@@ -233,172 +233,69 @@ static void glyph_box_nsew(unsigned char *bits, unsigned int nsew, unsigned int 
                 glyph_vline(bits, mid_x, mid_x + thick - 1, mid_y, WINDOW_CELL_H - 1);
 }
 
+/*
+        Which edges each of U+2500 to U+257F draws.
+
+        The block is a chart and this is the chart: the code point's low seven
+        bits pick the row, and a row is the edges that meet in the middle of
+        the cell. It was a hundred and twenty five cases returning fifteen
+        answers between them, which is a table spelled out at four lines an
+        entry. Weight is not in here -- the light, heavy, dashed and double
+        spellings of a join all draw the same edges, and glyph_synthesize asks
+        the code point itself how thick to draw them. U+2571 to U+2573 are the
+        diagonals, which no combination of edges describes, so they answer
+        nothing and fall through to the face.
+*/
+static const unsigned char box_nsew[0x80] = {
+    [0x00 ... 0x01]    = BX_W | BX_E,
+    [0x02 ... 0x03]    = BX_N | BX_S,
+    [0x04 ... 0x05]    = BX_W | BX_E,
+    [0x06 ... 0x07]    = BX_N | BX_S,
+    [0x08 ... 0x09]    = BX_W | BX_E,
+    [0x0a ... 0x0b]    = BX_N | BX_S,
+    [0x0c ... 0x0f]    = BX_S | BX_E,
+    [0x10 ... 0x13]    = BX_S | BX_W,
+    [0x14 ... 0x17]    = BX_N | BX_E,
+    [0x18 ... 0x1b]    = BX_N | BX_W,
+    [0x1c ... 0x23]    = BX_N | BX_S | BX_E,
+    [0x24 ... 0x2b]    = BX_N | BX_S | BX_W,
+    [0x2c ... 0x33]    = BX_S | BX_W | BX_E,
+    [0x34 ... 0x3b]    = BX_N | BX_W | BX_E,
+    [0x3c ... 0x4b]    = BX_N | BX_S | BX_W | BX_E,
+    [0x4c ... 0x4d]    = BX_W | BX_E,
+    [0x4e ... 0x4f]    = BX_N | BX_S,
+    [0x50]             = BX_W | BX_E,
+    [0x51]             = BX_N | BX_S,
+    [0x52 ... 0x54]    = BX_S | BX_E,
+    [0x55 ... 0x57]    = BX_S | BX_W,
+    [0x58 ... 0x5a]    = BX_N | BX_E,
+    [0x5b ... 0x5d]    = BX_N | BX_W,
+    [0x5e ... 0x60]    = BX_N | BX_S | BX_E,
+    [0x61 ... 0x63]    = BX_N | BX_S | BX_W,
+    [0x64 ... 0x66]    = BX_S | BX_W | BX_E,
+    [0x67 ... 0x69]    = BX_N | BX_W | BX_E,
+    [0x6a ... 0x6c]    = BX_N | BX_S | BX_W | BX_E,
+    [0x6d]             = BX_S | BX_E,
+    [0x6e]             = BX_S | BX_W,
+    [0x6f]             = BX_N | BX_W,
+    [0x70]             = BX_N | BX_E,
+    [0x74]             = BX_W,
+    [0x75]             = BX_N,
+    [0x76]             = BX_E,
+    [0x77]             = BX_S,
+    [0x78]             = BX_W,
+    [0x79]             = BX_N,
+    [0x7a]             = BX_E,
+    [0x7b]             = BX_S,
+    [0x7c]             = BX_W | BX_E,
+    [0x7d]             = BX_N | BX_S,
+    [0x7e]             = BX_W | BX_E,
+    [0x7f]             = BX_N | BX_S,
+};
+
 static unsigned int glyph_box_nsew_from(unsigned int c)
 {
-        switch (c)
-        {
-        case 0x2500:
-        case 0x2501:
-        case 0x2504:
-        case 0x2505:
-        case 0x2508:
-        case 0x2509:
-        case 0x254c:
-        case 0x254d:
-                return BX_W | BX_E;
-        case 0x2502:
-        case 0x2503:
-        case 0x2506:
-        case 0x2507:
-        case 0x250a:
-        case 0x250b:
-        case 0x254e:
-        case 0x254f:
-                return BX_N | BX_S;
-        case 0x250c:
-        case 0x250d:
-        case 0x250e:
-        case 0x250f:
-        case 0x256d:
-                return BX_S | BX_E;
-        case 0x2510:
-        case 0x2511:
-        case 0x2512:
-        case 0x2513:
-        case 0x256e:
-                return BX_S | BX_W;
-        case 0x2514:
-        case 0x2515:
-        case 0x2516:
-        case 0x2517:
-        case 0x2570:
-                return BX_N | BX_E;
-        case 0x2518:
-        case 0x2519:
-        case 0x251a:
-        case 0x251b:
-        case 0x256f:
-                return BX_N | BX_W;
-        case 0x251c:
-        case 0x251d:
-        case 0x251e:
-        case 0x251f:
-        case 0x2520:
-        case 0x2521:
-        case 0x2522:
-        case 0x2523:
-                return BX_N | BX_S | BX_E;
-        case 0x2524:
-        case 0x2525:
-        case 0x2526:
-        case 0x2527:
-        case 0x2528:
-        case 0x2529:
-        case 0x252a:
-        case 0x252b:
-                return BX_N | BX_S | BX_W;
-        case 0x252c:
-        case 0x252d:
-        case 0x252e:
-        case 0x252f:
-        case 0x2530:
-        case 0x2531:
-        case 0x2532:
-        case 0x2533:
-                return BX_S | BX_W | BX_E;
-        case 0x2534:
-        case 0x2535:
-        case 0x2536:
-        case 0x2537:
-        case 0x2538:
-        case 0x2539:
-        case 0x253a:
-        case 0x253b:
-                return BX_N | BX_W | BX_E;
-        case 0x253c:
-        case 0x253d:
-        case 0x253e:
-        case 0x253f:
-        case 0x2540:
-        case 0x2541:
-        case 0x2542:
-        case 0x2543:
-        case 0x2544:
-        case 0x2545:
-        case 0x2546:
-        case 0x2547:
-        case 0x2548:
-        case 0x2549:
-        case 0x254a:
-        case 0x254b:
-                return BX_N | BX_S | BX_W | BX_E;
-        case 0x2550:
-                return BX_W | BX_E;
-        case 0x2551:
-                return BX_N | BX_S;
-        case 0x2552:
-        case 0x2553:
-        case 0x2554:
-                return BX_S | BX_E;
-        case 0x2555:
-        case 0x2556:
-        case 0x2557:
-                return BX_S | BX_W;
-        case 0x2558:
-        case 0x2559:
-        case 0x255a:
-                return BX_N | BX_E;
-        case 0x255b:
-        case 0x255c:
-        case 0x255d:
-                return BX_N | BX_W;
-        case 0x255e:
-        case 0x255f:
-        case 0x2560:
-                return BX_N | BX_S | BX_E;
-        case 0x2561:
-        case 0x2562:
-        case 0x2563:
-                return BX_N | BX_S | BX_W;
-        case 0x2564:
-        case 0x2565:
-        case 0x2566:
-                return BX_S | BX_W | BX_E;
-        case 0x2567:
-        case 0x2568:
-        case 0x2569:
-                return BX_N | BX_W | BX_E;
-        case 0x256a:
-        case 0x256b:
-        case 0x256c:
-                return BX_N | BX_S | BX_W | BX_E;
-        case 0x2574:
-                return BX_W;
-        case 0x2575:
-                return BX_N;
-        case 0x2576:
-                return BX_E;
-        case 0x2577:
-                return BX_S;
-        case 0x2578:
-                return BX_W;
-        case 0x2579:
-                return BX_N;
-        case 0x257a:
-                return BX_E;
-        case 0x257b:
-                return BX_S;
-        case 0x257c:
-                return BX_W | BX_E;
-        case 0x257d:
-                return BX_N | BX_S;
-        case 0x257e:
-                return BX_W | BX_E;
-        case 0x257f:
-                return BX_N | BX_S;
-        default:
-                return 0;
-        }
+        return c - 0x2500 < sizeof(box_nsew) ? box_nsew[c - 0x2500] : 0;
 }
 
 static void glyph_block(unsigned int c, unsigned char *bits)
