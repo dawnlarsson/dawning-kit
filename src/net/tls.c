@@ -2129,17 +2129,28 @@ static bool tls_server_flight_step(p8 address_to state, p8 type)
         return true;
 }
 
+/* RFC 8446 forbids duplicate extensions.  Rescanning every earlier extension
+   to find one is quadratic in a block whose size the peer chooses: sixteen
+   kilobytes of empty extensions is eight million inner steps, and
+   EncryptedExtensions arrives before the certificate is checked, so anyone
+   who can terminate the key exchange can spend it.  The kinds already seen go
+   in a bitmap of the sixteen-bit space instead and the walk is one pass.  The
+   nested scan's own framing tests were unreachable -- it only ever visited
+   offsets this walk had already validated and placed -- so the predicate is
+   the same one. */
 static bool tls_encrypted_extensions_valid(p8 address_to body,
                                            positive length)
 {
+        p8 seen[8192];
         positive at = 2;
 
         if (length < 2 || network_load_16(body) != length - 2)
                 return false;
 
+        memory_fill(seen, 0, sizeof seen);
+
         while (at < length)
         {
-                positive before = 2;
                 p16 kind;
                 p16 size;
 
@@ -2152,22 +2163,9 @@ static bool tls_encrypted_extensions_valid(p8 address_to body,
                 if ((positive)size > length - at - 4)
                         return false;
 
-                /* RFC 8446 forbids duplicate extensions.  A nested scan is
-                   bounded by the 16 KiB handshake ceiling and avoids keeping
-                   a second extension table solely for this check. */
-                while (before < at)
-                {
-                        positive prior_size;
-
-                        if (at - before < 4)
-                                return false;
-                        prior_size = network_load_16(body + before + 2);
-                        if (prior_size > at - before - 4)
-                                return false;
-                        if (network_load_16(body + before) == kind)
-                                return false;
-                        before += 4 + prior_size;
-                }
+                if (seen[kind >> 3] & (p8)(1u << (kind & 7)))
+                        return false;
+                seen[kind >> 3] |= (p8)(1u << (kind & 7));
 
                 at += 4 + size;
         }
