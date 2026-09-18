@@ -15539,14 +15539,6 @@ static fn grep_operand(b32 index)
         text_file_add(index);
 }
 
-// A word one of the three options takes and only one of the words will do.
-static bool grep_word_is(string_address value, string_address first,
-                         string_address second, string_address third)
-{
-        return string_equals(value, first) || string_equals(value, second) ||
-               (third && string_equals(value, third));
-}
-
 /*
         What --directories would have taken, in argmatch's shape. --devices
         and --binary-files are checked by hand inside grep and say so in
@@ -15588,7 +15580,9 @@ static bool grep_option_seen(p8 letter, string_address value)
                 not whichever of the three a later pass would have looked at
                 first.
         */
-        if (letter == 'd' && !grep_word_is(value, "read", "recurse", "skip"))
+        if (letter == 'd' &&
+            !string_equals(value, "read") && !string_equals(value, "recurse") &&
+            !string_equals(value, "skip"))
         {
                 grep_option_status = 1;
                 text_argmatch((string_address) "--directories", value,
@@ -15596,11 +15590,14 @@ static bool grep_option_seen(p8 letter, string_address value)
                 return false;
         }
 
-        if (letter == 'D' && !grep_word_is(value, "read", "skip", null))
+        if (letter == 'D' &&
+            !string_equals(value, "read") && !string_equals(value, "skip"))
                 return string_diagnostic(&text_diagnostic, 0, null,
                                          "unknown devices method");
 
-        if (letter == 'N' && !grep_word_is(value, "binary", "text", "without-match"))
+        if (letter == 'N' &&
+            !string_equals(value, "binary") && !string_equals(value, "text") &&
+            !string_equals(value, "without-match"))
                 return string_diagnostic(&text_diagnostic, 0, null,
                                          "unknown binary-files type");
 
@@ -20729,7 +20726,7 @@ static fn sed_put_listing(positive wrap)
 // is not there is nothing at all rather than a complaint.
 static fn sed_put_file(string_address name)
 {
-        p8 window[8192];
+        static p8 window[8192];
         bipolar handle = text_open_handle(name, FILE_READ, 0);
 
         if (handle < 0)

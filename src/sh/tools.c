@@ -6167,8 +6167,7 @@ static bool factor_number(p8 address_to bytes, positive length,
         positive start = 0;
         positive value;
 
-        while (start < length && bytes[start] == ' ')
-                start++;
+        start += memory_span_byte(bytes + start, ' ', length - start);
         if (start < length && bytes[start] == '+')
                 start++;
 

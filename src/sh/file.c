@@ -17412,12 +17412,6 @@ static bool whereis_scan(positive want, string_address query, bool glob)
         return true;
 }
 
-static bool whereis_long(string_address word, string_address name)
-{
-        return word[0] == '-' && word[1] == '-' &&
-               string_equals(word + 2, name);
-}
-
 /*
         whereis reads its line the way util-linux reads it, which is not the
         way anything else here does.
@@ -17494,7 +17488,7 @@ static b32 file_whereis()
                 return string_report(log_error, 1, "Try 'whereis --help' for more information.\n");
         }
 
-        if (whereis_long(program_argument(1), (string_address) "help"))
+        if (string_equals(program_argument(1), "--help"))
         {
                 string_format(log,
                               "Usage: whereis [options] NAME...\n"
@@ -17505,7 +17499,7 @@ static b32 file_whereis()
                 return 0;
         }
 
-        if (whereis_long(program_argument(1), (string_address) "version"))
+        if (string_equals(program_argument(1), "--version"))
         {
                 string_format(log, "whereis from dawning-kit\n");
                 log_flush();
@@ -24044,9 +24038,7 @@ static bool cp_recursive;
 static bool cp_preserve;
 static bool cp_force;
 static bool cp_ask;
-static bool cp_never_clobber;
-static bool cp_newer_only;
-static bool cp_update_fail;
+static bool cp_wants_context;
 static p8 cp_update_policy;
 static p8 mv_update_policy;
 static string_address file_into_seen;
@@ -24063,9 +24055,6 @@ static file_facts cp_destination_facts;
 static file_facts cp_destination_entry_facts;
 static bool mv_across_said;
 static bool mv_ask;
-static bool mv_never_clobber;
-static bool mv_newer_only;
-static bool mv_update_fail;
 static bool mv_destination_decided;
 static bool mv_destination_existed;
 static bool mv_collision_seen;
@@ -24698,7 +24687,8 @@ static bool cp_linked(bipolar source_directory, string_address source,
         /* GNU link_or_copy.c: an existing dest is File exists unless
            -f or --remove-destination. -i may have approved a later
            unlink; -l/-s still refuse unless force/replace. */
-        bool no_clobber = cp_never_clobber || (!cp_force && !cp_replace);
+        bool no_clobber = cp_update_policy == 'n' || cp_update_policy == 'F' ||
+                          (!cp_force && !cp_replace);
         bipolar done = file_stage_publish_protected_at(
             address_of protected, destination_directory,
             destination, made_handle, 0, no_clobber, approved, 0);
@@ -25961,7 +25951,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
            copy; the same-file sentence is not the answer. -l is already
            linked, -b of a distinct dirent and --remove-destination of a
            dest symlink or extra hard link all proceed. */
-        if (!moving && destination_exists && !cp_never_clobber &&
+        if (!moving && destination_exists && cp_update_policy != 'n' &&
+            cp_update_policy != 'F' &&
             file_same_identity(address_of facts, address_of there))
         {
                 bool done = false;
@@ -26006,8 +25997,11 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         if (!moving && kind != MODE_DIRECTORY &&
             !(named && cp_destination_decided) &&
             !file_overwrite_allowed((string_address)"cp", destination_shown,
-                                    destination_exists, cp_never_clobber,
-                                    cp_newer_only, cp_ask, cp_update_fail,
+                                    destination_exists,
+                                    cp_update_policy == 'n' ||
+                                        cp_update_policy == 'F',
+                                    cp_update_policy == 'u', cp_ask,
+                                    cp_update_policy == 'F',
                                     cp_loud, address_of facts,
                                     address_of there, address_of cp_status))
                 return true;
@@ -26637,7 +26631,8 @@ static fn cp_pair(string_address source, string_address destination)
         bool entry_exists = file_look(
             destination_directory, destination_leaf, AT_SYMLINK_NOFOLLOW,
             address_of destination_entry);
-        if (destination_exists && !cp_never_clobber &&
+        if (destination_exists && cp_update_policy != 'n' &&
+            cp_update_policy != 'F' &&
             file_same_identity(address_of source_facts,
                                address_of destination_facts))
         {
@@ -26681,12 +26676,17 @@ static fn cp_pair(string_address source, string_address destination)
             (destination_entry.mode & MODE_FORMAT) == MODE_LINK &&
             !destination_exists;
         bool refuse_dangling = kind != MODE_DIRECTORY && dangling_dest &&
-                               !cp_force && !cp_replace && !cp_never_clobber &&
+                               !cp_force && !cp_replace &&
+                               cp_update_policy != 'n' &&
+                               cp_update_policy != 'F' &&
                                !file_backup_kind;
         if (kind != MODE_DIRECTORY && !refuse_dangling &&
             !file_overwrite_allowed((string_address)"cp", destination,
-                                    collision_exists, cp_never_clobber,
-                                    cp_newer_only, cp_ask, cp_update_fail,
+                                    collision_exists,
+                                    cp_update_policy == 'n' ||
+                                        cp_update_policy == 'F',
+                                    cp_update_policy == 'u', cp_ask,
+                                    cp_update_policy == 'F',
                                     cp_loud, address_of source_facts,
                                     collision_facts, address_of cp_status))
         {
@@ -26845,11 +26845,15 @@ static bool cp_option_seen(p8 letter, string_address value)
                 return false;
         if (!file_into_option_seen((string_address) "cp", letter, value))
                 return false;
-        if (letter == 'p' &&
-            !cp_words_read((string_address) "--preserve", value,
-                           cp_preserve_words, array_count(cp_preserve_words),
-                           null, 0))
-                return false;
+        if (letter == 'p')
+        {
+                cp_wants_context = false;
+                if (!cp_words_read((string_address) "--preserve", value,
+                                   cp_preserve_words,
+                                   array_count(cp_preserve_words),
+                                   address_of cp_wants_context, 0))
+                        return false;
+        }
         if (letter == 'N' &&
             !cp_words_read((string_address) "--no-preserve", value,
                            cp_preserve_words, array_count(cp_preserve_words),
@@ -26957,7 +26961,7 @@ static b32 file_cp()
         };
 
         cp_update_policy = 0;
-        cp_update_fail = false;
+        cp_wants_context = false;
         file_into_seen = null;
         file_join_source_path = false;
         file_backup_control_named = null;
@@ -26976,18 +26980,6 @@ static b32 file_cp()
                 return string_report(log_error, 1,
                                      "cp: --backup is mutually exclusive with -n or --update=none-fail\n");
 
-        bool wants_context = false;
-
-        if (!cp_words_read((string_address) "--preserve",
-                           file_option_value(address_of taking, 'p'),
-                           cp_preserve_words, array_count(cp_preserve_words),
-                           address_of wants_context, 0) ||
-            !cp_words_read((string_address) "--no-preserve",
-                           file_option_value(address_of taking, 'N'),
-                           cp_preserve_words, array_count(cp_preserve_words),
-                           null, 0))
-                return 1;
-
         //      This image has no SELinux. -Z and a bare --context are
         //      no-ops there, and a named context is warned about and
         //      otherwise ignored; cp says "SELinux-enabled" where mkdir and
@@ -26999,7 +26991,7 @@ static b32 file_cp()
                           "SELinux-enabled kernel\n", 0);
 
         // A label asked for by name is one this kernel cannot give.
-        if (wants_context)
+        if (cp_wants_context)
         {
                 return string_report(log_error, 1,
                                      "cp: cannot preserve security context without an "
@@ -27036,9 +27028,6 @@ static b32 file_cp()
         cp_force = (flags & FILE_FLAG('f')) != 0;
         cp_ask = cp_selected.collision == 'i' && cp_update_policy != 'n' &&
                  cp_update_policy != 'F';
-        cp_never_clobber = cp_update_policy == 'n' || cp_update_policy == 'F';
-        cp_newer_only = cp_update_policy == 'u';
-        cp_update_fail = cp_update_policy == 'F';
         cp_hard = (flags & FILE_FLAG('l')) != 0;
         cp_symbolic = (flags & FILE_FLAG('s')) != 0;
         cp_loud = (flags & FILE_FLAG('v')) != 0;
@@ -27290,8 +27279,8 @@ static bool install_unchanged(bipolar source, file_facts address_to from,
                               bipolar parent, string_address leaf,
                               file_facts address_to to)
 {
-        p8 left[4096];
-        p8 right[4096];
+        static p8 left[4096];
+        static p8 right[4096];
         bipolar dest;
         p64 remain;
 
@@ -27822,7 +27811,8 @@ static fn mv_one(string_address source, string_address destination)
         /* GNU same_file_ok runs before -u/-i skip, and is itself skipped
            only for UPDATE_NONE / UPDATE_NONE_FAIL. A later --update must
            still see two names for one file. */
-        if (destination_exists && !mv_never_clobber &&
+        if (destination_exists && mv_update_policy != 'n' &&
+            mv_update_policy != 'F' &&
             (file_same_identity(address_of from, address_of to) ||
              ((from.mode & MODE_FORMAT) == MODE_LINK &&
               file_look(source_directory, source_leaf, 0,
@@ -27844,8 +27834,11 @@ static fn mv_one(string_address source, string_address destination)
                 }
         }
         if (!file_overwrite_allowed((string_address)"mv", destination,
-                                    destination_exists, mv_never_clobber,
-                                    mv_newer_only, mv_ask, mv_update_fail,
+                                    destination_exists,
+                                    mv_update_policy == 'n' ||
+                                        mv_update_policy == 'F',
+                                    mv_update_policy == 'u', mv_ask,
+                                    mv_update_policy == 'F',
                                     mv_loud, address_of from,
                                     address_of to, address_of mv_status))
                 goto finished;
@@ -27979,7 +27972,8 @@ static fn mv_one(string_address source, string_address destination)
                 goto finished;
         }
 
-        if (done == -ERROR_EXISTS && mv_never_clobber)
+        if (done == -ERROR_EXISTS &&
+            (mv_update_policy == 'n' || mv_update_policy == 'F'))
                 goto finished;
         if ((done == -ERROR_EXISTS || done == -ERROR_AGAIN) && mv_ask)
         {
@@ -28038,7 +28032,7 @@ static fn mv_one(string_address source, string_address destination)
 
                 if (mv_collision_seen)
                 {
-                        if (!mv_never_clobber)
+                        if (mv_update_policy != 'n' && mv_update_policy != 'F')
                         {
                                 string_format(log_error, "mv: destination changed before moving '%w'\n",
                                               writer_terminal_quoted_name, destination);
@@ -28130,7 +28124,6 @@ static b32 file_mv()
         };
 
         mv_update_policy = 0;
-        mv_update_fail = false;
         file_into_seen = null;
         file_join_source_path = false;
         file_backup_control_named = null;
@@ -28150,7 +28143,6 @@ static b32 file_mv()
                 return string_report(log_error, 1,
                                      "mv: cannot combine --backup with --exchange, -n, or --update=none-fail\n");
 
-        mv_newer_only = mv_update_policy == 'u';
         // A tree mv copies across devices is made under the same mask cp
         // reads, so a directory it makes can always be written into.
         cp_umask = file_umask();
@@ -28159,8 +28151,6 @@ static b32 file_mv()
 
         mv_ask = mv_collision_option == 'i' && mv_update_policy != 'n' &&
                  mv_update_policy != 'F';
-        mv_never_clobber = mv_update_policy == 'n' || mv_update_policy == 'F';
-        mv_update_fail = mv_update_policy == 'F';
         mv_loud = (taking.flags & FILE_FLAG('v')) != 0;
         file_strip_trailing = (taking.flags & FILE_FLAG('w')) != 0;
         mv_exchange = (taking.flags & FILE_FLAG('X')) != 0;
