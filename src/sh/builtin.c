@@ -582,7 +582,15 @@ static bipolar floodlight_proc_read(string_address path, p8 address_to text,
         if (handle >= 0 && system_close(handle) < 0)
                 got = -ERROR_ACCESS;
 
-        system_close(proc);
+        /* Both, because the paragraph above says both. The root's close was
+           the one call here whose answer was dropped, and a comment claiming
+           a security property the code below it does not have is worse than
+           no comment: the next reader trusts it instead of checking. The
+           read has already happened by now, so this refuses nothing a
+           working machine does -- which is the point of saying it out loud
+           rather than leaving the exception unwritten. */
+        if (system_close(proc) < 0)
+                got = -ERROR_ACCESS;
 
         return got < 0 ? -ERROR_ACCESS : got;
 }
