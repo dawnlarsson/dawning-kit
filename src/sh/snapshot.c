@@ -122,6 +122,17 @@ static HOT bool system_snapshot_accelerated(system_snapshot address_to sample,
              !system_snapshot_range(header->network_offset,
                                     header->network_count,
                                     sizeof(struct snapshot_network),
+                                    request.used)) ||
+            /*      The process section too, though this kernel refuses to
+                    produce one: the section pointers below are taken from
+                    the header whichever section was asked for, so the one
+                    offset that was not measured here was the one a device
+                    answering more than this kernel does would be believed
+                    about. Every section a caller can name is measured. */
+            ((flags & SPARK_SNAPSHOT_PROCESS) &&
+             !system_snapshot_range(header->process_offset,
+                                    header->process_count,
+                                    sizeof(struct snapshot_process),
                                     request.used)))
         {
                 system_close(device);
