@@ -6,6 +6,13 @@
         wait loop keeps walking servers until the clock is set. Five samples
         keep the lowest delay unless /root/ntp.filter says off. The kernel
         adds that offset with adjtimex; a kiss-o-death drops the server.
+
+        The forked query is reaped with wait4, not asked after with kill.
+        A pid that has exited but not been waited for is still a pid, so
+        kill(pid, 0) answers zero for a zombie exactly as it does for a
+        live child: the poll would see its first query running for ever,
+        never retry a boot that failed for want of a network, and never
+        poll again. wait4 is the only call that distinguishes the two.
 */
 
 #include "../net/sntp.c"
@@ -19,6 +26,7 @@
 #define LOCALE_NTP_RETRY_LEAST 1
 #define LOCALE_NTP_RETRY_MOST 8
 #define LOCALE_NTP_AGAIN 1800
+#define LOCALE_WAIT_NOHANG 1
 #define ADJ_STATUS 0x10
 #define ADJ_SETOFFSET 0x80
 #define ADJ_NANO 0x2000
@@ -377,8 +385,12 @@ static fn locale_ntp_keep(void)
 
         if (locale_ntp_child > 0)
         {
-                if (system_call_2(syscall(kill), (positive)locale_ntp_child, 0) ==
-                    0)
+                positive status = 0;
+                bipolar reaped = system_wait4_retry(locale_ntp_child,
+                                                    address_of status,
+                                                    LOCALE_WAIT_NOHANG, null);
+
+                if (reaped == 0)
                         return;
                 locale_ntp_child = 0;
                 if (locale_clock_synced())
