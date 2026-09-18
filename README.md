@@ -47,6 +47,7 @@ moonwater timezone                     the clock's zone [UTC]
 moonwater timezone ZONE                IANA name or POSIX TZ string
 moonwater ntp                          whether the clock is set from the network
 moonwater ntp on|off                   keep asking the network [on]
+moonwater ntp filter [on|off]          keep the lowest-delay sample of five [on]
 moonwater keyboard                     Canvas layout [us]
 moonwater keyboard LAYOUT              us uk de se no dk fi fr es it
 moonwater wipe                         forget /home and extra /root; keep the machine
@@ -67,13 +68,18 @@ machine script: see `main.moonwater.sh` in this repository.
 Wifi passwords and the internet preference live on the data partition (`/root/wifi`,
 `/root/internet`), not in the image, so `moonwater update` keeps them. When a cable
 and wifi both have carrier, `/ip watch` uses the preference (`wired` if unset).
-The timezone, NTP switch and keyboard layout are the same shape (`/root/timezone`,
-`/root/ntp`, `/root/keyboard`). NTP starts with the machine and stays on until
-turned off: restore asks the network before init, then the wait loop keeps
-walking `pool.ntp.org`, Google, Cloudflare and their addresses until the kernel
-says the clock is synchronised. There is no zoneinfo file; a name such as
-`Europe/Stockholm` is mapped to a POSIX TZ string. Canvas layouts other than US
-are the compositor's table, switched live.
+The timezone, NTP switch, clock filter and keyboard layout are the same shape
+(`/root/timezone`, `/root/ntp`, `/root/ntp.filter`, `/root/keyboard`). NTP starts
+with the machine and stays on until turned off: restore asks the network before
+init, then the wait loop keeps walking `pool.ntp.org`, Google, Cloudflare and
+their addresses until the kernel says the clock is synchronised. Each query
+takes five samples and keeps the one with the smallest round-trip delay, which
+is how RFC 5905's clock filter refuses a one-sided queue spike; `moonwater ntp
+filter off` falls back to a single sample. The kernel adds that offset to
+the current time; a kiss-o-death or a server whose root delay or dispersion
+is worse than a second is dropped. There is no
+zoneinfo file; a name such as `Europe/Stockholm` is mapped to a POSIX TZ string.
+Canvas layouts other than US are the compositor's table, switched live.
 Steam Deck radios (RTL8822CE, MT7921) also need the matching linux-firmware files
 under `/lib/firmware`; the drivers are in the image, the blobs are not.
 
@@ -88,7 +94,7 @@ A kiosk is the machine script after wipe, not a second verb. `moonwater wipe`
 empties `/home` and everything under `/root` except the overlay
 (`/root/main.moonwater.sh`) and the radio files (`wifi`, `wifi.power`,
 `bluetooth`, `bluetooth.power`, `internet`) plus `timezone`, `ntp`,
-`ntp.server` and `keyboard`. `/bowls` is left alone, so
+`ntp.server`, `ntp.filter` and `keyboard`. `/bowls` is left alone, so
 pre-installed software survives. The builtin `moonwater_init` always wipes
 once the boot verdict is `live` or `disk`. Overlay the script and start
 whatever is already there after that line: Chromium, Weston, a bowl binary.

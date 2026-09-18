@@ -58163,11 +58163,18 @@ static fn machine_policy(void)
         }
 }
 
+static fn machine_sntp(void)
+{
+        check("RFC 5905 offset, min-delay pick and poison guards hold",
+              sntp_math_ok());
+}
+
 b32 main(void)
 {
         machine_hooks();
         machine_arms();
         machine_policy();
+        machine_sntp();
         return test_report(null);
 }
 #endif /* CHECK_machine */

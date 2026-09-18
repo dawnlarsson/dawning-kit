@@ -3121,6 +3121,7 @@ static string_address host_wipe_keep[] = {
     "timezone",
     "ntp",
     "ntp.server",
+    "ntp.filter",
     "keyboard",
 };
 
@@ -3536,6 +3537,8 @@ static fn host_usage_write(writer out)
                       "             " TERM_DIM "the clock's zone [UTC]" TERM_RESET "\n"
                       TERM_BOLD "  ntp [on|off]" TERM_RESET
                       "                " TERM_DIM "set the clock from the network [on]" TERM_RESET "\n"
+                      TERM_BOLD "  ntp filter [on|off]" TERM_RESET
+                      "         " TERM_DIM "keep the lowest-delay sample of five [on]" TERM_RESET "\n"
                       TERM_BOLD "  keyboard [LAYOUT]" TERM_RESET
                       "           " TERM_DIM "Canvas keys: us uk de se no dk fi fr es it" TERM_RESET "\n"
                       TERM_BOLD "  wipe" TERM_RESET
@@ -3662,9 +3665,12 @@ static b32 host_status(void)
                 string_format(log, "  timezone %s\n",
                               zone[0] ? (string_address)zone
                                       : (string_address) "UTC");
-                string_format(log, "  ntp %s\n",
+                string_format(log, "  ntp %s, filter %s\n",
                               locale_ntp_wanted() ? (string_address) "on"
-                                                  : (string_address) "off");
+                                                  : (string_address) "off",
+                              locale_ntp_filter_wanted()
+                                  ? (string_address) "on"
+                                  : (string_address) "off");
                 string_format(log, "  keyboard %s\n",
                               keyboard[0] ? (string_address)keyboard
                                           : (string_address) "us");

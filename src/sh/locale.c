@@ -3,7 +3,9 @@
 
         Choices live on /root so an image update keeps them. The machine
         starts NTP itself: restore forks the first query before init, and the
-        wait loop keeps walking servers until the clock is set.
+        wait loop keeps walking servers until the clock is set. Five samples
+        keep the lowest delay unless /root/ntp.filter says off. The kernel
+        adds that offset with adjtimex; a kiss-o-death drops the server.
 */
 
 #include "../net/sntp.c"
@@ -11,12 +13,15 @@
 #define LOCALE_ZONE_PATH "/root/timezone"
 #define LOCALE_NTP_PATH "/root/ntp"
 #define LOCALE_NTP_SERVER_PATH "/root/ntp.server"
+#define LOCALE_NTP_FILTER_PATH "/root/ntp.filter"
 #define LOCALE_KEYBOARD_PATH "/root/keyboard"
 #define LOCALE_NTP_DEFAULT_SERVER "pool.ntp.org"
 #define LOCALE_NTP_RETRY_LEAST 1
 #define LOCALE_NTP_RETRY_MOST 8
 #define LOCALE_NTP_AGAIN 1800
 #define ADJ_STATUS 0x10
+#define ADJ_SETOFFSET 0x80
+#define ADJ_NANO 0x2000
 
 static p64 locale_ntp_next;
 static positive locale_ntp_retry = LOCALE_NTP_RETRY_LEAST;
@@ -48,14 +53,29 @@ static fn locale_word(string_address path, p8 address_to into, positive room)
                 into[--length] = end;
 }
 
-static bool locale_ntp_wanted(void)
+static bool locale_switch_on(string_address path)
 {
         p8 word[16];
 
-        locale_word(LOCALE_NTP_PATH, word, sizeof(word));
+        locale_word(path, word, sizeof(word));
         if (!word[0])
                 return true;
         return string_equals(word, "on");
+}
+
+static bool locale_ntp_wanted(void)
+{
+        return locale_switch_on(LOCALE_NTP_PATH);
+}
+
+static bool locale_ntp_filter_wanted(void)
+{
+        return locale_switch_on(LOCALE_NTP_FILTER_PATH);
+}
+
+static bool locale_clock_synced(void)
+{
+        return logger_clock_synced(null);
 }
 
 static bool locale_zone_ok(string_address name)
@@ -108,16 +128,6 @@ static b32 locale_zone_set(string_address name)
         return 0;
 }
 
-static bool locale_clock_synced(void)
-{
-        positive words[LOGGER_TIMEX_WORDS] = {0};
-
-        if (system_call_1(syscall(adjtimex), (positive)words) < 0)
-                return false;
-        return ((p32)words[LOGGER_TIMEX_STATUS] & LOGGER_CLOCK_UNSYNCHRONISED) ==
-               0;
-}
-
 static fn locale_clock_mark_synced(void)
 {
         positive words[LOGGER_TIMEX_WORDS] = {0};
@@ -137,18 +147,44 @@ static const char locale_ntp_fallback[][24] = {
         "162.159.200.123",
 };
 
-static bipolar locale_ntp_set_clock(p64 seconds, p32 nanoseconds)
+static bipolar locale_ntp_apply_offset(bipolar offset_ns)
 {
+        bipolar now;
+        bipolar target = 0;
+        bipolar sec = 0;
+        bipolar nsec = 0;
+        positive words[LOGGER_TIMEX_WORDS];
         p64 stamp[2];
         bipolar failed;
 
-        stamp[0] = seconds;
-        stamp[1] = nanoseconds;
+        now = sntp_now_ns();
+        if (now < 0)
+                return now;
+        if (!sntp_target_ok(now, offset_ns, address_of target))
+                return SNTP_MALFORMED;
+
+        sntp_split_offset(offset_ns, address_of sec, address_of nsec);
+        memory_zero(words, sizeof(words));
+        words[0] = ADJ_SETOFFSET | ADJ_NANO | ADJ_STATUS;
+        words[LOGGER_TIMEX_STATUS] = 0;
+        words[LOGGER_TIMEX_TIME_SEC] = (positive)sec;
+        words[LOGGER_TIMEX_TIME_NSEC] = (positive)nsec;
+        failed = system_call_1(syscall(adjtimex), (positive)words);
+        if_common (failed >= 0)
+                return 0;
+
+        now = sntp_now_ns();
+        if (now < 0)
+                return now;
+        if (!sntp_target_ok(now, offset_ns, address_of target))
+                return SNTP_MALFORMED;
+        stamp[0] = (p64)(target / (bipolar)SNTP_NANOSECONDS);
+        stamp[1] = (p64)(target % (bipolar)SNTP_NANOSECONDS);
         failed = system_call_2(syscall(clock_settime), CLOCK_REALTIME,
                                (positive)stamp);
         if (failed < 0)
         {
-                stamp[1] = nanoseconds / 1000;
+                stamp[1] = stamp[1] / 1000;
                 failed = system_call_2(syscall(settimeofday), (positive)stamp, 0);
         }
         if (failed < 0)
@@ -157,19 +193,18 @@ static bipolar locale_ntp_set_clock(p64 seconds, p32 nanoseconds)
         return 0;
 }
 
-static bipolar locale_ntp_one(string_address server)
+static bipolar locale_ntp_one(string_address server, bool filter, bool tight)
 {
-        p64 seconds = 0;
-        p32 nanoseconds = 0;
+        bipolar offset_ns = 0;
         bipolar failed;
 
         if (!server || !server[0] ||
             !radio_text_plain(server, string_length(server)))
                 return SNTP_NO_SERVER;
-        failed = sntp_query(server, address_of seconds, address_of nanoseconds);
+        failed = sntp_query(server, filter, tight, address_of offset_ns);
         if (failed < 0)
                 return failed;
-        return locale_ntp_set_clock(seconds, nanoseconds);
+        return locale_ntp_apply_offset(offset_ns);
 }
 
 static bipolar locale_ntp_apply(void)
@@ -177,11 +212,13 @@ static bipolar locale_ntp_apply(void)
         p8 server[80];
         bipolar failed = SNTP_NO_SERVER;
         positive at;
+        bool filter = locale_ntp_filter_wanted();
+        bool tight = locale_clock_synced();
 
         locale_word(LOCALE_NTP_SERVER_PATH, server, sizeof(server));
         if (server[0])
         {
-                failed = locale_ntp_one((string_address)server);
+                failed = locale_ntp_one((string_address)server, filter, tight);
                 if (failed >= 0)
                         return 0;
         }
@@ -191,7 +228,8 @@ static bipolar locale_ntp_apply(void)
                     string_equals((string_address)server,
                                   (string_address)locale_ntp_fallback[at]))
                         continue;
-                failed = locale_ntp_one((string_address)locale_ntp_fallback[at]);
+                failed = locale_ntp_one((string_address)locale_ntp_fallback[at],
+                                        filter, tight);
                 if (failed >= 0)
                         return 0;
         }
@@ -208,9 +246,29 @@ static b32 locale_ntp_status(void)
         if (!server[0])
                 string_copy_bounded(server, LOCALE_NTP_DEFAULT_SERVER,
                                     sizeof(server));
-        string_format(log, host_label "ntp %s, %s, %s\n",
+        string_format(log, host_label "ntp %s, %s, filter %s, %s\n",
                       wanted ? "on" : "off", server,
+                      locale_ntp_filter_wanted() ? "on" : "off",
                       synced ? "synchronised" : "waiting");
+        log_flush();
+        return 0;
+}
+
+static b32 locale_ntp_filter_status(void)
+{
+        string_format(log, host_label "ntp filter %s\n",
+                      locale_ntp_filter_wanted() ? "on" : "off");
+        log_flush();
+        return 0;
+}
+
+static COLD b32 locale_ntp_filter_set(string_address word)
+{
+        if (!string_equals(word, "on") && !string_equals(word, "off"))
+                return host_usage();
+        if (locale_write_word(LOCALE_NTP_FILTER_PATH, word) < 0)
+                return host_fail("ntp", -1);
+        string_format(log, host_label "ntp filter %s\n", word);
         log_flush();
         return 0;
 }
@@ -388,6 +446,16 @@ static b32 host_locale(string_address address_to arguments, positive count)
         {
                 if (count == 2)
                         return locale_ntp_status();
+                if (string_equals(word, "filter"))
+                {
+                        if (count == 3)
+                                return locale_ntp_filter_status();
+                        if (count != 4)
+                                return host_usage();
+                        if (!bowl_is_root())
+                                return host_refuse("%s needs root\n", "moonwater");
+                        return locale_ntp_filter_set(arguments[3]);
+                }
                 if (count != 3)
                         return host_usage();
                 if (!bowl_is_root())

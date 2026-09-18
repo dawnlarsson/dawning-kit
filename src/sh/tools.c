@@ -200,10 +200,13 @@ static fn logger_build_positive(logger_builder address_to build, positive value)
 /* The clock's own opinion of itself, which RFC 5424's time quality reports:
    a discipline without STA_UNSYNC is synchronised, and maxerror is the bound
    it claims. struct timex is one 32-bit mode word padded out to the long
-   fields, so maxerror is the fourth word and status the sixth. */
+   fields, so maxerror is the fourth word, status the sixth, and ADJ_SETOFFSET
+   writes the timeval at words 10 and 11. */
 #define LOGGER_TIMEX_WORDS 26
 #define LOGGER_TIMEX_MAXERROR 3
 #define LOGGER_TIMEX_STATUS 5
+#define LOGGER_TIMEX_TIME_SEC 9
+#define LOGGER_TIMEX_TIME_NSEC 10
 #define LOGGER_CLOCK_UNSYNCHRONISED 0x40
 
 static bool logger_clock_synced(positive address_to accuracy)
@@ -214,7 +217,8 @@ static bool logger_clock_synced(positive address_to accuracy)
             ((p32)words[LOGGER_TIMEX_STATUS] & LOGGER_CLOCK_UNSYNCHRONISED))
                 return false;
 
-        address_to accuracy = words[LOGGER_TIMEX_MAXERROR];
+        if (accuracy)
+                address_to accuracy = words[LOGGER_TIMEX_MAXERROR];
         return true;
 }
 
