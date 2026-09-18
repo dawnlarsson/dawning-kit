@@ -30384,7 +30384,6 @@ PINNED = r"""
 {"domain":"files","kind":"bug","list":"ledger","option":"--threshold","reason_id":"r99","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"--time-style","reason_id":"r99","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"-0","reason_id":"r99","utility":"du"},
-{"domain":"files","kind":"bug","list":"ledger","option":"-B","reason_id":"r99","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"-D","reason_id":"r99","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"-H","reason_id":"r99","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"-P","reason_id":"r99","utility":"du"},
