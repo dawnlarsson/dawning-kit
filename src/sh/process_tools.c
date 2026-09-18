@@ -833,10 +833,7 @@ static b32 process_pipesz()
                                               "pipesz: cannot open %s: %s\n",
                                               path, file_reason(descriptor));
                         if (taking.flags & FILE_FLAG('c'))
-                        {
-                                log_flush();
                                 return 1;
-                        }
                 }
                 else
                         targets[used++] = (process_pipe_target){
@@ -1305,7 +1302,6 @@ static fn process_timeout_signal(b32 child, bipolar pidfd, b32 signal,
                 string_format(log_error,
                               "timeout: sending signal %s to command '%w'\n",
                               name, writer_terminal_quoted_name, command);
-                log_flush();
         }
 
         if (foreground && pidfd >= 0 &&
