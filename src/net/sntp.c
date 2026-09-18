@@ -56,7 +56,8 @@
         ((bipolar)SNTP_WALL_LEAST * (bipolar)SNTP_NANOSECONDS)
 #define SNTP_WALL_MOST_NS \
         ((bipolar)SNTP_WALL_MOST * (bipolar)SNTP_NANOSECONDS)
-#define SNTP_TIMESPEC_SECONDS_MOST 9223372036ull
+#define SNTP_TIMESPEC_SECONDS_MOST 9223372035ull
+#define SNTP_ERA ((bipolar)4294967296)
 #define SNTP_SHORT_SECOND 0x10000u
 #define SNTP_TEST_NOW \
         ((bipolar)1700000000 * (bipolar)SNTP_NANOSECONDS)
@@ -71,6 +72,18 @@ typedef struct
 static inline INLINE CONST bool sntp_wall_ok(bipolar ns)
 {
         return ns >= SNTP_WALL_LEAST_NS && ns <= SNTP_WALL_MOST_NS;
+}
+
+/*
+        A local stamp may sit anywhere from the epoch to the end of the
+        window, because a machine that has never been told the time boots
+        at zero. It may not sit past the window: t1 and t4 are the only
+        two terms sntp_offset_delay adds that are not already bounded by
+        the wire format, and an unbounded one overflows the sum.
+*/
+static inline INLINE CONST bool sntp_local_ok(bipolar ns)
+{
+        return ns >= 0 && ns <= SNTP_WALL_MOST_NS;
 }
 
 static inline INLINE CONST bipolar sntp_timespec_ns(p64 seconds, p64 nanoseconds)
@@ -112,6 +125,8 @@ static inline INLINE PURE bipolar sntp_load_stamp(p8 address_to field)
         bipolar unix_nsec =
             (bipolar)(((p64)ntp_frac * SNTP_NANOSECONDS) >> 32);
 
+        if (!(ntp_seconds & 0x80000000u))
+                unix_seconds += SNTP_ERA;
         return unix_seconds * (bipolar)SNTP_NANOSECONDS + unix_nsec;
 }
 
@@ -211,6 +226,20 @@ static COLD bool sntp_math_ok(void)
             {0, 1050000000, 1050000000, 2000000000, 50000000, 2000000000},
             {0, 100000000, 100000000, 1100000000, -450000000, 1100000000},
         };
+        static const struct
+        {
+                p32 seconds;
+                p32 fraction;
+                bipolar want;
+        } stamp_case[] = {
+            /* era 0, the high bit set: 1968 through February 2036 */
+            {SNTP_UNIX, 0, 0},
+            {SNTP_UNIX + 1, 0, (bipolar)SNTP_NANOSECONDS},
+            {SNTP_UNIX, 0x80000000u, 500000000},
+            /* era 1, the high bit clear: February 2036 onward */
+            {0, 0, (bipolar)2085978496 * (bipolar)SNTP_NANOSECONDS},
+            {1, 0, (bipolar)2085978497 * (bipolar)SNTP_NANOSECONDS},
+        };
         static const bipolar split_case[][3] = {
             {1500000000, 1, 500000000},
             {-1500000000, -2, 500000000},
@@ -291,6 +320,31 @@ static COLD bool sntp_math_ok(void)
             sntp_short_ok(0x80000000u))
                 return false;
 
+        /*
+                The seconds bound is the one that has to hold exactly: a
+                whole second short of it, with the largest fraction, is
+                still a number, and one second past it is not.
+        */
+        if (sntp_timespec_ns(SNTP_TIMESPEC_SECONDS_MOST,
+                             SNTP_NANOSECONDS - 1) < 0 ||
+            sntp_timespec_ns(SNTP_TIMESPEC_SECONDS_MOST + 1, 0) >= 0 ||
+            sntp_timespec_ns(0, SNTP_NANOSECONDS) >= 0)
+                return false;
+
+        if (!sntp_local_ok(0) || !sntp_local_ok(SNTP_WALL_MOST_NS) ||
+            sntp_local_ok(SNTP_WALL_MOST_NS + 1) || sntp_local_ok(-1))
+                return false;
+
+        for (at = 0; at < array_count(stamp_case); at++)
+        {
+                p8 field[8];
+
+                network_store_32(field, stamp_case[at].seconds);
+                network_store_32(field + 4, stamp_case[at].fraction);
+                if (sntp_load_stamp(field) != stamp_case[at].want)
+                        return false;
+        }
+
         for (at = 0; at < array_count(split_case); at++)
         {
                 sntp_split_offset(split_case[at][0], address_of offset,
@@ -330,7 +384,7 @@ static HOT bipolar sntp_exchange(b32 handle,
         if_rare (socket_send(handle, request, SNTP_PACKET, 0, 0, 0) < 0)
                 return SNTP_NO_REPLY;
         t1 = sntp_timespec_ns(sent[0], sent[1]);
-        if_rare (t1 < 0)
+        if_rare (!sntp_local_ok(t1))
                 return SNTP_NO_REPLY;
 
         for (;;)
@@ -355,6 +409,8 @@ static HOT bipolar sntp_exchange(b32 handle,
                          !sntp_short_ok(network_load_32(reply + 8)))
                         return SNTP_BAD_SERVER;
                 t4 = sntp_timespec_ns(got[0], got[1]);
+                if_rare (!sntp_local_ok(t4))
+                        return SNTP_MALFORMED;
                 t2 = sntp_load_stamp(reply + 32);
                 t3 = sntp_load_stamp(reply + 40);
                 sntp_offset_delay(t1, t2, t3, t4, address_of offset,
