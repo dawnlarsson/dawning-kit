@@ -13,7 +13,6 @@
 
 #include "compression_huffman.c"
 
-#define XZ_MAGIC0 0xfd
 #define XZ_IN 16384
 #define XZ_MATCH_MAX 273
 #define XZ_MATCH_MIN 2

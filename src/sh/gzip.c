@@ -19,7 +19,6 @@
 #define GZIP_WINDOW 32768
 #define GZIP_WMASK (GZIP_WINDOW - 1)
 #define GZIP_IN 16384
-#define GZIP_OUT 16384
 #define GZIP_MAXBITS 15
 #define GZIP_MAXLIT 288
 #define GZIP_MAXDIST 32
@@ -1016,30 +1015,6 @@ static address_any gzip_pull_open(bipolar fd, p8 address_to prefix, positive pre
         return z;
 }
 
-/* >0 bytes at *span, valid until the next call on this state; 0 at the
-   clean end of input; <0 on error. */
-static bipolar gzip_pull_span(address_any state, p8 address_to address_to span)
-{
-        gzip_inflater address_to z = (gzip_inflater address_to)state;
-        positive n;
-
-        if (z->taken >= z->fill)
-        {
-                if (z->finished)
-                        return 0;
-                if (z->fill)
-                        gzip_inflate_slide(z);
-                if (!gzip_inflate_run(z))
-                        return -1;
-                if (z->taken >= z->fill)
-                        return 0;
-        }
-        address_to span = z->out + z->taken;
-        n = z->fill - z->taken;
-        z->taken = z->fill;
-        return (bipolar)n;
-}
-
 static bipolar gzip_pull_read(address_any state, p8 address_to into, positive n)
 {
         gzip_inflater address_to z = (gzip_inflater address_to)state;
@@ -1066,11 +1041,6 @@ static bipolar gzip_pull_read(address_any state, p8 address_to into, positive n)
                         return -1;
         }
         return (bipolar)copied;
-}
-
-static string_address gzip_pull_error(address_any state)
-{
-        return state ? ((gzip_inflater address_to)state)->why : (string_address)"gzip no decoder";
 }
 
 static bool gzip_pull_close(address_any state)
@@ -2028,11 +1998,6 @@ static bool gzip_decode_begin_prefix(bipolar in, p8 address_to prefix,
                 return gzip_fail(n > GZIP_DECODE_IN ? "gzip prefix"
                                                     : "gzip cannot map the decoder");
         return true;
-}
-
-static bool gzip_decode_begin(bipolar in)
-{
-        return gzip_decode_begin_prefix(in, null, 0);
 }
 
 static bipolar gzip_decode_read(p8 address_to dst, positive n)

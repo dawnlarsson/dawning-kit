@@ -20,7 +20,6 @@
 #define ZSTD_OUT 131072
 #define ZSTD_FSE_MAX 512
 #define ZSTD_HUF_MAX 2048
-#define ZSTD_SEQ_MAX (ZSTD_BLOCK_MAX / 4)
 
 static const bipolar zstd_ll_default[36] = {
         4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1,
