@@ -533,6 +533,49 @@ static bipolar floodlight_read_whole(bipolar handle, p8 address_to text,
         return got < 0 ? -ERROR_ACCESS : (bipolar)used;
 }
 
+/*
+        One authenticated read of a kernel-owned proc file.
+
+        Three of the answers this policy needs -- whether the device is
+        registered, what Yama's ptrace scope is, and which children this task
+        still has -- are the same act with different bytes at the end of it:
+        open the proc root and prove it, open the named file below it on that
+        same mount, read it whole, and close both whatever happened. Only
+        what the bytes then mean belongs to a caller.
+
+        Answers the bytes read, the root open's own error when that is what
+        failed, and otherwise -ERROR_ACCESS -- for a file that would not
+        authenticate, would not read, or would not close. A close that fails
+        is ambiguity like any other: this reads for a confinement decision,
+        and every one of them fails closed.
+*/
+static bipolar floodlight_proc_read(string_address path, p8 address_to text,
+                                    positive room)
+{
+        file_facts proc_facts;
+        file_facts facts;
+        bipolar proc = floodlight_proc_root_open(address_of proc_facts);
+        bipolar handle;
+        bipolar got = -ERROR_ACCESS;
+
+        if (proc < 0)
+                return proc;
+
+        handle = system_open_at(proc, path,
+                                FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+
+        if (floodlight_proc_genuine(handle, address_of facts,
+                                    address_of proc_facts, MODE_FILE))
+                got = floodlight_read_whole(handle, text, room);
+
+        if (handle >= 0 && system_close(handle) < 0)
+                got = -ERROR_ACCESS;
+
+        system_close(proc);
+
+        return got < 0 ? -ERROR_ACCESS : got;
+}
+
 /* /proc/misc is a kernel-owned inventory outside the caller's /dev mount.
    A mount namespace can hide /dev/floodlight, but it cannot make the genuine
    registered misc device disappear from an authenticated procfs view. Return
@@ -543,30 +586,15 @@ static bipolar floodlight_policy_registered()
 #define FLOODLIGHT_MISC_MAX 4096
         static const p8 registered[] = "249 floodlight";
         p8 text[FLOODLIGHT_MISC_MAX];
-        file_facts proc_facts;
-        file_facts misc_facts;
-        bipolar proc = floodlight_proc_root_open(address_of proc_facts);
-        bipolar handle = -1;
-        bipolar got;
+        bipolar got = floodlight_proc_read((string_address)"misc", text,
+                                           sizeof(text));
         positive used;
-        bipolar result = -ERROR_ACCESS;
 
-        if (proc < 0)
-                return proc;
-
-        handle = system_open_at(
-            proc, (string_address)"misc",
-            FILE_READ | O_NOFOLLOW | O_CLOEXEC);
-        if (!floodlight_proc_genuine(handle, address_of misc_facts,
-                                     address_of proc_facts, MODE_FILE))
-                goto finished;
-
-        got = floodlight_read_whole(handle, text, sizeof(text));
         if (got < 0)
-                goto finished;
+                return got;
+
         used = (positive)got;
 
-        result = 0;
         for (positive at = 0; at < used;)
         {
                 positive stop = at;
@@ -579,18 +607,11 @@ static bipolar floodlight_policy_registered()
                 if (stop - at == sizeof(registered) - 1 &&
                     !memory_compare(text + at, registered,
                                     sizeof(registered) - 1))
-                {
-                        result = 1;
-                        break;
-                }
+                        return 1;
                 at = stop < used ? stop + 1 : stop;
         }
 
-finished:
-        if (handle >= 0)
-                system_close(handle);
-        system_close(proc);
-        return result;
+        return 0;
 #undef FLOODLIGHT_MISC_MAX
 }
 
@@ -699,37 +720,19 @@ static bipolar floodlight_descriptor_read_link(
 static bool floodlight_ptrace_scope_safe()
 {
         p8 text[16];
-        file_facts proc_facts;
-        file_facts scope_facts;
-        bipolar proc = floodlight_proc_root_open(address_of proc_facts);
-        bipolar handle = -1;
-        bipolar got;
+        bipolar got = floodlight_proc_read(
+            (string_address)"sys/kernel/yama/ptrace_scope", text,
+            sizeof(text));
         positive used;
-        bool safe = false;
 
-        if (proc < 0)
+        if (got <= 0)
                 return false;
 
-        handle = system_open_at(
-            proc, (string_address)"sys/kernel/yama/ptrace_scope",
-            FILE_READ | O_NOFOLLOW | O_CLOEXEC);
-        if (!floodlight_proc_genuine(handle, address_of scope_facts,
-                                     address_of proc_facts, MODE_FILE))
-                goto finished;
-
-        got = floodlight_read_whole(handle, text, sizeof(text));
-        if (got <= 0)
-                goto finished;
         used = (positive)got;
         if (text[used - 1] == '\n')
                 used--;
-        safe = used == 1 && text[0] >= '1' && text[0] <= '3';
 
-finished:
-        if (handle >= 0)
-                system_close(handle);
-        system_close(proc);
-        return safe;
+        return used == 1 && text[0] >= '1' && text[0] <= '3';
 }
 
 /* execve resets dumpability.  Before this shell replaces itself, ask the
@@ -745,14 +748,8 @@ static bipolar floodlight_descendants_read(p8 address_to text, positive room)
         static const p8 prefix[] = "self/task/";
         static const p8 suffix[] = "/children";
         p8 path[64];
-        file_facts proc_facts;
-        file_facts children_facts;
         bipolar process = system_call_1(syscall(getpid), 0);
         positive used = sizeof(prefix) - 1;
-        bipolar proc;
-        bipolar handle = -1;
-        bipolar got = -ERROR_ACCESS;
-        bipolar closed = 0;
 
         if (process <= 0)
                 return -ERROR_ACCESS;
@@ -762,18 +759,7 @@ static bipolar floodlight_descendants_read(p8 address_to text, positive room)
                 return -ERROR_ACCESS;
         memory_copy_end(path + used, suffix, sizeof(suffix) - 1);
 
-        proc = floodlight_proc_root_open(address_of proc_facts);
-        if (proc < 0)
-                return -ERROR_ACCESS;
-        handle = system_open_at(proc, path, FILE_READ | O_NOFOLLOW | O_CLOEXEC);
-        if (floodlight_proc_genuine(handle, address_of children_facts,
-                                    address_of proc_facts, MODE_FILE))
-                got = floodlight_read_whole(handle, text, room);
-
-        if (handle >= 0)
-                closed = system_close(handle);
-        system_close(proc);
-        return got < 0 || closed < 0 ? -ERROR_ACCESS : got;
+        return floodlight_proc_read(path, text, room);
 }
 
 static bipolar floodlight_child_next(p8 address_to address_to at,
