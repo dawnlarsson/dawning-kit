@@ -1289,24 +1289,16 @@ static p8 address_to storage_fd_path(bipolar handle, positive address_to room)
         while (true)
         {
                 positive want = path.room ? path.room * 2 : 256;
+                bipolar got;
 
                 if (want <= path.room ||
                     !byte_store_reserve(address_of path, want, 256))
-                {
-                        byte_store_release(address_of path);
-                        address_to room = 0;
-                        return null;
-                }
+                        break;
 
-                bipolar got = system_read_link_at(
-                    AT_FDCWD, name, path.bytes, path.room - 1);
-
+                got = system_read_link_at(AT_FDCWD, name, path.bytes,
+                                          path.room - 1);
                 if (got < 0)
-                {
-                        byte_store_release(address_of path);
-                        address_to room = 0;
-                        return null;
-                }
+                        break;
 
                 if ((positive)got < path.room - 1)
                 {
@@ -1315,11 +1307,22 @@ static p8 address_to storage_fd_path(bipolar handle, positive address_to room)
                         return path.bytes;
                 }
         }
+
+        byte_store_release(address_of path);
+        address_to room = 0;
+        return null;
+}
+
+/* An argument list mountpoint cannot use: no operand, or a second one. */
+static COLD b32 storage_mountpoint_usage(writer diagnostic)
+{
+        if (diagnostic)
+                diagnostic(str("mountpoint: bad usage\n"
+                               "Try 'mountpoint --help' for more information.\n"));
+        return 1;
 }
 
 /* Reentrant core used unchanged by builtin and multicall dispatch. */
-
-
 b32 storage_mountpoint(positive argc, string_address address_to argv,
                        writer output, writer diagnostic)
 {
@@ -1356,12 +1359,7 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                 else if (option == ARGUMENT_OPERAND)
                 {
                         if (path)
-                        {
-                                if (diagnostic)
-                                        diagnostic(str("mountpoint: bad usage\n"
-                                                       "Try 'mountpoint --help' for more information.\n"));
-                                return 1;
-                        }
+                                return storage_mountpoint_usage(diagnostic);
                         path = value;
                 }
                 else
@@ -1373,12 +1371,7 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
         }
 
         if (!path)
-        {
-                if (diagnostic)
-                        diagnostic(str("mountpoint: bad usage\n"
-                                       "Try 'mountpoint --help' for more information.\n"));
-                return 1;
-        }
+                return storage_mountpoint_usage(diagnostic);
 
         if (devno && nofollow)
         {
