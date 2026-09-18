@@ -6675,7 +6675,16 @@ static fn ls_scaled(writer write, p64 value, positive unit, bool human, bool si,
                 return si ? ls_human_1000(write, value) : positive_to_human_1024(write, value);
 
         positive_to_string(write, unit > 1 ? value / unit + (value % unit != 0) : value);
-        write(suffix, string_length(suffix));
+
+        /* The suffix is the letter --block-size was given, and it is empty
+           unless one was. Writing an empty one is not free here: the writers
+           this runs through read a length of zero as "measure the string", so
+           the empty suffix cost a measure to produce the zero, a writer call,
+           a second measure inside it, and a log. One byte answers instead,
+           and every column of ls -l and ls -s asks twice -- once for the
+           width and once for the number. */
+        if (string_get(suffix))
+                write(suffix, string_length(suffix));
 }
 
 static positive ls_scaled_width(p64 value, positive unit, bool human, bool si,
