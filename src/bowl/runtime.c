@@ -238,7 +238,10 @@ static bool bowl_name(string_address name, bool plus)
         return true;
 }
 
-/* . or .. as a component, or //, so a path cannot walk out of its root. */
+/* . or .. as a component, or //, so a path cannot walk out of its root.
+   The session environment asks the same question of HOME and
+   XDG_RUNTIME_DIR, and both standalone harness windows compile this one
+   walk rather than each keeping a copy of it. */
 static bool bowl_path_steps(string_address path)
 {
         if (!path || path[0] != '/')
@@ -1085,28 +1088,6 @@ static b32 bowl_path_same(string_address path, string_address want)
         return !path[i] || (path[i] == '/' && !path[i + 1]);
 }
 
-/* . or .. as a component, or //. The same walk as bowl_path_steps; the
-   session extract does not include that function. */
-static b32 bowl_session_steps(string_address path)
-{
-        if (!path || path[0] != '/')
-                return true;
-
-        for (; *path; path++)
-        {
-                if (*path != '/')
-                        continue;
-                if (path[1] == '/')
-                        return true;
-                if (path[1] == '.' &&
-                    (!path[2] || path[2] == '/' ||
-                     (path[2] == '.' && (!path[3] || path[3] == '/'))))
-                        return true;
-        }
-
-        return false;
-}
-
 static b32 bowl_session_host_path(string_address path)
 {
         static string_address trees[] = {
@@ -1157,7 +1138,7 @@ static b32 bowl_session_unusable(string_address entry)
                 if (bowl_env_named(entry, path[i]))
                 {
                         value = bowl_env_payload(entry, path[i]);
-                        return bowl_session_steps(value) ||
+                        return bowl_path_steps(value) ||
                                bowl_session_host_path(value);
                 }
 
@@ -1186,7 +1167,7 @@ static b32 bowl_session_default_missing(string_address name,
         if (string_equals(name, "HOME") ||
             string_equals(name, "XDG_RUNTIME_DIR") ||
             string_equals(name, "TMPDIR"))
-                return bowl_session_steps(value) ||
+                return bowl_path_steps(value) ||
                        bowl_session_host_path(value);
 
         return false;
@@ -1291,7 +1272,7 @@ static fn bowl_session_prepare_at(string_address home, string_address runtime,
 {
         bowl_session_fill();
 
-        if (!runtime || bowl_session_steps(runtime) ||
+        if (!runtime || bowl_path_steps(runtime) ||
             bowl_session_host_path(runtime))
                 runtime = bowl_runtime_path;
 
@@ -1307,7 +1288,7 @@ static fn bowl_session_prepare_at(string_address home, string_address runtime,
         bowl_dev_link("/run/lock", "/var/lock");
         if (!user_dirs)
                 return;
-        if (!home || bowl_session_steps(home) || bowl_session_host_path(home))
+        if (!home || bowl_path_steps(home) || bowl_session_host_path(home))
                 home = (string_address)BOWL_SESSION_HOME;
         bowl_session_home_dirs(home);
 }

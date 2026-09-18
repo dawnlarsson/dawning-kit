@@ -26766,6 +26766,11 @@ def harness_bowl_session(argv):
     bowl = (root / "src/bowl/runtime.c").read_text()
     start = bowl.index("static b32 bowl_env_named(")
     stop = bowl.index("/*\n        Room on the filesystem that holds a bowl.")
+    #   The session reads HOME and XDG_RUNTIME_DIR through the one path walk
+    #   the launchers use, which sits above this window; take it along rather
+    #   than let the file keep a second copy for this harness to find.
+    steps = bowl[bowl.index("/* . or .. as a component"):
+                 bowl.index("/* A named root has exactly the form")]
     source = r'''
 #include <stdio.h>
 #include <string.h>
@@ -26862,6 +26867,7 @@ static int env_named(string_address *environment, const char *name) {
     return 0;
 }
 '''
+    source += steps
     source += bowl[start:stop]
     source += r'''
 int main(void) {
