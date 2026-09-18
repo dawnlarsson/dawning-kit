@@ -848,11 +848,21 @@ static b32 awk_frame_size;
         whatever the shape of the recursion, and a script that recurses too
         far is told so rather than dying on a page that is not there.
 */
+// One recursion of the interpreter is a few hundred bytes, and this is the
+// room awk_call keeps above the interpreter's floor so that it refuses a
+// deep call first.
+#define AWK_WALK_SLACK (64u << 10)
+
 static positive awk_stack_start;
 static positive awk_stack_room;
 // awk_stack_start - awk_stack_room, so a walker compares its own frame
 // against one loaded word.
 static positive awk_stack_floor;
+// The interpreter's own floor, a little below it. A call checks the floor
+// above from a frame the eval frames beneath it have already passed, so at
+// one shared floor the interpreter would refuse a deep recursion first and
+// awk_call's diagnostic, which names the function, would never be reached.
+static positive awk_walk_floor;
 
 static b32 awk_where_environ;
 static b32 awk_where_argv;
@@ -3382,6 +3392,13 @@ static bool awk_room_left()
         return (positive)address_of here >= awk_stack_floor;
 }
 
+static bool awk_walk_room_left()
+{
+        b32 here;
+
+        return (positive)address_of here >= awk_walk_floor;
+}
+
 static fn awk_parse_room()
 {
         if (!awk_room_left())
@@ -4626,7 +4643,7 @@ static decimal awk_eval_number(awk_node address_to node)
         // An arithmetic tree recurses here and never through awk_eval, so
         // this path needs the same measure: 1+1+...+1 two hundred thousand
         // terms long is a left-leaning tree that deep.
-        if_rare (!awk_room_left())
+        if_rare (!awk_walk_room_left())
                 awk_leave((awk_flush_everything(), text_flush(),
                            string_diagnostic(&text_diagnostic, 2, null,
                                              "nested too deeply")));
@@ -4890,7 +4907,7 @@ static fn awk_getline(awk_node address_to node, awk_value address_to out);
 
 static fn awk_eval(awk_node address_to node, awk_value address_to out)
 {
-        if_rare (!awk_room_left())
+        if_rare (!awk_walk_room_left())
                 awk_leave((awk_flush_everything(), text_flush(),
                            string_diagnostic(&text_diagnostic, 2, null,
                                              "nested too deeply")));
@@ -5799,7 +5816,7 @@ static fn awk_do_printf(awk_node address_to node)
 
 static b32 awk_run(awk_node address_to node)
 {
-        if_rare (!awk_room_left())
+        if_rare (!awk_walk_room_left())
                 awk_leave((awk_flush_everything(), text_flush(),
                            string_diagnostic(&text_diagnostic, 2, null,
                                              "nested too deeply")));
@@ -6366,7 +6383,15 @@ static b32 awk_run_rules()
 static fn awk_stack_room_set(positive room)
 {
         awk_stack_room = room;
-        awk_stack_floor = awk_stack_start - room;
+
+        // A floor below zero would be a huge unsigned address and would
+        // refuse every program rather than the deep ones. No machine here
+        // puts a stack that low, and a zero floor refuses none, which is
+        // the side to be wrong on.
+        awk_stack_floor = room < awk_stack_start ? awk_stack_start - room : 0;
+        awk_walk_floor = awk_stack_floor > AWK_WALK_SLACK
+                             ? awk_stack_floor - AWK_WALK_SLACK
+                             : 0;
 }
 
 static fn awk_stack_measure()
