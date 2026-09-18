@@ -520,28 +520,14 @@ static _Bool glyph_synthesize(unsigned int c, unsigned char *bits)
                 nsew = glyph_box_nsew_from(c);
                 if (!nsew)
                 {
-                        if (c == 0x2571)
+                        // The two diagonals, which are no arrangement of
+                        // edges: one pixel a row, stepping across the cell in
+                        // whichever direction the code point leans.
+                        if (c == 0x2571 || c == 0x2572)
                         {
-                                bits[0] = 0x01;
-                                bits[2] = 0x02;
-                                bits[4] = 0x04;
-                                bits[6] = 0x08;
-                                bits[8] = 0x10;
-                                bits[10] = 0x20;
-                                bits[12] = 0x40;
-                                bits[14] = 0x80;
-                                return true;
-                        }
-                        if (c == 0x2572)
-                        {
-                                bits[0] = 0x80;
-                                bits[2] = 0x40;
-                                bits[4] = 0x20;
-                                bits[6] = 0x10;
-                                bits[8] = 0x08;
-                                bits[10] = 0x04;
-                                bits[12] = 0x02;
-                                bits[14] = 0x01;
+                                for (unsigned int y = 0; y < 8; y++)
+                                        bits[2 * y] = (unsigned char)(
+                                            c == 0x2571 ? 1u << y : 0x80u >> y);
                                 return true;
                         }
                         glyph_tofu(bits);
@@ -592,24 +578,13 @@ static _Bool glyph_synthesize(unsigned int c, unsigned char *bits)
                 return true;
         }
 
-        if (c == 0x23ba)
+        // The four horizontal scan lines a VT100 drew, one row each and the
+        // rows they sat on.
+        if (c >= 0x23ba && c <= 0x23bd)
         {
-                bits[0] = 0xff;
-                return true;
-        }
-        if (c == 0x23bb)
-        {
-                bits[5] = 0xff;
-                return true;
-        }
-        if (c == 0x23bc)
-        {
-                bits[10] = 0xff;
-                return true;
-        }
-        if (c == 0x23bd)
-        {
-                bits[15] = 0xff;
+                static const unsigned char scan[4] = {0, 5, 10, 15};
+
+                bits[scan[c - 0x23ba]] = 0xff;
                 return true;
         }
 
