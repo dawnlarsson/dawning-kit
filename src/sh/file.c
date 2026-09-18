@@ -6911,7 +6911,7 @@ static bool ls_is_directory_like(ls_entry address_to entry)
         return (entry->mode & MODE_FORMAT) == MODE_DIRECTORY || entry->points_at_directory;
 }
 
-static PURE HOT bipolar ls_order(ls_entry address_to left, ls_entry address_to right)
+static HOT bipolar ls_order(ls_entry address_to left, ls_entry address_to right)
 {
         if (ls_group_directories && ls_sorting != 'U')
         {
