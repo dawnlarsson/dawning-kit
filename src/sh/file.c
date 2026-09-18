@@ -36802,15 +36802,30 @@ static b32 file_xargs()
 
         if (taking.flags & FILE_FLAG('s'))
         {
-                positive made = 0;
-                string_digits_checked_exact(file_option_value(address_of taking, 's'),
-                                            10, address_of made);
+                string_address written = file_option_value(address_of taking, 's');
+                /*
+                        The same saturation xargs_count_value spells out one
+                        screen up: string_digits_checked_exact leaves its
+                        output alone when the digits overrun the word, so the
+                        seed is the answer for a count too wide, and that
+                        answer is the largest there is rather than zero.
+                        Seeding zero read -s 99999999999999999999 as one
+                        byte, which is below every limit, so the warning that
+                        should have named it never fired and xargs refused
+                        every batch instead as one that could not be made to
+                        fit. The value is echoed as it was written, which is
+                        the reference's wording and is the only form that
+                        still means something once it has saturated.
+                */
+                positive made = positive_max;
+
+                string_digits_checked_exact(written, 10, address_of made);
                 if (!made)
                         made = 1;
                 if (made > usable)
                         string_format(log_error,
-                                      "xargs: value %p for -s option should be <= %p\n",
-                                      made, usable);
+                                      "xargs: value %s for -s option should be <= %p\n",
+                                      written, usable);
                 if (made > XARGS_BATCH_BYTES)
                         made = XARGS_BATCH_BYTES;
                 xargs_most_bytes = made;
