@@ -33,6 +33,17 @@ static b32 tools_extra_operand(string_address program, string_address word)
         return text_done(1);
 }
 
+/*      Three of these answer no option at all, and every one of them names
+        itself twice -- once to the option reader and once to the writer that
+        prefixes its diagnostics.  One line says the name once; anything the
+        taking needs beyond its table follows. */
+static const argument_option tools_no_options[] = {{null}};
+
+#define tools_taking(name, table, ...) \
+        file_taking taking = {.program = (string_address)name, \
+                              .options = table, __VA_ARGS__}; \
+        text_begin(name);
+
 // hostid ----------------------------------------------------
 
 /* Linux gethostid first accepts the native four-byte /etc/hostid.  Without
@@ -75,13 +86,7 @@ static p32 tools_hostid_value()
 
 static b32 tools_hostid()
 {
-        file_taking taking = {
-            .program = (string_address) "hostid",
-            .options = (const argument_option[]){
-    {null},
-        }};
-
-        text_begin("hostid");
+        tools_taking("hostid", tools_no_options);
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -1194,15 +1199,9 @@ static b32 tools_logger()
 
         // Options after the message are still options, as with getopt.
         file_operands_begin();
-        file_taking taking = {
-            .program = (string_address)"logger",
-            .options = logger_options,
-            .selection = (p8 address_to)address_of logger_selected,
-            .operand = file_operand,
-            .seen = logger_option_seen,
-        };
-
-        text_begin("logger");
+        tools_taking("logger", logger_options,
+                     .selection = (p8 address_to)address_of logger_selected,
+                     .operand = file_operand, .seen = logger_option_seen);
         text_delimiter = '\n';
         logger_port_unknown = false;
         logger_seen_sd_id = null;
@@ -2105,11 +2104,7 @@ static bool login_message_meta(file_taking address_to taking,
 
 static b32 tools_write()
 {
-        file_taking taking = {
-            .program = (string_address)"write",
-            .options = login_write_options,
-        };
-        text_begin("write");
+        tools_taking("write", login_write_options);
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -2309,11 +2304,7 @@ static fn login_wall_banner(login_message_sink address_to sink)
 
 static b32 tools_wall()
 {
-        file_taking taking = {
-            .program = (string_address)"wall",
-            .options = login_wall_options,
-        };
-        text_begin("wall");
+        tools_taking("wall", login_wall_options);
         if (!file_take(address_of taking))
                 return text_done(1);
         b32 meta;
@@ -2642,13 +2633,8 @@ static b32 tools_utmpdump()
 {
         file_operands_begin();
         login_utmpdump_output = -1;
-        file_taking taking = {
-            .program = (string_address)"utmpdump",
-            .options = login_utmpdump_options,
-            .operand = file_operand,
-            .seen = login_utmpdump_seen,
-        };
-        text_begin("utmpdump");
+        tools_taking("utmpdump", login_utmpdump_options,
+                     .operand = file_operand, .seen = login_utmpdump_seen);
         if (!file_take(address_of taking) || file_operand_failed)
         {
                 if (login_utmpdump_output > 2)
@@ -3148,15 +3134,9 @@ static bool login_last_seen(p8 letter, string_address value)
 static b32 tools_last()
 {
         file_operands_begin();
-        file_taking taking = {
-            .program = (string_address)"last",
-            .options = login_last_arguments,
-            .operand = file_operand,
-            // last -3 is the line limit said without its letter.
-            .digits = 'n',
-            .seen = login_last_seen,
-        };
-        text_begin("last");
+        // last -3 is the line limit said without its letter.
+        tools_taking("last", login_last_arguments, .operand = file_operand,
+                     .digits = 'n', .seen = login_last_seen);
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
         if (file_meta(address_of taking, "[options] [username|tty ...]", text_put))
@@ -3628,13 +3608,7 @@ static const argument_option login_who_arguments[] = {
 static b32 tools_who()
 {
         file_operands_begin();
-        file_taking taking = {
-            .program = (string_address) "who",
-            .options = login_who_arguments,
-            .operand = file_operand,
-        };
-
-        text_begin("who");
+        tools_taking("who", login_who_arguments, .operand = file_operand);
         memory_fill(address_of login_who, 0, sizeof(login_who));
 
         if (!file_take(address_of taking) || file_operand_failed)
@@ -3739,15 +3713,7 @@ static bool login_users_visit(login_record address_to record)
 static b32 tools_users()
 {
         file_operands_begin();
-        file_taking taking = {
-            .program = (string_address) "users",
-            .options = (const argument_option[]){
-    {null},
-        },
-            .operand = file_operand,
-        };
-
-        text_begin("users");
+        tools_taking("users", tools_no_options, .operand = file_operand);
         utility_arena.used = 0;
         login_users_head = null;
 
@@ -3926,14 +3892,8 @@ static b32 tools_pinky()
 {
         p8 output_mode = 0;
         file_operands_begin();
-        file_taking taking = {
-            .program = (string_address) "pinky",
-            .options = login_pinky_arguments,
-            .selection = &output_mode,
-            .operand = file_operand,
-        };
-
-        text_begin("pinky");
+        tools_taking("pinky", login_pinky_arguments,
+                     .selection = &output_mode, .operand = file_operand);
         login_pinky = (login_pinky_options){
             .heading = true,
             .fullname = true,
@@ -4112,13 +4072,7 @@ static bool tsort_break_cycle(b32 address_to order, b32 address_to loop)
 
 static b32 tools_tsort()
 {
-        file_taking taking = {
-            .program = (string_address) "tsort",
-            .options = (const argument_option[]){
-    {null},
-        }};
-
-        text_begin("tsort");
+        tools_taking("tsort", tools_no_options);
         utility_arena.used = 0;
 
         if (!file_take(address_of taking))
@@ -5700,14 +5654,8 @@ static b32 tools_text_done(b32 code)
 static b32 tools_numfmt()
 {
         file_operands_begin();
-        file_taking taking = {
-            .program = (string_address) "numfmt",
-            .options = numfmt_arguments,
-            .operand = file_operand,
-            .seen = numfmt_option_seen,
-        };
-
-        text_begin("numfmt");
+        tools_taking("numfmt", numfmt_arguments, .operand = file_operand,
+                     .seen = numfmt_option_seen);
         numfmt = (numfmt_options){
             .from = NUMFMT_SCALE_NONE,
             .to = NUMFMT_SCALE_NONE,
@@ -6331,13 +6279,7 @@ static const argument_option factor_options[] = {
 static b32 tools_factor()
 {
         file_operands_begin();
-        file_taking taking = {
-            .program = (string_address) "factor",
-            .options = factor_options,
-            .operand = file_operand,
-        };
-
-        text_begin("factor");
+        tools_taking("factor", factor_options, .operand = file_operand);
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
@@ -6586,13 +6528,8 @@ static bool tools_uuidgen_hex_name(string_address text,
 static b32 tools_uuidgen()
 {
         file_operands_begin();
-        file_taking taking = {
-            .program = (string_address)"uuidgen",
-            .options = tools_uuidgen_options,
-            .operand = file_operand,
-        };
-
-        text_begin("uuidgen");
+        tools_taking("uuidgen", tools_uuidgen_options,
+                     .operand = file_operand);
         utility_arena.used = 0;
 
         if (!file_take(address_of taking) || file_operand_failed)
@@ -6858,13 +6795,8 @@ static const argument_option tools_uuidparse_options[] = {
 static b32 tools_uuidparse()
 {
         file_operands_begin();
-        file_taking taking = {
-            .program = (string_address)"uuidparse",
-            .options = tools_uuidparse_options,
-            .operand = file_operand,
-        };
-
-        text_begin("uuidparse");
+        tools_taking("uuidparse", tools_uuidparse_options,
+                     .operand = file_operand);
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
 
@@ -7073,13 +7005,8 @@ static bool tools_mcookie_seen(p8 letter, string_address value)
 
 static b32 tools_mcookie()
 {
-        file_taking taking = {
-            .program = (string_address)"mcookie",
-            .options = tools_mcookie_options,
-            .seen = tools_mcookie_seen,
-        };
-
-        text_begin("mcookie");
+        tools_taking("mcookie", tools_mcookie_options,
+                     .seen = tools_mcookie_seen);
         if (!file_take(address_of taking))
                 return text_done(1);
 
@@ -9840,13 +9767,7 @@ static b32 dump_strings(positive first, positive count, positive minimum)
 
 static b32 tools_od(void)
 {
-        file_taking taking = {
-            .program = (string_address) "od",
-            .options = dump_od_options,
-            .seen = dump_od_seen,
-        };
-
-        text_begin("od");
+        tools_taking("od", dump_od_options, .seen = dump_od_seen);
         memory_fill(address_of dump_arguments, 0, sizeof(dump_arguments));
         dump_arguments.limit = TEXT_UNSET;
         dump_arguments.address_base = 8;
@@ -9962,13 +9883,7 @@ static b32 tools_hexdump(void)
         //      opened a file must not inherit the complaint od left armed.
         dump_od_warn_unit = 0;
 
-        file_taking taking = {
-            .program = (string_address) "hexdump",
-            .options = dump_hex_options,
-            .seen = dump_hex_seen,
-        };
-
-        text_begin("hexdump");
+        tools_taking("hexdump", dump_hex_options, .seen = dump_hex_seen);
         memory_fill(address_of dump_arguments, 0, sizeof(dump_arguments));
         dump_arguments.limit = TEXT_UNSET;
         dump_arguments.width = DUMP_DEFAULT_WIDTH;
@@ -11886,13 +11801,7 @@ static bool diff_option_seen(p8 letter, string_address value)
 
 static b32 tools_diff(void)
 {
-        file_taking taking = {
-            .program = (string_address) "diff",
-            .options = diff_options,
-            .seen = diff_option_seen,
-        };
-
-        text_begin("diff");
+        tools_taking("diff", diff_options, .seen = diff_option_seen);
 
         diff_brief = false;
         diff_style = DIFF_NORMAL;
@@ -13789,12 +13698,7 @@ static b32 tools_dmesg_control(b32 operation, positive value,
 
 static b32 tools_dmesg_main()
 {
-        file_taking taking = {
-            .program = (string_address)"dmesg",
-            .options = tools_dmesg_options,
-        };
-
-        text_begin("dmesg");
+        tools_taking("dmesg", tools_dmesg_options);
         utility_arena.used = 0;
         if (!file_take(address_of taking))
                 return text_done(1);
