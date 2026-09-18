@@ -47,6 +47,10 @@
 #define SNTP_NO_REPLY (-2)
 #define SNTP_MALFORMED (-3)
 #define SNTP_BAD_SERVER (-4)
+#define SNTP_RATE_LIMITED (-5)
+#define SNTP_KISS_RATE 0x52415445u /* "RATE" */
+#define SNTP_KISS_DENY 0x44454e59u /* "DENY" */
+#define SNTP_KISS_RSTR 0x52535452u /* "RSTR" */
 #define SNTP_DELAY_MOST_NS ((bipolar)2 * (bipolar)SNTP_NANOSECONDS)
 #define SNTP_OFFSET_MOST_NS ((bipolar)24 * 3600 * (bipolar)SNTP_NANOSECONDS)
 #define SNTP_OFFSET_SYNCED_NS ((bipolar)2 * (bipolar)SNTP_NANOSECONDS)
@@ -209,6 +213,42 @@ static PURE COLD bipolar sntp_pick(sntp_sample address_to row, positive count)
         return best;
 }
 
+/*
+        Everything below is read out of forty-eight bytes a stranger sent.
+        The socket is connected, so the kernel has already dropped a
+        datagram whose source is not the server's, but an on-path answer
+        and a blind one aimed at an open port both arrive here.
+
+        The origin stamp is the check that carries the weight: it is the
+        transmit stamp we planted, echoed back, and an answer that does
+        not carry it was not an answer to our question. It is dropped and
+        the wait resumes rather than ending the exchange, because a late
+        reply to an earlier sample is not a reason to give up on this one.
+
+        Stratum zero is a kiss-o-death and the four bytes at 12 say which.
+        RATE is the server asking to be asked less often, which is a
+        different answer from DENY and RSTR: it is reported separately so
+        the policy above can wait instead of walking to the next server
+        and asking again immediately.
+*/
+static COLD bipolar sntp_reply_ok(p8 address_to reply, p8 address_to request)
+{
+        if (memory_compare(reply + 24, request + 40, 8))
+                return SNTP_NO_REPLY;
+        if ((reply[0] & 0x7) != 4)
+                return SNTP_BAD_SERVER;
+        if (!reply[1])
+                return network_load_32(reply + 12) == SNTP_KISS_RATE
+                           ? SNTP_RATE_LIMITED
+                           : SNTP_BAD_SERVER;
+        if ((reply[0] >> 6) == 3 || reply[1] >= 16)
+                return SNTP_BAD_SERVER;
+        if (!sntp_short_ok(network_load_32(reply + 4)) ||
+            !sntp_short_ok(network_load_32(reply + 8)))
+                return SNTP_BAD_SERVER;
+        return SNTP_OK;
+}
+
 static COLD bool sntp_math_ok(void)
 {
         bipolar offset = 0;
@@ -216,6 +256,43 @@ static COLD bool sntp_math_ok(void)
         bipolar target = 0;
         bipolar two_days = (bipolar)2 * 86400 * (bipolar)SNTP_NANOSECONDS;
         positive at;
+        p8 request[SNTP_PACKET];
+        p8 reply[SNTP_PACKET];
+        static const struct
+        {
+                p8 first;
+                p8 stratum;
+                p32 root_delay;
+                p32 root_dispersion;
+                p32 reference_id;
+                bool echoed;
+                bipolar want;
+        } reply_case[] = {
+            /* a stratum 2 server answering the question we asked */
+            {0x24, 2, 0, 0, 0, true, SNTP_OK},
+            /* the same packet with the origin stamp not echoed: a forgery,
+               and the one check standing between us and an off-path lie */
+            {0x24, 2, 0, 0, 0, false, SNTP_NO_REPLY},
+            /* mode 3 is a request, not a reply */
+            {0x23, 2, 0, 0, 0, true, SNTP_BAD_SERVER},
+            /* stratum 0 carries a kiss code in the reference id */
+            {0x24, 0, 0, 0, SNTP_KISS_RATE, true, SNTP_RATE_LIMITED},
+            {0x24, 0, 0, 0, SNTP_KISS_DENY, true, SNTP_BAD_SERVER},
+            {0x24, 0, 0, 0, SNTP_KISS_RSTR, true, SNTP_BAD_SERVER},
+            {0x24, 0, 0, 0, 0, true, SNTP_BAD_SERVER},
+            /* RATE is still RATE when the alarm bit is set with it */
+            {0xe4, 0, 0, 0, SNTP_KISS_RATE, true, SNTP_RATE_LIMITED},
+            /* stratum 16 is unsynchronised, and the alarm says so too */
+            {0x24, 16, 0, 0, 0, true, SNTP_BAD_SERVER},
+            {0xe4, 2, 0, 0, 0, true, SNTP_BAD_SERVER},
+            /* a second of root delay is the most we trust, and the sign
+               bit of the fixed-point short is never legitimately set */
+            {0x24, 2, SNTP_SHORT_SECOND, SNTP_SHORT_SECOND, 0, true, SNTP_OK},
+            {0x24, 2, SNTP_SHORT_SECOND + 1, 0, 0, true, SNTP_BAD_SERVER},
+            {0x24, 2, 0, SNTP_SHORT_SECOND + 1, 0, true, SNTP_BAD_SERVER},
+            {0x24, 2, 0x80000000u, 0, 0, true, SNTP_BAD_SERVER},
+            {0x24, 2, 0, 0x80000000u, 0, true, SNTP_BAD_SERVER},
+        };
         sntp_sample row[5] = {
             {10000000, 20000000, true}, {8000000, 80000000, true},
             {2000000, 15000000, true},  {4000000, 40000000, true},
@@ -353,6 +430,35 @@ static COLD bool sntp_math_ok(void)
                         return false;
         }
 
+        memory_fill(request, 0, sizeof(request));
+        request[0] = SNTP_LI_VN_MODE;
+        network_store_32(request + 40, 0xc0ffee00u);
+        network_store_32(request + 44, 0x0badf00du);
+        for (at = 0; at < array_count(reply_case); at++)
+        {
+                memory_fill(reply, 0, sizeof(reply));
+                reply[0] = reply_case[at].first;
+                reply[1] = reply_case[at].stratum;
+                network_store_32(reply + 4, reply_case[at].root_delay);
+                network_store_32(reply + 8, reply_case[at].root_dispersion);
+                network_store_32(reply + 12, reply_case[at].reference_id);
+                if (reply_case[at].echoed)
+                        memory_copy(reply + 24, request + 40, 8);
+                if (sntp_reply_ok(reply, request) != reply_case[at].want)
+                        return false;
+        }
+
+        /*
+                One bit of the echoed stamp flipped is still a forgery.
+        */
+        memory_fill(reply, 0, sizeof(reply));
+        reply[0] = 0x24;
+        reply[1] = 2;
+        memory_copy(reply + 24, request + 40, 8);
+        reply[31] ^= 1;
+        if (sntp_reply_ok(reply, request) != SNTP_NO_REPLY)
+                return false;
+
         return sntp_pick(row, 5) == 2 && row[2].offset_ns == 2000000;
 }
 
@@ -370,6 +476,8 @@ static HOT bipolar sntp_exchange(b32 handle,
         bipolar t4;
         bipolar wait;
         bipolar received;
+        bipolar verdict;
+        bipolar reference;
         bipolar offset = 0;
         bipolar delay = 0;
 
@@ -399,20 +507,19 @@ static HOT bipolar sntp_exchange(b32 handle,
                         return SNTP_NO_REPLY;
                 if_rare (received < SNTP_PACKET)
                         continue;
-                if_rare (memory_compare(reply + 24, request + 40, 8))
+                verdict = sntp_reply_ok(reply, request);
+                if_rare (verdict == SNTP_NO_REPLY)
                         continue;
-                if_rare ((reply[0] >> 6) == 3)
-                        return SNTP_BAD_SERVER;
-                if_rare ((reply[0] & 0x7) != 4 || !reply[1] || reply[1] >= 16)
-                        return SNTP_BAD_SERVER;
-                if_rare (!sntp_short_ok(network_load_32(reply + 4)) ||
-                         !sntp_short_ok(network_load_32(reply + 8)))
-                        return SNTP_BAD_SERVER;
+                if_rare (verdict < 0)
+                        return verdict;
                 t4 = sntp_timespec_ns(got[0], got[1]);
                 if_rare (!sntp_local_ok(t4))
                         return SNTP_MALFORMED;
                 t2 = sntp_load_stamp(reply + 32);
                 t3 = sntp_load_stamp(reply + 40);
+                reference = sntp_load_stamp(reply + 16);
+                if_rare (!sntp_wall_ok(reference) || reference > t3)
+                        return SNTP_BAD_SERVER;
                 sntp_offset_delay(t1, t2, t3, t4, address_of offset,
                                   address_of delay);
                 if_rare (!sntp_sample_sane(t1, t2, t3, t4, offset, delay,
@@ -463,7 +570,7 @@ static COLD bipolar sntp_query_at(p32 server, bool filter, bool tight,
         {
                 failed = sntp_exchange((b32)handle, address_of deadline, tight,
                                        row + at);
-                if (failed == SNTP_BAD_SERVER)
+                if (failed == SNTP_BAD_SERVER || failed == SNTP_RATE_LIMITED)
                         break;
         }
         socket_close((b32)handle);
