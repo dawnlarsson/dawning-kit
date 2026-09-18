@@ -161,8 +161,18 @@ static PURE bipolar http_header_end(p8 address_to bytes, positive size)
         //      starts first wins. A header block ending \r\n\r\n contains no
         //      bare \n\n -- there is a \r between them -- so the two can never
         //      both match at the same place.
+        //
+        //      Once the full spelling is found at some offset, only a bare
+        //      one starting before it can win, so the second search stops
+        //      there rather than walking the rest of the buffer. A block
+        //      ending \r\n\r\n holds no \n\n at all, so searching the whole
+        //      of it was a scan of every byte after the answer -- on every
+        //      read, and once more per informational response ahead of the
+        //      final one, which is what a peer sending 1xx after 1xx one
+        //      byte at a time was buying.
         p8 address_to full = (p8 address_to)memory_search(bytes, size, "\r\n\r\n", 4);
-        p8 address_to bare = (p8 address_to)memory_search(bytes, size, "\n\n", 2);
+        positive span = full ? (positive)(full - bytes) + 1 : size;
+        p8 address_to bare = (p8 address_to)memory_search(bytes, span, "\n\n", 2);
 
         if (full && (!bare || full < bare))
                 return (bipolar)(full - bytes) + 4;
