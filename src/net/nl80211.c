@@ -395,46 +395,20 @@ static bool wifi_psk(p8 address_to ssid, positive ssid_length,
         return true;
 }
 
-static fn wifi_put_be16(p8 address_to bytes, p16 value)
+/* One byte of InvMixColumns.  The matrix's four rows are the same four
+   coefficients rotated, so the row it is wanted for says where to start
+   reading them, and the multiply is crypto.c's constant-time one -- the
+   same GF(2^8) its S-box inversion runs in. */
+static p8 wifi_unmix(p8 address_to column, positive row)
 {
-        bytes[0] = (p8)(value >> 8);
-        bytes[1] = (p8)value;
-}
+        static const p8 factor[4] = {0x0e, 0x0b, 0x0d, 0x09};
+        p8 mixed = 0;
 
-static p16 wifi_be16(p8 address_to bytes)
-{
-        return (p16)(((p16)bytes[0] << 8) | bytes[1]);
-}
+        for (positive at = 0; at < 4; at++)
+                mixed ^= crypto_aes_field_multiply(
+                    column[at], factor[(4 + at - row) & 3]);
 
-static b32 wifi_compare(p8 address_to left, p8 address_to right, positive length)
-{
-        positive at;
-
-        for (at = 0; at < length; at++)
-                if (left[at] != right[at])
-                        return (b32)left[at] - (b32)right[at];
-        return 0;
-}
-
-static p8 wifi_xtime(p8 value)
-{
-        return (p8)((value << 1) ^ ((value & 0x80) ? 0x1b : 0));
-}
-
-static p8 wifi_gmul(p8 left, p8 right)
-{
-        p8 product = 0;
-        positive bit;
-
-        for (bit = 0; bit < 8; bit++)
-        {
-                if (right & 1)
-                        product ^= left;
-                left = wifi_xtime(left);
-                right >>= 1;
-        }
-
-        return product;
+        return mixed;
 }
 
 static fn wifi_aes_decrypt(p8 address_to key, p8 address_to in, p8 address_to out)
@@ -476,72 +450,39 @@ static fn wifi_aes_decrypt(p8 address_to key, p8 address_to in, p8 address_to ou
         for (step = 0; step < 16; step++)
                 state[step] ^= round[160 + step];
 
-        for (step = 9; step >= 1; step--)
+        /*
+                The last round is every other round without InvMixColumns, so
+                the loop runs once more and leaves from the middle rather
+                than repeating its first three steps underneath itself.
+        */
+        for (step = 9;; step--)
         {
-                temp = state[1];
-                state[1] = state[13];
-                state[13] = state[9];
-                state[9] = state[5];
-                state[5] = temp;
-                temp = state[2];
-                state[2] = state[10];
-                state[10] = temp;
-                temp = state[6];
-                state[6] = state[14];
-                state[14] = temp;
-                temp = state[3];
-                state[3] = state[7];
-                state[7] = state[11];
-                state[11] = state[15];
-                state[15] = temp;
+                //      InvShiftRows: row r of the state -- the bytes r, r+4,
+                //      r+8 and r+12 -- rotates right by r.
+                for (row = 1; row < 4; row++)
+                        for (positive turn = 0; turn < row; turn++)
+                        {
+                                temp = state[row + 12];
+                                state[row + 12] = state[row + 8];
+                                state[row + 8] = state[row + 4];
+                                state[row + 4] = state[row];
+                                state[row] = temp;
+                        }
+
                 for (row = 0; row < 16; row++)
                         state[row] = inverse[state[row]];
                 for (row = 0; row < 16; row++)
                         state[row] ^= round[step * 16 + row];
+                if (!step)
+                        break;
+
                 memory_copy(hold, state, 16);
                 for (row = 0; row < 4; row++)
-                {
-                        p8 address_to column = hold + row * 4;
-
-                        state[row * 4] = (p8)(wifi_gmul(column[0], 0x0e) ^
-                                              wifi_gmul(column[1], 0x0b) ^
-                                              wifi_gmul(column[2], 0x0d) ^
-                                              wifi_gmul(column[3], 0x09));
-                        state[row * 4 + 1] = (p8)(wifi_gmul(column[0], 0x09) ^
-                                                  wifi_gmul(column[1], 0x0e) ^
-                                                  wifi_gmul(column[2], 0x0b) ^
-                                                  wifi_gmul(column[3], 0x0d));
-                        state[row * 4 + 2] = (p8)(wifi_gmul(column[0], 0x0d) ^
-                                                  wifi_gmul(column[1], 0x09) ^
-                                                  wifi_gmul(column[2], 0x0e) ^
-                                                  wifi_gmul(column[3], 0x0b));
-                        state[row * 4 + 3] = (p8)(wifi_gmul(column[0], 0x0b) ^
-                                                  wifi_gmul(column[1], 0x0d) ^
-                                                  wifi_gmul(column[2], 0x09) ^
-                                                  wifi_gmul(column[3], 0x0e));
-                }
+                        for (positive at = 0; at < 4; at++)
+                                state[row * 4 + at] =
+                                    wifi_unmix(hold + row * 4, at);
         }
 
-        temp = state[1];
-        state[1] = state[13];
-        state[13] = state[9];
-        state[9] = state[5];
-        state[5] = temp;
-        temp = state[2];
-        state[2] = state[10];
-        state[10] = temp;
-        temp = state[6];
-        state[6] = state[14];
-        state[14] = temp;
-        temp = state[3];
-        state[3] = state[7];
-        state[7] = state[11];
-        state[11] = state[15];
-        state[15] = temp;
-        for (row = 0; row < 16; row++)
-                state[row] = inverse[state[row]];
-        for (row = 0; row < 16; row++)
-                state[row] ^= round[row];
         memory_copy(out, state, 16);
         crypto_forget(round, sizeof(round));
         crypto_forget(state, sizeof(state));
@@ -600,7 +541,7 @@ static fn wifi_ptk(p8 address_to pmk, p8 address_to ap, p8 address_to sta,
         positive used = 0;
         positive which;
 
-        if (wifi_compare(ap, sta, 6) < 0)
+        if (memory_compare(ap, sta, 6) < 0)
         {
                 min_mac = ap;
                 max_mac = sta;
@@ -610,7 +551,7 @@ static fn wifi_ptk(p8 address_to pmk, p8 address_to ap, p8 address_to sta,
                 min_mac = sta;
                 max_mac = ap;
         }
-        if (wifi_compare(anonce, snonce, 32) < 0)
+        if (memory_compare(anonce, snonce, 32) < 0)
         {
                 min_nonce = anonce;
                 max_nonce = snonce;
@@ -876,7 +817,7 @@ static bipolar wifi_handshake(nl80211 address_to session, p32 index, b32 eapol,
                 length = (positive)got;
                 if (frame[1] != 3 || frame[4] != 2)
                         continue;
-                info = wifi_be16(frame + 5);
+                info = network_load_16(frame + 5);
                 if ((info & 7) != 2 || !(info & 8))
                         continue;
                 if (!(info & 0x80))
@@ -891,13 +832,13 @@ static bipolar wifi_handshake(nl80211 address_to session, p32 index, b32 eapol,
                         memory_fill(frame, 0, WIFI_EAPOL_HDR + sizeof(wifi_rsn_ie));
                         frame[0] = 1;
                         frame[1] = 3;
-                        wifi_put_be16(frame + 2, (p16)(95 + sizeof(wifi_rsn_ie)));
+                        network_store_16(frame + 2, (p16)(95 + sizeof(wifi_rsn_ie)));
                         frame[4] = 2;
-                        wifi_put_be16(frame + 5, 0x010a);
-                        wifi_put_be16(frame + 7, 16);
+                        network_store_16(frame + 5, 0x010a);
+                        network_store_16(frame + 7, 16);
                         memory_copy(frame + 9, replay, 8);
                         memory_copy(frame + 17, snonce, 32);
-                        wifi_put_be16(frame + 97, (p16)sizeof(wifi_rsn_ie));
+                        network_store_16(frame + 97, (p16)sizeof(wifi_rsn_ie));
                         memory_copy(frame + 99, wifi_rsn_ie, sizeof(wifi_rsn_ie));
                         wifi_eapol_mic(ptk, frame, WIFI_EAPOL_HDR + sizeof(wifi_rsn_ie));
                         wifi_eapol_send(eapol, index, bssid, frame,
@@ -908,7 +849,7 @@ static bipolar wifi_handshake(nl80211 address_to session, p32 index, b32 eapol,
                 if (!have_anonce || !(info & 0x1000))
                         continue;
 
-                data_length = wifi_be16(frame + 97);
+                data_length = network_load_16(frame + 97);
                 if (WIFI_EAPOL_HDR + data_length > length)
                         continue;
                 {
@@ -971,10 +912,10 @@ static bipolar wifi_handshake(nl80211 address_to session, p32 index, b32 eapol,
                 memory_fill(frame, 0, WIFI_EAPOL_HDR);
                 frame[0] = 1;
                 frame[1] = 3;
-                wifi_put_be16(frame + 2, 95);
+                network_store_16(frame + 2, 95);
                 frame[4] = 2;
-                wifi_put_be16(frame + 5, 0x030a);
-                wifi_put_be16(frame + 7, 16);
+                network_store_16(frame + 5, 0x030a);
+                network_store_16(frame + 7, 16);
                 memory_copy(frame + 9, replay, 8);
                 wifi_eapol_mic(ptk, frame, WIFI_EAPOL_HDR);
                 if (wifi_eapol_send(eapol, index, bssid, frame, WIFI_EAPOL_HDR) < 0)
