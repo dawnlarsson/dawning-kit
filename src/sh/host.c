@@ -2397,12 +2397,11 @@ static b32 host_settings_apply(host_settings address_to settings,
         host_setting setting;
         string_address failed;
         positive length = 0;
-        positive which = 0;
+        positive which = string_table_find(verb, host_lists,
+                                           sizeof(host_lists[0]),
+                                           array_count(host_lists));
         p16 id = 0;
         p8 list;
-
-        while (which < array_count(host_lists) && !string_equals(verb, host_lists[which].verb))
-                which++;
 
         if (which == array_count(host_lists))
                 return HOST_SETTINGS_USAGE;

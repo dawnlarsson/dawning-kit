@@ -339,13 +339,11 @@ static const struct bowl_distro bowl_distros[] = {
 
 static const struct bowl_distro address_to bowl_find_distro(string_address name)
 {
-        positive at;
+        positive at = string_table_find(name, bowl_distros,
+                                        sizeof(bowl_distros[0]),
+                                        array_count(bowl_distros));
 
-        for (at = 0; at < array_count(bowl_distros); at++)
-                if (string_equals(bowl_distros[at].name, name))
-                        return address_of bowl_distros[at];
-
-        return null;
+        return at < array_count(bowl_distros) ? bowl_distros + at : null;
 }
 
 /*
