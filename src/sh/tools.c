@@ -3126,7 +3126,10 @@ static fn login_last_line(string_address user, string_address line,
                                     ? "    gone - no logout"
                                     : "   gone - no logout");
 
-        if (!login_last.no_host && login_last.host_last && *host)
+        positive host_tail = string_length(host);
+        while (host_tail && byte_is_space(host[host_tail - 1]))
+                host_tail--;
+        if (!login_last.no_host && login_last.host_last && host_tail)
         {
                 // The closing word sits in a twelve-wide column.
                 positive word = ended ? 1 + duration_length
@@ -3134,7 +3137,14 @@ static fn login_last_line(string_address user, string_address line,
                                 : end_kind == LOGIN_LAST_END_LOGGED ? 9
                                                                      : 11;
                 writer_fill_bulk(text_put, word < 13 ? 13 - word : 1, ' ');
-                login_last_put(host, string_length(host));
+                /* Last on the line, the reference drops the host's trailing
+                   whitespace altogether rather than padding a column with
+                   it -- and drops it before spelling anything, so a host
+                   ending in a tab or a return loses those bytes at every
+                   tier instead of gaining a spelling for them.  A host that
+                   is nothing but blanks leaves the whole closing column
+                   away, which is why the gap above is inside this test. */
+                login_last_put(host, host_tail);
         }
         text_put_character('\n');
 }
@@ -3289,7 +3299,7 @@ static b32 tools_last()
                         break;
                 p8 user[33];
                 login_field(user, sizeof(user), record.user,
-                            sizeof(record.user), true);
+                            sizeof(record.user), false);
                 if (record.type == LOGIN_BOOT_TIME)
                 {
                         login_last.latest_boot = record.seconds;
@@ -3311,13 +3321,18 @@ static b32 tools_last()
                 if (!login_last_record_at(address_of reader, at - 1,
                                           address_of record))
                         break;
+                /*      The reference takes each field exactly as the
+                        writer left it.  Trimming the trailing blanks is
+                        invisible in a padded column and wrong the moment
+                        the field is wide enough to truncate, where the
+                        blank is a byte that counts toward the width. */
                 p8 user[33], line[33], host[257], ip[64];
                 login_field(user, sizeof(user), record.user,
-                            sizeof(record.user), true);
+                            sizeof(record.user), false);
                 login_field(line, sizeof(line), record.line,
-                            sizeof(record.line), true);
+                            sizeof(record.line), false);
                 login_field(host, sizeof(host), record.host,
-                            sizeof(record.host), true);
+                            sizeof(record.host), false);
                 if (login_last.ip)
                 {
                         login_address_text(ip, record.address);
@@ -3354,13 +3369,38 @@ static b32 tools_last()
                                                         line)
                                            ? LOGIN_LAST_END_LOGGED
                                            : LOGIN_LAST_END_GONE;
-                        login_last_emit(address_of record, user, line, host,
-                                        kind, finish);
-                        ending = login_last_end_for(line, true);
-                        if (!ending)
-                                break;
-                        ending->seconds = record.seconds;
-                        ending->kind = LOGIN_LAST_END_LOGOUT;
+                        /*      A login always writes the account it is
+                                for, so a USER_PROCESS with an empty ut_user
+                                is a record the reference does not print --
+                                but it still ends the login that held the
+                                line, so the row goes away and the
+                                bookkeeping stays.  The test is on the
+                                stored bytes rather than the field as read:
+                                a user of one space is a name to it and
+                                prints as a blank column.
+
+                                A line beginning with a tilde is the
+                                exception, because that is where init writes
+                                its own records and the reference reads the
+                                type there from the name rather than
+                                second-guessing it. */
+                        if (record.user[0] || record.line[0] == '~')
+                                login_last_emit(address_of record, user, line,
+                                                host, kind, finish);
+                        /*      A login closes out the one that held its
+                                terminal, and a record naming no terminal
+                                holds none: the reference never matches an
+                                empty ut_line against another, so two such
+                                logins both stand open.  The dead-process
+                                arm already reads it that way. */
+                        if (*line)
+                        {
+                                ending = login_last_end_for(line, true);
+                                if (!ending)
+                                        break;
+                                ending->seconds = record.seconds;
+                                ending->kind = LOGIN_LAST_END_LOGOUT;
+                        }
                         continue;
                 }
                 if (record.type == LOGIN_BOOT_TIME)
