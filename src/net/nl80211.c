@@ -849,7 +849,7 @@ static COLD bipolar wifi_handshake(nl80211 address_to session, p32 index, b32 ea
                         memory_fill(frame + 81, 0, 16);
                         wifi_hmac_sha1(ptk, 16, frame, WIFI_EAPOL_HDR + data_length,
                                        check);
-                        if (memory_compare(mic, check, 16))
+                        if (!crypto_same(mic, check, 16))
                         {
                                 crypto_forget(check, sizeof(check));
                                 continue;

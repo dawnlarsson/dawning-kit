@@ -276,6 +276,23 @@ static p8 crypto_aes_substitute(p8 value)
                     ((inverse << 4) | (inverse >> 4)) ^ 0x63);
 }
 
+/* Two authenticators compared without telling the peer where they first
+   differed.  memory_compare stops at the first differing byte, which turns a
+   rejected tag into a measurement of how many leading bytes were right, and
+   an authenticator a peer may retry under one key is guessable a byte at a
+   time from that.  This reads both spans whole, the way the AEAD tag check
+   below already does. */
+static bool crypto_same(const p8 address_to left, const p8 address_to right,
+                        positive length)
+{
+        p8 diff = 0;
+
+        for (positive at = 0; at < length; at++)
+                diff |= (p8)(left[at] ^ right[at]);
+
+        return !diff;
+}
+
 /* Unlike memory_fill, these stores cannot be discarded after the final use. */
 static fn crypto_forget(address_any secret, positive length)
 {

@@ -1986,7 +1986,7 @@ static COLD bipolar tls_check_finished(tls_conn address_to tls, p8 address_to ve
         tls_expand_label(tls->s_hs_traffic, "finished", null, 0, finished_key, 32);
         crypto_sha256_close(address_of copy, hash);
         crypto_hmac_sha256(finished_key, 32, hash, 32, expect);
-        status = memory_compare(expect, verify, 32) ? TLS_FAIL : TLS_OK;
+        status = crypto_same(expect, verify, 32) ? TLS_OK : TLS_FAIL;
 
 done:
         crypto_forget(finished_key, sizeof finished_key);
