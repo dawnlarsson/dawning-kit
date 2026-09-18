@@ -138,6 +138,37 @@ menu "Moonwater"
           clock for virtio-gpu, and the display then waits forever for a
           vblank that never arrives.
 
+    config MOONWATER_STRICT
+        int "How strict this build is where safety and the reference disagree"
+        depends on MOONWATER_UTILITIES
+        range 0 2
+        default 1
+        help
+          The utility surface is written against the tool on the machine
+          rather than against a standard, because the tool is what a script
+          actually meets. Now and then the reference has a hole in it, and
+          matching it byte for byte means shipping the hole: util-linux's
+          last writes a newline straight out of a utmp host field, so a
+          hostname a remote peer chose can forge a line in the output.
+
+          0 is the reference exactly -- every byte the tool on the machine
+          writes, including the ones it should not. Choose it to diff our
+          output against that tool, or when a script parses the hole on
+          purpose.
+
+          1 is the default: a divergence only where benign input is
+          unaffected and hostile input was dangerous. That is the shape of
+          the escaping above and of the symlinked-component refusal
+          mkdir -p already makes.
+
+          2 refuses where 1 sanitises, and tightens what a careful operator
+          would want tightened even though ordinary use never arrives
+          there.
+
+          This is a ceiling on what the build will do, not a promise that
+          every utility has something to say at every level. Most have
+          nothing to say and never read it.
+
     config MOONWATER_MACHINE_SCRIPT
         string "Default machine script"
         depends on MOONWATER_CORE

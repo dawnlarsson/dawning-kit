@@ -12,6 +12,45 @@
 #ifndef STANDARD_MODERN_C_LIBRARY_COMMON
 #define STANDARD_MODERN_C_LIBRARY_COMMON
 
+/*
+        How strict this build is, where safety and the reference disagree.
+
+        The utility surface is written against the tool on the machine
+        rather than against a standard, because the tool is what a script
+        actually meets. Now and then the reference has a hole in it, and
+        matching it byte for byte means shipping the hole: util-linux's
+        last writes a newline straight out of a utmp host field, so a
+        hostname a remote peer chose can forge a line in the output, and
+        coreutils' who does the same with an escape byte.
+
+        Deciding that once per utility buries it in whichever comment the
+        author happened to write. A build says which way it leans instead:
+
+          STRICT_REFERENCE  the reference, exactly -- every byte the tool
+                            on the machine writes, including the ones it
+                            should not. For diffing against that tool, or
+                            for a script that parses the hole on purpose.
+          STRICT_SAFE       the default. A divergence is taken only where
+                            benign input is unaffected and hostile input
+                            was dangerous, which is the shape of the
+                            escaping above and of the symlinked-component
+                            refusal mkdir -p already makes.
+          STRICT_TIGHT      refuse where safe would sanitise, and tighten
+                            what a careful operator would want tightened
+                            even though ordinary use never arrives there.
+
+        A tier is a ceiling on what a build will do, not a promise that
+        every utility has something to say at every tier. Most have
+        nothing to say and never name MOONWATER_STRICT at all.
+*/
+#define STRICT_REFERENCE 0
+#define STRICT_SAFE 1
+#define STRICT_TIGHT 2
+
+#ifndef MOONWATER_STRICT
+#define MOONWATER_STRICT STRICT_SAFE
+#endif
+
 /* C varargs adapters shared by the standard compatibility families. */
 #define var_list_entry(name, returned, parameters, last, call)               \
         static returned name parameters                                      \
