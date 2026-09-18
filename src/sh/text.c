@@ -3960,6 +3960,18 @@ static bool text_locale_utf8()
 }
 
 /*
+        The policy a pattern is read under: a dot and a bracket stand for
+        one character where LC_CTYPE says a character is more than a byte,
+        and for one byte where it does not. The reference reads a pattern
+        the same way, and a C locale keeps every answer it had.
+*/
+static p8 text_regex_policy()
+{
+        return (p8)(REGEX_POLICY_DEFAULT |
+                    (text_locale_utf8() ? REGEX_CHARACTERS : 0));
+}
+
+/*
         Word separators past ASCII in a UTF-8 locale: glibc's iswspace, which
         leaves the no-break spaces out, and the no-break spaces GNU's wc adds
         back unless POSIXLY_CORRECT is set -- U+00A0 is one in the C locale
@@ -19184,7 +19196,7 @@ static b32 text_grep()
                 return text_done(string_diagnostic(&text_diagnostic, 2, null, "no pattern given"));
 
         if (!never && !regex_compile(grep_pattern, extended, icase, false,
-                                     REGEX_POLICY_DEFAULT))
+                                     text_regex_policy()))
                 return text_done(string_diagnostic(&text_diagnostic, 2, null, "invalid regular expression"));
 
         regex_boundary = whole_line ? REGEX_BOUNDARY_LINE :
@@ -19978,7 +19990,7 @@ static b32 sed_compile_regex(string_address pattern, bool icase)
         }
 
         if (!regex_compile(pattern, sed_extended, icase, true,
-                           REGEX_POLICY_DEFAULT))
+                           text_regex_policy()))
         {
                 sed_broken = true;
                 return 0;

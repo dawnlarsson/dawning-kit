@@ -976,7 +976,7 @@ static fn awk_regex_build(regex_program address_to into, string_address pattern)
             string_first_of(pattern, '\\') ? awk_regex_escapes(pattern) : null;
 
         if (!regex_compile(plain ? plain->text : pattern, true, false, true,
-                           REGEX_POLICY_DEFAULT))
+                           text_regex_policy()))
         {
                 // Written in the program, it is the program that is wrong.
                 if (awk_parsing)

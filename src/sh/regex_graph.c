@@ -14,7 +14,9 @@ enum { RX_HAS_BACKREF = 2, RX_BRANCHING = 4,
        RX_LITERAL_PROVES = 64, RX_IGNORE_CASE = 128 };
 enum { RX_NO_MATCH, RX_MATCH, RX_COMPLEX };
 enum { REGEX_DOT_NEWLINE = 1, REGEX_LINE_ANCHORS = 2, REGEX_BASIC_REPEATS = 4,
-       REGEX_POLICY_DEFAULT = 5, REGEX_POLICY_TAC = 2 };
+       REGEX_POLICY_DEFAULT = 5, REGEX_POLICY_TAC = 2,
+       /* A dot and a bracket stand for one character rather than one byte. */
+       REGEX_CHARACTERS = 8 };
 enum { REGEX_BOUNDARY_NONE, REGEX_BOUNDARY_WORD, REGEX_BOUNDARY_LINE };
 enum { REGEX_EDGE_WORD, REGEX_EDGE_NOT_WORD, REGEX_EDGE_START, REGEX_EDGE_STOP };
 
@@ -70,6 +72,14 @@ typedef struct
         string_address pattern;
         positive length, at;
         b32 depth;
+        /*
+                The five byte sets a character is spelled with: the one-byte
+                characters, the three lead ranges and the continuation
+                range. Every dot and every negated bracket in one pattern
+                shares them, so a pattern full of dots costs them once
+                against the sixty-four a pool holds. -1 until first asked.
+        */
+        b32 wide_ascii, wide_two, wide_three, wide_four, wide_tail;
         bool extended, escapes, broken;
 } rx_compiler;
 
@@ -130,13 +140,123 @@ static fn rx_set_add(rx_compiler *c, b32 set, p8 byte)
         }
 }
 
+static rx_fragment rx_one(rx_compiler *c, p8 kind, p8 argument)
+{
+        p16 at = rx_emit(c, (rx_node){.kind = kind, .argument = argument});
+
+        return (rx_fragment){at, at};
+}
+
+static rx_fragment rx_either(rx_compiler *c, rx_fragment one, rx_fragment two)
+{
+        p16 at = rx_emit(c, (rx_node){.kind = RX_ALT, .left = one.first,
+                                      .right = two.first});
+
+        return (rx_fragment){at, at};
+}
+
+/* A lead byte and the continuation bytes that follow it, as one sequence. */
+static rx_fragment rx_wide_run(rx_compiler *c, b32 lead, b32 tails)
+{
+        rx_fragment run = rx_one(c, RX_SET, (p8)lead);
+
+        for (b32 i = 0; i < tails; i++)
+                run = rx_join(c, run, rx_one(c, RX_SET, (p8)c->wide_tail));
+
+        return run;
+}
+
+/*
+        The byte sets a character is spelled with, made once for a pattern.
+
+        A character is one byte below 0x80, or a lead byte and one, two or
+        three continuation bytes. Spelling a dot this way rather than
+        teaching the walk to count bytes leaves the walk, the machine and a
+        counted repeat exactly as they were: every one of them already
+        knows what an alternation of byte sets means. Measured, it costs the
+        machine nothing -- the classes a byte falls into collapse the four
+        lead ranges and the continuation range to one column each.
+*/
+static bool rx_wide_sets(rx_compiler *c)
+{
+        if (c->wide_tail >= 0)
+                return true;
+
+        b32 tail = rx_new_set(c), two = rx_new_set(c);
+        b32 three = rx_new_set(c), four = rx_new_set(c);
+
+        if (tail < 0 || two < 0 || three < 0 || four < 0)
+                return false;
+
+        for (b32 i = 0x80; i <= 0xbf; i++)
+                c->pool->sets[tail][i] = 1;
+
+        for (b32 i = 0xc2; i <= 0xdf; i++)
+                c->pool->sets[two][i] = 1;
+
+        for (b32 i = 0xe0; i <= 0xef; i++)
+                c->pool->sets[three][i] = 1;
+
+        for (b32 i = 0xf0; i <= 0xf4; i++)
+                c->pool->sets[four][i] = 1;
+
+        c->wide_tail = tail;
+        c->wide_two = two;
+        c->wide_three = three;
+        c->wide_four = four;
+        return true;
+}
+
+/*
+        One character: the bytes `ascii` names, or any sequence of more than
+        one byte. A caller hands the set of one-byte characters it will
+        take -- everything but a newline for a dot, everything a negated
+        bracket did not name -- and gets back the whole of what stands for
+        a character there.
+*/
+static rx_fragment rx_character(rx_compiler *c, b32 ascii)
+{
+        if (!rx_wide_sets(c))
+        {
+                c->broken = true;
+                return (rx_fragment){0};
+        }
+
+        rx_fragment wide = rx_either(c, rx_wide_run(c, c->wide_three, 2),
+                                     rx_wide_run(c, c->wide_four, 3));
+
+        wide = rx_either(c, rx_wide_run(c, c->wide_two, 1), wide);
+        return rx_either(c, rx_one(c, RX_SET, (p8)ascii), wide);
+}
+
+/*
+        What a bracket named besides the bytes it put in its set: whether it
+        was negated, and the characters of more than one byte it holds. The
+        set is a table of bytes and cannot hold one of those; putting its
+        bytes in separately would make [e-acute] match either half of one,
+        and match the halves of every other character as well.
+*/
+#define RX_SET_WIDE_MAX 24
+
+typedef struct
+{
+        bool negated;
+        /* Some member, or some end of a range, was a byte above 0x7f. */
+        bool high;
+        b32 count;
+        positive at[RX_SET_WIDE_MAX];
+        p8 size[RX_SET_WIDE_MAX];
+} rx_set_facts;
+
 /* Brackets keep the BRE/ERE backslash rule; sed enables its own escapes. */
-static b32 rx_parse_set(rx_compiler *c)
+static b32 rx_parse_set(rx_compiler *c, rx_set_facts *facts)
 {
         b32 set = rx_new_set(c);
         bool negate = rx_peek(c, 0) == '^', first = true;
+        bool wide = (c->program.policy & REGEX_CHARACTERS) != 0;
         if (set < 0)
                 return 0;
+        facts->negated = negate;
         c->at += negate;
         while (c->at < c->length)
         {
@@ -170,6 +290,45 @@ static b32 rx_parse_set(rx_compiler *c)
                         byte = byte == 'n' ? '\n' : byte == 't' ? '\t' :
                                byte == 'r' ? '\r' : byte;
                         c->at++;
+                }
+                /*
+                        A member of more than one byte is kept whole and
+                        alternated beside the set rather than broken into
+                        bytes the set could not tell apart. A range with an
+                        endpoint like that has no byte order to walk and
+                        keeps the byte reading it always had.
+
+                        So does a negated bracket that names one: saying
+                        every character but this one needs each lead byte's
+                        range split around it, which an alternation of whole
+                        sequences cannot say, and a wrong answer that looks
+                        right is worse than the byte answer it has now.
+                */
+                // c->at still stands on the member here, so one ahead is a
+                // range's dash and two ahead is the end it runs to.
+                if (byte >= 0x80 ||
+                    (rx_peek(c, 1) == '-' && rx_peek(c, 2) >= 0x80))
+                        facts->high = true;
+
+                if (wide && !negate && byte >= 0x80 && rx_peek(c, 1) != '-')
+                {
+                        positive size = memory_utf8_span(
+                            (address_any)(c->pattern + c->at),
+                            c->length - c->at, 1).x;
+
+                        if (size > 1)
+                        {
+                                if (facts->count == RX_SET_WIDE_MAX)
+                                {
+                                        c->broken = true;
+                                        return set;
+                                }
+
+                                facts->at[facts->count] = c->at;
+                                facts->size[facts->count++] = (p8)size;
+                                c->at += size;
+                                continue;
+                        }
                 }
                 c->at++;
                 if (rx_peek(c, 0) == '-' && rx_peek(c, 1) && rx_peek(c, 1) != ']')
@@ -208,12 +367,87 @@ static rx_fragment rx_atom(rx_compiler *c)
         else
         {
                 positive at = c->at++;
+                bool wide = (c->program.policy & REGEX_CHARACTERS) != 0;
                 if (byte == '.')
+                {
                         kind = RX_ANY;
+
+                        /*
+                                A dot is one character, and every character
+                                of one byte but a newline is the set it
+                                takes. The bytes above it are never one on
+                                their own, so they are left to the
+                                sequences rx_character alternates in.
+                        */
+                        if (wide)
+                        {
+                                b32 plain = c->wide_ascii;
+
+                                if (plain < 0 && (plain = rx_new_set(c)) >= 0)
+                                {
+                                        for (b32 i = 0; i < 0x80; i++)
+                                                c->pool->sets[plain][i] = 1;
+
+                                        if (!(c->program.policy & REGEX_DOT_NEWLINE))
+                                                c->pool->sets[plain]['\n'] = 0;
+
+                                        c->wide_ascii = plain;
+                                }
+
+                                if (plain < 0)
+                                {
+                                        c->broken = true;
+                                        return (rx_fragment){0};
+                                }
+
+                                return rx_character(c, plain);
+                        }
+                }
                 else if (byte == '[')
                 {
+                        rx_set_facts facts = {0};
+
                         kind = RX_SET;
-                        byte = (p8)rx_parse_set(c);
+                        byte = (p8)rx_parse_set(c, address_of facts);
+
+                        /*
+                                A negated bracket names every character it
+                                did not, which the table cannot say on its
+                                own: the bytes above 0x7f it holds are the
+                                halves of characters, so they come out and
+                                the sequences stand beside it instead. A
+                                bracket that named characters of more than
+                                one byte alternates each of them in whole.
+                        */
+                        if (wide && ((facts.negated && !facts.high) || facts.count))
+                        {
+                                rx_fragment whole;
+
+                                if (facts.negated)
+                                {
+                                        for (b32 i = 0x80; i < 256; i++)
+                                                c->pool->sets[byte][i] = 0;
+
+                                        whole = rx_character(c, byte);
+                                }
+                                else
+                                        whole = rx_one(c, RX_SET, byte);
+
+                                for (b32 i = 0; i < facts.count; i++)
+                                {
+                                        rx_fragment run = {0};
+
+                                        for (b32 b = 0; b < facts.size[i]; b++)
+                                                run = rx_join(
+                                                    c, run,
+                                                    rx_one(c, RX_BYTE,
+                                                           c->pattern[facts.at[i] + b]));
+
+                                        whole = rx_either(c, whole, run);
+                                }
+
+                                return whole;
+                        }
                 }
                 else if (byte == '^' && (c->extended || !at ||
                          (at >= 2 && c->pattern[at - 2] == '\\' &&
@@ -520,7 +754,9 @@ static bool rx_compile(rx_pool *pool, regex_program *out, string_address pattern
                        bool extended, bool icase, bool escapes, p8 policy)
 {
         rx_compiler c = {.pool = pool, .cursor = pool->used, .pattern = pattern,
-                         .length = string_length(pattern), .extended = extended, .escapes = escapes};
+                         .length = string_length(pattern), .extended = extended,
+                         .escapes = escapes, .wide_ascii = -1, .wide_two = -1,
+                         .wide_three = -1, .wide_four = -1, .wide_tail = -1};
         if (c.cursor.hints == RX_HINT_MAX)
                 return false;
         if (!c.cursor.nodes)
