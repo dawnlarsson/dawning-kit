@@ -1272,7 +1272,7 @@ static bipolar http_run(string_address start, const http_manners address_to how,
         http_buffer whole = {0};
         positive hop;
         bool secure = false;
-        bipolar status = HTTP_REDIRECTS;
+        bipolar status;
 
         if (string_length(start) >= sizeof url)
                 return HTTP_BAD_URL;
@@ -1365,8 +1365,11 @@ static bipolar http_run(string_address start, const http_manners address_to how,
                 }
 
                 http_link_close(address_of link);
-                break;
+                goto done;
         }
+
+        //      Ten hops and the last one still pointed somewhere else.
+        status = HTTP_REDIRECTS;
 
 done:
         if (into && !status)
