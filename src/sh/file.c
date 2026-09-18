@@ -3740,6 +3740,45 @@ static fn file_change_walk_as(bipolar directory, string_address name,
         }
 }
 
+#if defined(LIBRARY_THREAD_RUNTIME)
+/*
+        The node a -R walk on the pool keeps for one directory: what the
+        parent looked at, so the job that opens it can prove it is still the
+        same directory, whether that look says its contents may be trusted,
+        and the whole path it is reached by with the name inside it marked.
+        chmod and chown keep exactly this and nothing more, so they keep one
+        node and not two of the same shape under two names; chown's leaves
+        are nodes of it as well.
+*/
+typedef struct file_change_tree_node
+{
+        struct file_change_tree_node address_to parent;
+        file_facts expected;
+        bool trusted;
+        positive name_at;
+        positive length;
+        p8 path[];
+} file_change_tree_node;
+
+static file_change_tree_node address_to file_change_tree_node_new(
+    file_change_tree_node address_to parent, string_address name,
+    positive name_length)
+{
+        positive length = 0;
+        file_change_tree_node address_to node = file_tree_node_take(
+            parent, __builtin_offsetof(file_change_tree_node, path),
+            parent ? parent->length : 0, name, name_length, address_of length);
+
+        if (!node)
+                return null;
+
+        node->parent = parent;
+        node->length = length;
+        node->name_at = length - name_length;
+        return node;
+}
+#endif
+
 //      A walk of the tool's own for everything under an operand of -R, when
 //      it has one; the serial walk below otherwise.
 static fn(address_to file_change_tree)(string_address path);
@@ -14959,37 +14998,12 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         trusted.  A job says nothing: an outcome that would be heard is a
         record, and the sink says it in walk order.  There is no depth limit.
 */
-typedef struct chmod_tree_node
-{
-        struct chmod_tree_node address_to parent;
-        file_facts expected;
-        bool trusted;
-        positive length;
-        p8 path[];
-} chmod_tree_node;
-
-static chmod_tree_node address_to chmod_tree_node_new(chmod_tree_node address_to parent,
-                                                     string_address name,
-                                                     positive name_length)
-{
-        positive length = 0;
-        chmod_tree_node address_to node = file_tree_node_take(
-            parent, __builtin_offsetof(chmod_tree_node, path),
-            parent ? parent->length : 0, name, name_length, address_of length);
-
-        if (!node)
-                return null;
-
-        node->parent = parent;
-        node->length = length;
-        return node;
-}
 
 //      An outcome and the whole path it is about, written straight into the
 //      node's output.
 static bool chmod_tree_put(parallel_output address_to output,
                            chmod_outcome address_to out,
-                           chmod_tree_node address_to node,
+                           file_change_tree_node address_to node,
                            string_address name, positive name_length)
 {
         return file_tree_put(output, out, sizeof(chmod_outcome),
@@ -15001,7 +15015,7 @@ static bool chmod_tree_put(parallel_output address_to output,
 static fn chmod_tree_enter(address_any context, address_any node_address,
                            bipolar directory, parallel_output address_to output)
 {
-        chmod_tree_node address_to node = node_address;
+        file_change_tree_node address_to node = node_address;
         p8 records[WALK_READ];
 
         (void)context;
@@ -15062,7 +15076,8 @@ static fn chmod_tree_enter(address_any context, address_any node_address,
                 if (!here)
                         continue;
 
-                chmod_tree_node address_to child = chmod_tree_node_new(node, name, name_length);
+                file_change_tree_node address_to child =
+                    file_change_tree_node_new(node, name, name_length);
 
                 if (!child)
                 {
@@ -15128,7 +15143,8 @@ static fn chmod_tree(string_address path)
         if (handle < 0)
                 return;
 
-        chmod_tree_node address_to top = chmod_tree_node_new(null, path, string_length(path));
+        file_change_tree_node address_to top =
+            file_change_tree_node_new(null, path, string_length(path));
 
         if (!top ||
             (top->expected = facts,
@@ -15613,33 +15629,6 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         When a leaf runs does not change what a change of owner lets the walk
         read; where its bytes land is what the output shows.
 */
-typedef struct chown_tree_node
-{
-        struct chown_tree_node address_to parent;
-        file_facts expected;
-        bool trusted;
-        positive name_at;
-        positive length;
-        p8 path[];
-} chown_tree_node;
-
-static chown_tree_node address_to chown_tree_node_new(chown_tree_node address_to parent,
-                                                     string_address name,
-                                                     positive name_length)
-{
-        positive length = 0;
-        chown_tree_node address_to node = file_tree_node_take(
-            parent, __builtin_offsetof(chown_tree_node, path),
-            parent ? parent->length : 0, name, name_length, address_of length);
-
-        if (!node)
-                return null;
-
-        node->parent = parent;
-        node->length = length;
-        node->name_at = length - name_length;
-        return node;
-}
 
 //      An outcome and the whole path it is about: head, then name when
 //      there is one, written straight into the output.
@@ -15656,7 +15645,7 @@ static bool chown_tree_put(parallel_output address_to output,
 static fn chown_tree_leaf(address_any context, address_any node_address,
                           bipolar directory, parallel_output address_to output)
 {
-        chown_tree_node address_to leaf = node_address;
+        file_change_tree_node address_to leaf = node_address;
         chown_outcome outcome;
 
         (void)context;
@@ -15681,7 +15670,7 @@ static fn chown_tree_leaf(address_any context, address_any node_address,
 static fn chown_tree_enter(address_any context, address_any node_address,
                            bipolar directory, parallel_output address_to output)
 {
-        chown_tree_node address_to node = node_address;
+        file_change_tree_node address_to node = node_address;
         p8 records[WALK_READ];
 
         (void)context;
@@ -15744,9 +15733,11 @@ static fn chown_tree_enter(address_any context, address_any node_address,
                         continue;
                 }
 
-                chown_tree_node address_to child = chown_tree_node_new(node, name, name_length);
-                chown_tree_node address_to leaf = child ? chown_tree_node_new(node, name, name_length)
-                                                        : null;
+                file_change_tree_node address_to child =
+                    file_change_tree_node_new(node, name, name_length);
+                file_change_tree_node address_to leaf =
+                    child ? file_change_tree_node_new(node, name, name_length)
+                          : null;
 
                 if (!child || !leaf)
                 {
@@ -15824,7 +15815,8 @@ static fn chown_tree(string_address path)
 
         if (handle >= 0)
         {
-                chown_tree_node address_to top = chown_tree_node_new(null, path, string_length(path));
+                file_change_tree_node address_to top =
+                    file_change_tree_node_new(null, path, string_length(path));
 
                 if (!top ||
                     (top->expected = facts,
