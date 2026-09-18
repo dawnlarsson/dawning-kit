@@ -26,7 +26,6 @@
 
 // Raw kernel return values: there is no errno here, a failed call comes back
 // as the negated error itself.
-#define ERROR_INTERRUPTED (-4)
 #define ERROR_NO_CHILDREN (-10)
 
 // PID 1 has two jobs: start the first program, and reap every orphan the
@@ -134,13 +133,12 @@ static fn wait_for_settling(bipolar service)
                clock_monotonic_nanoseconds() - started < SETTLE_WAIT_NS)
         {
                 positive status = 0;
-                bipolar reaped = system_call_4(syscall(wait4), service,
-                                               (positive)address_of status,
-                                               WAIT_NO_HANG, 0);
 
-                if (reaped == ERROR_INTERRUPTED)
-                        continue;
-                if (reaped != 0)
+                //      library.c's retry: an interruption here is not an
+                //      answer about the service, and asking again is the
+                //      whole of what this loop used to do about one.
+                if (system_wait4_retry(service, address_of status,
+                                       WAIT_NO_HANG, null) != 0)
                         return;
 
                 host_pause(20000000);
@@ -231,12 +229,10 @@ static DEAD_END b32 system_init()
                 positive status = 0;
 
                 // -1 reaps any child, not just the shell: as PID 1 every
-                // orphan on the system is eventually ours to collect.
-                bipolar reaped = system_call_4(syscall(wait4), -1,
-                                               (positive)address_of status, 0, 0);
-
-                if (reaped == ERROR_INTERRUPTED)
-                        continue;
+                // orphan on the system is eventually ours to collect, and
+                // library.c's retry absorbs the interruptions.
+                bipolar reaped = system_wait4_retry(-1, address_of status, 0,
+                                                    null);
 
                 // Retrying a failing wait as fast as the CPU allows is the one
                 // way PID 1 can spin with nothing to show for it. Say it once
