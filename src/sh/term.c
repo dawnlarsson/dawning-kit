@@ -1338,36 +1338,43 @@ static fn alternate_leave(b32 restore)
 */
 static unsigned int mode(unsigned int p, b32 change, b32 on)
 {
+        /*
+                The modes that are nothing but a bit, which is most of them:
+                six private ones and the one public one, each setting its word
+                and reading it straight back in the same three lines. A row
+                apiece rather than a case apiece, and the marker is in the row
+                because it is part of a mode's name -- CSI 4 h is insert mode
+                and CSI ? 4 h is something else entirely.
+        */
+        static const struct { unsigned short p; b32 private; b32 address_to flag; }
+        bits[] = {
+            {4, false, address_of insert_mode},
+            {1, true, address_of application_keys},
+            {7, true, address_of autowrap},
+            {25, true, address_of cursor_visible},
+            {1004, true, address_of focus_events},
+            {1006, true, address_of mouse_sgr},
+            {2026, true, address_of synchronized_output},
+        };
         b32 now;
 
-        if (!terminal_csi.marker)
+        for (positive i = 0; i < array_count(bits); i++)
         {
-                if (p != 4)
-                        return 0;
+                if (bits[i].p != p ||
+                    bits[i].private != (terminal_csi.marker != 0))
+                        continue;
 
                 if (change)
-                        insert_mode = on;
+                        address_to bits[i].flag = on;
 
-                return insert_mode ? 1 : 2;
+                return address_to bits[i].flag ? 1 : 2;
         }
+
+        if (!terminal_csi.marker)
+                return 0;
 
         switch (p)
         {
-        case 1:
-                if (change)
-                        application_keys = on;
-                now = application_keys;
-                break;
-        case 7:
-                if (change)
-                        autowrap = on;
-                now = autowrap;
-                break;
-        case 25:
-                if (change)
-                        cursor_visible = on;
-                now = cursor_visible;
-                break;
         case 6:
                 if (change)
                 {
@@ -1396,21 +1403,6 @@ static unsigned int mode(unsigned int p, b32 change, b32 on)
                                 window->want = mouse_mode ? WINDOW_WANT_POINTER : 0;
                 }
                 now = mouse_mode == p;
-                break;
-        case 1004:
-                if (change)
-                        focus_events = on;
-                now = focus_events;
-                break;
-        case 1006:
-                if (change)
-                        mouse_sgr = on;
-                now = mouse_sgr;
-                break;
-        case 2026:
-                if (change)
-                        synchronized_output = on;
-                now = synchronized_output;
                 break;
         default:
                 return 0;
