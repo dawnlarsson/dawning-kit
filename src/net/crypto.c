@@ -16,29 +16,19 @@
 
 typedef unsigned __int128 crypto_wide;
 
-static p32 crypto_be32(const p8 address_to bytes)
-{
-        return ((p32)bytes[0] << 24) | ((p32)bytes[1] << 16) |
-               ((p32)bytes[2] << 8) | (p32)bytes[3];
-}
-
+/* Big endian 64 bit fields -- GCM's length block, a key wrap's integrity
+   check, a bignum limb -- are an unaligned pair of 32 bit halves, and the
+   halves are library.c's own byte-reversing load and store. */
 static p64 crypto_be64(const p8 address_to bytes)
 {
-        return ((p64)crypto_be32(bytes) << 32) | crypto_be32(bytes + 4);
-}
-
-static fn crypto_put_be32(p8 address_to bytes, p32 value)
-{
-        bytes[0] = (p8)(value >> 24);
-        bytes[1] = (p8)(value >> 16);
-        bytes[2] = (p8)(value >> 8);
-        bytes[3] = (p8)value;
+        return ((p64)network_load_32((p8 address_to)bytes) << 32) |
+               network_load_32((p8 address_to)bytes + 4);
 }
 
 static fn crypto_put_be64(p8 address_to bytes, p64 value)
 {
-        crypto_put_be32(bytes, (p32)(value >> 32));
-        crypto_put_be32(bytes + 4, (p32)value);
+        network_store_32(bytes, (p32)(value >> 32));
+        network_store_32(bytes + 4, (p32)value);
 }
 
 /*
@@ -506,66 +496,49 @@ static fn crypto_x25519_load(crypto_x25519_fe out, p8 address_to in)
         out[4] = (crypto_x25519_load64(in + 24) >> 12) & 0x7ffffffffffffull;
 }
 
+/*
+        One pass of the 51 bit carry chain.
+
+        Each limb hands what will not fit to the one above it. wrap folds the
+        carry leaving the top limb back into the bottom one at the weight the
+        prime gives it -- 2^255 is 19 -- and is how the chain stays inside
+        the field. The pass that finishes a store is the one exception: there
+        the carry out of the top is the answer to the conditional
+        subtraction, and dropping it is what performs the subtraction.
+*/
+static fn crypto_x25519_carry(crypto_wide address_to t, bool wrap)
+{
+        for (positive i = 0; i < 4; i++)
+        {
+                t[i + 1] += t[i] >> 51;
+                t[i] &= 0x7ffffffffffffull;
+        }
+
+        if (wrap)
+                t[0] += 19 * (t[4] >> 51);
+        t[4] &= 0x7ffffffffffffull;
+}
+
 static fn crypto_x25519_store(p8 address_to out, crypto_x25519_fe in)
 {
         crypto_wide t[5];
 
-        t[0] = in[0];
-        t[1] = in[1];
-        t[2] = in[2];
-        t[3] = in[3];
-        t[4] = in[4];
+        for (positive i = 0; i < 5; i++)
+                t[i] = in[i];
 
-        t[1] += t[0] >> 51;
-        t[0] &= 0x7ffffffffffffull;
-        t[2] += t[1] >> 51;
-        t[1] &= 0x7ffffffffffffull;
-        t[3] += t[2] >> 51;
-        t[2] &= 0x7ffffffffffffull;
-        t[4] += t[3] >> 51;
-        t[3] &= 0x7ffffffffffffull;
-        t[0] += 19 * (t[4] >> 51);
-        t[4] &= 0x7ffffffffffffull;
+        crypto_x25519_carry(t, true);
+        crypto_x25519_carry(t, true);
 
-        t[1] += t[0] >> 51;
-        t[0] &= 0x7ffffffffffffull;
-        t[2] += t[1] >> 51;
-        t[1] &= 0x7ffffffffffffull;
-        t[3] += t[2] >> 51;
-        t[2] &= 0x7ffffffffffffull;
-        t[4] += t[3] >> 51;
-        t[3] &= 0x7ffffffffffffull;
-        t[0] += 19 * (t[4] >> 51);
-        t[4] &= 0x7ffffffffffffull;
-
+        //      Adding 19 and carrying turns a value in [p, 2p) into one in
+        //      [0, p) with the top limb's bit set, which the constants below
+        //      then clear; a value already below p is unchanged by the pair.
         t[0] += 19;
-
-        t[1] += t[0] >> 51;
-        t[0] &= 0x7ffffffffffffull;
-        t[2] += t[1] >> 51;
-        t[1] &= 0x7ffffffffffffull;
-        t[3] += t[2] >> 51;
-        t[2] &= 0x7ffffffffffffull;
-        t[4] += t[3] >> 51;
-        t[3] &= 0x7ffffffffffffull;
-        t[0] += 19 * (t[4] >> 51);
-        t[4] &= 0x7ffffffffffffull;
+        crypto_x25519_carry(t, true);
 
         t[0] += 0x8000000000000ull - 19;
-        t[1] += 0x8000000000000ull - 1;
-        t[2] += 0x8000000000000ull - 1;
-        t[3] += 0x8000000000000ull - 1;
-        t[4] += 0x8000000000000ull - 1;
-
-        t[1] += t[0] >> 51;
-        t[0] &= 0x7ffffffffffffull;
-        t[2] += t[1] >> 51;
-        t[1] &= 0x7ffffffffffffull;
-        t[3] += t[2] >> 51;
-        t[2] &= 0x7ffffffffffffull;
-        t[4] += t[3] >> 51;
-        t[3] &= 0x7ffffffffffffull;
-        t[4] &= 0x7ffffffffffffull;
+        for (positive i = 1; i < 5; i++)
+                t[i] += 0x8000000000000ull - 1;
+        crypto_x25519_carry(t, false);
 
         crypto_x25519_store64(out, (p64)(t[0] | (t[1] << 51)));
         crypto_x25519_store64(out + 8, (p64)((t[1] >> 13) | (t[2] << 38)));
