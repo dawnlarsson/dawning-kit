@@ -518,22 +518,35 @@ static bool host_running_build(p8 address_to into, positive room)
         p8 banner[1024];
         positive release;
         positive version;
+        positive prefix;
+        bipolar got;
         string_address who;
         positive who_length = 0;
 
         into[0] = end;
-        if (!file_machine_read(address_of machine) ||
-            host_read_text("/proc/version", banner, sizeof(banner)) <= 0)
+        if (!file_machine_read(address_of machine))
+                return false;
+
+        got = host_read_text("/proc/version", banner, sizeof(banner));
+        if (got <= 0)
                 return false;
 
         release = string_length(machine.release);
         version = string_length(machine.version);
-        if (memory_compare(banner, head, sizeof(head) - 1) ||
+        prefix = sizeof(head) - 1 + release + 2;
+
+        /*  The fixed compares below are exact byte spans, not string ones,
+            and the builder scan after them has only the terminator to stop
+            it. One short read from procfs would put both past what was read
+            and into whatever the frame held, so the record has to be at
+            least as long as the part being matched. */
+        if ((positive)got < prefix ||
+            memory_compare(banner, head, sizeof(head) - 1) ||
             memory_compare(banner + sizeof(head) - 1, machine.release, release) ||
             memory_compare(banner + sizeof(head) - 1 + release, " (", 2))
                 return false;
 
-        who = banner + sizeof(head) - 1 + release + 2;
+        who = banner + prefix;
         while (who[who_length] && who[who_length] != ')')
                 who_length++;
 
