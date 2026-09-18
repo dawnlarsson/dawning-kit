@@ -19344,13 +19344,13 @@ static COLD fn sed_stdio_follow(positive length, bool checked)
                 sed_output_state |= waiting ? SED_OUTPUT_PENDING : SED_OUTPUT_MODELLING;
 }
 
-static inline INLINE fn sed_stdio(positive length, bool checked)
+// Every write on the line path is a checked one, so both states are tested;
+// the unchecked = and r go through sed_stdio_follow themselves.
+static inline INLINE fn sed_stdio(positive length)
 {
-        p8 wanted = checked ? (p8)(SED_OUTPUT_MODELLING | SED_OUTPUT_PENDING)
-                            : (p8)SED_OUTPUT_MODELLING;
-
-        if (unlikely(sed_output_state & wanted))
-                sed_stdio_follow(length, checked);
+        if (unlikely(sed_output_state &
+                     (SED_OUTPUT_MODELLING | SED_OUTPUT_PENDING)))
+                sed_stdio_follow(length, true);
 }
 
 // = prints its number and delimiter through one unchecked printf.
@@ -19480,7 +19480,7 @@ static fn sed_put_reader_line(b32 which)
                 return;
 
         sed_output_start();
-        sed_stdio(length + 1, true);
+        sed_stdio(length + 1);
         text_put(sed_reader_line, length);
         text_put_character('\n');
 }
@@ -20472,7 +20472,7 @@ static COLD fn sed_output_start_slow()
 {
         if (sed_output_state & SED_OUTPUT_UNTERMINATED)
         {
-                sed_stdio(1, true);
+                sed_stdio(1);
                 text_put_character(text_delimiter);
                 sed_output_state &= (p8)~SED_OUTPUT_UNTERMINATED;
         }
@@ -20487,9 +20487,9 @@ static inline INLINE fn sed_output_start()
 static COLD fn sed_output_follow(positive length, bool ended)
 {
         sed_output_start_slow();
-        sed_stdio(length, true);
+        sed_stdio(length);
         if (ended)
-                sed_stdio(1, true);
+                sed_stdio(1);
 }
 
 static inline INLINE fn sed_output(p8 address_to bytes, positive length, bool ended)
@@ -20586,7 +20586,7 @@ static fn sed_put_listing(positive wrap)
 
                 if (at == sed_pattern.length)
                 {
-                        sed_stdio(2, true);
+                        sed_stdio(2);
                         text_put_character('$');
                         text_put_character('\n');
                         return;
@@ -20627,13 +20627,13 @@ static fn sed_put_listing(positive wrap)
                 // that marks it takes the last column of the line.
                 if (wrap && column + width > wrap - 1)
                 {
-                        sed_stdio(2, true);
+                        sed_stdio(2);
                         text_put_character('\\');
                         text_put_character('\n');
                         column = 0;
                 }
 
-                sed_stdio(width, true);
+                sed_stdio(width);
                 text_put(shown, width);
                 column += width;
         }
@@ -20660,7 +20660,7 @@ static fn sed_put_file(string_address name)
 
                 if (first)
                         sed_output_start();
-                sed_stdio((positive)got, true);
+                sed_stdio((positive)got);
                 text_put(window, (positive)got);
                 if (window[got - 1] != text_delimiter)
                         sed_output_state |= SED_OUTPUT_UNTERMINATED;
@@ -22357,6 +22357,14 @@ static positive sort_budget;
 static positive sort_line_cost;
 static bool sort_failed;
 
+// What a stage says when the arena refuses it room: the run is over, and the
+// caller has its false back without writing the reason down again.
+static bool sort_exhausted()
+{
+        sort_failed = true;
+        return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+}
+
 static fn sort_stages_ready()
 {
         for (b32 stage = 0; stage <= sort_key_count; stage++)
@@ -23800,10 +23808,7 @@ static bool sort_hold(sort_view address_to view, sort_view address_to into)
 {
         if (!array_store_reserve(sort_held, sort_held_room, 0,
                                  view->length + SORT_SLACK, 4096))
-        {
-                sort_failed = true;
-                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
-        }
+                return sort_exhausted();
 
         memory_copy_apart(sort_held, view->at, view->length);
         address_to into = address_to view;
@@ -23874,11 +23879,7 @@ static bool sort_source_next(sort_source address_to source)
                                 if (source->quiet)
                                         source->error = -12;
                                 else
-                                {
-                                        sort_failed = true;
-                                        string_diagnostic(&text_diagnostic, 0, null,
-                                                          "out of memory");
-                                }
+                                        sort_exhausted();
 
                                 return source->have = false;
                         }
@@ -23986,10 +23987,7 @@ static bool sort_sources_open(positive first, positive count)
 
         if (!array_store_reserve(sort_sources, sort_sources_room, 0, count, 64) ||
             !array_store_reserve(sort_tree, sort_tree_room, 0, count + 1, 64))
-        {
-                sort_failed = true;
-                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
-        }
+                return sort_exhausted();
 
         for (positive at = 0; at < count; at++)
         {
@@ -24782,8 +24780,7 @@ static bool sort_entries_room_for(positive count)
                                 count, 64))
                 return true;
 
-        sort_failed = true;
-        return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+        return sort_exhausted();
 }
 
 static fn sort_entries_close(positive first, positive count)
@@ -24862,10 +24859,7 @@ static bool sort_line_record(positive stop)
 {
         if (!array_store_reserve(sort_lines, sort_lines_room, sort_lines_count,
                                  sort_lines_count + 1, 65536))
-        {
-                sort_failed = true;
-                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
-        }
+                return sort_exhausted();
 
         sort_line address_to line = sort_lines + sort_lines_count;
 
@@ -24986,10 +24980,7 @@ static bool sort_split()
         positive total = 0;
 
         if (!array_store_reserve(sort_split_counts, sort_split_counts_room, 0, blocks, 64))
-        {
-                sort_failed = true;
-                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
-        }
+                return sort_exhausted();
 
         parallel_for(sort_lines_count_job, address_of region, blocks, bytes);
 
@@ -25003,10 +24994,7 @@ static bool sort_split()
 
         if (!array_store_reserve(sort_lines, sort_lines_room, sort_lines_count,
                                  sort_lines_count + total + 1, 65536))
-        {
-                sort_failed = true;
-                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
-        }
+                return sort_exhausted();
 
         parallel_for(sort_lines_fill_job, address_of region, blocks, bytes);
 
@@ -25088,9 +25076,7 @@ static bool sort_gather(positive handle, string_address name)
                                         continue;
                                 }
 
-                                sort_failed = true;
-                                return string_diagnostic(&text_diagnostic, 0, null,
-                                                         "out of memory");
+                                return sort_exhausted();
                         }
 
                         continue;
