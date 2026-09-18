@@ -4843,6 +4843,35 @@ static bipolar file_replace_decided_at(
     bipolar to_directory, string_address to,
     file_facts address_to from_facts, file_facts address_to replaced);
 
+/*
+        A staged object that was just made and opened is bound back to its own
+        entry before anything else may touch it. A bind that will not take
+        leaves nothing behind: the entry it made goes, the handle is closed
+        and the transaction is released, and the caller is told why rather
+        than handed a descriptor nothing owns. A file, a directory and a
+        device node are all staged this way and differ only in the flag the
+        entry goes by, so the undo is written once.
+*/
+static bipolar file_stage_bound(system_path_stage address_to stage,
+                                bipolar handle, positive remove_flags)
+{
+        bipolar bound = handle < 0 ? handle
+                                   : system_path_stage_bind_opened(stage, handle);
+
+        if (bound >= 0)
+                return handle;
+
+        if (handle >= 0)
+        {
+                (void)system_path_remove_opened_at(
+                    stage->directory, SYSTEM_PATH_STAGE_LEAF, handle,
+                    remove_flags);
+                system_close(handle);
+        }
+        system_path_stage_release(stage);
+        return bound;
+}
+
 /* Create a regular output inside its private transaction from the first
    syscall.  No public temporary name exists for another directory writer to
    rename or hard-link before bytes or privileged metadata are applied. */
@@ -4859,22 +4888,7 @@ static bipolar file_stage_file_open_at(
             stage->directory, SYSTEM_PATH_STAGE_LEAF,
             FILE_WRITE | FILE_EXCLUSIVE | O_NOFOLLOW | O_CLOEXEC,
             mode);
-        bipolar bound = handle < 0 ? handle
-                                   : system_path_stage_bind_opened(
-                                         stage, handle);
-        if (bound < 0)
-        {
-                if (handle >= 0)
-                {
-                        (void)system_path_remove_opened_at(
-                            stage->directory, SYSTEM_PATH_STAGE_LEAF,
-                            handle, 0);
-                        system_close(handle);
-                }
-                system_path_stage_release(stage);
-                return bound;
-        }
-        return handle;
+        return file_stage_bound(stage, handle, 0);
 }
 
 /* Finish one protected output transaction.  The writable descriptor is
@@ -5341,22 +5355,7 @@ static bipolar file_copy_directory_open(
         bipolar handle = system_open_at(
             protected->directory, SYSTEM_PATH_STAGE_LEAF,
             FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-        bipolar bound = handle < 0 ? handle
-                                   : system_path_stage_bind_opened(
-                                         protected, handle);
-        if (bound < 0)
-        {
-                if (handle >= 0)
-                {
-                        (void)system_path_remove_opened_at(
-                            protected->directory, SYSTEM_PATH_STAGE_LEAF,
-                            handle, AT_REMOVEDIR);
-                        system_close(handle);
-                }
-                system_path_stage_release(protected);
-                return bound;
-        }
-        return handle;
+        return file_stage_bound(protected, handle, AT_REMOVEDIR);
 }
 /* Open a just-created object and bind that descriptor back to its directory
    entry before any caller applies metadata.  Creation syscalls do not return
@@ -24569,22 +24568,7 @@ static bipolar file_stage_claim_at(
 
         bipolar handle = file_stage_open_verified_at(
             stage->directory, SYSTEM_PATH_STAGE_LEAF, expected);
-        bipolar bound = handle < 0 ? handle
-                                   : system_path_stage_bind_opened(
-                                         stage, handle);
-        if (bound < 0)
-        {
-                if (handle >= 0)
-                {
-                        (void)system_path_remove_opened_at(
-                            stage->directory, SYSTEM_PATH_STAGE_LEAF,
-                            handle, 0);
-                        system_close(handle);
-                }
-                system_path_stage_release(stage);
-                return bound;
-        }
-        return handle;
+        return file_stage_bound(stage, handle, 0);
 }
 
 // -n, -u and -i are three ways of asking the same question about a
