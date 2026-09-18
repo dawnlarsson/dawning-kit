@@ -15980,8 +15980,6 @@ typedef struct
 } grep_set;
 
 static grep_set grep_literals;
-static rx_dfa grep_dfa;
-static rx_dfa_cache grep_dfa_cache;
 
 // False when some branch is not bytes alone, or the set would not fit.
 static bool grep_set_gather(const regex_program address_to program, p16 node,
@@ -17385,7 +17383,7 @@ static bool grep_one(grep_run address_to run, string_address name)
         if (spanning)
         {
                 grep_plan plan = grep_plan_of(
-                    run, machine ? address_of grep_dfa_cache : null, limit,
+                    run, machine ? address_of regex_dfa_cache : null, limit,
                     first_mode);
 
                 plan.plain = plain_output;
@@ -17741,7 +17739,7 @@ static bool grep_one(grep_run address_to run, string_address name)
                                 }
 
                                 grep_plan rest = grep_plan_of(
-                                    run, machine ? address_of grep_dfa_cache : null,
+                                    run, machine ? address_of regex_dfa_cache : null,
                                     TEXT_UNSET, true);
                                 positive complex = 0;
 
@@ -18200,7 +18198,7 @@ static rx_match address_to grep_slot_match(grep_slot address_to scratch)
 static rx_dfa_cache address_to grep_slot_dfa(grep_slot address_to scratch)
 {
         if (scratch == grep_slots)
-                return address_of grep_dfa_cache;
+                return address_of regex_dfa_cache;
 
         if (!scratch->dfa)
         {
@@ -18209,7 +18207,7 @@ static rx_dfa_cache address_to grep_slot_dfa(grep_slot address_to scratch)
                 if (!dfa)
                         return null;
 
-                rx_dfa_attach(dfa, address_of grep_dfa);
+                rx_dfa_attach(dfa, address_of regex_dfa);
                 scratch->dfa = dfa;
         }
 
@@ -19216,11 +19214,11 @@ static b32 text_grep()
         // Only where no string answers the whole question, and after the
         // delimiter is known, since it is a column of the machine.
         bool machine = !never && !literal_proves && !literal_set &&
-                       rx_dfa_compile(address_of grep_dfa, address_of regex_current,
+                       rx_dfa_compile(address_of regex_dfa, address_of regex_current,
                                       regex_boundary, text_delimiter);
 
         if (machine)
-                rx_dfa_attach(address_of grep_dfa_cache, address_of grep_dfa);
+                rx_dfa_attach(address_of regex_dfa_cache, address_of regex_dfa);
 
         // -m0 can match nothing, and a -f file with no patterns in it matches
         // nothing either. GNU answers both before it opens a single file --

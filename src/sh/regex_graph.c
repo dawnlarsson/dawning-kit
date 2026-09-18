@@ -1543,6 +1543,21 @@ static rx_match regex_match = {
     .work_limit = 100000000,
 };
 
+/*
+        The deterministic machine, and the states it has learned.
+
+        It lives here rather than beside grep because grep is not the only
+        caller that could use one: every utility that asks this file a
+        question shares one automaton and one cache, and a second pair would
+        be another two and a half megabytes of nothing for whichever of them
+        is not running. No two of them run in one process at a time, so the
+        pair is only ever built for one program; which program that is, is
+        remembered beside it so a caller that finds somebody else's
+        automaton loaded knows to build its own.
+*/
+static rx_dfa regex_dfa;
+static rx_dfa_cache regex_dfa_cache;
+
 #define regex_slots regex_match.slots
 #define regex_group_count regex_current.groups
 #define regex_boundary regex_current.boundary
