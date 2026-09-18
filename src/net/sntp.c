@@ -93,14 +93,6 @@ static inline INLINE bipolar sntp_now_ns(void)
         return sntp_timespec_ns(now[0], now[1]);
 }
 
-static inline INLINE fn sntp_put32(p8 address_to field, p32 value)
-{
-        field[0] = (p8)(value >> 24);
-        field[1] = (p8)(value >> 16);
-        field[2] = (p8)(value >> 8);
-        field[3] = (p8)value;
-}
-
 static inline INLINE fn sntp_put_stamp(p8 address_to field, p64 unix_seconds,
                                        p64 unix_nsec)
 {
@@ -108,8 +100,8 @@ static inline INLINE fn sntp_put_stamp(p8 address_to field, p64 unix_seconds,
         p32 ntp_frac =
             (p32)(((p64)unix_nsec << 32) / SNTP_NANOSECONDS);
 
-        sntp_put32(field, ntp_seconds);
-        sntp_put32(field + 4, ntp_frac);
+        network_store_32(field, ntp_seconds);
+        network_store_32(field + 4, ntp_frac);
 }
 
 static inline INLINE PURE bipolar sntp_load_stamp(p8 address_to field)

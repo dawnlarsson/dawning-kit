@@ -2104,10 +2104,7 @@ static fn crypto_mgf1_sha256(p8 address_to seed, positive seed_length,
                 p8 count[4];
                 positive take;
 
-                count[0] = (p8)(counter >> 24);
-                count[1] = (p8)(counter >> 16);
-                count[2] = (p8)(counter >> 8);
-                count[3] = (p8)counter;
+                network_store_32(count, counter);
                 crypto_sha256_open(address_of hash);
                 crypto_sha256_write(address_of hash, seed, seed_length);
                 crypto_sha256_write(address_of hash, count, 4);
