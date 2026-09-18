@@ -5,9 +5,9 @@
         a string looks like is. A program is handed characters, not scancodes
         and a table of its own.
 
-        The layout is US ASCII, which is what the machine has been booted with
-        so far. Anything beyond it -- other layouts, dead keys, compose -- is a
-        larger table and the same shape of code.
+        The default table is US ASCII. `moonwater keyboard` switches the live
+        map; AltGr is level 3, not compositor Alt. Dead keys and compose are
+        still a larger table and the same shape of code.
 */
 
 /*
@@ -18,6 +18,10 @@
         what code exists for.
 */
 #define KEY_TABLE 128
+#define KEY_LEVELS 4
+#ifndef KEY_102ND
+#define KEY_102ND 86
+#endif
 
 /*
         Backspace is DEL, not BS.
@@ -26,15 +30,24 @@
         and treats 8 as an ordinary character -- so sending 8 echoed as ^H and
         made the line two characters longer for every press.
 */
-// Columns are plain character, shifted character, and a modifier bit. Right
-// modifiers use the high nibble so releasing either side preserves the other.
-static const unsigned char key_map[KEY_TABLE][3] = {
-    [KEY_LEFTSHIFT] = {0, 0, WINDOW_KEY_SHIFT},
-    [KEY_RIGHTSHIFT] = {0, 0, WINDOW_KEY_SHIFT << 4},
-    [KEY_LEFTCTRL] = {0, 0, WINDOW_KEY_CONTROL},
-    [KEY_RIGHTCTRL] = {0, 0, WINDOW_KEY_CONTROL << 4},
-    [KEY_LEFTALT] = {0, 0, WINDOW_KEY_ALT},
-    [KEY_RIGHTALT] = {0, 0, WINDOW_KEY_ALT << 4},
+static unsigned char key_mod[KEY_TABLE] = {
+    [KEY_LEFTSHIFT] = WINDOW_KEY_SHIFT,
+    [KEY_RIGHTSHIFT] = WINDOW_KEY_SHIFT << 4,
+    [KEY_LEFTCTRL] = WINDOW_KEY_CONTROL,
+    [KEY_RIGHTCTRL] = WINDOW_KEY_CONTROL << 4,
+    [KEY_LEFTALT] = WINDOW_KEY_ALT,
+    [KEY_RIGHTALT] = WINDOW_KEY_ALTGR,
+};
+static unsigned short key_live[KEY_TABLE][KEY_LEVELS];
+static char canvas_layout_held[8] = "us";
+static bool key_ready;
+
+struct key_patch {
+        unsigned char code;
+        unsigned short level[KEY_LEVELS];
+};
+
+static const unsigned short key_us[KEY_TABLE][KEY_LEVELS] = {
     [1] = {27, 27},
     [2] = {'1', '!'},  [3] = {'2', '@'},  [4] = {'3', '#'},
     [5] = {'4', '$'},  [6] = {'5', '%'},  [7] = {'6', '^'},
@@ -55,7 +68,6 @@ static const unsigned char key_map[KEY_TABLE][3] = {
     [47] = {'v', 'V'}, [48] = {'b', 'B'}, [49] = {'n', 'N'},
     [50] = {'m', 'M'}, [51] = {',', '<'}, [52] = {'.', '>'},
     [53] = {'/', '?'}, [55] = {'*', '*'}, [57] = {' ', ' '},
-    // The keypad as NumLock on, there being nothing here that turns it off.
     [71] = {'7', '7'}, [72] = {'8', '8'}, [73] = {'9', '9'},
     [74] = {'-', '-'}, [75] = {'4', '4'}, [76] = {'5', '5'},
     [77] = {'6', '6'}, [78] = {'+', '+'}, [79] = {'1', '1'},
@@ -63,19 +75,227 @@ static const unsigned char key_map[KEY_TABLE][3] = {
     [83] = {'.', '.'}, [96] = {'\n', '\n'}, [98] = {'/', '/'},
 };
 
+static const struct key_patch key_uk[] = {
+        {3, {'2', '"', '@'}},
+        {4, {'3', 0xA3, 0xA3}},
+        {40, {'\'', '@'}},
+        {41, {'`', 0xAC, 0xA6}},
+        {43, {'#', '~', '\\'}},
+        {KEY_102ND, {'\\', '|'}},
+};
+
+static const struct key_patch key_de[] = {
+        {12, {0xDF, '?', '\\'}},
+        {13, {0xB4, '`'} },
+        {21, {'z', 'Z'}},
+        {26, {0xFC, 0xDC}},
+        {27, {'+', '*', '~'}},
+        {39, {0xF6, 0xD6}},
+        {40, {0xE4, 0xC4}},
+        {41, {'^', 0xB0}},
+        {43, {'#', '\''}},
+        {44, {'y', 'Y'}},
+        {KEY_102ND, {'<', '>', '|'}},
+        {8, {'7', '/', '{'}},
+        {9, {'8', '(', '['}},
+        {10, {'9', ')', ']'}},
+        {11, {'0', '=', '}'}},
+        {16, {'q', 'Q', '@'}},
+        {18, {'e', 'E', 0x20AC}},
+};
+
+static const struct key_patch key_se[] = {
+        {3, {'2', '"', '@'}},
+        {4, {'3', '#', 0xA3}},
+        {5, {'4', 0xA4, '$'}},
+        {6, {'5', '%', 0x20AC}},
+        {7, {'6', '&'}},
+        {8, {'7', '/', '{'}},
+        {9, {'8', '(', '['}},
+        {10, {'9', ')', ']'}},
+        {11, {'0', '=', '}'}},
+        {12, {'+', '?', '\\'}},
+        {13, {0xB4, '`'}},
+        {26, {0xE5, 0xC5}},
+        {27, {0xA8, '^', '~'}},
+        {39, {0xF6, 0xD6}},
+        {40, {0xE4, 0xC4}},
+        {41, {0xA7, 0xBD}},
+        {43, {'\'', '*'}},
+        {53, {'-', '_'}},
+        {KEY_102ND, {'<', '>', '|'}},
+};
+
+static const struct key_patch key_no[] = {
+        {3, {'2', '"', '@'}},
+        {4, {'3', '#', 0xA3}},
+        {5, {'4', 0xA4, '$'}},
+        {6, {'5', '%', 0x20AC}},
+        {8, {'7', '/', '{'}},
+        {9, {'8', '(', '['}},
+        {10, {'9', ')', ']'}},
+        {11, {'0', '=', '}'}},
+        {12, {'+', '?'}},
+        {13, {'\\', '`', 0xB4}},
+        {26, {0xE5, 0xC5}},
+        {39, {0xF8, 0xD8}},
+        {40, {0xE6, 0xC6}},
+        {41, {'|', 0xA7}},
+        {43, {'\'', '*'}},
+        {53, {'-', '_'}},
+        {KEY_102ND, {'<', '>'}},
+};
+
+static const struct key_patch key_fr[] = {
+        {2, {'&', '1'}},
+        {3, {0xE9, '2', '~'}},
+        {4, {'"', '3', '#'}},
+        {5, {'\'', '4', '{'}},
+        {6, {'(', '5', '['}},
+        {7, {'-', '6', '|'}},
+        {8, {0xE8, '7', '`'}},
+        {9, {'_', '8', '\\'}},
+        {10, {0xE7, '9', '^'}},
+        {11, {0xE0, '0', '@'}},
+        {12, {')', 0xB0, ']'}},
+        {13, {'=', '+', '}'}},
+        {16, {'a', 'A'}},
+        {17, {'z', 'Z'}},
+        {18, {'e', 'E', 0x20AC}},
+        {26, {'^', 0xA8}},
+        {27, {'$', 0xA3, 0xA4}},
+        {30, {'q', 'Q'}},
+        {38, {'m', 'M'}},
+        {39, {0xF9, '%'}},
+        {40, {'*', 0xB5}},
+        {44, {'w', 'W'}},
+        {50, {',', '?'}},
+        {51, {';', '.'}},
+        {52, {':', '/'}},
+        {53, {'!', 0xA7}},
+        {KEY_102ND, {'<', '>'}},
+};
+
+static const struct key_patch key_es[] = {
+        {3, {'2', '"', '@'}},
+        {4, {'3', 0xB7, '#'}},
+        {8, {'7', '/', '{'}},
+        {11, {'0', '=', '}'}},
+        {12, {'\'', '?'}},
+        {13, {0xA1, 0xBF}},
+        {26, {'`', '^', '['}},
+        {27, {'+', '*', ']'}},
+        {39, {0xF1, 0xD1}},
+        {40, {0xB4, 0xA8, '{'}},
+        {41, {0xBA, 0xAA, '\\'}},
+        {43, {0xE7, 0xC7, '}'}},
+        {KEY_102ND, {'<', '>'}},
+        {18, {'e', 'E', 0x20AC}},
+};
+
+static const struct key_patch key_it[] = {
+        {3, {'2', '"'}},
+        {4, {'3', 0xA3}},
+        {8, {'7', '{'}},
+        {9, {'8', '['}},
+        {10, {'9', ']'}},
+        {11, {'0', '}'}},
+        {12, {'\'', '?'}},
+        {13, {0xEC, '^'}},
+        {26, {0xE8, 0xE9, '['}},
+        {27, {'+', '*', ']'}},
+        {39, {0xF2, 0xE7, '@'}},
+        {40, {0xE0, 0xB0, '#'}},
+        {41, {'\\', '|'}},
+        {43, {0xF9, 0xA7}},
+        {KEY_102ND, {'<', '>'}},
+        {18, {'e', 'E', 0x20AC}},
+};
+
+static void key_load_us(void)
+{
+        memset(key_live, 0, sizeof(key_live));
+        memcpy(key_live, key_us, sizeof(key_us));
+}
+
+static void key_patch_apply(const struct key_patch *patch, unsigned int count)
+{
+        unsigned int at;
+
+        for (at = 0; at < count; at++)
+                memcpy(key_live[patch[at].code], patch[at].level,
+                       sizeof(patch[at].level));
+}
+
+static const char *canvas_layout_name(void)
+{
+        if (!key_ready)
+        {
+                key_load_us();
+                key_ready = true;
+                strscpy(canvas_layout_held, "us", sizeof(canvas_layout_held));
+        }
+        return canvas_layout_held;
+}
+
+static long canvas_layout_set(const char *name)
+{
+        key_load_us();
+        key_ready = true;
+        if (!name || !strcmp(name, "us"))
+        {
+                strscpy(canvas_layout_held, "us", sizeof(canvas_layout_held));
+                return 0;
+        }
+        if (!strcmp(name, "uk") || !strcmp(name, "gb"))
+        {
+                key_patch_apply(key_uk, ARRAY_SIZE(key_uk));
+        }
+        else if (!strcmp(name, "de"))
+                key_patch_apply(key_de, ARRAY_SIZE(key_de));
+        else if (!strcmp(name, "se") || !strcmp(name, "sv") || !strcmp(name, "fi"))
+                key_patch_apply(key_se, ARRAY_SIZE(key_se));
+        else if (!strcmp(name, "no") || !strcmp(name, "nb") || !strcmp(name, "dk"))
+                key_patch_apply(key_no, ARRAY_SIZE(key_no));
+        else if (!strcmp(name, "fr"))
+                key_patch_apply(key_fr, ARRAY_SIZE(key_fr));
+        else if (!strcmp(name, "es"))
+                key_patch_apply(key_es, ARRAY_SIZE(key_es));
+        else if (!strcmp(name, "it"))
+                key_patch_apply(key_it, ARRAY_SIZE(key_it));
+        else
+        {
+                key_load_us();
+                strscpy(canvas_layout_held, "us", sizeof(canvas_layout_held));
+                return -EINVAL;
+        }
+        strscpy(canvas_layout_held, name, sizeof(canvas_layout_held));
+        return 0;
+}
+
 // The input handler owns each device's held bits and the list to combine.
 static unsigned int *keyboard_held(struct input_handle *handle);
 static unsigned int keyboard_modifiers(void);
 
-static CONST unsigned int key_character(unsigned int code, unsigned int modifiers)
+static unsigned int key_character(unsigned int code, unsigned int modifiers)
 {
-        char c;
+        unsigned int level = 0;
+        unsigned int c;
+        const unsigned short (*map)[KEY_LEVELS] = key_ready ? key_live : key_us;
 
         if (code >= KEY_TABLE)
                 return 0;
-
-        c = key_map[code][!!(modifiers & WINDOW_KEY_SHIFT)];
-
+        if (modifiers & WINDOW_KEY_ALTGR)
+                level += 2;
+        if (modifiers & WINDOW_KEY_SHIFT)
+                level += 1;
+        c = map[code][level];
+        if (!c && level)
+                c = map[code][level & 2];
+        if (!c && (modifiers & WINDOW_KEY_SHIFT))
+                c = map[code][1];
+        if (!c)
+                c = map[code][0];
         if (!c)
                 return 0;
 
@@ -83,9 +303,9 @@ static CONST unsigned int key_character(unsigned int code, unsigned int modifier
         // which is the whole of why a terminal wants a modifier at all.
         if ((modifiers & WINDOW_KEY_CONTROL) &&
             (unsigned int)((c | 0x20) - 'a') < 26)
-                return (unsigned int)c & 0x1f;
+                return c & 0x1f;
 
-        return (unsigned int)(unsigned char)c;
+        return c;
 }
 
 /*
@@ -102,7 +322,7 @@ static PURE _Bool key_typed(unsigned int code, unsigned int flags)
         if (!(flags & WINDOW_KEY_DOWN))
                 return false;
 
-        return code >= KEY_TABLE || !key_map[code][2];
+        return code >= KEY_TABLE || !key_mod[code];
 }
 
 /*
@@ -121,7 +341,7 @@ static void keyboard_event(struct input_handle *handle, unsigned int code, int v
                 return;
 
         modifiers = (unsigned int)atomic_read(&desktop.modifiers);
-        bit = code < KEY_TABLE ? key_map[code][2] : 0;
+        bit = code < KEY_TABLE ? key_mod[code] : 0;
 
         if (bit)
         {
@@ -138,7 +358,8 @@ static void keyboard_event(struct input_handle *handle, unsigned int code, int v
                         a modifier state that never happened. Keep Alt in the
                         flags of ordinary keys, but consume its own events.
                 */
-                if (bit & (WINDOW_KEY_ALT | (WINDOW_KEY_ALT << 4)))
+                if (bit & (WINDOW_KEY_ALT | (WINDOW_KEY_ALT << 4) |
+                           WINDOW_KEY_ALTGR))
                 {
                         if (!(modifiers & WINDOW_KEY_ALT) &&
                             atomic_xchg(&desktop.focus_cycling, 0))

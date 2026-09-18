@@ -1978,6 +1978,7 @@ static b32 host_machine_run(void)
 
         if (!host_starts((string_address)verdict, "ask "))
                 radio_restore();
+        locale_restore();
 
         for (i = 0; i < MOONWATER_HOOKS; i++) {
                 exec_function_readonly_set((string_address)moonwater_hook[i].name);
@@ -1997,6 +1998,7 @@ static b32 host_machine_run(void)
                 const struct moonwater_pair *pair;
 
                 radio_recover();
+                locale_recover();
                 failed = host_machine_wait(device, address_of control);
                 if (failed == -4 || failed == -ETIMEDOUT)
                         continue;

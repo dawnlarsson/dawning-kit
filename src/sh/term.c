@@ -710,6 +710,37 @@ static fn emit(unsigned int byte)
         emit_bytes(address_of one, 1);
 }
 
+static fn SPARE emit_character(unsigned int character)
+{
+        p8 bytes[4];
+        positive n = 0;
+
+        if (character < 0x80)
+        {
+                emit(character);
+                return;
+        }
+        if (character < 0x800)
+        {
+                bytes[n++] = (p8)(0xC0 | (character >> 6));
+                bytes[n++] = (p8)(0x80 | (character & 0x3F));
+        }
+        else if (character < 0x10000)
+        {
+                bytes[n++] = (p8)(0xE0 | (character >> 12));
+                bytes[n++] = (p8)(0x80 | ((character >> 6) & 0x3F));
+                bytes[n++] = (p8)(0x80 | (character & 0x3F));
+        }
+        else
+        {
+                bytes[n++] = (p8)(0xF0 | (character >> 18));
+                bytes[n++] = (p8)(0x80 | ((character >> 12) & 0x3F));
+                bytes[n++] = (p8)(0x80 | ((character >> 6) & 0x3F));
+                bytes[n++] = (p8)(0x80 | (character & 0x3F));
+        }
+        emit_bytes(bytes, n);
+}
+
 #define emit_literal(text) \
         emit_bytes((address_any)(text), sizeof(text) - 1)
 
@@ -3348,7 +3379,7 @@ static fn SPARE term_key_modified(unsigned int character, unsigned int code,
                 if (held & WINDOW_KEY_ALT)
                         emit(27);
 
-                emit(character);
+                emit_character(character);
                 return;
         }
 

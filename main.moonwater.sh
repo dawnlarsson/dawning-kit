@@ -19,7 +19,8 @@
 # The builtin init always forgets userspace. A kiosk is this file:
 # wipe, then one already-installed command. /bowls stays. A machine
 # that should keep /home omits moonwater_init, and bind init runs.
-# Wifi, bluetooth and the internet preference survive wipe on /root.
+# Wifi, bluetooth, the internet preference, timezone, ntp and keyboard
+# survive wipe on /root.
 
 # Once, after boot has written a verdict. $1 is that line: live,
 # disk <name>, or ask ...
@@ -36,6 +37,8 @@ function moonwater_init {
     # moonwater wifi on
     # moonwater bluetooth on
     # moonwater priority internet wired
+    # moonwater timezone Europe/Stockholm
+    # moonwater keyboard se
     ;;
   esac
 }

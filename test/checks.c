@@ -33671,8 +33671,8 @@ int main(int words, char **word)
             holds it in an int. %G and %g both follow it over.
           - %Y, %C and %G are unpadded, which is what glibc 2.44 does and is
             not what musl does; see the note in src/standard/clock.c.
-          - localtime is gmtime, because there is no zoneinfo. glibc with
-            TZ unset would disagree with that on any machine that is not in
+          - localtime follows POSIX TZ (and /root/timezone). Unset, it is UTC.
+            glibc with TZ unset would disagree on a machine that is not in
             London, which is why the reference side was pinned to TZ=UTC.
 
         The other four are strptime, and three of the four are glibc defects
@@ -35069,10 +35069,27 @@ static fn check_live(void)
                 copy = address_to broken;
                 good((string_address) "timegm undoes gmtime",
                      timegm(address_of copy) == first);
-                good((string_address) "localtime is gmtime here",
+                setenv((string_address) "TZ", (string_address) "UTC", 1);
+                tzset();
+                good((string_address) "localtime is UTC when TZ is",
                      localtime(address_of first)->tm_hour == copy.tm_hour);
                 good((string_address) "and says so",
-                     broken->tm_gmtoff == 0 && broken->tm_isdst == 0);
+                     localtime(address_of first)->tm_gmtoff == 0 &&
+                         localtime(address_of first)->tm_isdst == 0);
+                setenv((string_address) "TZ", (string_address) "CET-1", 1);
+                tzset();
+                {
+                        time_t epoch = 0;
+
+                        good((string_address) "CET-1 is an hour east",
+                             localtime(address_of epoch)->tm_hour == 1 &&
+                                 localtime(address_of epoch)->tm_gmtoff == 3600);
+                }
+                good((string_address) "Stockholm maps to CET",
+                     clock_zone_posix((string_address) "Europe/Stockholm") &&
+                         clock_zone_posix((string_address) "Europe/Stockholm")[0] == 'C');
+                setenv((string_address) "TZ", (string_address) "UTC", 1);
+                tzset();
         }
 
         same_signed((string_address) "difftime",
@@ -35133,6 +35150,9 @@ static fn check_failure_and_precision(void)
 b32 main(void)
 {
         tm epoch = {0};
+
+        setenv((string_address) "TZ", (string_address) "UTC", 1);
+        tzset();
         good("strptime refuses signed epoch overflow",
              !strptime("9223372036854775808", "%s", &epoch));
         good("strptime refuses wrapped epoch overflow",

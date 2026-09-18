@@ -141,6 +141,7 @@
 #define WINDOW_KEY_ALT 8u
 #define WINDOW_KEY_POINTER 16u
 #define WINDOW_KEY_POINTER_MOVE 32u
+#define WINDOW_KEY_ALTGR 64u
 
 struct window_key
 {

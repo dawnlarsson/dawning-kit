@@ -1029,18 +1029,37 @@ static long report_canvas(struct canvas_control __user *out)
         struct canvas_control control;
         unsigned int request;
         long answer = 0;
+        char layout[16];
 
         if (copy_from_user(&control, out, sizeof(control)))
                 return -EFAULT;
 
         request = control.request;
-        if (request > SPARK_CANVAS_OFF)
+        memcpy(layout, control.master_command, sizeof(layout));
+        layout[sizeof(layout) - 1] = 0;
+        if (request > SPARK_CANVAS_LAYOUT)
                 return -EINVAL;
-        if (request != SPARK_CANVAS_STATUS && !capable(CAP_SYS_ADMIN))
+        if (request == SPARK_CANVAS_LAYOUT)
+        {
+                if (layout[0] && !capable(CAP_SYS_ADMIN))
+                        return -EPERM;
+        }
+        else if (request != SPARK_CANVAS_STATUS && !capable(CAP_SYS_ADMIN))
                 return -EPERM;
 
         memset(&control, 0, sizeof(control));
         control.request = request;
+
+        if (request == SPARK_CANVAS_LAYOUT)
+        {
+                if (layout[0])
+                        answer = canvas_layout_set(layout);
+                strscpy(control.master_command, canvas_layout_name(),
+                        sizeof(control.master_command));
+                if (copy_to_user(out, &control, sizeof(control)))
+                        return -EFAULT;
+                return answer;
+        }
 
         if (request == SPARK_CANVAS_ON)
                 answer = canvas_turn_on(&control);

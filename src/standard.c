@@ -6529,13 +6529,9 @@ b32 system(string_address command)
         this file can be merged before or after the formatting family and in
         either order with the rest.
 
-        Timezones, said plainly: this system has no zoneinfo, nothing reads
-        /etc/localtime, and localtime is gmtime. Every broken-down time this
-        file produces carries tm_isdst zero, tm_gmtoff zero, and tm_zone
-        "UTC", because that is what it actually computed -- not because the
-        machine happens to be in London. A program that needs a real local
-        time will need a TZif parser; until one exists the local spellings
-        share the UTC entries below.
+        Timezones, said plainly: there is no TZif database. TZ and
+        /root/timezone hold a POSIX TZ string, or an IANA name this file maps
+        to one. Unset, localtime is UTC. tm_gmtoff is seconds east of UTC.
 */
 
 /*
@@ -6600,7 +6596,7 @@ typedef struct timeval
 
         tm_year counts from 1900 and tm_mon from zero, which are the two
         traps in the whole of <time.h>. tm_yday is zero for the first of
-        January. tm_isdst is always zero here; see the note about zoneinfo.
+        January. tm_isdst and tm_gmtoff follow TZ.
 */
 typedef struct tm
 {
@@ -7034,12 +7030,9 @@ tm address_to gmtime(const time_t address_to stamp)
         return gmtime_r(stamp, address_of clock_broken_shared);
 }
 
-//      Without a timezone database, the local reentrant spelling is UTC too.
-tm address_to localtime_r(const time_t address_to stamp, tm address_to into)
-        __attribute__((alias("gmtime_r")));
-
-tm address_to localtime(const time_t address_to stamp)
-        __attribute__((alias("gmtime")));
+tm address_to localtime_r(const time_t address_to stamp, tm address_to into);
+tm address_to localtime(const time_t address_to stamp);
+string_address clock_zone_posix(string_address name);
 
 /*
         Two shapes of decimal field, which between them are every number this
@@ -8800,19 +8793,491 @@ p8 address_to strptime(const char address_to input, const char address_to format
 }
 
 /*
-        The three globals tzset is supposed to set, set to what they actually
-        are here. tzset itself is a call that does nothing, which is honest:
-        there is no zone to load, and a program that calls it is asking for
-        the timezone to be re-read rather than for anything to change.
+        POSIX TZ, and a short IANA map so a machine can say Europe/Stockholm
+        without shipping zoneinfo. Unset TZ and a missing /root/timezone stay
+        UTC, which is what the calendar tests pin.
 */
-static const char address_to clock_zone_names[2] = {"UTC", "UTC"};
+#define CLOCK_ZONE_PATH "/root/timezone"
+#define CLOCK_TZ_NAME 16
+
+static char clock_std_name[CLOCK_TZ_NAME] = "UTC";
+static char clock_dst_name[CLOCK_TZ_NAME] = "UTC";
+static const char address_to clock_zone_names[2] = {clock_std_name,
+                                                    clock_dst_name};
 
 const char address_to address_to tzname = clock_zone_names;
 b64 timezone = 0;
 b32 daylight = 0;
 
+static bipolar clock_std_west;
+static bipolar clock_dst_west;
+static bool clock_has_dst;
+static p8 clock_dst_kind[2];
+static p8 clock_dst_month[2];
+static p8 clock_dst_week[2];
+static p8 clock_dst_dow[2];
+static p16 clock_dst_day[2];
+static bipolar clock_dst_at[2];
+
+static const struct
+{
+        char name[40];
+        char posix[40];
+} clock_zones[] = {
+        {"UTC", "UTC0"},
+        {"GMT", "GMT0"},
+        {"Zulu", "UTC0"},
+        {"CET", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"EET", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
+        {"WET", "WET0WEST,M3.5.0/1,M10.5.0"},
+        {"Europe/London", "GMT0BST,M3.5.0/1,M10.5.0"},
+        {"Europe/Dublin", "IST-1GMT0,M10.5.0,M3.5.0/1"},
+        {"Europe/Lisbon", "WET0WEST,M3.5.0/1,M10.5.0"},
+        {"Europe/Paris", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Berlin", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Amsterdam", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Brussels", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Madrid", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Rome", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Stockholm", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Oslo", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Copenhagen", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Helsinki", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
+        {"Europe/Athens", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
+        {"Europe/Warsaw", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Prague", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Vienna", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Zurich", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"Europe/Moscow", "MSK-3"},
+        {"Europe/Istanbul", "TRT-3"},
+        {"America/New_York", "EST5EDT,M3.2.0,M11.1.0"},
+        {"America/Chicago", "CST6CDT,M3.2.0,M11.1.0"},
+        {"America/Denver", "MST7MDT,M3.2.0,M11.1.0"},
+        {"America/Los_Angeles", "PST8PDT,M3.2.0,M11.1.0"},
+        {"America/Phoenix", "MST7"},
+        {"America/Anchorage", "AKST9AKDT,M3.2.0,M11.1.0"},
+        {"America/Honolulu", "HST10"},
+        {"Pacific/Honolulu", "HST10"},
+        {"America/Toronto", "EST5EDT,M3.2.0,M11.1.0"},
+        {"America/Vancouver", "PST8PDT,M3.2.0,M11.1.0"},
+        {"America/Sao_Paulo", "BRT3"},
+        {"America/Mexico_City", "CST6"},
+        {"America/Argentina/Buenos_Aires", "ART3"},
+        {"Asia/Tokyo", "JST-9"},
+        {"Asia/Seoul", "KST-9"},
+        {"Asia/Shanghai", "CST-8"},
+        {"Asia/Hong_Kong", "HKT-8"},
+        {"Asia/Singapore", "SGT-8"},
+        {"Asia/Kolkata", "IST-5:30"},
+        {"Asia/Calcutta", "IST-5:30"},
+        {"Asia/Dubai", "GST-4"},
+        {"Asia/Jakarta", "WIB-7"},
+        {"Asia/Bangkok", "ICT-7"},
+        {"Asia/Taipei", "CST-8"},
+        {"Australia/Sydney", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
+        {"Australia/Melbourne", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
+        {"Australia/Perth", "AWST-8"},
+        {"Australia/Adelaide", "ACST-9:30ACDT,M10.1.0,M4.1.0/3"},
+        {"Pacific/Auckland", "NZST-12NZDT,M9.5.0,M4.1.0/3"},
+        {"Africa/Johannesburg", "SAST-2"},
+        {"Africa/Cairo", "EET-2"},
+        {"Africa/Lagos", "WAT-1"},
+        {"Atlantic/Reykjavik", "GMT0"},
+        {"se", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"sv", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"de", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"fr", "CET-1CEST,M3.5.0,M10.5.0/3"},
+        {"gb", "GMT0BST,M3.5.0/1,M10.5.0"},
+        {"uk", "GMT0BST,M3.5.0/1,M10.5.0"},
+        {"us/eastern", "EST5EDT,M3.2.0,M11.1.0"},
+        {"us/central", "CST6CDT,M3.2.0,M11.1.0"},
+        {"us/mountain", "MST7MDT,M3.2.0,M11.1.0"},
+        {"us/pacific", "PST8PDT,M3.2.0,M11.1.0"},
+};
+
+static bool clock_zone_same(string_address a, string_address b)
+{
+        p8 ca;
+        p8 cb;
+
+        while (a[0] && b[0])
+        {
+                ca = (p8)a[0];
+                cb = (p8)b[0];
+                if (ca >= 'A' && ca <= 'Z')
+                        ca += 32;
+                if (cb >= 'A' && cb <= 'Z')
+                        cb += 32;
+                if (ca != cb)
+                        return false;
+                a++;
+                b++;
+        }
+        return a[0] == 0 && b[0] == 0;
+}
+
+string_address clock_zone_posix(string_address name)
+{
+        positive at;
+
+        if (!name || !name[0])
+                return (string_address) "UTC0";
+        for (at = 0; at < array_count(clock_zones); at++)
+                if (clock_zone_same(name, (string_address)clock_zones[at].name))
+                        return (string_address)clock_zones[at].posix;
+        return null;
+}
+
+static bool clock_tz_name(const char address_to address_to at, p8 address_to into,
+                          positive room)
+{
+        const char address_to s = address_to at;
+        positive n = 0;
+
+        if (s[0] == '<')
+        {
+                s++;
+                while (s[0] && s[0] != '>' && n + 1 < room)
+                        into[n++] = (p8)s++[0];
+                if (s[0] != '>')
+                        return false;
+                s++;
+        }
+        else
+        {
+                while (((s[0] >= 'A' && s[0] <= 'Z') ||
+                        (s[0] >= 'a' && s[0] <= 'z')) &&
+                       n + 1 < room)
+                        into[n++] = (p8)s++[0];
+                if (n < 3)
+                        return false;
+        }
+        into[n] = 0;
+        address_to at = s;
+        return n > 0;
+}
+
+static bool clock_tz_offset(const char address_to address_to at, bipolar address_to west)
+{
+        const char address_to s = address_to at;
+        bipolar sign = 1;
+        bipolar hours = 0;
+        bipolar minutes = 0;
+        bipolar seconds = 0;
+
+        if (s[0] == '+')
+                s++;
+        else if (s[0] == '-')
+        {
+                sign = -1;
+                s++;
+        }
+        if (s[0] < '0' || s[0] > '9')
+                return false;
+        while (s[0] >= '0' && s[0] <= '9')
+                hours = hours * 10 + (s++[0] - '0');
+        if (hours > 24)
+                return false;
+        if (s[0] == ':')
+        {
+                s++;
+                if (s[0] < '0' || s[0] > '9')
+                        return false;
+                minutes = s++[0] - '0';
+                if (s[0] < '0' || s[0] > '9')
+                        return false;
+                minutes = minutes * 10 + (s++[0] - '0');
+                if (minutes > 59)
+                        return false;
+                if (s[0] == ':')
+                {
+                        s++;
+                        if (s[0] < '0' || s[0] > '9')
+                                return false;
+                        seconds = s++[0] - '0';
+                        if (s[0] < '0' || s[0] > '9')
+                                return false;
+                        seconds = seconds * 10 + (s++[0] - '0');
+                        if (seconds > 59)
+                                return false;
+                }
+        }
+        address_to west = sign * (hours * 3600 + minutes * 60 + seconds);
+        address_to at = s;
+        return true;
+}
+
+static bool clock_tz_rule(const char address_to address_to at, p8 which)
+{
+        const char address_to s = address_to at;
+        bipolar time = 2 * 3600;
+
+        clock_dst_at[which] = time;
+        if (s[0] == 'M')
+        {
+                bipolar month = 0;
+                bipolar week = 0;
+                bipolar dow = 0;
+
+                s++;
+                while (s[0] >= '0' && s[0] <= '9')
+                        month = month * 10 + (s++[0] - '0');
+                if (s[0] != '.' || month < 1 || month > 12)
+                        return false;
+                s++;
+                while (s[0] >= '0' && s[0] <= '9')
+                        week = week * 10 + (s++[0] - '0');
+                if (s[0] != '.' || week < 1 || week > 5)
+                        return false;
+                s++;
+                if (s[0] < '0' || s[0] > '6')
+                        return false;
+                dow = s++[0] - '0';
+                clock_dst_kind[which] = 2;
+                clock_dst_month[which] = (p8)month;
+                clock_dst_week[which] = (p8)week;
+                clock_dst_dow[which] = (p8)dow;
+        }
+        else if (s[0] == 'J')
+        {
+                bipolar day = 0;
+
+                s++;
+                while (s[0] >= '0' && s[0] <= '9')
+                        day = day * 10 + (s++[0] - '0');
+                if (day < 1 || day > 365)
+                        return false;
+                clock_dst_kind[which] = 1;
+                clock_dst_day[which] = (p16)day;
+        }
+        else
+        {
+                bipolar day = 0;
+
+                if (s[0] < '0' || s[0] > '9')
+                        return false;
+                while (s[0] >= '0' && s[0] <= '9')
+                        day = day * 10 + (s++[0] - '0');
+                if (day > 365)
+                        return false;
+                clock_dst_kind[which] = 0;
+                clock_dst_day[which] = (p16)day;
+        }
+        if (s[0] == '/')
+        {
+                s++;
+                if (!clock_tz_offset(address_of s, address_of time))
+                        return false;
+                clock_dst_at[which] = time;
+        }
+        address_to at = s;
+        return true;
+}
+
+static bool clock_tz_parse(string_address text)
+{
+        const char address_to s = (const char address_to)text;
+
+        clock_has_dst = false;
+        clock_std_west = 0;
+        clock_dst_west = 0;
+        string_copy_bounded(clock_std_name, "UTC", CLOCK_TZ_NAME);
+        string_copy_bounded(clock_dst_name, "UTC", CLOCK_TZ_NAME);
+        if (!s || !s[0])
+                return true;
+        if (!clock_tz_name(address_of s, clock_std_name, CLOCK_TZ_NAME))
+                return false;
+        if (!clock_tz_offset(address_of s, address_of clock_std_west))
+                return false;
+        string_copy_bounded(clock_dst_name, clock_std_name, CLOCK_TZ_NAME);
+        if (!s[0] || s[0] == ',')
+        {
+                timezone = clock_std_west;
+                daylight = 0;
+                return s[0] == 0;
+        }
+        if (!clock_tz_name(address_of s, clock_dst_name, CLOCK_TZ_NAME))
+                return false;
+        if (s[0] && s[0] != ',')
+        {
+                if (!clock_tz_offset(address_of s, address_of clock_dst_west))
+                        return false;
+        }
+        else
+                clock_dst_west = clock_std_west - 3600;
+        if (s[0] != ',')
+        {
+                timezone = clock_std_west;
+                daylight = 1;
+                clock_has_dst = false;
+                return s[0] == 0;
+        }
+        s++;
+        if (!clock_tz_rule(address_of s, 0) || s[0] != ',')
+                return false;
+        s++;
+        if (!clock_tz_rule(address_of s, 1) || s[0])
+                return false;
+        clock_has_dst = true;
+        daylight = 1;
+        timezone = clock_std_west;
+        return true;
+}
+
+static bool clock_year_leap(bipolar year)
+{
+        return clock_days_from_civil(year, 3, 1) -
+                   clock_days_from_civil(year, 2, 1) ==
+               29;
+}
+
+static bipolar clock_tz_local_seconds(bipolar year, p8 which)
+{
+        bipolar days;
+
+        if (clock_dst_kind[which] == 2)
+        {
+                bipolar w0 = clock_weekday_from_days(
+                    clock_days_from_civil(year, clock_dst_month[which], 1));
+                bipolar day = 1 + (clock_dst_dow[which] + 7 - w0) % 7 +
+                              (clock_dst_week[which] - 1) * 7;
+                static const p8 month_days[] = {0,  31, 28, 31, 30, 31, 30,
+                                                31, 31, 30, 31, 30, 31};
+                p8 last = month_days[clock_dst_month[which]];
+
+                if (clock_dst_month[which] == 2 && clock_year_leap(year))
+                        last = 29;
+                while (day > last)
+                        day -= 7;
+                days = clock_days_from_civil(year, clock_dst_month[which], day);
+        }
+        else if (clock_dst_kind[which] == 1)
+        {
+                bipolar day = clock_dst_day[which];
+
+                if (day > 59 && clock_year_leap(year))
+                        day++;
+                days = clock_days_from_civil(year, 1, 1) + day - 1;
+        }
+        else
+                days = clock_days_from_civil(year, 1, 1) + clock_dst_day[which];
+        return days * CLOCK_SECONDS_PER_DAY + clock_dst_at[which];
+}
+
+static bool clock_tz_in_dst(bipolar utc)
+{
+        bipolar wall;
+        bipolar year;
+        bipolar month;
+        bipolar day;
+        bipolar start;
+        bipolar stop;
+        bipolar start_utc;
+        bipolar stop_utc;
+
+        if (!clock_has_dst)
+                return false;
+        wall = utc - clock_std_west;
+        clock_civil_from_days(clock_floor_divide(wall, CLOCK_SECONDS_PER_DAY),
+                              address_of year, address_of month, address_of day);
+        start = clock_tz_local_seconds(year, 0);
+        stop = clock_tz_local_seconds(year, 1);
+        start_utc = start + clock_std_west;
+        stop_utc = stop + clock_dst_west;
+        if (start_utc < stop_utc)
+                return utc >= start_utc && utc < stop_utc;
+        return utc >= start_utc || utc < stop_utc;
+}
+
+static fn clock_tz_reset(void)
+{
+        clock_has_dst = false;
+        clock_std_west = 0;
+        clock_dst_west = 0;
+        timezone = 0;
+        daylight = 0;
+        string_copy_bounded(clock_std_name, "UTC", CLOCK_TZ_NAME);
+        string_copy_bounded(clock_dst_name, "UTC", CLOCK_TZ_NAME);
+}
+
+static fn clock_tz_load_file(void)
+{
+        p8 text[80];
+        bipolar handle;
+        bipolar got;
+        positive used = 0;
+
+        handle = system_call_4(syscall(openat), AT_FDCWD,
+                               (positive)(string_address)CLOCK_ZONE_PATH,
+                               O_RDONLY | O_CLOEXEC, 0);
+        if (handle < 0)
+                return;
+        do
+                got = system_call_3(syscall(read), (positive)handle,
+                                    (positive)(text + used),
+                                    sizeof(text) - 1 - used);
+        while (got == -4);
+        system_call_1(syscall(close), (positive)handle);
+        if (got < 0)
+                return;
+        used += (positive)got;
+        while (used && (text[used - 1] == '\n' || text[used - 1] == '\r'))
+                used--;
+        text[used] = 0;
+        if (!used)
+                return;
+        {
+                string_address posix = clock_zone_posix(text);
+
+                if (!posix)
+                        posix = text;
+                if (!clock_tz_parse(posix))
+                        clock_tz_reset();
+        }
+}
+
 fn tzset(void)
 {
+        string_address value = getenv((string_address) "TZ");
+        string_address posix;
+
+        clock_tz_reset();
+        if (value)
+        {
+                posix = clock_zone_posix(value);
+                if (!posix)
+                        posix = value;
+                if (!clock_tz_parse(posix))
+                        clock_tz_reset();
+                return;
+        }
+        clock_tz_load_file();
+}
+
+tm address_to localtime_r(const time_t address_to stamp, tm address_to into)
+{
+        bipolar utc;
+        bipolar west;
+        bool dst;
+
+        if (is_null(stamp) || is_null(into))
+                return null;
+        tzset();
+        utc = (bipolar)(address_to stamp);
+        dst = clock_tz_in_dst(utc);
+        west = dst ? clock_dst_west : clock_std_west;
+        if (!clock_break_down(utc - west, into))
+                return null;
+        into->tm_isdst = dst ? 1 : 0;
+        into->tm_gmtoff = -west;
+        into->tm_zone = dst ? clock_dst_name : clock_std_name;
+        timezone = west;
+        return into;
+}
+
+tm address_to localtime(const time_t address_to stamp)
+{
+        return localtime_r(stamp, address_of clock_broken_shared);
 }
 
 #endif // KERNEL_MODE / STANDARD_NO_PLATFORM

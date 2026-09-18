@@ -142,6 +142,9 @@ static b32 host_machine_run(void);
 static b32 host_radio(string_address address_to arguments, positive count);
 static fn radio_restore(void);
 static fn radio_recover(void);
+static b32 host_locale(string_address address_to arguments, positive count);
+static fn locale_restore(void);
+static fn locale_recover(void);
 static b32 host_wipe(void);
 
 static b32 host_refuse(string_address text, string_address name)
@@ -957,6 +960,7 @@ static b32 host_take(host_install address_to install, bool update)
                       BOWL_ROOT_DIRECTORY, install->disk);
         log_flush();
         radio_restore();
+        locale_restore();
         return 0;
 }
 
@@ -3097,12 +3101,13 @@ static b32 host_canvas(string_address address_to arguments, positive count)
 }
 
 #include "radio.c"
+#include "locale.c"
 
 /*
         Forget userspace, keep the machine.
 
-        /home is emptied. /root is emptied except the overlay and the radio
-        files an image update already leaves on the data partition. /bowls
+        /home is emptied. /root is emptied except the overlay and the files
+        an image update already leaves on the data partition. /bowls
         stays: that is the pre-installed software a kiosk starts after wipe.
         The builtin machine script calls this at every settled boot.
 */
@@ -3113,6 +3118,10 @@ static string_address host_wipe_keep[] = {
     "bluetooth",
     "bluetooth.power",
     "internet",
+    "timezone",
+    "ntp",
+    "ntp.server",
+    "keyboard",
 };
 
 static bool host_wipe_kept_name(string_address name)
@@ -3523,6 +3532,12 @@ static fn host_usage_write(writer out)
                       "          " TERM_DIM "remember a bluetooth device" TERM_RESET "\n"
                       TERM_BOLD "  priority internet [wired|wifi]" TERM_RESET
                       " " TERM_DIM "which link when both are up [wired]" TERM_RESET "\n"
+                      TERM_BOLD "  timezone [ZONE]" TERM_RESET
+                      "             " TERM_DIM "the clock's zone [UTC]" TERM_RESET "\n"
+                      TERM_BOLD "  ntp [on|off]" TERM_RESET
+                      "                " TERM_DIM "set the clock from the network [on]" TERM_RESET "\n"
+                      TERM_BOLD "  keyboard [LAYOUT]" TERM_RESET
+                      "           " TERM_DIM "Canvas keys: us uk de se no dk fi fr es it" TERM_RESET "\n"
                       TERM_BOLD "  wipe" TERM_RESET
                       "                        " TERM_DIM "forget /home and /root, keep the machine" TERM_RESET "\n"
                       "\n"
@@ -3638,6 +3653,23 @@ static b32 host_status(void)
         if (host_canvas_request(SPARK_CANVAS_STATUS, address_of canvas) >= 0)
                 host_canvas_write("  ", address_of canvas);
 
+        {
+                p8 zone[80];
+                p8 keyboard[16];
+
+                locale_word(LOCALE_ZONE_PATH, zone, sizeof(zone));
+                locale_word(LOCALE_KEYBOARD_PATH, keyboard, sizeof(keyboard));
+                string_format(log, "  timezone %s\n",
+                              zone[0] ? (string_address)zone
+                                      : (string_address) "UTC");
+                string_format(log, "  ntp %s\n",
+                              locale_ntp_wanted() ? (string_address) "on"
+                                                  : (string_address) "off");
+                string_format(log, "  keyboard %s\n",
+                              keyboard[0] ? (string_address)keyboard
+                                          : (string_address) "us");
+        }
+
         (void)host_bind_each("  ", false);
 
         host_settings_session(address_of settings);
@@ -3735,6 +3767,10 @@ static b32 host_main()
         if (string_equals(verb, "wifi") || string_equals(verb, "bluetooth") ||
             string_equals(verb, "priority"))
                 return host_radio(arguments, count);
+
+        if (string_equals(verb, "timezone") || string_equals(verb, "ntp") ||
+            string_equals(verb, "keyboard"))
+                return host_locale(arguments, count);
 
         if (string_equals(verb, "wipe") && count == 2)
                 return host_wipe();

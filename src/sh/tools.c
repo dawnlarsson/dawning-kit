@@ -353,7 +353,7 @@ static bool logger_rfc_flags(logger_control address_to control,
 }
 
 /* A moment spelled by a strftime format, terminated; empty when the moment
-   has no spelling. There is no timezone database, so local time is UTC. */
+   has no spelling. date stays UTC; the zone is moonwater timezone. */
 static positive tools_clock_text(p8 address_to into, positive room,
                                  string_address format, b64 seconds)
 {

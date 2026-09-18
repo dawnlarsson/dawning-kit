@@ -548,7 +548,9 @@ static unsigned int keyboard_modifiers(void)
 
         list_for_each_entry(pointer, &pointer_handles, link)
                 held |= pointer->modifiers;
-        return (held | (held >> 4)) & (WINDOW_KEY_SHIFT | WINDOW_KEY_CONTROL | WINDOW_KEY_ALT);
+        return ((held | (held >> 4)) &
+                (WINDOW_KEY_SHIFT | WINDOW_KEY_CONTROL | WINDOW_KEY_ALT)) |
+               (held & WINDOW_KEY_ALTGR);
 }
 
 static HOT void pointer_event(struct input_handle *handle, unsigned int type,
@@ -648,7 +650,7 @@ static COLD void pointer_disconnect(struct input_handle *handle)
 
         spin_lock_irqsave(&desktop.input_lock, flags);
         for (unsigned int code = 0; code < KEY_TABLE; code++)
-                if (pointer->modifiers & key_map[code][2])
+                if (pointer->modifiers & key_mod[code])
                         keyboard_event(handle, code, 0);
         list_del(&pointer->link);
         spin_unlock_irqrestore(&desktop.input_lock, flags);

@@ -742,6 +742,7 @@ static long canvas_turn_on(struct canvas_control *answer)
 
         if (taken)
         {
+                (void)canvas_layout_name();
                 bind_fire(SPARK_BIND_CANVAS_ON);
                 return 0;
         }

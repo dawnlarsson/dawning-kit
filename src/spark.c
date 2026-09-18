@@ -348,11 +348,13 @@ _Static_assert(sizeof(struct snapshot_request) == 32,
         is master of a card, and names that program.
 
         The state below comes back whatever the request answers. Reading it
-        needs nothing; on and off need CAP_SYS_ADMIN.
+        needs nothing; on and off need CAP_SYS_ADMIN. LAYOUT reads the
+        compositor keymap without a capability; setting it needs CAP_SYS_ADMIN.
 */
 #define SPARK_CANVAS_STATUS 0u
 #define SPARK_CANVAS_ON 1u
 #define SPARK_CANVAS_OFF 2u
+#define SPARK_CANVAS_LAYOUT 3u
 #define SPARK_CANVAS_OUTPUTS 4u
 
 struct canvas_output_state {
