@@ -3355,6 +3355,23 @@ static fn awk_expect(b32 what, string_address complaint)
         awk_next_token();
 }
 
+/*
+        A program is input, and the parser descends once for every level of
+        nesting in it: 30,000 nested parentheses, braces, ! or $ is more
+        native stack than the process was given, and the fault is the whole
+        of the diagnostic. The measure awk_call is already held to answers
+        this too, and it asks the machine rather than counting levels, since
+        a level of one parser is not the same number of bytes as a level of
+        another.
+*/
+static fn awk_parse_room()
+{
+        b32 here = 0;
+
+        if (awk_stack_start - (positive)address_of here > awk_stack_room)
+                awk_syntax("nested too deeply");
+}
+
 static fn awk_skip_newlines()
 {
         while (awk_token == T_NEWLINE)
@@ -3420,6 +3437,8 @@ static bool awk_statement_ends();
 static awk_node address_to awk_primary()
 {
         awk_node address_to node;
+
+        awk_parse_room();
 
         switch (awk_token)
         {
@@ -3707,6 +3726,8 @@ static awk_node address_to awk_power_level()
 
 static awk_node address_to awk_unary()
 {
+        awk_parse_room();
+
         if (awk_token == T_MINUS || awk_token == T_PLUS || awk_token == T_NOT)
         {
                 b32 which = awk_token;
@@ -4091,6 +4112,8 @@ static awk_node address_to awk_loop_body(awk_node address_to node)
 static awk_node address_to awk_statement()
 {
         awk_node address_to node;
+
+        awk_parse_room();
 
         switch (awk_token)
         {
