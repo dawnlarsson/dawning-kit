@@ -2319,7 +2319,17 @@ static fn host_settings_save(host_settings address_to settings)
         host_settings_keep(settings);
 }
 
-static fn host_settings_list(host_settings address_to settings, positive which)
+/*
+        One list said twice.
+
+        `moonwater init` writes it as log lines of its own, and `moonwater
+        status` sets the same three answers -- the hook that took the list
+        away, the entries, or the sentence for an empty one -- under a
+        heading on the session page. Only the frame around them differs,
+        and a page is one block of output, so it does not flush per list.
+*/
+static fn host_settings_lines(host_settings address_to settings, positive which,
+                              bool page)
 {
         p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
         host_setting setting;
@@ -2329,10 +2339,12 @@ static fn host_settings_list(host_settings address_to settings, positive which)
 
         if (line)
         {
-                string_format(log, host_label "%s is %s:%p\n",
+                string_format(log, page ? "  %s: %s:%p\n"
+                                        : host_label "%s is %s:%p\n",
                               host_lists[which].verb, host_machine_where(),
                               (positive)line);
-                log_flush();
+                if (!page)
+                        log_flush();
                 return;
         }
 
@@ -2341,16 +2353,21 @@ static fn host_settings_list(host_settings address_to settings, positive which)
                 if (setting.entry.list != host_lists[which].list)
                         continue;
 
+                if (page && !shown)
+                        string_format(log, "  %s:\n", host_lists[which].verb);
+
                 host_settings_text(text, address_of setting);
-                string_format(log, "%p  %s\n", (positive)setting.entry.id, text);
+                string_format(log, page ? "    %p  %s\n" : "%p  %s\n",
+                              (positive)setting.entry.id, text);
                 shown++;
         }
 
         if (!shown)
-                string_format(log, host_label "%s: %s\n", host_lists[which].verb,
-                              host_lists[which].empty);
+                string_format(log, page ? "  %s: %s\n" : host_label "%s: %s\n",
+                              host_lists[which].verb, host_lists[which].empty);
 
-        log_flush();
+        if (!page)
+                log_flush();
 }
 
 static b32 host_settings_refused(string_address verb, string_address why,
@@ -2394,7 +2411,7 @@ static b32 host_settings_apply(host_settings address_to settings,
 
         if (count == 2)
         {
-                host_settings_list(settings, which);
+                host_settings_lines(settings, which, false);
                 return HOST_SETTINGS_SHOWN;
         }
 
@@ -3558,40 +3575,6 @@ static b32 host_usage(void)
         return 2;
 }
 
-static fn host_status_events(host_settings address_to settings, positive which)
-{
-        p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
-        host_setting setting;
-        positive at = 0;
-        positive shown = 0;
-        p16 line = host_machine_hook_line(host_lists[which].hook);
-
-        if (line)
-        {
-                string_format(log, "  %s: %s:%p\n", host_lists[which].verb,
-                              host_machine_where(),
-                              (positive)line);
-                return;
-        }
-
-        while (host_settings_next(settings, address_of at, address_of setting))
-        {
-                if (setting.entry.list != host_lists[which].list)
-                        continue;
-
-                if (!shown)
-                        string_format(log, "  %s:\n", host_lists[which].verb);
-
-                host_settings_text(text, address_of setting);
-                string_format(log, "    %p  %s\n", (positive)setting.entry.id, text);
-                shown++;
-        }
-
-        if (!shown)
-                string_format(log, "  %s: %s\n", host_lists[which].verb,
-                              host_lists[which].empty);
-}
-
 /*
         This session as one page: the build, the disks, Canvas, the bound
         events, init and exit, then the commands. Nothing is a log line;
@@ -3679,10 +3662,10 @@ static b32 host_status(void)
         (void)host_bind_each("  ", false);
 
         host_settings_session(address_of settings);
-        host_status_events(address_of settings, 0);
+        host_settings_lines(address_of settings, 0, true);
         string_format(log, "  init mount is %s\n",
                       settings.flags & SPARK_SETTINGS_MOUNT_OFF ? "off" : "on");
-        host_status_events(address_of settings, 1);
+        host_settings_lines(address_of settings, 1, true);
 
         string_format(log, "\n");
         host_usage_write(log);
