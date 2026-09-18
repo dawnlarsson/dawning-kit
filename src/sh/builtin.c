@@ -13211,12 +13211,16 @@ bool trap_debug_here;
 static fn trap_refused(string_address word)
 {
         //      dash writes this one without naming the script first, alone
-        //      among its diagnostics.
+        //      among its diagnostics, so the line goes in front of only one
+        //      of the two and this is not shell_told.
         if (shell_bash_compat)
-        shell_told(shell_bash_compat
-                       ? "trap: %s: invalid signal specification\n"
-                       : "trap: %s: bad trap\n",
-            word);
+                shell_diagnostic_where();
+
+        string_format(log_error,
+                      shell_bash_compat
+                          ? "trap: %s: invalid signal specification\n"
+                          : "trap: %s: bad trap\n",
+                      word);
 }
 
 bipolar trap_number(string_address word)
