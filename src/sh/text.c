@@ -1018,6 +1018,20 @@ static fn text_file_add(b32 which)
         text_files[text_files_count++] = which;
 }
 
+/*
+        What every tool says about its operand list before it reads a byte:
+        the option scan has to have finished, and the array of operand
+        indexes has a ceiling. A process may legally name more files than
+        that array will hold, and the answer is the refusal GNU prints rather
+        than a tail quietly left off.
+*/
+static bool text_took(file_taking address_to taking)
+{
+        return file_take(taking) &&
+               !(text_files_failed &&
+                 string_diagnostic(&text_diagnostic, 1, null, "too many operands"));
+}
+
 static string_address text_file_name(positive which)
 {
         if (text_file_list)
@@ -2102,7 +2116,7 @@ static b32 text_comm()
         text_delimiter = '\n';
         utility_arena.used = 0;
 
-        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         if (text_files_count < 2)
@@ -2334,7 +2348,7 @@ static b32 text_paste()
         text_delimiter = '\n';
         utility_arena.used = 0;
 
-        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         if (taking.flags & FILE_FLAG('z'))
@@ -3062,7 +3076,7 @@ static b32 text_join()
         join_order_mode = RELATION_ORDER_DEFAULT;
         join_separator = -1;
 
-        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+        if (!text_took(address_of taking))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "invalid option value"));
 
         if (text_files_count < 2)
@@ -4342,10 +4356,7 @@ static b32 text_wc()
         text_begin("wc");
         wc_total_mode = WC_TOTAL_AUTO;
 
-        if (!file_take(address_of taking))
-                return text_done(1);
-
-        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -4666,7 +4677,7 @@ static b32 text_sum()
 
         text_begin("sum");
 
-        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         bool sysv = sum_option == 's';
@@ -4866,7 +4877,7 @@ static b32 text_tac()
 
         text_begin("tac");
 
-        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         string_address separator = file_option_value(address_of taking, 's');
@@ -4926,10 +4937,7 @@ static b32 text_rev()
 
         text_begin("rev");
 
-        if (!file_take(address_of taking))
-                return text_done(1);
-
-        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         if (taking.flags & FILE_FLAG('0'))
@@ -5711,10 +5719,7 @@ static inline INLINE b32 text_head_tail(bool tail)
         text_count_tail = tail;
         text_count_marked = false;
 
-        if (!file_take(address_of taking))
-                return text_done(1);
-
-        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         string_address misplaced = text_digits_misplaced(address_of taking);
@@ -5897,10 +5902,7 @@ static b32 text_tee()
         text_begin("tee");
         tee_leave = false;
 
-        if (!file_take(address_of taking))
-                return text_done(1);
-
-        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         bool append = (taking.flags & FILE_FLAG('a')) != 0;
@@ -6175,10 +6177,7 @@ static b32 text_nl()
         nl_step = 1;
         nl_join = 1;
 
-        if (!file_take(address_of taking))
-                return text_done(1);
-
-        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         positive width = nl_width;
@@ -6920,7 +6919,7 @@ static inline INLINE b32 text_tabs(bool unexpand)
         text_begin(taking.program);
         text_tab_reset();
 
-        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         if (!text_tab_prescan(address_of taking, unexpand))
@@ -7501,7 +7500,7 @@ static b32 text_fmt()
         text_begin("fmt");
         utility_arena.used = 0;
 
-        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         if (taking.flags & FILE_FLAG('W'))
@@ -9448,7 +9447,7 @@ static b32 text_ptx()
         text_begin("ptx");
         utility_arena.used = 0;
 
-        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -10332,7 +10331,7 @@ static b32 text_column()
         text_begin("column");
         utility_arena.used = 0;
 
-        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -11701,7 +11700,7 @@ static b32 text_colcrt()
         text_begin("colcrt");
         terminal_colcrt_no_under = false;
 
-        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         bool no_under = terminal_colcrt_no_under ||
@@ -11816,7 +11815,7 @@ static b32 text_ul()
 
         text_begin("ul");
 
-        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         string_address terminal_ul_option = file_option_value(&taking, taking.last);
@@ -12241,10 +12240,7 @@ static b32 text_fold()
         text_begin("fold");
         fold_counting = 0;
 
-        if (!file_take(address_of taking))
-                return text_done(1);
-
-        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         positive width = 80;
@@ -12709,10 +12705,7 @@ static b32 text_cut()
         text_begin("cut");
         text_list_reset();
 
-        if (!file_take(address_of taking))
-                return text_done(1);
-
-        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -13609,10 +13602,7 @@ static b32 text_tr()
 
         text_begin("tr");
 
-        if (!file_take(address_of taking))
-                return text_done(1);
-
-        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -14022,10 +14012,7 @@ static b32 text_uniq()
         uniq_all_how = UNIQ_GROUP_NONE;
         uniq_group_how = UNIQ_GROUP_SEPARATE;
 
-        if (!file_take(address_of taking))
-                return text_done(1);
-
-        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
+        if (!text_took(address_of taking))
                 return text_done(1);
 
         positive flags = taking.flags;
