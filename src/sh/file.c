@@ -3498,6 +3498,94 @@ static fn walk_batch_end(walk_batch address_to batch)
         array_store_release(batch->text, batch->text_room, batch->text_used);
 }
 
+#if defined(LIBRARY_THREAD_RUNTIME)
+/*
+        Every parallel walk in this file keeps its tree as nodes that are a
+        header of its own shape followed by the whole path the node names, so
+        a job holds one allocation and reads the path out of it rather than
+        climbing back up the parents to spell it. What differs between find,
+        du, chmod, chown, cp and rm is only the header; taking the memory and
+        joining the parent's path with one name is the same work every time
+        and is done here. The header comes in as the offset of the path
+        inside it, which is the number that is right by construction rather
+        than by every walk happening to end its struct the same way, and is
+        zeroed for the caller to fill in what it alone knows. A parent whose
+        path already ends in a slash -- an operand written "dir/" -- takes no
+        second one, and a root, whose parent is nothing or whose path is
+        empty, is the name by itself.
+*/
+static address_any file_tree_node_take(address_any parent, positive header,
+                                       positive parent_length,
+                                       string_address name, positive name_length,
+                                       positive address_to length_taken)
+{
+        p8 address_to above = parent ? (p8 address_to)parent + header : null;
+        positive joint = above && parent_length && above[parent_length - 1] != '/';
+        positive length = (above ? parent_length + joint : 0) + name_length;
+        p8 address_to node = memory_take(header + length + 1);
+
+        if (!node)
+                return null;
+
+        memory_fill(node, 0, header);
+
+        p8 address_to path = node + header;
+
+        if (above && parent_length)
+        {
+                memory_copy(path, above, parent_length);
+                if (joint)
+                        path[parent_length] = '/';
+                memory_copy(path + parent_length + joint, name, name_length);
+        }
+        else
+                memory_copy(path, name, name_length);
+        path[length] = end;
+        address_to length_taken = length;
+        return node;
+}
+
+/*
+        A record one job wrote and the whole path it is about after it: the
+        head a node already spells, one name inside that head when the record
+        is about a name, and the NUL the sink reads the path by. Each walk
+        keeps a record of its own shape and is told apart by its size, so the
+        reserve, the join and the count of path bytes the sink steps over are
+        written once here. The count goes back through the caller's own
+        field, because every record spells it in a place of its own; a record
+        about no name at all -- du's totals, its read failures -- passes no
+        head and carries no path, and the sink steps over the record alone.
+*/
+static bool file_tree_put(parallel_output address_to output,
+                          address_any record, positive size,
+                          p32 address_to path_bytes,
+                          string_address head, positive head_length,
+                          string_address name, positive name_length)
+{
+        positive joint = name_length && head_length && head[head_length - 1] != '/';
+        positive length = head_length + joint + name_length;
+        positive bytes = head ? length + 1 : 0;
+        p8 address_to at = parallel_reserve(output, size + bytes);
+
+        if (!at)
+                return false;
+
+        address_to path_bytes = (p32)bytes;
+        memory_copy(at, record, size);
+        if (!bytes)
+                return true;
+
+        p8 address_to path = at + size;
+
+        memory_copy(path, head, head_length);
+        if (joint)
+                path[head_length] = '/';
+        memory_copy(path + head_length + joint, name, name_length);
+        path[length] = end;
+        return true;
+}
+#endif
+
 /*
         A tool that changes something about a name, and under -R about
         everything beneath it. chmod, chown and chgrp are this one walk with a
@@ -11986,29 +12074,18 @@ static find_tree_node address_to find_tree_node_new(find_tree_node address_to pa
                                                    positive name_length,
                                                    positive depth)
 {
-        positive joint = parent && parent->length &&
-                         parent->path[parent->length - 1] != '/';
-        positive length = (parent ? parent->length + joint : 0) + name_length;
-        find_tree_node address_to node = memory_take(sizeof(find_tree_node) + length + 1);
+        positive length = 0;
+        find_tree_node address_to node = file_tree_node_take(
+            parent, __builtin_offsetof(find_tree_node, path),
+            parent ? parent->length : 0, name, name_length, address_of length);
 
         if (!node)
                 return null;
 
-        memory_fill(node, 0, sizeof(find_tree_node));
         node->parent = parent;
         node->depth = depth;
         node->length = length;
         node->name_at = length - name_length;
-        if (parent)
-        {
-                memory_copy(node->path, parent->path, parent->length);
-                if (joint)
-                        node->path[parent->length] = '/';
-                memory_copy(node->path + parent->length + joint, name, name_length);
-        }
-        else
-                memory_copy(node->path, name, name_length);
-        node->path[length] = end;
         return node;
 }
 
@@ -13419,28 +13496,17 @@ static du_tree_node address_to du_tree_node_new(du_tree_node address_to parent,
                                                string_address name,
                                                positive name_length)
 {
-        positive joint = parent && parent->length &&
-                         parent->path[parent->length - 1] != '/';
-        positive length = (parent ? parent->length + joint : 0) + name_length;
-        du_tree_node address_to node = memory_take(sizeof(du_tree_node) + length + 1);
+        positive length = 0;
+        du_tree_node address_to node = file_tree_node_take(
+            parent, __builtin_offsetof(du_tree_node, path),
+            parent ? parent->length : 0, name, name_length, address_of length);
 
         if (!node)
                 return null;
 
-        memory_fill(node, 0, sizeof(du_tree_node));
         node->parent = parent;
         node->depth = parent ? parent->depth + 1 : 0;
         node->length = length;
-        if (parent)
-        {
-                memory_copy(node->path, parent->path, parent->length);
-                if (joint)
-                        node->path[parent->length] = '/';
-                memory_copy(node->path + parent->length + joint, name, name_length);
-        }
-        else
-                memory_copy(node->path, name, name_length);
-        node->path[length] = end;
         return node;
 }
 
@@ -13469,20 +13535,9 @@ static bool du_tree_put(parallel_output address_to output,
                         du_tree_record address_to record,
                         string_address path, positive length)
 {
-        positive bytes = path ? length + 1 : 0;
-        p8 address_to at = parallel_reserve(output, sizeof(du_tree_record) + bytes);
-
-        if (!at)
-                return false;
-
-        record->path_bytes = (p32)bytes;
-        memory_copy(at, record, sizeof(du_tree_record));
-        if (bytes)
-        {
-                memory_copy(at + sizeof(du_tree_record), path, length);
-                at[sizeof(du_tree_record) + length] = end;
-        }
-        return true;
+        return file_tree_put(output, record, sizeof(du_tree_record),
+                             address_of record->path_bytes, path, length,
+                             (string_address)"", 0);
 }
 
 static fn du_tree_enter(address_any context, address_any node_address,
@@ -14992,27 +15047,16 @@ static chmod_tree_node address_to chmod_tree_node_new(chmod_tree_node address_to
                                                      string_address name,
                                                      positive name_length)
 {
-        positive joint = parent && parent->length &&
-                         parent->path[parent->length - 1] != '/';
-        positive length = (parent ? parent->length + joint : 0) + name_length;
-        chmod_tree_node address_to node = memory_take(sizeof(chmod_tree_node) + length + 1);
+        positive length = 0;
+        chmod_tree_node address_to node = file_tree_node_take(
+            parent, __builtin_offsetof(chmod_tree_node, path),
+            parent ? parent->length : 0, name, name_length, address_of length);
 
         if (!node)
                 return null;
 
-        memory_fill(node, 0, sizeof(chmod_tree_node));
         node->parent = parent;
         node->length = length;
-        if (parent)
-        {
-                memory_copy(node->path, parent->path, parent->length);
-                if (joint)
-                        node->path[parent->length] = '/';
-                memory_copy(node->path + parent->length + joint, name, name_length);
-        }
-        else
-                memory_copy(node->path, name, name_length);
-        node->path[length] = end;
         return node;
 }
 
@@ -15023,24 +15067,10 @@ static bool chmod_tree_put(parallel_output address_to output,
                            chmod_tree_node address_to node,
                            string_address name, positive name_length)
 {
-        positive joint = node->length && node->path[node->length - 1] != '/';
-        positive length = node->length + joint + name_length;
-        p8 address_to at = parallel_reserve(output, sizeof(chmod_outcome) + length + 1);
-
-        if (!at)
-                return false;
-
-        out->path_bytes = (p32)(length + 1);
-        memory_copy(at, out, sizeof(chmod_outcome));
-
-        p8 address_to path = at + sizeof(chmod_outcome);
-
-        memory_copy(path, node->path, node->length);
-        if (joint)
-                path[node->length] = '/';
-        memory_copy(path + node->length + joint, name, name_length);
-        path[length] = end;
-        return true;
+        return file_tree_put(output, out, sizeof(chmod_outcome),
+                             address_of out->path_bytes,
+                             (string_address)node->path, node->length,
+                             name, name_length);
 }
 
 static fn chmod_tree_enter(address_any context, address_any node_address,
@@ -15677,28 +15707,17 @@ static chown_tree_node address_to chown_tree_node_new(chown_tree_node address_to
                                                      string_address name,
                                                      positive name_length)
 {
-        positive joint = parent && parent->length &&
-                         parent->path[parent->length - 1] != '/';
-        positive length = (parent ? parent->length + joint : 0) + name_length;
-        chown_tree_node address_to node = memory_take(sizeof(chown_tree_node) + length + 1);
+        positive length = 0;
+        chown_tree_node address_to node = file_tree_node_take(
+            parent, __builtin_offsetof(chown_tree_node, path),
+            parent ? parent->length : 0, name, name_length, address_of length);
 
         if (!node)
                 return null;
 
-        memory_fill(node, 0, sizeof(chown_tree_node));
         node->parent = parent;
         node->length = length;
         node->name_at = length - name_length;
-        if (parent)
-        {
-                memory_copy(node->path, parent->path, parent->length);
-                if (joint)
-                        node->path[parent->length] = '/';
-                memory_copy(node->path + parent->length + joint, name, name_length);
-        }
-        else
-                memory_copy(node->path, name, name_length);
-        node->path[length] = end;
         return node;
 }
 
@@ -15709,24 +15728,9 @@ static bool chown_tree_put(parallel_output address_to output,
                            string_address head, positive head_length,
                            string_address name, positive name_length)
 {
-        positive joint = name_length && head_length && head[head_length - 1] != '/';
-        positive length = head_length + joint + name_length;
-        p8 address_to at = parallel_reserve(output, sizeof(chown_outcome) + length + 1);
-
-        if (!at)
-                return false;
-
-        out->path_bytes = (p32)(length + 1);
-        memory_copy(at, out, sizeof(chown_outcome));
-
-        p8 address_to path = at + sizeof(chown_outcome);
-
-        memory_copy(path, head, head_length);
-        if (joint)
-                path[head_length] = '/';
-        memory_copy(path + head_length + joint, name, name_length);
-        path[length] = end;
-        return true;
+        return file_tree_put(output, out, sizeof(chown_outcome),
+                             address_of out->path_bytes, head, head_length,
+                             name, name_length);
 }
 
 static fn chown_tree_leaf(address_any context, address_any node_address,
@@ -25077,27 +25081,18 @@ static cp_tree_node address_to cp_tree_node_new(cp_tree_node address_to parent,
                                                string_address name,
                                                positive name_length)
 {
-        positive joint = parent && parent->length ? 1 : 0;
-        positive length = (parent ? parent->length + joint : 0) + name_length;
-        cp_tree_node address_to node = memory_take(sizeof(cp_tree_node) + length + 1);
+        positive length = 0;
+        cp_tree_node address_to node = file_tree_node_take(
+            parent, __builtin_offsetof(cp_tree_node, path),
+            parent ? parent->length : 0, name, name_length, address_of length);
 
         if (!node)
                 return null;
 
-        memory_fill(node, 0, sizeof(cp_tree_node));
         node->parent = parent;
         node->level = parent ? parent->level + 1 : 0;
         node->length = length;
         node->name_at = length - name_length;
-        if (parent && parent->length)
-        {
-                memory_copy(node->path, parent->path, parent->length);
-                node->path[parent->length] = '/';
-                memory_copy(node->path + parent->length + 1, name, name_length);
-        }
-        else
-                memory_copy(node->path, name, name_length);
-        node->path[length] = end;
         return node;
 }
 
@@ -25151,33 +25146,22 @@ static bool cp_tree_put(parallel_output address_to output, p8 kind, bipolar code
                         cp_tree_node address_to node, string_address name,
                         positive name_length)
 {
-        positive joint = name_length && node->length ? 1 : 0;
-        positive length = name_length ? node->length + joint + name_length : node->length;
-        p8 address_to at = parallel_reserve(output, sizeof(cp_tree_record) + length + 1);
         cp_tree_record record;
-
-        if (!at)
-                return false;
 
         memory_fill(address_of record, 0, sizeof(record));
         record.kind = kind;
         record.code = (b32)code;
-        record.name_at = (p32)(name_length ? length - name_length : node->name_at);
-        record.path_bytes = (p32)(length + 1);
+        //      The name sits after the head and the slash between them; a
+        //      record about the node itself keeps the name the node already
+        //      knows, and stays at the node's own level.
+        record.name_at = (p32)(name_length
+                                   ? node->length + (node->length ? 1 : 0)
+                                   : node->name_at);
         record.level = (p32)(name_length ? node->level + 1 : node->level);
-        memory_copy(at, address_of record, sizeof(record));
-
-        p8 address_to path = at + sizeof(cp_tree_record);
-
-        memory_copy(path, node->path, node->length);
-        if (name_length)
-        {
-                if (joint)
-                        path[node->length] = '/';
-                memory_copy(path + node->length + joint, name, name_length);
-        }
-        path[length] = end;
-        return true;
+        return file_tree_put(output, address_of record, sizeof(record),
+                             address_of record.path_bytes,
+                             (string_address)node->path, node->length,
+                             name, name_length);
 }
 
 //      The batch form's job: true when the copy is whole and kept.
@@ -28817,28 +28801,17 @@ static rm_tree_node address_to rm_tree_node_new(rm_tree_node address_to parent,
                                                string_address name,
                                                positive name_length)
 {
-        positive joint = parent && parent->length &&
-                         parent->path[parent->length - 1] != '/';
-        positive length = (parent ? parent->length + joint : 0) + name_length;
-        rm_tree_node address_to node = memory_take(sizeof(rm_tree_node) + length + 1);
+        positive length = 0;
+        rm_tree_node address_to node = file_tree_node_take(
+            parent, __builtin_offsetof(rm_tree_node, path),
+            parent ? parent->length : 0, name, name_length, address_of length);
 
         if (!node)
                 return null;
 
-        memory_fill(node, 0, sizeof(rm_tree_node));
         node->parent = parent;
         node->length = length;
         node->name_at = length - name_length;
-        if (parent)
-        {
-                memory_copy(node->path, parent->path, parent->length);
-                if (joint)
-                        node->path[parent->length] = '/';
-                memory_copy(node->path + parent->length + joint, name, name_length);
-        }
-        else
-                memory_copy(node->path, name, name_length);
-        node->path[length] = end;
         return node;
 }
 
@@ -28848,28 +28821,14 @@ static bool rm_tree_put(parallel_output address_to output, p8 kind, bipolar code
                         string_address head, positive head_length,
                         string_address name, positive name_length)
 {
-        positive joint = name_length && head_length && head[head_length - 1] != '/';
-        positive length = head_length + joint + name_length;
-        p8 address_to at = parallel_reserve(output, sizeof(rm_tree_record) + length + 1);
         rm_tree_record record;
-
-        if (!at)
-                return false;
 
         memory_fill(address_of record, 0, sizeof(record));
         record.kind = kind;
         record.code = (b32)code;
-        record.path_bytes = (p32)(length + 1);
-        memory_copy(at, address_of record, sizeof(record));
-
-        p8 address_to path = at + sizeof(rm_tree_record);
-
-        memory_copy(path, head, head_length);
-        if (joint)
-                path[head_length] = '/';
-        memory_copy(path + head_length + joint, name, name_length);
-        path[length] = end;
-        return true;
+        return file_tree_put(output, address_of record, sizeof(record),
+                             address_of record.path_bytes, head, head_length,
+                             name, name_length);
 }
 
 static fn rm_tree_keep(rm_tree_node address_to node)
