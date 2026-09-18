@@ -262,6 +262,28 @@ static bipolar checksum_hash_path(const checksum_algorithm address_to algorithm,
         return 0;
 }
 
+/* A name in a verification report or diagnostic, quoted as coreutils'
+   shell-escape style quotes it; ls owns that style. */
+static fn checksum_name_put(writer write, string_address name)
+{
+        ls_quote_shell(write, name, string_length(name), false, true);
+}
+
+/*
+        The name an unreadable input is blamed by, quoted the way the FAILED
+        line beside it already quotes it: the reference quotes both, so a name
+        holding a blank, a quote or a shell character reads the same in either
+        line, and an empty name is '' rather than nothing at all.  This is
+        string_diagnostic's own shape -- text_diagnostic's preflush, prefix
+        and writer -- with the subject rendered instead of copied.
+*/
+static b32 checksum_blame(string_address name, string_address reason)
+{
+        text_flush();
+        return string_report(writer_stderr, 0, "%s: %w: %s\n", text_name,
+                             checksum_name_put, name, reason);
+}
+
 static fn checksum_filename_put(string_address name, bool escaped)
 {
         if (!escaped)
@@ -479,7 +501,7 @@ static bool checksum_batch_sink(address_any context, positive index,
 
                 if (answer.status < 0)
                 {
-                        string_diagnostic(address_of text_diagnostic, 0, name, file_reason(answer.status));
+                        checksum_blame(name, file_reason(answer.status));
                         batch->answer = 1;
                 }
                 else
@@ -583,13 +605,6 @@ static b32 checksum_generate(const checksum_algorithm address_to algorithm,
         }
 
         return batch.answer;
-}
-
-/* A name in a verification report or diagnostic, quoted as coreutils'
-   shell-escape style quotes it; ls owns that style. */
-static fn checksum_name_put(writer write, string_address name)
-{
-        ls_quote_shell(write, name, string_length(name), false, true);
 }
 
 static fn checksum_check_result_put(string_address name,
@@ -1062,7 +1077,7 @@ static fn checksum_check_one(checksum_check_run address_to run,
                 run->unreadable++;
                 run->failed = true;
 
-                string_diagnostic(address_of text_diagnostic, 0, filename, file_reason(answer->status));
+                checksum_blame(filename, file_reason(answer->status));
                 if (!run->status)
                         checksum_check_result_put(filename,
                                                   (string_address) "FAILED open or read");

@@ -59,7 +59,7 @@ static bool cksum_other_path(p8 kind, string_address path, bool debug,
         bipolar input = checksum_open(path, address_of standard);
 
         if (input < 0)
-                return string_diagnostic(address_of text_diagnostic, 0, path, file_reason(input));
+                return checksum_blame(path, file_reason(input));
 
         // coreutils names the crc32b machinery for every input it reads.
         if (debug && kind == 'c')
@@ -94,7 +94,7 @@ static bool cksum_other_path(p8 kind, string_address path, bool debug,
                 system_close((positive)input);
 
         if (got < 0)
-                return string_diagnostic(address_of text_diagnostic, 0, path, file_reason(got));
+                return checksum_blame(path, file_reason(got));
 
         if (kind == 'p')
                 sum = ~cksum_crc_length(sum, bytes);
