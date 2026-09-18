@@ -548,6 +548,22 @@ static bool host_running_build(p8 address_to into, positive room)
         return true;
 }
 
+/*
+        A version string an image carries is the image's, not this machine's,
+        and moonwater status writes it to a terminal beside the disk it came
+        from. A disk somebody plugged in is as free to put an escape sequence
+        there as a version, so every byte that is not plain text becomes one
+        that is before the line is written. A real banner is ASCII throughout,
+        so a legitimate image is unchanged and still compares equal to the
+        running build.
+*/
+static fn host_build_plain(p8 address_to text)
+{
+        for (positive at = 0; text[at]; at++)
+                if (text[at] < 0x20 || text[at] > 0x7e)
+                        text[at] = '?';
+}
+
 /* The version string in an x86 boot image's setup header, if it has one. */
 static bool host_image_build(string_address path, p8 address_to into,
                              positive room)
@@ -575,6 +591,8 @@ static bool host_image_build(string_address path, p8 address_to into,
                 {
                         into[got] = end;
                         found = into[0] && string_length(into) < (positive)got;
+                        if (found)
+                                host_build_plain(into);
                 }
         }
 
