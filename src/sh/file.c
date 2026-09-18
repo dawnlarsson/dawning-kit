@@ -778,11 +778,23 @@ static bipolar file_parent_open_named(string_address path, p8 address_to leaf)
 static bool file_path_join(p8 address_to into, string_address directory,
                            string_address name)
 {
-        positive head = string_length(directory);
-        positive wanted = head + string_length(name) +
-                          (head && directory[head - 1] != '/' ? 1 : 0);
+        positive made = path_join(into, FILE_PATH_MAX, directory, name);
 
-        return path_join(into, FILE_PATH_MAX, directory, name) == wanted;
+        /* path_join gives the directory the available space first and takes
+           as much of name as remains, so the only way either half can be cut
+           is by reaching the terminator's own byte.  A result short of that
+           byte therefore went in whole, and the everyday join -- one per
+           entry in every walk in this file -- answers without measuring
+           either operand a second time.  At the byte itself the two lengths
+           are what separates "exactly fits" from "cut to fit", and only
+           there is the measure worth its two passes. */
+        if (made < FILE_PATH_MAX - 1)
+                return true;
+
+        positive head = string_length(directory);
+
+        return made == head + string_length(name) +
+                           (head && directory[head - 1] != '/' ? 1 : 0);
 }
 
 /*
