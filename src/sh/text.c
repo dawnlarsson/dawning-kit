@@ -13932,10 +13932,13 @@ enum
         UNIQ_GROUP_BOTH
 };
 
-// The words both names take, and the two more that only --group does.
+// The two words both names take, the one only --all-repeated does and the
+// two only --group does. GNU's --group has no none: a grouping that puts
+// nothing between groups is what it does without a word at all, and it
+// refuses the spelling rather than reading it as separate.
 static bool uniq_grouping_of(string_address word, bool ends, positive address_to how)
 {
-        if (string_equals(word, "none"))
+        if (!ends && string_equals(word, "none"))
                 address_to how = UNIQ_GROUP_NONE;
         else if (string_equals(word, "prepend"))
                 address_to how = UNIQ_GROUP_PREPEND;
