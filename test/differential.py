@@ -22206,6 +22206,9 @@ def harness_floodlight(argv):
     source_release_tokens = exec_function_tokens(
         'static COLD bool exec_internal_source_release(')
 
+    decide_body = shell[shell.rindex('static b32 floodlight_launch_decide('):]
+    decide_body = decide_body[:decide_body.index('\n}\n')]
+
     def calls(*sequence):
         window = len(sequence)
         return any(shell_tokens[i:i + window] == list(sequence)
@@ -22385,6 +22388,21 @@ def harness_floodlight(argv):
              '              !floodlight_inplace_final)' in shell,
              'a final restricted child requires the inherited launcher '
              'contract, with a distinct authenticated in-place transition'),
+            #   The gate above is only worth its text while it is the only
+            #   way to the filter. Both hops are single-caller by count --
+            #   one definition and one call each -- and the gate, with the
+            #   Yama check beside it, comes before that call inside the one
+            #   function that makes it. A second apply site, or a confine
+            #   call from anywhere else, would leave every check above
+            #   passing and the filter reachable without the contract.
+            (shell.count('floodlight_confine(') == 2 and
+             shell.count('floodlight_apply(') == 2 and
+             decide_body.index('floodlight: parent protection unavailable') <
+                 decide_body.index('floodlight_apply(') and
+             decide_body.index('floodlight_ptrace_scope_safe') <
+                 decide_body.index('floodlight_apply('),
+             'the launcher contract and Yama are checked before the only '
+             'call that installs a filter, and nothing else can install one'),
             #   One child start resets the role, and the here-document and
             #   here-string helper takes it too, handing back only the depth.
             (exec_source.count('exec_floodlight_child_began();') == 1 and
