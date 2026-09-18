@@ -850,6 +850,9 @@ static b32 awk_frame_size;
 */
 static positive awk_stack_start;
 static positive awk_stack_room;
+// awk_stack_start - awk_stack_room, so a walker compares its own frame
+// against one loaded word.
+static positive awk_stack_floor;
 
 static b32 awk_where_environ;
 static b32 awk_where_argv;
@@ -3356,19 +3359,32 @@ static fn awk_expect(b32 what, string_address complaint)
 }
 
 /*
-        A program is input, and the parser descends once for every level of
-        nesting in it: 30,000 nested parentheses, braces, ! or $ is more
-        native stack than the process was given, and the fault is the whole
-        of the diagnostic. The measure awk_call is already held to answers
-        this too, and it asks the machine rather than counting levels, since
-        a level of one parser is not the same number of bytes as a level of
-        another.
+        Whether the native stack has room for another level of nesting.
+
+        A program is input, and both the parser and the interpreter descend
+        once for every level of nesting in it: 30,000 nested parentheses,
+        braces or ! is more stack than the process was given, and the fault
+        was the whole of the diagnostic. Neither one can stand for the other
+        -- an interpreter level is some five times a parser level here, so a
+        depth the parser accepts is not a depth the interpreter can walk.
+
+        The measure awk_call is already held to answers both, and asking the
+        machine rather than counting levels needs no level counted back down
+        and stays true as either one changes shape.
 */
+static bool awk_room_left()
+{
+        b32 here;
+
+        // One global and one compare: the interpreter asks this of every
+        // node it walks, so the subtraction is done once in awk_stack_measure
+        // rather than here.
+        return (positive)address_of here >= awk_stack_floor;
+}
+
 static fn awk_parse_room()
 {
-        b32 here = 0;
-
-        if (awk_stack_start - (positive)address_of here > awk_stack_room)
+        if (!awk_room_left())
                 awk_syntax("nested too deeply");
 }
 
@@ -4607,6 +4623,14 @@ static inline INLINE decimal awk_arithmetic(p8 operation, decimal left, decimal 
 
 static decimal awk_eval_number(awk_node address_to node)
 {
+        // An arithmetic tree recurses here and never through awk_eval, so
+        // this path needs the same measure: 1+1+...+1 two hundred thousand
+        // terms long is a left-leaning tree that deep.
+        if_rare (!awk_room_left())
+                awk_leave((awk_flush_everything(), text_flush(),
+                           string_diagnostic(&text_diagnostic, 2, null,
+                                             "nested too deeply")));
+
         // Numeric consumers need no owned values along an arithmetic tree.
         // Convert in place so input classification is cached on the source,
         // rather than repeated on a temporary copy on every loop iteration.
@@ -4866,6 +4890,11 @@ static fn awk_getline(awk_node address_to node, awk_value address_to out);
 
 static fn awk_eval(awk_node address_to node, awk_value address_to out)
 {
+        if_rare (!awk_room_left())
+                awk_leave((awk_flush_everything(), text_flush(),
+                           string_diagnostic(&text_diagnostic, 2, null,
+                                             "nested too deeply")));
+
         switch (node->kind)
         {
         case N_NUMBER:
@@ -5770,6 +5799,11 @@ static fn awk_do_printf(awk_node address_to node)
 
 static b32 awk_run(awk_node address_to node)
 {
+        if_rare (!awk_room_left())
+                awk_leave((awk_flush_everything(), text_flush(),
+                           string_diagnostic(&text_diagnostic, 2, null,
+                                             "nested too deeply")));
+
         for (; node; node = node->next)
         {
                 if (awk_exiting)
@@ -6329,13 +6363,19 @@ static b32 awk_run_rules()
         return awk_exit_code;
 }
 
+static fn awk_stack_room_set(positive room)
+{
+        awk_stack_room = room;
+        awk_stack_floor = awk_stack_start - room;
+}
+
 static fn awk_stack_measure()
 {
         positive limits[2] = {0, 0};
         b32 here = 0;
 
         awk_stack_start = (positive)address_of here;
-        awk_stack_room = 6u << 20;
+        awk_stack_room_set(6u << 20);
 
         if (system_call_4(syscall(prlimit64), 0, 3, 0, (positive)limits))
                 return;
@@ -6345,11 +6385,12 @@ static fn awk_stack_measure()
 
         if (limits[0] == ~(positive)0)
         {
-                awk_stack_room = 256u << 20;
+                awk_stack_room_set(256u << 20);
                 return;
         }
 
-        awk_stack_room = limits[0] > (2u << 20) ? limits[0] - (1u << 20) : limits[0] / 2;
+        awk_stack_room_set(limits[0] > (2u << 20) ? limits[0] - (1u << 20)
+                                                  : limits[0] / 2);
 }
 
 static fn awk_start()
