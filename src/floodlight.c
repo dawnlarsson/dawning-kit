@@ -145,6 +145,7 @@ static const struct rule baseline[] = {
 	{ "env", SPAWN, 1 },       /* NAMED */
 	{ "flock", SPAWN, 1 },     /* NAMED */
 	{ "ionice", SPAWN, 1 },    /* NAMED */
+	{ "install", SPAWN, 1 },   /* NAMED: strip, for -s */
 	{ "nice", SPAWN, 1 },      /* NAMED */
 	{ "nohup", SPAWN, 1 },     /* NAMED */
 	{ "nsenter", SPAWN, 1 },   /* NAMED */
