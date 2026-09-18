@@ -57580,6 +57580,30 @@ static fn settings_format(void)
         check("every one-bit change to a slot's header or entries is caught", caught);
         check("and the slot checks again once each is put back",
               spark_settings_check(slot) == 1);
+
+        /*  A settings image found on a disk is believed about how to boot
+            and about nothing that runs: every entry in the payload is a
+            command, and the only thing tying that image to this build is a
+            version string anybody can copy out of /proc/version. */
+        slot->flags = SPARK_SETTINGS_CANVAS_OFF | SPARK_SETTINGS_MOUNT_OFF |
+                      SPARK_SETTINGS_STARTUP_SET;
+        host_settings_seal(slot);
+        host_settings_untrusted(slot);
+        {
+                positive step = 0;
+                positive left = 0;
+
+                while (host_settings_next(slot, address_of step,
+                                          address_of setting))
+                        left++;
+                check("a slot no disk vouches for keeps none of its commands",
+                      !left && !slot->length);
+                check("and keeps the switches that only say how to boot",
+                      slot->flags == (SPARK_SETTINGS_CANVAS_OFF |
+                                      SPARK_SETTINGS_MOUNT_OFF));
+                check("and still checks once its commands are gone",
+                      spark_settings_check(slot) == 1);
+        }
 }
 
 static fn settings_bounds(void)

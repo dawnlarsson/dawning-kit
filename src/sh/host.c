@@ -2123,6 +2123,30 @@ static bool host_settings_visit(storage_identity address_to identity,
         return true;
 }
 
+/*
+        What a disk nobody has authenticated is allowed to say.
+
+        The only thing tying a settings image on some disk to this build is
+        the version string in that image's own setup header, and that string
+        is bytes in a file: anybody who can read /proc/version can write it
+        into an image of their own. Believing it about the two switches is a
+        nuisance at worst. Believing it about the lists hands whoever pushed
+        the disk in what this machine runs -- every entry in the payload is a
+        command, at boot, at stop, or on a bound event, and these settings do
+        not stay in memory: an install stamps them into the image it writes,
+        and moonwater bind saves them as this session's. So the switches are
+        taken and the payload is not, and the startup flag goes with it
+        because it says a list was written.
+*/
+static fn host_settings_untrusted(host_settings address_to settings)
+{
+        memory_zero(settings->payload, settings->length);
+        settings->length = 0;
+        settings->flags &= ~SPARK_SETTINGS_STARTUP_SET;
+        memory_zero(settings->next, sizeof(settings->next));
+        host_settings_seal(settings);
+}
+
 /* This session's settings: its own copy, else the one image of this build a disk here has, else the defaults. */
 static fn host_settings_session(host_settings address_to settings)
 {
@@ -2133,6 +2157,13 @@ static fn host_settings_session(host_settings address_to settings)
                 return;
 
         host_settings_empty(settings);
+
+        /*  Tighter than safe hears nothing from a disk at all: the switches
+            are only a nuisance, but a machine that wants no word from media
+            somebody pushed in gets none. */
+        if (MOONWATER_STRICT >= STRICT_TIGHT)
+                return;
+
         memory_zero(address_of search, sizeof(search));
 
         if (!host_running_build(running, sizeof(running)))
@@ -2141,8 +2172,11 @@ static fn host_settings_session(host_settings address_to settings)
         search.build = running;
         storage_each_device(host_settings_visit, address_of search);
 
-        if (search.count == 1)
-                memory_copy_apart(settings, address_of search.found, SPARK_SETTINGS_SLOT);
+        if (search.count != 1)
+                return;
+
+        memory_copy_apart(settings, address_of search.found, SPARK_SETTINGS_SLOT);
+        host_settings_untrusted(settings);
 }
 
 typedef struct
