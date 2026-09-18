@@ -1443,14 +1443,35 @@ static bipolar system_path_file_finish(system_path_file address_to input,
 
 /* Linux gives every signal disposition the same four-word record.  Keep that
    ABI shape at the syscall floor: callers choose the handler, flags and
-   restorer without rebuilding the record in each subsystem. */
+   restorer without rebuilding the record in each subsystem.
+
+   The third word is the one that is not the same on all three machines.
+   Linux puts sa_restorer between the flags and the mask only where
+   __ARCH_HAS_SA_RESTORER is defined -- x86_64 and arm64 -- and riscv64 does
+   not define it, so there the third word IS sa_mask and the record is three
+   words rather than four. standard.c spells the conditional struct out and
+   explains why; this entry keeps the flat array because it never carries a
+   mask, and there is no mask parameter for a caller to hand it one through.
+   What is left is the restorer, so the restorer is what is guarded: on an
+   architecture with no restorer slot the word stays zero rather than being
+   installed as a signal mask nobody asked for. Today every caller already
+   passes zero there off x86_64 (SIGNAL_CATCH_RESTORER is the trampoline on
+   x86_64 and zero on the other two), so this changes no instruction on any
+   machine that builds now; it is what keeps the next caller from writing a
+   mask into riscv64's sa_mask by handing this a restorer. */
 #if defined(LINUX) && !defined(KERNEL_MODE) && \
     !defined(STANDARD_NO_PLATFORM)
 static inline INLINE bool system_signal_install(
     b32 number, positive disposition, positive flags, positive restorer,
     positive address_to previous)
 {
+#if X64 || ARM64
         positive action[4] = {disposition, flags, restorer, 0};
+#else
+        positive action[4] = {disposition, flags, 0, 0};
+
+        (void)restorer;
+#endif
 
         return system_signal_action(number, address_of action, previous, 8) >= 0;
 }
