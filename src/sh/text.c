@@ -16804,6 +16804,33 @@ typedef struct
 } grep_run;
 
 /*
+        The plan the readers hand the span engine: what the program is, what a
+        string or a set may answer in its place, and how much of the answer
+        this mode needs. What differs between a serial read, the rest of a
+        binary file and a walk's job is only where the output goes, so each of
+        them sets those flags on the plan this hands back.
+*/
+static grep_plan grep_plan_of(const grep_run address_to run,
+                              rx_dfa_cache address_to dfa, positive limit,
+                              bool first_mode)
+{
+        return (grep_plan){
+            .program = address_of regex_current,
+            .literal = run->literal->literal_length ? run->literal : null,
+            .set = run->literal_set ? address_of grep_literals : null,
+            .dfa = dfa,
+            .limit = limit,
+            .mode = first_mode      ? GREP_SPAN_FIRST
+                    : run->counting ? GREP_SPAN_COUNT
+                                    : GREP_SPAN_PRINT,
+            .boundary = regex_boundary,
+            .literal_proves = run->literal_proves,
+            .icase = run->icase,
+            .invert = run->invert,
+        };
+}
+
+/*
         One input, read and answered: a named file, standard input when name
         is null, or a file a walk's job handed back. False when -q has its
         answer.
@@ -17021,30 +17048,19 @@ static bool grep_one(grep_run address_to run, string_address name)
 
         if (spanning)
         {
-                grep_plan plan = {
-                    .program = address_of regex_current,
-                    .literal = literal->literal_length ? literal : null,
-                    .set = literal_set ? address_of grep_literals : null,
-                    .dfa = machine ? address_of grep_dfa_cache : null,
-                    .limit = limit,
-                    .mode = quiet || listing || listing_without || discard_file
-                                ? GREP_SPAN_FIRST
-                            : counting ? GREP_SPAN_COUNT
-                                       : GREP_SPAN_PRINT,
-                    .boundary = regex_boundary,
-                    .literal_proves = literal_proves,
-                    .icase = icase,
-                    .invert = invert,
-                    .plain = plain_output,
-                    .numbered = grep_numbered,
-                    .check_encoding = check_encoding,
-                    .binary = binary_regions &&
+                grep_plan plan = grep_plan_of(
+                    run, machine ? address_of grep_dfa_cache : null, limit,
+                    first_mode);
+
+                plan.plain = plain_output;
+                plan.numbered = grep_numbered;
+                plan.check_encoding = check_encoding;
+                plan.binary = binary_regions &&
                                       grep_binary_files != GREP_BINARY_WITHOUT
                                   ? address_of binary
                               : binary_zapping || zap_hits ? address_of zap_all
-                                                           : null,
-                    .zap_hits = zap_hits,
-                };
+                                                           : null;
+                plan.zap_hits = zap_hits;
                 grep_state state = {.match = address_of regex_match,
                                     .name = shown_name,
                                     .name_length = shown_length,
@@ -17388,18 +17404,9 @@ static bool grep_one(grep_run address_to run, string_address name)
                                         break;
                                 }
 
-                                grep_plan rest = {
-                                    .program = address_of regex_current,
-                                    .literal = literal->literal_length ? literal : null,
-                                    .set = literal_set ? address_of grep_literals : null,
-                                    .dfa = machine ? address_of grep_dfa_cache : null,
-                                    .limit = TEXT_UNSET,
-                                    .mode = GREP_SPAN_FIRST,
-                                    .boundary = regex_boundary,
-                                    .literal_proves = literal_proves,
-                                    .icase = icase,
-                                    .invert = invert,
-                                };
+                                grep_plan rest = grep_plan_of(
+                                    run, machine ? address_of grep_dfa_cache : null,
+                                    TEXT_UNSET, true);
                                 positive complex = 0;
 
                                 if (!literal_only)
@@ -18052,26 +18059,15 @@ static bool grep_leaf_file(grep_run address_to run, string_address path,
             grep_binary_holes(address_of binary, address_of facts, handle))
                 binary.from = 0;
 
-        grep_plan plan = {
-            .program = address_of regex_current,
-            .literal = literal->literal_length ? literal : null,
-            .set = run->literal_set ? address_of grep_literals : null,
-            .dfa = run->machine ? grep_slot_dfa(scratch) : null,
-            .limit = limit,
-            .mode = first_mode ? GREP_SPAN_FIRST
-                  : counting   ? GREP_SPAN_COUNT
-                               : GREP_SPAN_PRINT,
-            .boundary = regex_boundary,
-            .literal_proves = run->literal_proves,
-            .icase = run->icase,
-            .invert = invert,
-            .plain = !run->grouped && !grep_names && !grep_numbered &&
-                     !grep_offsets && !grep_coloring && !check_encoding,
-            .numbered = grep_numbered,
-            .check_encoding = check_encoding,
-            .whole = true,
-            .zap_hits = zap_hits,
-        };
+        grep_plan plan = grep_plan_of(
+            run, run->machine ? grep_slot_dfa(scratch) : null, limit, first_mode);
+
+        plan.plain = !run->grouped && !grep_names && !grep_numbered &&
+                     !grep_offsets && !grep_coloring && !check_encoding;
+        plan.numbered = grep_numbered;
+        plan.check_encoding = check_encoding;
+        plan.whole = true;
+        plan.zap_hits = zap_hits;
         // A string or a set that is the whole program never asks the graph.
         bool graph = !run->literal_proves && !run->literal_set;
         grep_state state = {
