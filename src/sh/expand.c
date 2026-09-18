@@ -371,7 +371,7 @@ fn shell_expand_reset()
 // One short of the end, because trimming writes a terminator at the length.
 static fn expand_push(p8 value, p8 mark)
 {
-        if (!expand_room(expand_length + 2))
+        if_rare(!expand_room(expand_length + 2))
         {
                 expand_overflow = true;
                 return;
@@ -384,7 +384,7 @@ static fn expand_push(p8 value, p8 mark)
 // A run that all comes out the same way, which is a copy and a fill.
 static fn expand_push_run(const_string text, positive length, p8 mark)
 {
-        if (!expand_room(expand_length + length + 2))
+        if_rare(!expand_room(expand_length + length + 2))
         {
                 expand_overflow = true;
                 return;
@@ -8088,7 +8088,7 @@ static fn expand_into(string_address text, bool quoted, p8 plain,
         string_address step = text;
         bool tilde = assignment;
 
-        while (!expand_failed && string_get(step))
+        while (likely(!expand_failed) && string_get(step))
         {
                 positive run = string_span(step, quoted ? expand_inside_set
                                                         : expand_plain_set);
