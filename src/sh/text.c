@@ -851,7 +851,7 @@ static bool text_unsigned_option(string_address source, bool saturate,
                 source++;
 
         positive made;
-        if (!file_decimal_read(address_of source, saturate, address_of made) ||
+        if (!string_decimal_read(address_of source, saturate, address_of made) ||
             string_get(source))
                 return false;
 
@@ -1082,7 +1082,7 @@ static bool text_count_suffixed(string_address said, positive address_to count)
         if (!byte_is_digit(said[0]))
                 return false;
 
-        if (!file_decimal_read(address_of said, true, address_of total))
+        if (!string_decimal_read(address_of said, true, address_of total))
                 return false;
 
         if (!said[0])
@@ -6188,7 +6188,7 @@ static bool nl_signed(string_address said, bipolar address_to into)
                 said++;
 
         if (!byte_is_digit(said[0]) ||
-            !file_decimal_read(address_of said, true, address_of magnitude) || said[0])
+            !string_decimal_read(address_of said, true, address_of magnitude) || said[0])
                 return false;
 
         if (magnitude > (positive)NL_NUMBER_MAX + negative)
@@ -7901,7 +7901,7 @@ static bool pr_signed(string_address value, bipolar address_to into)
         while (byte_is_space(string_get(value)))
                 value++;
         bipolar made;
-        if (!file_signed_decimal(value, address_of made) ||
+        if (!string_signed_decimal_exact(value, address_of made) ||
             made < b32_min || made > b32_max)
                 return false;
         address_to into = made;
@@ -10039,26 +10039,6 @@ static positive column_names_from_option(string_address names, bool fill,
         return count;
 }
 
-static bool column_span_unsigned(p8 address_to bytes, positive length,
-                                 positive address_to answer)
-{
-        positive made = 0;
-
-        if (!length)
-                return false;
-
-        for (positive at = 0; at < length; at++)
-        {
-                if (!byte_is_digit(bytes[at]) ||
-                    made > (positive_max - (bytes[at] - '0')) / 10)
-                        return false;
-
-                made = made * 10 + bytes[at] - '0';
-        }
-
-        address_to answer = made;
-        return true;
-}
 
 static bool column_name_equal(byte_span name, p8 address_to bytes,
                               positive length)
@@ -10081,7 +10061,7 @@ static bool column_resolve(p8 address_to bytes, positive length,
                 return true;
         }
 
-        if (column_span_unsigned(bytes, length, address_of number))
+        if (memory_digits_checked_exact(bytes, length, 10, address_of number))
         {
                 if (!number || number > column_count)
                         return false;
@@ -10132,10 +10112,10 @@ static bool column_apply_list(string_address list, p8 flag,
                         positive high;
 
                         if (dash && dash < length - 1 &&
-                            column_span_unsigned(item, dash, address_of low) &&
-                            column_span_unsigned(item + dash + 1,
-                                                 length - dash - 1,
-                                                 address_of high))
+                            memory_digits_checked_exact(item, dash, 10, address_of low) &&
+                            memory_digits_checked_exact(item + dash + 1,
+                                                        length - dash - 1, 10,
+                                                        address_of high))
                         {
                                 if (!low || low > high || high > column_count)
                                         return false;
@@ -25518,7 +25498,7 @@ static positive sort_size_bytes(string_address said)
         positive scale = 1024;
         positive power = 1;
 
-        file_decimal_read(address_of said, true, address_of value);
+        string_decimal_read(address_of said, true, address_of value);
 
         if (said[0] == 'b')
                 return value;
@@ -25759,7 +25739,7 @@ static bool sort_size_valid(string_address said)
         positive value;
 
         if (!byte_is_digit(said[0]) ||
-            !file_decimal_read(address_of said, true, address_of value))
+            !string_decimal_read(address_of said, true, address_of value))
                 return false;
 
         if (!said[0])

@@ -1557,43 +1557,16 @@ static fn awk_flush_everything()
 }
 
 /*
-        A command, in a child, with one end of a pipe.
-
-        There is no exec.c under this -- awk.c is included before it -- so the
-        three syscalls are made here. /bin/sh -c is what the standard says the
-        command is handed to.
+        A command handed to /bin/sh -c with one end of a pipe.  Fork, descriptor
+        ownership and final exec live in shell_fork_exec; AWK contributes only
+        the descriptors its child must not inherit.
 */
 static string_address address_to awk_child_environment;
 static positive awk_child_environment_room;
 
-static bipolar awk_spawn(string_address command, b32 into, b32 out_of)
+static fn awk_child_prepare(address_any context)
 {
-        string_address words[4];
-        bipolar child;
-
-        words[0] = "/bin/sh";
-        words[1] = "-c";
-        words[2] = (string_address)command;
-        words[3] = null;
-
-        awk_flush_everything();
-
-        child = system_fork();
-
-        if (child)
-                return child;
-
-        if (into >= 0)
-        {
-                if (shell_child_fd_move(into, 0) < 0)
-                        exit(126);
-        }
-
-        if (out_of >= 0)
-        {
-                if (shell_child_fd_move(out_of, 1) < 0)
-                        exit(126);
-        }
+        (void)context;
 
         for (b32 i = 0; i < awk_writer_count; i++)
                 if (awk_writers[i]->live && awk_writers[i]->handle > 2)
@@ -1602,11 +1575,22 @@ static bipolar awk_spawn(string_address command, b32 into, b32 out_of)
         for (b32 i = 0; i < awk_reader_count; i++)
                 if (awk_readers[i]->live && awk_readers[i]->handle > 2)
                         system_close(awk_readers[i]->handle);
+}
 
-        (void)shell_exec_file((string_address)"/bin/sh", words, 3,
-                              awk_child_environment);
-        exit(127);
-        return -1;
+static bipolar awk_spawn(string_address command, b32 into, b32 out_of)
+{
+        string_address words[4];
+
+        words[0] = "/bin/sh";
+        words[1] = "-c";
+        words[2] = (string_address)command;
+        words[3] = null;
+
+        awk_flush_everything();
+
+        return shell_fork_exec((string_address)"/bin/sh", words, 3,
+                               awk_child_environment, into, out_of,
+                               awk_child_prepare, null);
 }
 
 static b32 awk_wait_for(bipolar child)

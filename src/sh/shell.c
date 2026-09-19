@@ -738,6 +738,41 @@ static bipolar file_exec_path_try(string_address address_to words);
 #define shell_child_fd_move system_descriptor_move
 #define SHELL_PIPE_CLOSE_ON_EXEC 02000000
 
+/*
+        The small child-launch floor used by utilities which need only a fork,
+        at most one stdin/stdout handoff, optional inherited-fd cleanup, and the
+        shell's one final executable decision.  Job control, namespaces, PTYs
+        and other lifetime policy stay at their call sites.
+*/
+typedef fn(address_to shell_child_prepare)(address_any context);
+
+static bipolar shell_fork_exec(string_address path,
+                               string_address address_to arguments,
+                               positive count,
+                               string_address address_to environment,
+                               b32 input, b32 output,
+                               shell_child_prepare prepare,
+                               address_any context)
+{
+        bipolar child = system_fork();
+
+        if (child)
+                return child;
+
+        if (input >= 0 && shell_child_fd_move(input, 0) < 0)
+                system_call_1(syscall(exit), 126);
+
+        if (output >= 0 && shell_child_fd_move(output, 1) < 0)
+                system_call_1(syscall(exit), 126);
+
+        if (prepare)
+                prepare(context);
+
+        (void)shell_exec_file(path, arguments, count, environment);
+        system_call_1(syscall(exit), 127);
+        return -1;
+}
+
 #include "lex.c"
 #include "file.c"
 #include "gzip.c"

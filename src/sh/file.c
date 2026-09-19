@@ -3648,6 +3648,11 @@ typedef fn(address_to file_visit)(bipolar directory, string_address name,
 */
 static bool file_change_after_contents;
 
+/* Which mutation policy the shared recursive walker is carrying. Traversal
+   order stays in file_change_after_contents; the two facts happen to line up
+   for chmod versus chown/chgrp, but they are not the same policy. */
+static bool file_change_ownership;
+
 /* True while a visit is a name the walk reached, not one the user typed. A
    symlink the user names is theirs to mean; one found under a -R walk is not,
    and chown/chgrp must act on the link rather than follow it out of the tree
@@ -3820,6 +3825,9 @@ static file_change_tree_node address_to file_change_tree_node_new(
 //      A walk of the tool's own for everything under an operand of -R, when
 //      it has one; the serial walk below otherwise.
 static fn(address_to file_change_tree)(string_address path);
+#if defined(LIBRARY_THREAD_RUNTIME)
+static fn file_change_tree_parallel(string_address path);
+#endif
 
 /*
         The root failsafe chmod, chown and chgrp offer, which is rm's with
@@ -9514,46 +9522,7 @@ static b32 file_run(string_address address_to words, bipolar directory)
 }
 
 /* Saturating options consume the complete overflowing run and retain syntax. */
-static bool file_decimal_read(string_address address_to text, bool saturate,
-                              positive address_to value)
-{
-        if (string_digits_checked(text, 10, value))
-                return true;
-        if (!saturate || !byte_is_digit(string_get(address_to text)))
-                return false;
-        address_to text += string_span_of_set(address_to text, "0123456789");
-        address_to value = positive_max;
-        return true;
-}
 
-static bool file_signed_decimal(string_address text, bipolar address_to value)
-{
-        bool negative = string_is(text, '-');
-
-        if (negative || string_is(text, '+'))
-                text++;
-
-        string_address at = text;
-        positive magnitude;
-
-        if (!string_digits_checked(address_of at, 10, address_of magnitude) ||
-            string_get(at) ||
-            magnitude > (positive)bipolar_max + (positive)negative)
-                return false;
-
-        address_to value = bipolar_from_magnitude(magnitude, negative);
-        return true;
-}
-
-static bool file_unsigned_decimal(string_address text,
-                                   positive address_to number)
-{
-        if (string_is(text, '0') &&
-            (text[1] == 'x' || text[1] == 'X'))
-                return string_get(text + 2) &&
-                       string_digits_checked_exact(text + 2, 16, number);
-        return string_digits_checked_exact(text, 10, number);
-}
 
 
 // nice -------------------------------------------------------------
@@ -9566,7 +9535,7 @@ static bool nice_adjustment(string_address text, bipolar address_to value)
         if (negative || string_is(text, '+'))
                 text++;
         positive magnitude;
-        if (!file_decimal_read(address_of text, true, address_of magnitude) ||
+        if (!string_decimal_read(address_of text, true, address_of magnitude) ||
             string_get(text))
                 return false;
         address_to value = bipolar_from_magnitude(min(magnitude, (positive)39),
@@ -10562,7 +10531,7 @@ static b32 find_parse_primary(positive depth)
 
         case '>':
         case '<':
-                if (!file_unsigned_decimal(value, node->kind == '>'
+                if (!string_unsigned_decimal_or_hex_exact(value, node->kind == '>'
                                                       ? address_of find_maximum
                                                       : address_of find_minimum) ||
                     string_is(value, '+'))
@@ -15246,180 +15215,7 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         chmod_report(shown, address_of outcome);
 }
 
-#if defined(LIBRARY_THREAD_RUNTIME)
-/*
-        chmod -R over parallel_tree.  A directory's mode is changed by the job
-        reading the directory that holds it, before the pool opens it: the
-        top-down order the serial walk keeps, because the mode it is given is
-        what says whether it can be read.  The pool opens a subdirectory with
-        O_NOFOLLOW, and its job proves it is the directory its parent looked at
-        before reading a name of it, the check file_open_same makes, so a name
-        swapped for a link or for another directory between the look and the
-        open is not walked.  That same look says whether the directory is
-        trusted.  A job says nothing: an outcome that would be heard is a
-        record, and the sink says it in walk order.  There is no depth limit.
-*/
 
-//      An outcome and the whole path it is about, written straight into the
-//      node's output.
-static bool chmod_tree_put(parallel_output address_to output,
-                           chmod_outcome address_to out,
-                           file_change_tree_node address_to node,
-                           string_address name, positive name_length)
-{
-        return file_tree_put(output, out, sizeof(chmod_outcome),
-                             address_of out->path_bytes,
-                             (string_address)node->path, node->length,
-                             name, name_length);
-}
-
-static fn chmod_tree_enter(address_any context, address_any node_address,
-                           bipolar directory, parallel_output address_to output)
-{
-        file_change_tree_node address_to node = node_address;
-        p8 records[WALK_READ];
-
-        (void)context;
-
-        //      A directory that will not open, or one that is not the one
-        //      its parent looked at, is passed over without a word, as the
-        //      serial walk passes over it.
-        if (directory < 0)
-                return;
-
-        if (node->parent)
-        {
-                file_facts opened;
-
-                if (file_look_code(directory, (string_address)"", AT_EMPTY_PATH,
-                                   address_of opened) < 0 ||
-                    !file_same_identity(address_of node->expected, address_of opened) ||
-                    (node->expected.mode & MODE_FORMAT) != (opened.mode & MODE_FORMAT))
-                        return;
-
-                node->trusted = (opened.owner == file_change_user || opened.owner == 0) &&
-                                !(opened.mode & 0022);
-        }
-
-        positive have = 0;
-        positive at = 0;
-        bipolar error = 0;
-        struct linux_dirent64 address_to entry;
-
-        while ((entry = file_directory_next(directory, records, sizeof(records),
-                                            address_of have, address_of at,
-                                            address_of error)))
-        {
-                string_address name = (string_address)entry->d_name;
-                p8 type = entry->d_type;
-
-                if (file_is_dot(name))
-                        continue;
-
-                file_facts facts;
-                chmod_outcome outcome;
-                positive name_length = string_length(name);
-                bool looked = (type == 0 || type == DT_DIR) &&
-                              file_look(directory, name, AT_SYMLINK_NOFOLLOW,
-                                        address_of facts);
-                bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
-
-                chmod_decide(directory, name, looked ? address_of facts : null,
-                             node->trusted, address_of outcome);
-
-                if (chmod_outcome_heard(address_of outcome) &&
-                    !chmod_tree_put(output, address_of outcome, node, name, name_length))
-                {
-                        parallel_stop();
-                        return;
-                }
-
-                if (!here)
-                        continue;
-
-                file_change_tree_node address_to child =
-                    file_change_tree_node_new(node, name, name_length);
-
-                if (!child)
-                {
-                        parallel_stop();
-                        return;
-                }
-                child->expected = facts;
-                if (!parallel_child(output, name, child))
-                {
-                        memory_give(child);
-                        parallel_stop();
-                        return;
-                }
-        }
-}
-
-static bool chmod_tree_sink(address_any context, address_any node_address,
-                            address_any data, positive length, bool finished)
-{
-        p8 address_to bytes = data;
-        positive at = 0;
-
-        (void)context;
-        if (finished)
-        {
-                memory_give(node_address);
-                return true;
-        }
-
-        while (at < length)
-        {
-                chmod_outcome outcome;
-
-                memory_copy(address_of outcome, bytes + at, sizeof(outcome));
-                chmod_report((string_address)bytes + at + sizeof(outcome),
-                             address_of outcome);
-                at += sizeof(outcome) + outcome.path_bytes;
-        }
-        return true;
-}
-
-//      One operand of chmod -R: the operand itself on this thread, as the
-//      serial walk visits it, and everything under it on the pool.
-static fn chmod_tree(string_address path)
-{
-        file_facts facts;
-        bool looked = file_look(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, address_of facts);
-        bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
-
-        file_change_user = (p32)system_call(syscall(geteuid));
-        file_change_descended = false;
-        file_change_trusted = false;
-        chmod_one(AT_FDCWD, path, path, looked ? address_of facts : null);
-
-        if (!here)
-                return;
-
-        file_facts opened;
-        bipolar handle = file_open_same_facts(AT_FDCWD, path, address_of facts,
-                                              FILE_READ | O_DIRECTORY | O_NOFOLLOW,
-                                              address_of opened);
-
-        if (handle < 0)
-                return;
-
-        file_change_tree_node address_to top =
-            file_change_tree_node_new(null, path, string_length(path));
-
-        if (!top ||
-            (top->expected = facts,
-             top->trusted = (opened.owner == file_change_user || opened.owner == 0) &&
-                            !(opened.mode & 0022),
-             !parallel_tree(chmod_tree_enter, null, chmod_tree_sink, null, handle, top,
-                            O_NOFOLLOW)))
-        {
-                log_error("chmod: out of memory while walking the tree\n", 0);
-                chmod_status = 1;
-        }
-        system_close(handle);
-}
-#endif
 
 static const argument_option chmod_options[] = {
     {"changes", 'c', 0, ARGUMENT_SELECT(chmod_selection, loudness)},
@@ -15572,9 +15368,11 @@ static b32 file_chmod()
                                      chmod_specification);
 
         chmod_umask = file_umask();
+        file_change_ownership = false;
+        file_change_after_contents = false;
 
 #if defined(LIBRARY_THREAD_RUNTIME)
-        file_change_tree = chmod_tree;
+        file_change_tree = file_change_tree_parallel;
 #endif
         file_change_preserve_root = chmod_selected.root == 'p';
         file_change_paths(first, count, (taking.flags & FILE_FLAG('R')) != 0,
@@ -15884,30 +15682,26 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
 
 #if defined(LIBRARY_THREAD_RUNTIME)
 /*
-        chown and chgrp -R over parallel_tree.  A directory is walked as
-        chmod's walk walks it, and changed after everything under it, which is
-        the order the reference's -v shows: its parent's job hands it to the
-        pool and then a leaf whose bytes land after its subtree, and the leaf's
-        job, given the parent's directory pinned open, changes it by name the
-        way the serial walk does -- whether or not the pool could open it.
-        When a leaf runs does not change what a change of owner lets the walk
-        read; where its bytes land is what the output shows.
+        chmod, chown and chgrp -R share one parallel walk.
+
+        The mechanism is the same for all three: pin and verify each directory,
+        derive whether its names are trusted, enumerate it once, and schedule
+        subdirectories into parallel_tree while the sink writes results in walk
+        order.  Only the mutation order differs. chmod changes a directory from
+        its parent's job before that directory is opened; chown/chgrp leave a
+        directory behind its subtree and change it through the pinned parent
+        afterwards. file_change_after_contents carries only that ordering,
+        while file_change_ownership selects which mutation policy the shared
+        parallel walk applies.
+
+        Pool jobs never write diagnostics. They only perform the change and
+        append an outcome plus its path; the calling-thread sink reports it.
+        There is no depth limit.
 */
 
-//      An outcome and the whole path it is about: head, then name when
-//      there is one, written straight into the output.
-static bool chown_tree_put(parallel_output address_to output,
-                           chown_outcome address_to out,
-                           string_address head, positive head_length,
-                           string_address name, positive name_length)
-{
-        return file_tree_put(output, out, sizeof(chown_outcome),
-                             address_of out->path_bytes, head, head_length,
-                             name, name_length);
-}
-
-static fn chown_tree_leaf(address_any context, address_any node_address,
-                          bipolar directory, parallel_output address_to output)
+static fn file_change_tree_leaf(address_any context, address_any node_address,
+                                bipolar directory,
+                                parallel_output address_to output)
 {
         file_change_tree_node address_to leaf = node_address;
         chown_outcome outcome;
@@ -15921,26 +15715,33 @@ static fn chown_tree_leaf(address_any context, address_any node_address,
                 outcome.error = (b32)directory;
         }
         else
-                chown_decide(directory, (string_address)leaf->path + leaf->name_at,
+                chown_decide(directory,
+                             (string_address)leaf->path + leaf->name_at,
                              address_of leaf->expected, leaf->trusted, true,
                              address_of outcome);
 
         if (chown_outcome_heard(address_of outcome) &&
-            !chown_tree_put(output, address_of outcome, (string_address)leaf->path,
-                            leaf->length, (string_address)"", 0))
+            !file_tree_put(output, address_of outcome, sizeof(outcome),
+                           address_of outcome.path_bytes,
+                           (string_address)leaf->path, leaf->length,
+                           (string_address)"", 0))
                 parallel_stop();
 }
 
-static fn chown_tree_enter(address_any context, address_any node_address,
-                           bipolar directory, parallel_output address_to output)
+static fn file_change_tree_enter(address_any context, address_any node_address,
+                                 bipolar directory,
+                                 parallel_output address_to output)
 {
         file_change_tree_node address_to node = node_address;
         p8 records[WALK_READ];
 
         (void)context;
 
-        //      Not opened, or not the directory its parent looked at: nothing
-        //      under it is walked, and its leaf still changes it.
+        /*
+                A directory that did not open, or is no longer the directory
+                its parent looked at, contributes no contents. chown/chgrp's
+                separately scheduled leaf still changes the name afterwards.
+        */
         if (directory < 0)
                 return;
 
@@ -15950,12 +15751,15 @@ static fn chown_tree_enter(address_any context, address_any node_address,
 
                 if (file_look_code(directory, (string_address)"", AT_EMPTY_PATH,
                                    address_of opened) < 0 ||
-                    !file_same_identity(address_of node->expected, address_of opened) ||
-                    (node->expected.mode & MODE_FORMAT) != (opened.mode & MODE_FORMAT))
+                    !file_same_identity(address_of node->expected,
+                                        address_of opened) ||
+                    (node->expected.mode & MODE_FORMAT) !=
+                        (opened.mode & MODE_FORMAT))
                         return;
 
-                node->trusted = (opened.owner == file_change_user || opened.owner == 0) &&
-                                !(opened.mode & 0022);
+                node->trusted =
+                    (opened.owner == file_change_user || opened.owner == 0) &&
+                    !(opened.mode & 0022);
         }
 
         positive have = 0;
@@ -15978,41 +15782,76 @@ static fn chown_tree_enter(address_any context, address_any node_address,
                 bool looked = (type == 0 || type == DT_DIR) &&
                               file_look(directory, name, AT_SYMLINK_NOFOLLOW,
                                         address_of facts);
-                bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+                bool here = looked &&
+                            (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
 
-                if (!here)
+                if (!file_change_ownership)
                 {
-                        chown_outcome outcome;
+                        chmod_outcome outcome;
 
-                        chown_decide(directory, name, looked ? address_of facts : null,
-                                     node->trusted, true, address_of outcome);
-                        if (chown_outcome_heard(address_of outcome) &&
-                            !chown_tree_put(output, address_of outcome,
-                                            (string_address)node->path, node->length,
-                                            name, name_length))
+                        chmod_decide(directory, name,
+                                     looked ? address_of facts : null,
+                                     node->trusted, address_of outcome);
+
+                        if (chmod_outcome_heard(address_of outcome) &&
+                            !file_tree_put(output, address_of outcome,
+                                           sizeof(outcome),
+                                           address_of outcome.path_bytes,
+                                           (string_address)node->path,
+                                           node->length, name, name_length))
                         {
                                 parallel_stop();
                                 return;
                         }
-                        continue;
                 }
+                else if (!here)
+                {
+                        chown_outcome outcome;
+
+                        chown_decide(directory, name,
+                                     looked ? address_of facts : null,
+                                     node->trusted, true, address_of outcome);
+
+                        if (chown_outcome_heard(address_of outcome) &&
+                            !file_tree_put(output, address_of outcome,
+                                           sizeof(outcome),
+                                           address_of outcome.path_bytes,
+                                           (string_address)node->path,
+                                           node->length, name, name_length))
+                        {
+                                parallel_stop();
+                                return;
+                        }
+                }
+
+                if (!here)
+                        continue;
 
                 file_change_tree_node address_to child =
                     file_change_tree_node_new(node, name, name_length);
                 file_change_tree_node address_to leaf =
-                    child ? file_change_tree_node_new(node, name, name_length)
-                          : null;
+                    file_change_ownership && file_change_after_contents && child
+                        ? file_change_tree_node_new(node, name, name_length)
+                        : null;
 
-                if (!child || !leaf)
+                if (!child ||
+                    (file_change_ownership && file_change_after_contents &&
+                     !leaf))
                 {
                         memory_give(child);
                         memory_give(leaf);
                         parallel_stop();
                         return;
                 }
+
                 child->expected = facts;
-                leaf->expected = facts;
-                leaf->trusted = node->trusted;
+
+                if (leaf)
+                {
+                        leaf->expected = facts;
+                        leaf->trusted = node->trusted;
+                }
+
                 if (!parallel_child(output, name, child))
                 {
                         memory_give(child);
@@ -16020,7 +15859,8 @@ static fn chown_tree_enter(address_any context, address_any node_address,
                         parallel_stop();
                         return;
                 }
-                if (!parallel_leaf(output, chown_tree_leaf, leaf))
+
+                if (leaf && !parallel_leaf(output, file_change_tree_leaf, leaf))
                 {
                         memory_give(leaf);
                         parallel_stop();
@@ -16029,13 +15869,15 @@ static fn chown_tree_enter(address_any context, address_any node_address,
         }
 }
 
-static bool chown_tree_sink(address_any context, address_any node_address,
-                            address_any data, positive length, bool finished)
+static bool file_change_tree_sink(address_any context, address_any node_address,
+                                  address_any data, positive length,
+                                  bool finished)
 {
         p8 address_to bytes = data;
         positive at = 0;
 
         (void)context;
+
         if (finished)
         {
                 memory_give(node_address);
@@ -16044,38 +15886,79 @@ static bool chown_tree_sink(address_any context, address_any node_address,
 
         while (at < length)
         {
-                chown_outcome outcome;
+                if (file_change_ownership)
+                {
+                        chown_outcome outcome;
 
-                memory_copy(address_of outcome, bytes + at, sizeof(outcome));
-                chown_report((string_address)bytes + at + sizeof(outcome),
-                             address_of outcome);
-                at += sizeof(outcome) + outcome.path_bytes;
+                        memory_copy(address_of outcome, bytes + at,
+                                    sizeof(outcome));
+                        chown_report((string_address)bytes + at +
+                                         sizeof(outcome),
+                                     address_of outcome);
+                        at += sizeof(outcome) + outcome.path_bytes;
+                }
+                else
+                {
+                        chmod_outcome outcome;
+
+                        memory_copy(address_of outcome, bytes + at,
+                                    sizeof(outcome));
+                        chmod_report((string_address)bytes + at +
+                                         sizeof(outcome),
+                                     address_of outcome);
+                        at += sizeof(outcome) + outcome.path_bytes;
+                }
         }
+
         return true;
 }
 
-//      One operand of chown -R: everything under it on the pool, then the
-//      operand itself on this thread, as the serial walk visits it last.
-static fn chown_tree(string_address path)
+/*
+        One recursive operand. chmod visits the operand first and then walks
+        below it. chown/chgrp walk below it first and visit the operand last.
+        This is the same before/after contract file_change_walk_as keeps in the
+        serial path.
+*/
+static fn file_change_tree_operand(string_address path,
+                                   file_facts address_to known)
+{
+        if (file_change_ownership)
+                chown_one(AT_FDCWD, path, path, known);
+        else
+                chmod_one(AT_FDCWD, path, path, known);
+}
+
+static fn file_change_tree_parallel(string_address path)
 {
         file_facts facts;
-        bool looked = file_look(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, address_of facts);
-        bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+        bool looked = file_look(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW,
+                                address_of facts);
+        bool here = looked &&
+                    (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
 
         file_change_user = (p32)system_call(syscall(geteuid));
         file_change_descended = false;
         file_change_trusted = false;
 
-        if (!here)
+        if (!file_change_after_contents)
         {
-                chown_one(AT_FDCWD, path, path, looked ? address_of facts : null);
+                file_change_tree_operand(path,
+                                         looked ? address_of facts : null);
+
+                if (!here)
+                        return;
+        }
+        else if (!here)
+        {
+                file_change_tree_operand(path,
+                                         looked ? address_of facts : null);
                 return;
         }
 
         file_facts opened;
-        bipolar handle = file_open_same_facts(AT_FDCWD, path, address_of facts,
-                                              FILE_READ | O_DIRECTORY | O_NOFOLLOW,
-                                              address_of opened);
+        bipolar handle = file_open_same_facts(
+            AT_FDCWD, path, address_of facts,
+            FILE_READ | O_DIRECTORY | O_NOFOLLOW, address_of opened);
 
         if (handle >= 0)
         {
@@ -16084,21 +15967,40 @@ static fn chown_tree(string_address path)
 
                 if (!top ||
                     (top->expected = facts,
-                     top->trusted = (opened.owner == file_change_user || opened.owner == 0) &&
-                                    !(opened.mode & 0022),
-                     !parallel_tree(chown_tree_enter, null, chown_tree_sink, null, handle, top,
+                     top->trusted =
+                         (opened.owner == file_change_user ||
+                          opened.owner == 0) &&
+                         !(opened.mode & 0022),
+                     !parallel_tree(file_change_tree_enter, null,
+                                    file_change_tree_sink, null, handle, top,
                                     O_NOFOLLOW)))
                 {
-                        string_format(log_error, "%s: out of memory while walking the tree\n",
-                                      chown_program);
-                        chown_status = 1;
+                        if (file_change_ownership)
+                        {
+                                string_format(
+                                    log_error,
+                                    "%s: out of memory while walking the tree\n",
+                                    chown_program);
+                                chown_status = 1;
+                        }
+                        else
+                        {
+                                log_error(
+                                    "chmod: out of memory while walking the tree\n",
+                                    0);
+                                chmod_status = 1;
+                        }
                 }
+
                 system_close(handle);
         }
 
-        file_change_descended = false;
-        file_change_trusted = false;
-        chown_one(AT_FDCWD, path, path, address_of facts);
+        if (file_change_after_contents)
+        {
+                file_change_descended = false;
+                file_change_trusted = false;
+                file_change_tree_operand(path, address_of facts);
+        }
 }
 #endif
 
@@ -16182,15 +16084,17 @@ static bool chown_spec_read(string_address who, bipolar address_to user,
 
 static fn chown_paths(positive first, positive count)
 {
+        file_change_ownership = true;
         file_change_after_contents = true;
 #if defined(LIBRARY_THREAD_RUNTIME)
-        file_change_tree = chown_tree;
+        file_change_tree = file_change_tree_parallel;
 #endif
         file_change_preserve_root = chown_selected.root == 'p';
         file_change_paths(first, count, (chown_flags & FILE_FLAG('R')) != 0,
                           chown_program, address_of chown_status, chown_one);
         file_change_tree = null;
         file_change_after_contents = false;
+        file_change_ownership = false;
 }
 
 static b32 file_chown_common(string_address program, bool groups_only)
@@ -20624,7 +20528,7 @@ static bipolar csplit_parse_regex(string_address word,
 
         if (!string_get(offset))
                 pattern->offset = 0;
-        else if (!file_signed_decimal(offset, address_of pattern->offset))
+        else if (!string_signed_decimal_exact(offset, address_of pattern->offset))
                 return -1;
 
         return 1;
@@ -20635,7 +20539,7 @@ static bool csplit_parse_line(string_address word,
 {
         positive line;
 
-        if (!file_unsigned_decimal(word, address_of line) || !line)
+        if (!string_unsigned_decimal_or_hex_exact(word, address_of line) || !line)
                 return false;
 
         pattern->kind = CSPLIT_LINE;
@@ -22867,7 +22771,7 @@ static p8 shred_removal;
 static bool shred_option_seen(p8 letter, string_address value)
 {
         if (letter == 'n' && value &&
-            !file_unsigned_decimal(value, address_of shred_iterations))
+            !string_unsigned_decimal_or_hex_exact(value, address_of shred_iterations))
                 return string_report(log_error, false,
                                      "shred: invalid number of passes: '%s'\n", value);
 
@@ -23359,7 +23263,7 @@ static bool shuf_seen(p8 letter, string_address value)
         {
                 positive lines;
 
-                if (!file_unsigned_decimal(value, address_of lines))
+                if (!string_unsigned_decimal_or_hex_exact(value, address_of lines))
                         return string_report(log_error, false,
                                              "shuf: invalid line count: '%s'\n", value);
 
@@ -32739,7 +32643,7 @@ static bool nproc_decimal(string_address text, bool plus, bool trailing,
                 text++;
 
         positive number;
-        if (!file_decimal_read(address_of text, true, address_of number))
+        if (!string_decimal_read(address_of text, true, address_of number))
                 return false;
 
         if (trailing)
@@ -34158,7 +34062,7 @@ static b32 file_kill()
 
                 // A word that is not a number names a process, and this one
                 // has no process table to look the name up in.
-                if (!file_signed_decimal(word, address_of who) ||
+                if (!string_signed_decimal_exact(word, address_of who) ||
                     who < b32_min || who > b32_max)
                 {
                         string_format(log_error, "kill: cannot find process \"%s\"\n", word);

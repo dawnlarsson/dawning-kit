@@ -103,15 +103,8 @@ static bipolar start_service(string_address path,
                              string_address address_to arguments,
                              positive count)
 {
-        bipolar child = system_fork();
-
-        if (child == 0)
-        {
-                (void)shell_exec_file(path, arguments, count, init_envp);
-                system_call_1(syscall(exit), 127);
-        }
-
-        return child;
+        return shell_fork_exec(path, arguments, count, init_envp,
+                               -1, -1, null, null);
 }
 
 static bipolar start_network()

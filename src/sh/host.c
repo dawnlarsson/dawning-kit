@@ -962,24 +962,14 @@ static b32 host_update(host_install address_to install)
 static b32 host_run(string_address address_to argv)
 {
         positive status = 0;
-        bipolar child = system_fork();
-        bipolar reaped;
+        bipolar child = shell_fork_exec(
+            argv[0], argv, pointer_vector_count(argv), file_environment_all(),
+            -1, -1, null, null);
 
         if (child < 0)
                 return host_fail(argv[0], child);
 
-        if (child == 0)
-        {
-                // Through the launch decision every other exec here takes.
-                (void)shell_exec_file(argv[0], argv, pointer_vector_count(argv),
-                                      file_environment_all());
-                system_call_1(syscall(exit), 127);
-        }
-
-        do
-                reaped = system_call_4(syscall(wait4), child,
-                                       (positive)address_of status, 0, 0);
-        while (reaped == -4);
+        bipolar reaped = system_wait4_retry(child, address_of status, 0, null);
 
         if (reaped < 0)
                 return host_fail(argv[0], reaped);
@@ -2772,34 +2762,38 @@ static fn host_kmsg(string_address address_to parts)
 }
 
 /* /shell -c text in a session of its own, from /root, its output where asked or inherited. */
+typedef struct
+{
+        bipolar output;
+} host_event_child;
+
+static fn host_event_child_prepare(address_any context)
+{
+        host_event_child address_to child = context;
+        bipolar quiet = system_open_at(AT_FDCWD, "/dev/null",
+                                       FILE_READ_WRITE | O_CLOEXEC);
+
+        system_call(syscall(setsid));
+        if (quiet > 0)
+                system_call_3(syscall(dup3), (positive)quiet, 0, 0);
+        if (child->output > 2)
+        {
+                system_call_3(syscall(dup3), (positive)child->output, 1, 0);
+                system_call_3(syscall(dup3), (positive)child->output, 2, 0);
+        }
+
+        system_call_1(syscall(chdir), (positive)(string_address)"/root");
+}
+
 static bipolar host_event_start(string_address text, bipolar output,
                                 string_address address_to environment)
 {
-        bipolar child = system_fork();
+        string_address argv[] = {HOST_EVENT_SHELL, "-c", text, null};
+        host_event_child child = {.output = output};
 
-        if (child)
-                return child;
-
-        {
-                string_address argv[] = {HOST_EVENT_SHELL, "-c", text, null};
-                bipolar quiet = system_open_at(AT_FDCWD, "/dev/null",
-                                               FILE_READ_WRITE | O_CLOEXEC);
-
-                system_call(syscall(setsid));
-                if (quiet > 0)
-                        system_call_3(syscall(dup3), (positive)quiet, 0, 0);
-                if (output > 2)
-                {
-                        system_call_3(syscall(dup3), (positive)output, 1, 0);
-                        system_call_3(syscall(dup3), (positive)output, 2, 0);
-                }
-
-                system_call_1(syscall(chdir), (positive)(string_address)"/root");
-                (void)shell_exec_file(HOST_EVENT_SHELL, argv, 3, environment);
-                system_call_1(syscall(exit), 127);
-        }
-
-        return -1;
+        return shell_fork_exec(HOST_EVENT_SHELL, argv, 3, environment,
+                               -1, -1, host_event_child_prepare,
+                               address_of child);
 }
 
 /*

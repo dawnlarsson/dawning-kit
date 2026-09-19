@@ -78,7 +78,7 @@ static bool ul_signed(string_address text, bipolar minimum, bipolar maximum,
         while (byte_is_space(string_get(text)))
                 text++;
         bipolar got;
-        if (!file_signed_decimal(text, address_of got) ||
+        if (!string_signed_decimal_exact(text, address_of got) ||
             got < minimum || got > maximum)
                 return false;
         address_to value = got;
@@ -12126,7 +12126,7 @@ static bool ul_ipc_key_number(string_address text, positive address_to into)
         if (string_is(at, '-') || string_is(at, '+'))
         {
                 bipolar value;
-                if (!file_signed_decimal(at, address_of value) || value < b32_min ||
+                if (!string_signed_decimal_exact(at, address_of value) || value < b32_min ||
                     value > b32_max)
                         return false;
                 address_to into = (positive)(p32)(b32)value;
