@@ -962,24 +962,14 @@ static b32 host_update(host_install address_to install)
 static b32 host_run(string_address address_to argv)
 {
         positive status = 0;
-        bipolar child = system_fork();
-        bipolar reaped;
+        bipolar child = shell_fork_exec(
+            argv[0], argv, pointer_vector_count(argv), file_environment_all(),
+            -1, -1, null, null);
 
         if (child < 0)
                 return host_fail(argv[0], child);
 
-        if (child == 0)
-        {
-                // Through the launch decision every other exec here takes.
-                (void)shell_exec_file(argv[0], argv, pointer_vector_count(argv),
-                                      file_environment_all());
-                system_call_1(syscall(exit), 127);
-        }
-
-        do
-                reaped = system_call_4(syscall(wait4), child,
-                                       (positive)address_of status, 0, 0);
-        while (reaped == -4);
+        bipolar reaped = system_wait4_retry(child, address_of status, 0, null);
 
         if (reaped < 0)
                 return host_fail(argv[0], reaped);
