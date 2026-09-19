@@ -2751,7 +2751,7 @@ static b32 process_replay_timing(string_address line, bool address_to advanced,
         {
                 while (string_is(at, ' '))
                         at++;
-                if (!string_unsigned_integer_exact(at, address_of bytes))
+                if (!string_unsigned_decimal_or_hex_exact(at, address_of bytes))
                         return PROCESS_REPLAY_LINE_BROKEN;
         }
         address_to stream = kind;

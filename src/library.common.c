@@ -77,8 +77,18 @@ static inline INLINE positive digit_known(p8 character, positive base)
         return narrow <= (p32)base - 11 ? narrow + 10 : base;
 }
 
-/* Checked base-2..36 digit runs: overflow or no digits leaves both outputs
-   untouched; success advances the cursor and writes the unsigned value. */
+/* One checked accumulation step shared by terminated and counted scanners. */
+static inline bool positive_digit_append_checked(positive value,
+                                                 positive base,
+                                                 positive digit,
+                                                 positive address_to next)
+{
+        positive scaled;
+
+        return !__builtin_mul_overflow(value, base, address_of scaled) &&
+               !__builtin_add_overflow(scaled, digit, next);
+}
+
 /* Checked base-2..36 digit runs.  A saturating read consumes the whole
    overflowing run and answers positive_max; a checked read preserves the old
    all-or-nothing cursor/value contract. */
@@ -101,18 +111,14 @@ static inline bool string_digits_read(string_address address_to text,
                 if (digit >= base)
                         break;
 
-                if (!overflow)
+                if (!overflow &&
+                    !positive_digit_append_checked(got, base, digit,
+                                                   address_of got))
                 {
-                        positive scaled;
-
-                        if (__builtin_mul_overflow(got, base, address_of scaled) ||
-                            __builtin_add_overflow(scaled, digit, address_of got))
-                        {
-                                if (!saturate)
-                                        return false;
-                                got = positive_max;
-                                overflow = true;
-                        }
+                        if (!saturate)
+                                return false;
+                        got = positive_max;
+                        overflow = true;
                 }
 
                 at++;
@@ -155,11 +161,10 @@ static inline bool memory_digits_checked_exact(const p8 address_to bytes,
         for (positive at = 0; at < length; at++)
         {
                 positive digit = digit_known(bytes[at], base);
-                positive scaled;
 
                 if (digit >= base ||
-                    __builtin_mul_overflow(got, base, address_of scaled) ||
-                    __builtin_add_overflow(scaled, digit, address_of got))
+                    !positive_digit_append_checked(got, base, digit,
+                                                   address_of got))
                         return false;
         }
 
@@ -380,7 +385,7 @@ static inline bool string_signed_decimal_exact(string_address text,
         return true;
 }
 
-static inline bool string_unsigned_integer_exact(string_address text,
+static inline bool string_unsigned_decimal_or_hex_exact(string_address text,
                                                  positive address_to value)
 {
         if (string_is(text, '0') && (text[1] == 'x' || text[1] == 'X'))

@@ -3648,6 +3648,11 @@ typedef fn(address_to file_visit)(bipolar directory, string_address name,
 */
 static bool file_change_after_contents;
 
+/* Which mutation policy the shared recursive walker is carrying. Traversal
+   order stays in file_change_after_contents; the two facts happen to line up
+   for chmod versus chown/chgrp, but they are not the same policy. */
+static bool file_change_ownership;
+
 /* True while a visit is a name the walk reached, not one the user typed. A
    symlink the user names is theirs to mean; one found under a -R walk is not,
    and chown/chgrp must act on the link rather than follow it out of the tree
@@ -10526,7 +10531,7 @@ static b32 find_parse_primary(positive depth)
 
         case '>':
         case '<':
-                if (!string_unsigned_integer_exact(value, node->kind == '>'
+                if (!string_unsigned_decimal_or_hex_exact(value, node->kind == '>'
                                                       ? address_of find_maximum
                                                       : address_of find_minimum) ||
                     string_is(value, '+'))
@@ -15363,6 +15368,8 @@ static b32 file_chmod()
                                      chmod_specification);
 
         chmod_umask = file_umask();
+        file_change_ownership = false;
+        file_change_after_contents = false;
 
 #if defined(LIBRARY_THREAD_RUNTIME)
         file_change_tree = file_change_tree_parallel;
@@ -15683,9 +15690,9 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         order.  Only the mutation order differs. chmod changes a directory from
         its parent's job before that directory is opened; chown/chgrp leave a
         directory behind its subtree and change it through the pinned parent
-        afterwards. file_change_after_contents already names that distinction
-        for the serial walk, so the parallel walk uses the same bit instead of
-        carrying two copies of the traversal.
+        afterwards. file_change_after_contents carries only that ordering,
+        while file_change_ownership selects which mutation policy the shared
+        parallel walk applies.
 
         Pool jobs never write diagnostics. They only perform the change and
         append an outcome plus its path; the calling-thread sink reports it.
@@ -15778,7 +15785,7 @@ static fn file_change_tree_enter(address_any context, address_any node_address,
                 bool here = looked &&
                             (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
 
-                if (!file_change_after_contents)
+                if (!file_change_ownership)
                 {
                         chmod_outcome outcome;
 
@@ -15823,11 +15830,13 @@ static fn file_change_tree_enter(address_any context, address_any node_address,
                 file_change_tree_node address_to child =
                     file_change_tree_node_new(node, name, name_length);
                 file_change_tree_node address_to leaf =
-                    file_change_after_contents && child
+                    file_change_ownership && file_change_after_contents && child
                         ? file_change_tree_node_new(node, name, name_length)
                         : null;
 
-                if (!child || (file_change_after_contents && !leaf))
+                if (!child ||
+                    (file_change_ownership && file_change_after_contents &&
+                     !leaf))
                 {
                         memory_give(child);
                         memory_give(leaf);
@@ -15877,7 +15886,7 @@ static bool file_change_tree_sink(address_any context, address_any node_address,
 
         while (at < length)
         {
-                if (file_change_after_contents)
+                if (file_change_ownership)
                 {
                         chown_outcome outcome;
 
@@ -15910,6 +15919,15 @@ static bool file_change_tree_sink(address_any context, address_any node_address,
         This is the same before/after contract file_change_walk_as keeps in the
         serial path.
 */
+static fn file_change_tree_operand(string_address path,
+                                   file_facts address_to known)
+{
+        if (file_change_ownership)
+                chown_one(AT_FDCWD, path, path, known);
+        else
+                chmod_one(AT_FDCWD, path, path, known);
+}
+
 static fn file_change_tree_parallel(string_address path)
 {
         file_facts facts;
@@ -15924,16 +15942,16 @@ static fn file_change_tree_parallel(string_address path)
 
         if (!file_change_after_contents)
         {
-                chmod_one(AT_FDCWD, path, path,
-                          looked ? address_of facts : null);
+                file_change_tree_operand(path,
+                                         looked ? address_of facts : null);
 
                 if (!here)
                         return;
         }
         else if (!here)
         {
-                chown_one(AT_FDCWD, path, path,
-                          looked ? address_of facts : null);
+                file_change_tree_operand(path,
+                                         looked ? address_of facts : null);
                 return;
         }
 
@@ -15957,7 +15975,7 @@ static fn file_change_tree_parallel(string_address path)
                                     file_change_tree_sink, null, handle, top,
                                     O_NOFOLLOW)))
                 {
-                        if (file_change_after_contents)
+                        if (file_change_ownership)
                         {
                                 string_format(
                                     log_error,
@@ -15981,7 +15999,7 @@ static fn file_change_tree_parallel(string_address path)
         {
                 file_change_descended = false;
                 file_change_trusted = false;
-                chown_one(AT_FDCWD, path, path, address_of facts);
+                file_change_tree_operand(path, address_of facts);
         }
 }
 #endif
@@ -16066,6 +16084,7 @@ static bool chown_spec_read(string_address who, bipolar address_to user,
 
 static fn chown_paths(positive first, positive count)
 {
+        file_change_ownership = true;
         file_change_after_contents = true;
 #if defined(LIBRARY_THREAD_RUNTIME)
         file_change_tree = file_change_tree_parallel;
@@ -16075,6 +16094,7 @@ static fn chown_paths(positive first, positive count)
                           chown_program, address_of chown_status, chown_one);
         file_change_tree = null;
         file_change_after_contents = false;
+        file_change_ownership = false;
 }
 
 static b32 file_chown_common(string_address program, bool groups_only)
@@ -20519,7 +20539,7 @@ static bool csplit_parse_line(string_address word,
 {
         positive line;
 
-        if (!string_unsigned_integer_exact(word, address_of line) || !line)
+        if (!string_unsigned_decimal_or_hex_exact(word, address_of line) || !line)
                 return false;
 
         pattern->kind = CSPLIT_LINE;
@@ -22751,7 +22771,7 @@ static p8 shred_removal;
 static bool shred_option_seen(p8 letter, string_address value)
 {
         if (letter == 'n' && value &&
-            !string_unsigned_integer_exact(value, address_of shred_iterations))
+            !string_unsigned_decimal_or_hex_exact(value, address_of shred_iterations))
                 return string_report(log_error, false,
                                      "shred: invalid number of passes: '%s'\n", value);
 
@@ -23243,7 +23263,7 @@ static bool shuf_seen(p8 letter, string_address value)
         {
                 positive lines;
 
-                if (!string_unsigned_integer_exact(value, address_of lines))
+                if (!string_unsigned_decimal_or_hex_exact(value, address_of lines))
                         return string_report(log_error, false,
                                              "shuf: invalid line count: '%s'\n", value);
 

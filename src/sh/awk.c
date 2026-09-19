@@ -1561,6 +1561,9 @@ static fn awk_flush_everything()
         ownership and final exec live in shell_fork_exec; AWK contributes only
         the descriptors its child must not inherit.
 */
+static string_address address_to awk_child_environment;
+static positive awk_child_environment_room;
+
 static fn awk_child_prepare(address_any context)
 {
         (void)context;
