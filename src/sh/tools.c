@@ -5668,7 +5668,7 @@ static bool numfmt_option_seen(p8 letter, string_address value)
                         numfmt.to_unit = unit;
         }
         if (letter == 'p' && value &&
-            (!file_signed_decimal(value, address_of numfmt.padding) ||
+            (!string_signed_decimal_exact(value, address_of numfmt.padding) ||
              !numfmt.padding))
         {
                 text_flush();
