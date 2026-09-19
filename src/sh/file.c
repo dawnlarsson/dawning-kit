@@ -9517,46 +9517,7 @@ static b32 file_run(string_address address_to words, bipolar directory)
 }
 
 /* Saturating options consume the complete overflowing run and retain syntax. */
-static bool file_decimal_read(string_address address_to text, bool saturate,
-                              positive address_to value)
-{
-        if (string_digits_checked(text, 10, value))
-                return true;
-        if (!saturate || !byte_is_digit(string_get(address_to text)))
-                return false;
-        address_to text += string_span_of_set(address_to text, "0123456789");
-        address_to value = positive_max;
-        return true;
-}
 
-static bool file_signed_decimal(string_address text, bipolar address_to value)
-{
-        bool negative = string_is(text, '-');
-
-        if (negative || string_is(text, '+'))
-                text++;
-
-        string_address at = text;
-        positive magnitude;
-
-        if (!string_digits_checked(address_of at, 10, address_of magnitude) ||
-            string_get(at) ||
-            magnitude > (positive)bipolar_max + (positive)negative)
-                return false;
-
-        address_to value = bipolar_from_magnitude(magnitude, negative);
-        return true;
-}
-
-static bool file_unsigned_decimal(string_address text,
-                                   positive address_to number)
-{
-        if (string_is(text, '0') &&
-            (text[1] == 'x' || text[1] == 'X'))
-                return string_get(text + 2) &&
-                       string_digits_checked_exact(text + 2, 16, number);
-        return string_digits_checked_exact(text, 10, number);
-}
 
 
 // nice -------------------------------------------------------------
@@ -9569,7 +9530,7 @@ static bool nice_adjustment(string_address text, bipolar address_to value)
         if (negative || string_is(text, '+'))
                 text++;
         positive magnitude;
-        if (!file_decimal_read(address_of text, true, address_of magnitude) ||
+        if (!string_decimal_read(address_of text, true, address_of magnitude) ||
             string_get(text))
                 return false;
         address_to value = bipolar_from_magnitude(min(magnitude, (positive)39),
@@ -10565,7 +10526,7 @@ static b32 find_parse_primary(positive depth)
 
         case '>':
         case '<':
-                if (!file_unsigned_decimal(value, node->kind == '>'
+                if (!string_unsigned_integer_exact(value, node->kind == '>'
                                                       ? address_of find_maximum
                                                       : address_of find_minimum) ||
                     string_is(value, '+'))
@@ -20547,7 +20508,7 @@ static bipolar csplit_parse_regex(string_address word,
 
         if (!string_get(offset))
                 pattern->offset = 0;
-        else if (!file_signed_decimal(offset, address_of pattern->offset))
+        else if (!string_signed_decimal_exact(offset, address_of pattern->offset))
                 return -1;
 
         return 1;
@@ -20558,7 +20519,7 @@ static bool csplit_parse_line(string_address word,
 {
         positive line;
 
-        if (!file_unsigned_decimal(word, address_of line) || !line)
+        if (!string_unsigned_integer_exact(word, address_of line) || !line)
                 return false;
 
         pattern->kind = CSPLIT_LINE;
@@ -22790,7 +22751,7 @@ static p8 shred_removal;
 static bool shred_option_seen(p8 letter, string_address value)
 {
         if (letter == 'n' && value &&
-            !file_unsigned_decimal(value, address_of shred_iterations))
+            !string_unsigned_integer_exact(value, address_of shred_iterations))
                 return string_report(log_error, false,
                                      "shred: invalid number of passes: '%s'\n", value);
 
@@ -23282,7 +23243,7 @@ static bool shuf_seen(p8 letter, string_address value)
         {
                 positive lines;
 
-                if (!file_unsigned_decimal(value, address_of lines))
+                if (!string_unsigned_integer_exact(value, address_of lines))
                         return string_report(log_error, false,
                                              "shuf: invalid line count: '%s'\n", value);
 
@@ -32662,7 +32623,7 @@ static bool nproc_decimal(string_address text, bool plus, bool trailing,
                 text++;
 
         positive number;
-        if (!file_decimal_read(address_of text, true, address_of number))
+        if (!string_decimal_read(address_of text, true, address_of number))
                 return false;
 
         if (trailing)
@@ -34081,7 +34042,7 @@ static b32 file_kill()
 
                 // A word that is not a number names a process, and this one
                 // has no process table to look the name up in.
-                if (!file_signed_decimal(word, address_of who) ||
+                if (!string_signed_decimal_exact(word, address_of who) ||
                     who < b32_min || who > b32_max)
                 {
                         string_format(log_error, "kill: cannot find process \"%s\"\n", word);
