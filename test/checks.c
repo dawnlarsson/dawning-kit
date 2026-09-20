@@ -58344,6 +58344,8 @@ static fn machine_sntp(void)
 {
         check("RFC 5905 offset, min-delay pick and poison guards hold",
               sntp_math_ok());
+        check("the clock is stepped when far out and slewed when near",
+              locale_discipline_ok());
 }
 
 b32 main(void)

@@ -29,6 +29,10 @@
 #define LOCALE_WAIT_NOHANG 1
 #define LOCALE_NTP_RATE_AGAIN 300
 #define LOCALE_NTP_EXIT_RATE 2
+#define LOCALE_NTP_STEP_NS ((bipolar)128 * 1000000)
+#define LOCALE_NTP_TIMECONST 6
+#define LOCALE_TIMEX_OFFSET 1
+#define LOCALE_TIMEX_CONSTANT 6
 /*
         The kernel's own numbering, from uapi/linux/timex.h. ADJ_SETOFFSET
         is 0x0100. It was 0x80 here, which is ADJ_TAI: a request to set the
@@ -154,8 +158,138 @@ static fn locale_clock_mark_synced(void)
         positive words[LOGGER_TIMEX_WORDS] = {0};
 
         words[0] = ADJ_STATUS;
-        words[LOGGER_TIMEX_STATUS] = 0;
+        words[LOGGER_TIMEX_STATUS] = STA_PLL;
         system_call_1(syscall(adjtimex), (positive)words);
+}
+
+/*
+        A correction applied once and then left alone is only right at
+        the moment it lands. What carries the clock between polls is a
+        crystal, and LOCALE_NTP_AGAIN is half an hour: ten parts per
+        million, which is an ordinary one, is eighteen milliseconds of
+        drift by the next query. That is three orders of magnitude past
+        every other error on this path put together, and no amount of
+        care measuring the offset touches any of it. Stepping and then
+        free-running for 1800 seconds spends the whole measurement in
+        the first instant and then throws it away.
+
+        The kernel keeps a phase-locked loop for exactly this, and it
+        keeps its frequency estimate across our polls -- which is what
+        this program needs, because the query runs in a forked child
+        that exits, so nothing held in memory survives to the next one.
+        Handing the offset to that loop with ADJ_OFFSET and STA_PLL lets
+        the kernel both steer the clock and learn how fast it runs; a
+        poll interval longer than MINSEC puts it in the frequency-locked
+        regime, which is the one that estimates rate from samples as far
+        apart as ours.
+
+        A step is still right when the clock is far out. Slewing never
+        moves time backwards, which is what a log, a build and a file
+        timestamp all want, but the kernel slews at a bounded rate, so a
+        large offset would take longer to walk off than the gap between
+        polls. The split is at 128 ms, where ntpd puts it.
+
+        A step also cancels any slew still in progress, with an
+        ADJ_OFFSET of zero in the same request: the pending phase
+        adjustment was computed against a clock this request is about to
+        move, and applying both would correct twice.
+*/
+static CONST bool locale_ntp_wants_step(bipolar offset_ns)
+{
+        return offset_ns >= LOCALE_NTP_STEP_NS ||
+               offset_ns <= -LOCALE_NTP_STEP_NS;
+}
+
+static fn locale_ntp_discipline_words(bipolar offset_ns, bipolar seconds,
+                                      bipolar nanoseconds,
+                                      positive address_to words)
+{
+        memory_zero(words, LOGGER_TIMEX_WORDS * sizeof(positive));
+        words[LOGGER_TIMEX_STATUS] = STA_PLL;
+        if (locale_ntp_wants_step(offset_ns))
+        {
+                words[0] = ADJ_SETOFFSET | ADJ_OFFSET | ADJ_NANO | ADJ_STATUS;
+                words[LOCALE_TIMEX_OFFSET] = 0;
+                words[LOGGER_TIMEX_TIME_SEC] = (positive)seconds;
+                words[LOGGER_TIMEX_TIME_NSEC] = (positive)nanoseconds;
+                return;
+        }
+        words[0] = ADJ_OFFSET | ADJ_TIMECONST | ADJ_NANO | ADJ_STATUS;
+        words[LOCALE_TIMEX_OFFSET] = (positive)offset_ns;
+        words[LOCALE_TIMEX_CONSTANT] = LOCALE_NTP_TIMECONST;
+}
+
+/*
+        Nothing unprivileged can ask the kernel which mode a bit means,
+        and a wrong one returns success, so the decision is checked here
+        instead: what goes in the request for a given offset, rather than
+        what the kernel does with it.
+*/
+static COLD bool locale_discipline_ok(void)
+{
+        positive words[LOGGER_TIMEX_WORDS];
+        positive at;
+        static const struct
+        {
+                bipolar offset_ns;
+                bool step;
+        } discipline_case[] = {
+            {0, false},
+            {1000000, false},
+            {-1000000, false},
+            {LOCALE_NTP_STEP_NS - 1, false},
+            {-(LOCALE_NTP_STEP_NS - 1), false},
+            {LOCALE_NTP_STEP_NS, true},
+            {-LOCALE_NTP_STEP_NS, true},
+            {(bipolar)86400 * 1000000000, true},
+            {-(bipolar)86400 * 1000000000, true},
+        };
+
+        for (at = 0; at < array_count(discipline_case); at++)
+        {
+                bipolar offset = discipline_case[at].offset_ns;
+                bipolar sec = 0;
+                bipolar nsec = 0;
+
+                sntp_split_offset(offset, address_of sec, address_of nsec);
+                locale_ntp_discipline_words(offset, sec, nsec, words);
+
+                if (locale_ntp_wants_step(offset) != discipline_case[at].step)
+                        return false;
+                /* the loop is enabled either way, and the clock counts as
+                   set either way, so STA_UNSYNC never survives a reply */
+                if (words[LOGGER_TIMEX_STATUS] != STA_PLL)
+                        return false;
+                if (words[0] & ADJ_STATUS ? false : true)
+                        return false;
+                if (discipline_case[at].step)
+                {
+                        /* a step carries the time, cancels any slew, and
+                           has no business setting a loop time constant */
+                        if (!(words[0] & ADJ_SETOFFSET) ||
+                            words[0] & ADJ_TIMECONST ||
+                            words[LOCALE_TIMEX_OFFSET] != 0 ||
+                            (bipolar)words[LOGGER_TIMEX_TIME_SEC] != sec ||
+                            (bipolar)words[LOGGER_TIMEX_TIME_NSEC] != nsec)
+                                return false;
+                }
+                else
+                {
+                        /* a slew hands the offset to the loop and never
+                           steps, so time does not go backwards */
+                        if (words[0] & ADJ_SETOFFSET ||
+                            !(words[0] & ADJ_TIMECONST) ||
+                            (bipolar)words[LOCALE_TIMEX_OFFSET] != offset ||
+                            words[LOCALE_TIMEX_CONSTANT] !=
+                                LOCALE_NTP_TIMECONST ||
+                            words[LOGGER_TIMEX_TIME_SEC] ||
+                            words[LOGGER_TIMEX_TIME_NSEC])
+                                return false;
+                }
+                if (!(words[0] & ADJ_NANO) || !(words[0] & ADJ_OFFSET))
+                        return false;
+        }
+        return true;
 }
 
 static const char locale_ntp_fallback[][24] = {
@@ -185,11 +319,7 @@ static bipolar locale_ntp_apply_offset(bipolar offset_ns)
                 return SNTP_MALFORMED;
 
         sntp_split_offset(offset_ns, address_of sec, address_of nsec);
-        memory_zero(words, sizeof(words));
-        words[0] = ADJ_SETOFFSET | ADJ_NANO | ADJ_STATUS;
-        words[LOGGER_TIMEX_STATUS] = 0;
-        words[LOGGER_TIMEX_TIME_SEC] = (positive)sec;
-        words[LOGGER_TIMEX_TIME_NSEC] = (positive)nsec;
+        locale_ntp_discipline_words(offset_ns, sec, nsec, words);
         failed = system_call_1(syscall(adjtimex), (positive)words);
         if_common (failed >= 0)
                 return 0;
