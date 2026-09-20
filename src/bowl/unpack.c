@@ -20,12 +20,45 @@
 #define BOWL_GEO_MIRROR \
         "Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch\n"
 
+#define BOWL_RESOLVE_NO_MAGICLINKS 0x02
+#define BOWL_RESOLVE_IN_ROOT 0x10
+
 static bool bowl_has(string_address root, string_address path)
 {
-        p8 installed[BOWL_PATH_LIMIT];
+        bipolar root_handle;
+        bipolar found;
+        struct
+        {
+                p64 flags;
+                p64 mode;
+                p64 resolve;
+        } how = {
+            O_PATH | O_CLOEXEC,
+            0,
+            BOWL_RESOLVE_IN_ROOT | BOWL_RESOLVE_NO_MAGICLINKS,
+        };
 
-        return bowl_root_path(installed, sizeof(installed), root, path) &&
-               system_access_at(AT_FDCWD, installed, 0) >= 0;
+        if (!bowl_named_root(root) || bowl_path_steps(path))
+                return false;
+
+        root_handle = bowl_open_directory(root, false, null);
+        if (root_handle < 0)
+                return false;
+
+        /*
+                Resolve as if root were /.  In particular, an archive member
+                such as /usr/bin/pacman -> /bin/true must resolve to
+                ROOT/bin/true, not the host's /bin/true.  A plain access() on
+                ROOT/usr/bin/pacman crosses that boundary for absolute
+                symlinks and can make an incomplete or hostile bootstrap look
+                valid.
+        */
+        found = system_call_4(syscall(openat2), (positive)root_handle,
+                              (positive)path, (positive)address_of how,
+                              sizeof(how));
+        system_close(root_handle);
+
+        return found >= 0 && system_close(found) >= 0;
 }
 
 static bool bowl_root_busy(string_address root)
