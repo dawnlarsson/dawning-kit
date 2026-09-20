@@ -1613,10 +1613,12 @@ static b32 awk_wait_for(bipolar child)
 {
         positive status = 0;
 
-        if (child <= 0)
+        if (!child)
                 return 0;
+        if (child < 0 ||
+            system_wait4_retry(child, address_of status, 0, null) < 0)
+                return -1;
 
-        system_wait4_retry(child, address_of status, 0, null);
         return wait_status_code_base(status, 256);
 }
 
