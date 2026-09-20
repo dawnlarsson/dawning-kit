@@ -58340,6 +58340,35 @@ static fn machine_policy(void)
         }
 }
 
+/*
+        The machine process stopping the machine it is the machine process of.
+
+        moonwater_poweroff in the script runs poweroff, which is a builtin, so
+        it stops the machine from inside the event the machine process is in
+        the middle of. That goes through host_machine_stop like every other
+        stop does, and the attach it would ask the kernel to end is its own:
+        it must not poll for a detach only it could perform. moonwater_end is
+        what the file promises runs while the filesystems still write, so that
+        stop runs it, and only the first of them does.
+*/
+static fn machine_stop_self(void)
+{
+        bool held = host_machine_self;
+
+        memory_zero(address_of host_machine, sizeof(host_machine));
+        host_machine_ended = false;
+        host_machine_self = true;
+
+        check("the machine process does not wait on the attach it holds itself",
+              host_machine_stop());
+        check("and that stop spends moonwater_end", host_machine_ended);
+        check("a second stop does not run it again",
+              host_machine_stop() && host_machine_ended);
+
+        host_machine_self = held;
+        host_machine_ended = false;
+}
+
 static fn machine_sntp(void)
 {
         check("RFC 5905 offset, min-delay pick and poison guards hold",
@@ -58353,6 +58382,7 @@ b32 main(void)
         machine_hooks();
         machine_arms();
         machine_policy();
+        machine_stop_self();
         machine_sntp();
         return test_report(null);
 }

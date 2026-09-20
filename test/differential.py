@@ -17284,8 +17284,6 @@ static void state_strscpy(char *to, const char *from, unsigned long size) {
 }
 #define strscpy(to,from,size) state_strscpy((to),(from),(size))
 #define wait_event_interruptible_timeout(wq,cond,to) ((void)(wq),(cond)?1:0)
-static const char moonwater_machine_builtin[]="";
-static const char moonwater_machine_builtin_end[]="";
 #define KEY_LEFTCTRL 29
 #define KEY_RIGHTCTRL 97
 #define KEY_LEFTALT 56
@@ -17547,7 +17545,20 @@ static void init_waitqueue_head(wait_queue_head_t *w) { if (w) *w = 0; }
 static void wake_up(wait_queue_head_t *w) { (void)w; wakes++; }
 #define wait_event_interruptible(wq, condition) ((condition) ? 0 : 1)
 """
-    source += section(moonwater, "#define BIND_MOD_CTRL", "static int bind_connect")
+    # The script the module bakes in, as the module has it: one object, and an
+    # end that is its end. Two empty arrays stood here, and the difference
+    # bind_start reads as the built-in script's length was the distance
+    # between two unrelated objects -- whatever the compiler felt like.
+    source += ("static const char machine_shipped_script[] =\n" +
+               "".join("    " + json.dumps(line) + "\n"
+                       for line in shipped_machine.splitlines(keepends=True)) +
+               "    ;\n"
+               "#define moonwater_machine_builtin machine_shipped_script\n"
+               "#define moonwater_machine_builtin_end"
+               " (machine_shipped_script + sizeof machine_shipped_script - 1)\n")
+    source += (section(moonwater, "#define BIND_MOD_CTRL", "static int bind_connect")
+               .replace("extern const char moonwater_machine_builtin[];\n", "")
+               .replace("extern const char moonwater_machine_builtin_end[];\n", ""))
     source += section(moonwater, "#ifdef CONFIG_VT\nstatic int bind_keyboard_notify",
                       "static void bind_start(void)")
     source += section(moonwater, "static void bind_start(void)",
@@ -17612,10 +17623,6 @@ static unsigned bind_named(const char *first, const char *second) {
     return 0;
 }
 """
-    source += ("static const char machine_shipped_script[] =\n" +
-               "".join("    " + json.dumps(line) + "\n"
-                       for line in shipped_machine.splitlines(keepends=True)) +
-               "    ;\n")
     # moonwater canvas on and off: what the request decides before Canvas
     # is touched, with Canvas itself mocked.
     source += r'''
@@ -18725,9 +18732,10 @@ static void check_machine_events(void) {
     bind_idle(power);
     memset(&script,0,sizeof script);
     script.op=MOONWATER_SCRIPT_SET;
-    (void)report_machine_script(&script);
-    check(!machine_script_owned,
-          "and the built-in script this harness stands in for owns nothing");
+    check(!report_machine_script(&script) &&
+          machine_script_length==machine_script_builtin &&
+          (machine_script_owned & (1u<<(SPARK_BIND_POWEROFF-1))),
+          "and the module's own copy of that script owns the same rows");
 }
 
 static void check_settings_sum(void) {

@@ -1613,7 +1613,10 @@ bool env_assign(const_string name, const_string value);
 static struct machine_script host_machine;
 static p8 host_machine_text[MOONWATER_SCRIPT_BYTES];
 static p8 host_machine_fresh;
+//      This process owns the machine attach, from the moment it does.
 static bool host_machine_self;
+//      moonwater_end has run; it runs once however the machine stops.
+static bool host_machine_ended;
 
 static const struct {
         string_address name;
@@ -1913,14 +1916,48 @@ static fn host_machine_close(bipolar device)
         system_close(device);
 }
 
+/*
+        moonwater_end, at most once, wherever the machine turns out to stop.
+
+        A machine script stops the machine from inside its own event function
+        -- moonwater_poweroff runs poweroff -- and that never comes back to
+        the wait loop, so the loop's own call is not the only place this has
+        to happen. Running it from here as well, guarded, means the one
+        function the file promises runs whether the stop came from the event
+        or from the machine being told to end.
+*/
+static fn host_machine_end_run(void)
+{
+        string_address name = (string_address)moonwater_hook[2].name;
+
+        if (host_machine_ended)
+                return;
+        host_machine_ended = true;
+        if (!(host_machine.overlay.hooks & MOONWATER_HOOK_END))
+                return;
+        (void)host_machine_call(shell_function_slot(name), name, null, null);
+}
+
+/*
+        Waiting for the machine process to let go, unless we are it.
+
+        host_machine_self is set the moment this process owns the attach, not
+        when it is told to stop: its own moonwater_poweroff calls poweroff,
+        which comes through here, and a process that asked the kernel to end
+        the attach it is itself holding would poll for ten seconds for a
+        detach only it could perform -- ten seconds in which the button
+        already pressed looks like a button that did nothing.
+*/
 static bool host_machine_stop(void)
 {
         struct machine_control control;
         bipolar device;
         p64 started;
 
-        if (host_machine_self)
+        if (host_machine_self) {
+                host_machine_end_run();
                 return true;
+        }
         device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
         if (device < 0)
                 return false;
@@ -2017,6 +2054,10 @@ static b32 host_machine_run(void)
                 system_close(device);
                 return host_fail("machine attach", failed);
         }
+        //      The attach is ours from here, and every stop this process
+        //      performs goes through host_machine_stop, including the one
+        //      its own moonwater_poweroff asks for.
+        host_machine_self = true;
 
         host_machine_wait_verdict(verdict, sizeof(verdict));
         host_machine_publish();
@@ -2058,8 +2099,7 @@ static b32 host_machine_run(void)
                 if (!control.event) {
                         host_machine_dirty(false);
                         marked = false;
-                        host_machine_self = true;
-                        host_machine_hook(slot[2], 2, null, null);
+                        host_machine_end_run();
                         break;
                 }
 
@@ -2088,8 +2128,7 @@ static b32 host_machine_run(void)
                     moonwater_bind_line(&host_machine.overlay, control.event)) {
                         unsigned int stopping = control.event;
 
-                        host_machine_self = true;
-                        host_machine_hook(slot[2], 2, null, null);
+                        host_machine_end_run();
                         host_machine_dirty(false);
                         host_machine_close(device);
                         shell_stop(log, stopping == SPARK_BIND_POWEROFF

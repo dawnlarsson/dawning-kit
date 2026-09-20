@@ -9606,6 +9606,27 @@ rpi_master=$(grep -c 'raw/master' kernel/profile/post/rpi.sh)
 same 'immutable firmware source' '1:3:0' \
         "$rpi_commit_ok:$rpi_hashes:$rpi_master"
 
+#       The machine process owns its attach from the moment it has it, not
+#       from the moment it is told to stop. Its own moonwater_poweroff runs
+#       poweroff, a builtin, so the stop happens inside the event and goes
+#       through host_machine_stop: claimed any later and that call asks the
+#       kernel to end the attach this process is holding and then polls ten
+#       seconds for a detach only it could perform, which is a power button
+#       that looks dead for ten seconds.
+machine_claims=$(grep -c 'host_machine_self = true;' src/moonwater.c)
+machine_claim_line=$(grep -n 'host_machine_self = true;' src/moonwater.c |
+        head -1 | cut -d: -f1)
+machine_wait_line=$(grep -n 'host_machine_wait_verdict(verdict' src/moonwater.c |
+        head -1 | cut -d: -f1)
+if [ -n "$machine_claim_line" ] && [ -n "$machine_wait_line" ] &&
+        [ "$machine_claim_line" -lt "$machine_wait_line" ]; then
+        machine_claim_first=yes
+else
+        machine_claim_first=no
+fi
+same 'the machine process claims its attach before anything can stop it' \
+        '1:yes' "$machine_claims:$machine_claim_first"
+
 hook_return=$(grep -c 'return build_run("sh", "-c", value, null);' \
         src/build/build.c)
 hook_gates=$(grep -E -c 'if \(build_shell_key\("(pre|post)"\)\)' \
