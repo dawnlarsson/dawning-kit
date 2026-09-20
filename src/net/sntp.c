@@ -34,6 +34,34 @@
         the trap. This tree has no vDSO: clock_gettime is a syscall, and
         that cost dwarfs the stores, so the C must not add a second one.
 
+        WHAT HAS BEEN MEASURED, AND WHAT HAS NOT
+
+        Against five servers at once, with the box's own clock held
+        synchronised by something else as the reference, this file's
+        answers sat within 193 microseconds of it; a single-sample client
+        with userspace stamps, asked the same servers in the same minute,
+        spread to 1207. Both agree on sign and scale, so the difference
+        is the five-sample filter and the kernel stamps, not a disagreement
+        about what time it is.
+
+        The two kernel stamps are worth, at the median of real exchanges:
+        10355 ns for the arrival stamp, and 1729 ns to one server and 2320
+        to another for the departure stamp. Both are one-sided, which is
+        why they land in the offset at all -- the formula assumes the path
+        is symmetric. Round-trip asymmetry itself cannot be measured from
+        one end and so cannot be corrected here; across the servers above
+        it accounts for a spread of several milliseconds, which is larger
+        than everything this file does about anything else.
+
+        What is not proven is the clock being set. Nothing here can take
+        CLOCK_REALTIME on a machine that is not ours to disturb, so the
+        step and slew paths in locale.c have never been executed against a
+        kernel that carried them out. What is checked is the request: the
+        mode words against uapi/linux/timex.h, and the decision between
+        stepping and slewing against crafted offsets in the machine lane.
+        A reader should take "the right thing is asked for" from this and
+        not "the asking has been seen to work".
+
         Dawn Larsson - Apache 2.0 license
         github.com/dawnlarsson/dawning-kit
 
@@ -81,6 +109,12 @@
 #define SNTP_CONTROL_WORDS 16
 #define SNTP_CONTROL_HEAD (sizeof(positive) + 8)
 #define SNTP_ERRQUEUE_MOST 4
+#define SNTP_SOL_IP 0
+#define SNTP_IP_RECVERR 11
+#define SNTP_ERROR_TIMESTAMPING 4 /* SO_EE_ORIGIN_TIMESTAMPING */
+#define SNTP_ERROR_BYTES 16       /* struct sock_extended_err */
+#define SNTP_ERROR_ORIGIN 4       /* ee_origin within it */
+#define SNTP_ERROR_SEQUENCE 12    /* ee_data, which carries the id */
 #define SNTP_CONTROL_DATA                          \
         ((SNTP_CONTROL_HEAD + sizeof(positive) - 1) & \
          ~(sizeof(positive) - 1))
@@ -376,12 +410,68 @@ static HOT bipolar sntp_receive_stamped(b32 handle, p8 address_to reply,
         steps over anything that is not the timestamp, which is what lets
         a real ICMP error sit there without being mistaken for one.
 */
-static HOT bool sntp_transmit_stamp(b32 handle, p64 address_to departed)
+/*
+        OPT_ID is already asked for, so the kernel numbers every transmit
+        stamp with a counter that starts at zero when the option is set
+        and rises by one per send. Five sends on one socket came back 0,
+        1, 2, 3, 4.
+
+        The number does not travel in the timestamp. It is in the error
+        header beside it, as ee_data, and the same header says in
+        ee_origin whether this queue entry is a timestamp at all or a
+        real ICMP error that happens to be sitting there. Reading both is
+        what makes the stamp provably the one belonging to the send being
+        timed, rather than whichever stamp was on the queue -- a
+        distinction that only bites if a drain is ever missed, which is
+        exactly the case that cannot be tested from outside.
+
+        A kernel that sends no error header, or one whose numbering does
+        not line up, leaves the stamp unclaimed and the exchange falls
+        back to the userspace reading, as it does when the option is
+        refused outright.
+*/
+static bool sntp_control_sequence(p8 address_to control, positive length,
+                                  p32 address_to sequence)
+{
+        positive at = 0;
+
+        while (at + SNTP_CONTROL_DATA <= length)
+        {
+                positive size = address_to(positive address_to)(control + at);
+                b32 level = address_to(b32 address_to)(control + at +
+                                                       sizeof(positive));
+                b32 type = address_to(b32 address_to)(control + at +
+                                                      sizeof(positive) + 4);
+
+                if (size < SNTP_CONTROL_DATA || size > length - at)
+                        break;
+                if (level == SNTP_SOL_IP && type == SNTP_IP_RECVERR &&
+                    size - SNTP_CONTROL_DATA >= SNTP_ERROR_BYTES)
+                {
+                        p8 address_to body = control + at + SNTP_CONTROL_DATA;
+
+                        if (body[SNTP_ERROR_ORIGIN] == SNTP_ERROR_TIMESTAMPING)
+                        {
+                                address_to sequence =
+                                    address_to(p32 address_to)(
+                                        body + SNTP_ERROR_SEQUENCE);
+                                return true;
+                        }
+                }
+                at += (size + sizeof(positive) - 1) & ~(sizeof(positive) - 1);
+        }
+        return false;
+}
+
+static HOT bool sntp_transmit_stamp(b32 handle, p32 wanted,
+                                    p64 address_to departed)
 {
         positive message[SNTP_MESSAGE_WORDS];
         positive vector[2];
         positive control[SNTP_CONTROL_WORDS];
         p8 sink[SNTP_PACKET];
+        p64 stamp[2];
+        p32 sequence;
         bool found = false;
         positive round;
 
@@ -389,6 +479,7 @@ static HOT bool sntp_transmit_stamp(b32 handle, p64 address_to departed)
         {
                 bipolar got;
 
+                sequence = 0;
                 memory_zero(message, sizeof(message));
                 memory_zero(control, sizeof(control));
                 vector[0] = (positive)sink;
@@ -403,8 +494,15 @@ static HOT bool sntp_transmit_stamp(b32 handle, p64 address_to departed)
                 if (got < 0)
                         break;
                 if (sntp_control_stamp((p8 address_to)control, message[5],
-                                       SNTP_TIMESTAMPING, departed))
+                                       SNTP_TIMESTAMPING, stamp) &&
+                    sntp_control_sequence((p8 address_to)control, message[5],
+                                          address_of sequence) &&
+                    sequence == wanted)
+                {
+                        departed[0] = stamp[0];
+                        departed[1] = stamp[1];
                         found = true;
+                }
         }
         return found;
 }
@@ -456,6 +554,7 @@ static COLD bool sntp_math_ok(void)
         p8 reply[SNTP_PACKET];
         p8 control[96];
         p64 arrived[2];
+        p32 sequence;
         static const struct
         {
                 positive claimed; /* what the message says its length is */
@@ -752,6 +851,59 @@ static COLD bool sntp_math_ok(void)
                 return false;
 
         /*
+                The transmit stamp's number rides in the error header
+                beside it, not in the stamp, and the same header says
+                whether the entry is a timestamp at all. A real ICMP
+                error carries a different origin and must not be read as
+                a sequence number, or a refused port would start
+                claiming to be the answer to a send.
+        */
+        memory_zero(control, sizeof(control));
+        address_to(positive address_to)control = SNTP_CONTROL_DATA +
+                                                 SNTP_ERROR_BYTES;
+        address_to(b32 address_to)(control + sizeof(positive)) = SNTP_SOL_IP;
+        address_to(b32 address_to)(control + sizeof(positive) + 4) =
+            SNTP_IP_RECVERR;
+        control[SNTP_CONTROL_DATA + SNTP_ERROR_ORIGIN] =
+            SNTP_ERROR_TIMESTAMPING;
+        address_to(p32 address_to)(control + SNTP_CONTROL_DATA +
+                                   SNTP_ERROR_SEQUENCE) = 4u;
+        sequence = 0;
+        if (!sntp_control_sequence(control, SNTP_CONTROL_DATA +
+                                                SNTP_ERROR_BYTES,
+                                   address_of sequence) ||
+            sequence != 4u)
+                return false;
+
+        /* the same entry as an ICMP error rather than a timestamp */
+        control[SNTP_CONTROL_DATA + SNTP_ERROR_ORIGIN] = 2; /* ICMP */
+        sequence = 0;
+        if (sntp_control_sequence(control, SNTP_CONTROL_DATA +
+                                               SNTP_ERROR_BYTES,
+                                  address_of sequence))
+                return false;
+
+        /* a header cut short of the field the number sits in */
+        control[SNTP_CONTROL_DATA + SNTP_ERROR_ORIGIN] =
+            SNTP_ERROR_TIMESTAMPING;
+        address_to(positive address_to)control = SNTP_CONTROL_DATA + 8;
+        sequence = 0;
+        if (sntp_control_sequence(control, SNTP_CONTROL_DATA + 8,
+                                  address_of sequence))
+                return false;
+
+        /* and no error header at all, which is the fallback case */
+        memory_zero(control, sizeof(control));
+        address_to(positive address_to)control = SNTP_CONTROL_DATA + 48;
+        address_to(b32 address_to)(control + sizeof(positive)) = SOL_SOCKET;
+        address_to(b32 address_to)(control + sizeof(positive) + 4) =
+            SNTP_TIMESTAMPING;
+        sequence = 0;
+        if (sntp_control_sequence(control, SNTP_CONTROL_DATA + 48,
+                                  address_of sequence))
+                return false;
+
+        /*
                 One bit of the echoed stamp flipped is still a forgery.
         */
         memory_fill(reply, 0, sizeof(reply));
@@ -767,13 +919,15 @@ static COLD bool sntp_math_ok(void)
 
 static HOT bipolar sntp_exchange(b32 handle,
                                  network_deadline address_to deadline,
-                                 bool tight, sntp_sample address_to into)
+                                 bool tight, p32 address_to sequence,
+                                 sntp_sample address_to into)
 {
         p8 request[SNTP_PACKET];
         p8 reply[SNTP_PACKET];
         p64 sent[2];
         p64 got[2];
         p64 spare[2];
+        p32 mine;
         bipolar t1;
         bipolar t2;
         bipolar t3;
@@ -796,7 +950,9 @@ static HOT bipolar sntp_exchange(b32 handle,
         sntp_put_stamp(request + 40, sent[0], sent[1]);
         if_rare (socket_send(handle, request, SNTP_PACKET, 0, 0, 0) < 0)
                 return SNTP_NO_REPLY;
-        (void)sntp_transmit_stamp(handle, sent);
+        mine = address_to sequence;
+        address_to sequence = mine + 1;
+        (void)sntp_transmit_stamp(handle, mine, sent);
         t1 = sntp_timespec_ns(sent[0], sent[1]);
         if_rare (!sntp_local_ok(t1))
                 return SNTP_NO_REPLY;
@@ -827,7 +983,7 @@ static HOT bipolar sntp_exchange(b32 handle,
                                 wait again immediately, and again, until
                                 the deadline ran out.
                         */
-                        (void)sntp_transmit_stamp(handle, spare);
+                        (void)sntp_transmit_stamp(handle, mine, spare);
                         continue;
                 }
                 if_rare (received < SNTP_PACKET)
@@ -881,6 +1037,7 @@ static COLD bipolar sntp_query_at(p32 server, bool filter, bool tight,
         positive want = filter ? SNTP_SAMPLES : 1;
         b32 want_stamp = 1;
         p32 want_transmit = SNTP_TIMESTAMPING_WANT;
+        p32 sequence = 0;
         positive at;
         bipolar handle;
         bipolar best;
@@ -912,7 +1069,7 @@ static COLD bipolar sntp_query_at(p32 server, bool filter, bool tight,
         for (at = 0; at < want; at++)
         {
                 failed = sntp_exchange((b32)handle, address_of deadline, tight,
-                                       row + at);
+                                       address_of sequence, row + at);
                 if (failed == SNTP_BAD_SERVER || failed == SNTP_RATE_LIMITED)
                         break;
         }

@@ -13,6 +13,31 @@
         live child: the poll would see its first query running for ever,
         never retry a boot that failed for want of a network, and never
         poll again. wait4 is the only call that distinguishes the two.
+
+        NOTHING BELOW HAS BEEN SEEN TO SET A CLOCK
+
+        Setting CLOCK_REALTIME needs a machine it is acceptable to
+        disturb, and no machine in reach was one, so neither the step nor
+        the slew has ever been run against a kernel that carried it out.
+        What has been checked is what gets asked for: every ADJ_ and STA_
+        value here against uapi/linux/timex.h, every timex word index
+        against the struct's own offsets, and the choice between stepping
+        and slewing against crafted offsets either side of the threshold
+        in the machine lane. Take that as the request being right, not as
+        the request having been granted.
+
+        The reason to be careful about the difference is in the constants
+        below. ADJ_SETOFFSET was 0x80, which is ADJ_TAI, for as long as
+        this file has had it -- so no correction this program ever
+        computed reached the clock. It survived because adjtimex answers a
+        wrong mode the same way it answers a right one: with the clock
+        state, a non-negative number the caller reads as success. It also
+        cleared STA_UNSYNC on the way past, so the machine went on to
+        report itself synchronised. Anyone adding a mode here should know
+        that a non-negative return proves the call was accepted and
+        nothing else, and that there is no test that can tell you
+        otherwise, because nothing unprivileged can ask the kernel to
+        demonstrate which mode a bit meant.
 */
 
 #include "../net/sntp.c"
