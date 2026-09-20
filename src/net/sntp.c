@@ -73,9 +73,14 @@
 #define SNTP_SHORT_SECOND 0x10000u
 #define SNTP_RANDOM_NONBLOCK 1
 #define SNTP_TIMESTAMPNS 35
+#define SNTP_TIMESTAMPING 37
+#define SNTP_TIMESTAMPING_WANT 2194u /* TX_SOFTWARE|SOFTWARE|OPT_ID|TSONLY */
+#define SNTP_ERRQUEUE 0x2000
+#define SNTP_DONTWAIT 0x40
 #define SNTP_MESSAGE_WORDS 7
-#define SNTP_CONTROL_WORDS 8
+#define SNTP_CONTROL_WORDS 16
 #define SNTP_CONTROL_HEAD (sizeof(positive) + 8)
+#define SNTP_ERRQUEUE_MOST 4
 #define SNTP_CONTROL_DATA                          \
         ((SNTP_CONTROL_HEAD + sizeof(positive) - 1) & \
          ~(sizeof(positive) - 1))
@@ -286,7 +291,7 @@ static PURE COLD bipolar sntp_pick(sntp_sample address_to row, positive count)
         claiming to be longer than what is left ends the walk.
 */
 static bool sntp_control_stamp(p8 address_to control, positive length,
-                               p64 address_to arrived)
+                               b32 kind, p64 address_to arrived)
 {
         positive at = 0;
 
@@ -295,12 +300,12 @@ static bool sntp_control_stamp(p8 address_to control, positive length,
                 positive size = address_to(positive address_to)(control + at);
                 b32 level = address_to(b32 address_to)(control + at +
                                                        sizeof(positive));
-                b32 kind = address_to(b32 address_to)(control + at +
+                b32 type = address_to(b32 address_to)(control + at +
                                                       sizeof(positive) + 4);
 
                 if (size < SNTP_CONTROL_DATA || size > length - at)
                         break;
-                if (level == SOL_SOCKET && kind == SNTP_TIMESTAMPNS &&
+                if (level == SOL_SOCKET && type == kind &&
                     size - SNTP_CONTROL_DATA >= 2 * sizeof(p64))
                 {
                         arrived[0] = address_to(p64 address_to)(
@@ -335,13 +340,73 @@ static HOT bipolar sntp_receive_stamped(b32 handle, p8 address_to reply,
         message[5] = sizeof(control);
 
         got = system_call_3(syscall(recvmsg), (positive)handle,
-                            (positive)message, 0);
+                            (positive)message, SNTP_DONTWAIT);
         if_rare (got < 0)
                 return got;
 
         address_to stamped = sntp_control_stamp((p8 address_to)control,
-                                                message[5], arrived);
+                                                message[5], SNTP_TIMESTAMPNS,
+                                                arrived);
         return got;
+}
+
+/*
+        t1 has the same trouble t4 had, at the other end. It is read
+        before the send trap, so it is the moment before the kernel is
+        entered, and the packet leaves after the protocol stack has run.
+        The offset formula assumes the two directions are symmetric, so a
+        head start on the send side alone goes straight into the answer at
+        half its size: measured against the kernel's own departure stamp,
+        a median of 1729 ns to one server and 2320 ns to another.
+
+        SOF_TIMESTAMPING_TX_SOFTWARE records the moment the packet is
+        given to the driver and queues it on the socket's error queue.
+        Measured on a real route it is already there when send returns, 50
+        times out of 50, so one recvmsg that refuses to wait collects it
+        and no poll is needed.
+
+        Draining it is not optional once the option is on. A socket with
+        anything on its error queue reports POLLERR, and the wait below
+        asks about readability and would be woken by that for ever. One
+        non-blocking read after each send empties it, which 100 exchanges
+        across two servers confirm: no POLLERR survived into the wait.
+
+        OPT_TSONLY keeps the packet itself off the queue, so what comes
+        back is the timestamp and the error header beside it. The walk
+        steps over anything that is not the timestamp, which is what lets
+        a real ICMP error sit there without being mistaken for one.
+*/
+static HOT bool sntp_transmit_stamp(b32 handle, p64 address_to departed)
+{
+        positive message[SNTP_MESSAGE_WORDS];
+        positive vector[2];
+        positive control[SNTP_CONTROL_WORDS];
+        p8 sink[SNTP_PACKET];
+        bool found = false;
+        positive round;
+
+        for (round = 0; round < SNTP_ERRQUEUE_MOST; round++)
+        {
+                bipolar got;
+
+                memory_zero(message, sizeof(message));
+                memory_zero(control, sizeof(control));
+                vector[0] = (positive)sink;
+                vector[1] = sizeof(sink);
+                message[2] = (positive)vector;
+                message[3] = 1;
+                message[4] = (positive)control;
+                message[5] = sizeof(control);
+                got = system_call_3(syscall(recvmsg), (positive)handle,
+                                    (positive)message,
+                                    SNTP_ERRQUEUE | SNTP_DONTWAIT);
+                if (got < 0)
+                        break;
+                if (sntp_control_stamp((p8 address_to)control, message[5],
+                                       SNTP_TIMESTAMPING, departed))
+                        found = true;
+        }
+        return found;
 }
 
 /*
@@ -625,6 +690,7 @@ static COLD bool sntp_math_ok(void)
                 arrived[0] = 0;
                 arrived[1] = 0;
                 if (sntp_control_stamp(control, control_case[at].held,
+                                       SNTP_TIMESTAMPNS,
                                        arrived) != control_case[at].want)
                         return false;
                 if (control_case[at].want &&
@@ -654,8 +720,35 @@ static COLD bool sntp_math_ok(void)
                                    sizeof(p64)) = 750000000ull;
         arrived[0] = 0;
         arrived[1] = 0;
-        if (!sntp_control_stamp(control, 2 * SNTP_CONTROL_DATA + 16, arrived) ||
+        if (!sntp_control_stamp(control, 2 * SNTP_CONTROL_DATA + 16,
+                                SNTP_TIMESTAMPNS, arrived) ||
             arrived[0] != 1700000001ull || arrived[1] != 750000000ull)
+                return false;
+
+        /*
+                The departure stamp comes back under a different type and
+                in a longer payload -- three timespecs, of which the
+                software one is first -- so the walk has to take its two
+                words from the front and let the rest alone, and has to
+                tell the two types apart rather than taking whichever
+                timestamp it meets first.
+        */
+        memory_zero(control, sizeof(control));
+        address_to(positive address_to)control = SNTP_CONTROL_DATA + 48;
+        address_to(b32 address_to)(control + sizeof(positive)) = SOL_SOCKET;
+        address_to(b32 address_to)(control + sizeof(positive) + 4) =
+            SNTP_TIMESTAMPING;
+        address_to(p64 address_to)(control + SNTP_CONTROL_DATA) = 1700000002ull;
+        address_to(p64 address_to)(control + SNTP_CONTROL_DATA + sizeof(p64)) =
+            125000000ull;
+        arrived[0] = 0;
+        arrived[1] = 0;
+        if (!sntp_control_stamp(control, SNTP_CONTROL_DATA + 48,
+                                SNTP_TIMESTAMPING, arrived) ||
+            arrived[0] != 1700000002ull || arrived[1] != 125000000ull)
+                return false;
+        if (sntp_control_stamp(control, SNTP_CONTROL_DATA + 48,
+                               SNTP_TIMESTAMPNS, arrived))
                 return false;
 
         /*
@@ -680,6 +773,7 @@ static HOT bipolar sntp_exchange(b32 handle,
         p8 reply[SNTP_PACKET];
         p64 sent[2];
         p64 got[2];
+        p64 spare[2];
         bipolar t1;
         bipolar t2;
         bipolar t3;
@@ -702,6 +796,7 @@ static HOT bipolar sntp_exchange(b32 handle,
         sntp_put_stamp(request + 40, sent[0], sent[1]);
         if_rare (socket_send(handle, request, SNTP_PACKET, 0, 0, 0) < 0)
                 return SNTP_NO_REPLY;
+        (void)sntp_transmit_stamp(handle, sent);
         t1 = sntp_timespec_ns(sent[0], sent[1]);
         if_rare (!sntp_local_ok(t1))
                 return SNTP_NO_REPLY;
@@ -718,6 +813,23 @@ static HOT bipolar sntp_exchange(b32 handle,
                          system_call_2(syscall(clock_gettime), CLOCK_REALTIME,
                                        (positive)got) < 0)
                         return SNTP_NO_REPLY;
+                if_rare (received < 0)
+                {
+                        /*
+                                Nothing was readable, so what woke the
+                                wait was the error queue: a transmit
+                                stamp that was not yet there when the
+                                send drained for it. Take it off now --
+                                t1 is already decided, so the stamp is
+                                of no further use -- because a socket
+                                with anything on that queue reports
+                                POLLERR, and leaving it would wake this
+                                wait again immediately, and again, until
+                                the deadline ran out.
+                        */
+                        (void)sntp_transmit_stamp(handle, spare);
+                        continue;
+                }
                 if_rare (received < SNTP_PACKET)
                         continue;
                 verdict = sntp_reply_ok(reply, request);
@@ -768,6 +880,7 @@ static COLD bipolar sntp_query_at(p32 server, bool filter, bool tight,
         sntp_sample row[SNTP_SAMPLES];
         positive want = filter ? SNTP_SAMPLES : 1;
         b32 want_stamp = 1;
+        p32 want_transmit = SNTP_TIMESTAMPING_WANT;
         positive at;
         bipolar handle;
         bipolar best;
@@ -791,6 +904,9 @@ static COLD bipolar sntp_query_at(p32 server, bool filter, bool tight,
         }
         (void)socket_option_set((b32)handle, SOL_SOCKET, SNTP_TIMESTAMPNS,
                                 address_of want_stamp, sizeof(want_stamp));
+        (void)socket_option_set((b32)handle, SOL_SOCKET, SNTP_TIMESTAMPING,
+                                address_of want_transmit,
+                                sizeof(want_transmit));
 
         memory_zero(row, sizeof(row));
         for (at = 0; at < want; at++)
