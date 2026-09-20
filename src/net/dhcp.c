@@ -256,12 +256,17 @@ static COLD bipolar dhcp_read(p8 address_to packet, positive size, p32 transacti
 {
         dhcp_lease parsed = {0};
         positive at = DHCP_HEAD + 4;
+        positive seen = 0;
         p8 parsed_kind = 0;
 
         if (size < DHCP_HEAD + 4)
                 return -1;
 
-        if (packet[0] != 2)  // not a reply
+        /* This client asks on Ethernet with a six-byte hardware address.
+           Accepting a BOOTP reply that claims another hardware format while
+           merely sharing the first six chaddr bytes makes malformed packets
+           indistinguishable from replies to this transaction. */
+        if (packet[0] != 2 || packet[1] != 1 || packet[2] != 6)
                 return -1;
 
         if (network_load_32(packet + 4) != transaction)
@@ -297,13 +302,49 @@ static COLD bipolar dhcp_read(p8 address_to packet, positive size, p32 transacti
                 if (at + 2 + length > size)
                         return -1;
 
-                if (option == DHCP_OPTION_TYPE && length == 1)
+                /*
+                        Fixed-width options are one value, not "last one wins".
+                        RFC option concatenation makes repeated list options one
+                        logical list, so for router/DNS keep the first address
+                        from the first fragment and validate every fragment's
+                        four-byte address shape.
+                */
+                if (option == DHCP_OPTION_TYPE)
+                {
+                        if (length != 1 || (seen & 1))
+                                return -1;
+                        seen |= 1;
                         parsed_kind = packet[at + 2];
+                }
+
                 for (positive i = 1; i < array_count(dhcp_fields); i++)
-                        if (option == dhcp_fields[i].option && length >= 4 &&
-                            (length == 4 || dhcp_fields[i].multiple))
-                                *(p32 *)((p8 *)&parsed + dhcp_fields[i].offset) =
+                {
+                        positive bit = (positive)1 << i;
+
+                        if (option != dhcp_fields[i].option)
+                                continue;
+
+                        if (dhcp_fields[i].multiple)
+                        {
+                                if (length < 4 || (length & 3))
+                                        return -1;
+                                if (!(seen & bit))
+                                        *(p32 *)((p8 *)&parsed +
+                                                  dhcp_fields[i].offset) =
+                                            network_load_32(packet + at + 2);
+                        }
+                        else
+                        {
+                                if (length != 4 || (seen & bit))
+                                        return -1;
+                                *(p32 *)((p8 *)&parsed +
+                                          dhcp_fields[i].offset) =
                                     network_load_32(packet + at + 2);
+                        }
+
+                        seen |= bit;
+                        break;
+                }
 
                 at += 2 + length;
         }
