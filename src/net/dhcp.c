@@ -264,6 +264,14 @@ static COLD bipolar dhcp_read(p8 address_to packet, positive size, p32 transacti
         if (packet[0] != 2)  // not a reply
                 return -1;
 
+        /* Ethernet, and an address as long as Ethernet's. The chaddr
+           comparison below reads six bytes and calls them a match; that is
+           only this client's address if the reply agrees on what the medium
+           is and how long an address on it runs. A reply naming another one
+           is answering a question nobody here asked. */
+        if (packet[1] != 1 || packet[2] != 6)
+                return -1;
+
         if (network_load_32(packet + 4) != transaction)
                 return -1;
 
