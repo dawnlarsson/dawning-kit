@@ -1229,54 +1229,57 @@ fn host_terminal_opening(void)
 
 // Install -------------------------------------------------------
 
-typedef struct
+/* A GPT GUID is stored with its first three fields little-endian.  Turn the
+   exact sixteen bytes written into the PARTUUID spelling the kernel publishes. */
+static fn host_partuuid(p8 address_to into, p8 address_to guid)
 {
-        string_address disk;
-        host_install address_to install;
-} host_partition_look;
+        p8 uuid[16];
 
-static bool host_partition_visit(string_address directory, string_address name,
-                                 address_any opaque)
+        uuid[0] = guid[3];
+        uuid[1] = guid[2];
+        uuid[2] = guid[1];
+        uuid[3] = guid[0];
+        uuid[4] = guid[5];
+        uuid[5] = guid[4];
+        uuid[6] = guid[7];
+        uuid[7] = guid[6];
+        memory_copy(uuid + 8, guid + 8, 8);
+        storage_uuid_bytes(into, uuid);
+}
+
+/* Find the exact partitions just written, not whatever later happens to own
+   the disk's old /dev name.  PARTUUID is generated before the GPT write and
+   carried in the table itself, so hot-unplug/name reuse cannot redirect the
+   remainder of an install onto another disk. */
+static bool host_partition_resolve(p8 address_to guid,
+                                   p8 address_to into)
 {
-        host_partition_look address_to look = (host_partition_look address_to)opaque;
+        p8 uuid[37];
+        p8 query[sizeof("PARTUUID=") - 1 + 37];
         p8 path[HOST_PATH_ROOM];
-        p8 number[16];
 
-        if (!host_starts(name, look->disk) || string_length(name) >= HOST_NAME_ROOM ||
-            !host_join(path, sizeof(path), directory, "/") ||
-            !host_join(path, sizeof(path), path, name) ||
-            !host_join(path, sizeof(path), path, "/partition") ||
-            host_read_text(path, number, sizeof(number)) < 0)
-                return true;
+        host_partuuid(uuid, guid);
+        memory_copy(query, "PARTUUID=", sizeof("PARTUUID=") - 1);
+        string_copy(query + sizeof("PARTUUID=") - 1, uuid);
 
-        if (string_equals(number, "1"))
-                string_copy(look->install->system, name);
-        else if (string_equals(number, "2"))
-                string_copy(look->install->data, name);
+        if (!storage_resolve_tag(query, path, sizeof(path)) ||
+            !host_starts(path, "/dev/") ||
+            !host_name_valid(path + sizeof("/dev/") - 1))
+                return false;
 
+        string_copy(into, path + sizeof("/dev/") - 1);
         return true;
 }
 
-/* The kernel's names for the partitions just written, once their nodes exist. */
-static bool host_partitions_wait(host_install address_to install)
+static bool host_partitions_wait(host_install address_to install,
+                                 storage_format_partition address_to parts)
 {
-        p8 sysfs[HOST_PATH_ROOM];
-        p8 node[HOST_PATH_ROOM];
-        host_partition_look look = {install->disk, install};
-
-        if (!host_join(sysfs, sizeof(sysfs), "/sys/class/block/", install->disk))
-                return false;
-
         for (positive tries = 0; tries < 50; tries++)
         {
                 install->system[0] = install->data[0] = end;
-                host_each_entry(sysfs, host_partition_visit, address_of look);
 
-                if (install->system[0] && install->data[0] &&
-                    host_join(node, sizeof(node), "/dev/", install->system) &&
-                    system_access_at(AT_FDCWD, node, 0) >= 0 &&
-                    host_join(node, sizeof(node), "/dev/", install->data) &&
-                    system_access_at(AT_FDCWD, node, 0) >= 0)
+                if (host_partition_resolve(parts[0].unique, install->system) &&
+                    host_partition_resolve(parts[1].unique, install->data))
                         return true;
 
                 host_pause(HOST_POLL_NS);
@@ -1491,7 +1494,7 @@ static b32 host_install_disk(string_address asked, bool removable)
         memory_zero(address_of target, sizeof(target));
         string_copy(target.disk, name);
 
-        if (failed || !host_partitions_wait(address_of target))
+        if (failed || !host_partitions_wait(address_of target, parts))
         {
                 host_unmount(HOST_MEDIUM);
                 return failed ? host_fail(device, failed)
