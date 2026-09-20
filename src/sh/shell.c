@@ -1655,9 +1655,19 @@ fn shell_execute_command()
         if (child > 0)
         {
                 positive status = 0;
-                system_wait4_retry(child, address_of status, 0, null);
-                shell_child_death(child, status, true);
-                shell_status = wait_status_code(status);
+                bipolar waited =
+                    system_wait4_retry(child, address_of status, 0, null);
+
+                if (waited < 0)
+                {
+                        string_format(log, "failed with error: %b\n", waited);
+                        shell_status = 125;
+                }
+                else
+                {
+                        shell_child_death(child, status, true);
+                        shell_status = wait_status_code(status);
+                }
 
                 /*
                         An exit byte is not an execve error channel.
