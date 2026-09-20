@@ -208,6 +208,7 @@ struct script_token {
         char word[SCRIPT_WORD];
 };
 
+// TODO: FOLD? seems like we have something in library.c, this is too trivial?
 static int script_eq(const char *a, const char *b)
 {
         while (*a && *a == *b) {
@@ -639,8 +640,7 @@ static const struct {
         { "poweroff", 1000, BIND_BOOT | BIND_DROP, { KEY_POWER, 0 } },
         { "", 1000, BIND_BOOT | BIND_DROP, { KEY_SLEEP, KEY_SUSPEND } },
         { "reboot", 1000, BIND_BOOT | BIND_DROP, { KEY_RESTART, 0 } },
-        { "reboot", 1000, BIND_BOOT | BIND_DROP | BIND_CAD,
-          { KEY_DELETE, KEY_KPDOT } },
+        { "reboot", 1000, BIND_BOOT | BIND_DROP | BIND_CAD, { KEY_DELETE, KEY_KPDOT } },
         { "", 500, BIND_DROP, { 0, 0 } },
         { "", 500, BIND_DROP, { 0, 0 } },
         { "", 0, 0, { KEY_VOLUMEUP, 0 } },

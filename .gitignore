@@ -46,3 +46,5 @@ __pycache__/
 # Working files: nothing here is part of the tree.
 scratch/
 TODO.md
+bridge.py
+bowl_2.md

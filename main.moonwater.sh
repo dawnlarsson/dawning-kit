@@ -27,7 +27,7 @@
 function moonwater_init {
   case $1 in
   live|disk*)
-    moonwater wipe
+    # moonwater wipe
     # After wipe, start whatever this machine is. A kiosk is one line
     # of already-installed software, for example:
     # chromium --kiosk --user-data-dir=/tmp/kiosk "$URL"
