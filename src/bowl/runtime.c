@@ -231,6 +231,41 @@ static bipolar bowl_mkdir_parents(string_address path)
         return bowl_mkdir_parents_made(path, null);
 }
 
+#define BOWL_RESOLVE_NO_MAGICLINKS 0x02
+#define BOWL_RESOLVE_IN_ROOT 0x10
+
+/*
+        Open a path as though root were /. Absolute symlinks therefore remain
+        inside the bowl, and relative symlinks cannot climb above it. This is
+        the pathname rule isolated mode gets from pivot_root, made explicit for
+        setup and fast mode where the host root is still mounted.
+*/
+static bipolar bowl_open_in_root(string_address root, string_address path,
+                                 positive flags)
+{
+        struct
+        {
+                p64 flags;
+                p64 mode;
+                p64 resolve;
+        } how = {
+            flags,
+            0,
+            BOWL_RESOLVE_IN_ROOT | BOWL_RESOLVE_NO_MAGICLINKS,
+        };
+        bipolar root_handle = bowl_open_directory(root, false, null);
+        bipolar opened;
+
+        if (root_handle < 0)
+                return root_handle;
+
+        opened = system_call_4(syscall(openat2), (positive)root_handle,
+                               (positive)path, (positive)address_of how,
+                               sizeof(how));
+        system_close(root_handle);
+        return opened;
+}
+
 static bool bowl_root_path(p8 address_to into, positive room,
                            string_address root, string_address path)
 {
@@ -1000,8 +1035,7 @@ static DEAD_END fn bowl_inside(string_address root,
                                string_address address_to environment,
                                bipolar native_shell, bool isolated)
 {
-        p8 installed[BOWL_PATH_LIMIT];
-        string_address run = program;
+        bipolar program_handle = -1;
         bipolar failed;
 
         failed = system_mount(0, "/", 0, MS_REC | MS_PRIVATE, 0);
@@ -1019,26 +1053,41 @@ static DEAD_END fn bowl_inside(string_address root,
            the guest now sees the directories the session variables name. */
         bowl_session_prepare_from(environment);
 
-        /* Fast does not overlay /usr, so /usr/bin/jq is still Moonwater's
-           missing name. The file is the one under the bowl root. Isolated
-           has already pivoted; the guest path is the guest file. */
+        /*
+                Fast mode has not pivoted, so executing ROOT + /program by
+                pathname lets an absolute symlink inside the bowl jump back to
+                the host root. Pin the program with the same in-root resolver
+                used by setup, then execute that object. O_PATH deliberately
+                stays open across exec: Linux needs the descriptor available
+                when an execveat target is a shebang script.
+        */
         if (!isolated && native_shell < 0)
         {
-                if (!program || program[0] != '/' ||
-                    !bowl_root_path(installed, sizeof(installed), root,
-                                    program))
+                if (!program || program[0] != '/')
                 {
-                        bowl_fail(program ? program : root, -ENAMETOOLONG);
+                        bowl_fail(program ? program : root, -ERROR_INVALID);
                         exit(1);
                 }
-                run = installed;
+
+                program_handle = bowl_open_in_root(root, program, O_PATH);
+                if (program_handle < 0)
+                {
+                        bowl_fail(program, program_handle);
+                        exit(1);
+                }
         }
 
         failed = native_shell >= 0
             ? system_call_5(syscall(execveat), (positive)native_shell,
                              (positive)"", (positive)arguments,
                              (positive)environment, AT_EMPTY_PATH)
-            : system_execute(run, arguments, environment);
+            : program_handle >= 0
+                ? system_call_5(syscall(execveat), (positive)program_handle,
+                                (positive)"", (positive)arguments,
+                                (positive)environment, AT_EMPTY_PATH)
+                : system_execute(program, arguments, environment);
+        if (program_handle >= 0)
+                system_close(program_handle);
         bowl_fail(program, failed);
         exit(127);
 }
