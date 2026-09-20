@@ -47535,7 +47535,7 @@ static fn tls_certificate_identity_rules(void)
               !tls_parse_san(san_bad_ip, sizeof san_bad_ip,
                              "example.com", address_of matched));
         check("name constraints are refused even when non-critical",
-              tls_parse_extensions(constrained, sizeof constrained, 0,
+              tls_parse_extensions(constrained, sizeof constrained, 0, 2,
                                    address_of cert, null) == TLS_FAIL);
 }
 
