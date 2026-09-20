@@ -106,6 +106,8 @@ typedef struct
         p8 disk[HOST_NAME_ROOM];
         p8 system[HOST_NAME_ROOM];
         p8 data[HOST_NAME_ROOM];
+        p8 system_partuuid[STORAGE_PARTUUID_ROOM];
+        p8 data_partuuid[STORAGE_PARTUUID_ROOM];
         p8 build[HOST_BUILD_ROOM];
         bool readable;
 } host_install;
@@ -361,7 +363,11 @@ static bool host_census_visit(storage_identity address_to identity,
         p8 parent[HOST_NAME_ROOM];
         host_install address_to install = null;
 
-        if ((!system && !data) || !host_parent(name, parent, sizeof(parent)))
+        /* Moonwater installs are GPT, so the partition UUID is the stable
+           identity carried across every later mount. A label without one is
+           not one of ours strongly enough to act on. */
+        if ((!system && !data) || !identity->partuuid_length ||
+            !host_parent(name, parent, sizeof(parent)))
                 return true;
 
         for (positive at = 0; at < census->count; at++)
@@ -379,10 +385,13 @@ static bool host_census_visit(storage_identity address_to identity,
         }
 
         string_copy(system ? install->system : install->data, name);
+        string_copy(system ? install->system_partuuid : install->data_partuuid,
+                    identity->partuuid);
         return true;
 }
 
-/* Every disk with both of Moonwater's partitions on it, by their names. */
+/* Every disk with both of Moonwater's partitions on it, by their names and
+   stable GPT identities. */
 static fn host_census_take(host_census address_to census)
 {
         positive kept = 0;
@@ -637,6 +646,49 @@ static bipolar host_mount(string_address name, string_address target,
         return system_mount(device, target, type, flags, 0);
 }
 
+/* Resolve the identity again immediately before a later use. Device names are
+   presentation, not authority: a terminal can sit at the install/update prompt
+   long enough for hotplug to reuse sda or an nvme namespace number. */
+static bool host_partition_uuid_resolve(string_address uuid,
+                                        p8 address_to name)
+{
+        p8 query[sizeof("PARTUUID=") - 1 + STORAGE_PARTUUID_ROOM];
+        p8 path[HOST_PATH_ROOM];
+
+        if (!uuid[0] ||
+            !host_join(query, sizeof(query), "PARTUUID=", uuid) ||
+            !storage_resolve_tag(query, path, sizeof(path)) ||
+            !host_starts(path, "/dev/") ||
+            !host_name_valid(path + sizeof("/dev/") - 1))
+                return false;
+
+        string_copy(name, path + sizeof("/dev/") - 1);
+        return true;
+}
+
+/* Both partitions must still exist and still belong to one physical disk.
+   Refresh all display names together so the rest of an operation cannot mix
+   one old name with one newly resolved identity. */
+static bool host_install_refresh(host_install address_to install)
+{
+        p8 system[HOST_NAME_ROOM];
+        p8 data[HOST_NAME_ROOM];
+        p8 system_disk[HOST_NAME_ROOM];
+        p8 data_disk[HOST_NAME_ROOM];
+
+        if (!host_partition_uuid_resolve(install->system_partuuid, system) ||
+            !host_partition_uuid_resolve(install->data_partuuid, data) ||
+            !host_parent(system, system_disk, sizeof(system_disk)) ||
+            !host_parent(data, data_disk, sizeof(data_disk)) ||
+            !string_equals(system_disk, data_disk))
+                return false;
+
+        string_copy(install->disk, system_disk);
+        string_copy(install->system, system);
+        string_copy(install->data, data);
+        return true;
+}
+
 static fn host_unmount(string_address target)
 {
         system_call_2(syscall(umount2), (positive)target, 0);
@@ -649,7 +701,8 @@ static fn host_install_read(host_install address_to install)
         install->readable = false;
         install->build[0] = end;
 
-        if (host_mount(install->system, HOST_LOOK, "vfat", HOST_READ_ONLY) < 0)
+        if (!host_install_refresh(install) ||
+            host_mount(install->system, HOST_LOOK, "vfat", HOST_READ_ONLY) < 0)
                 return;
 
         if (host_join(path, sizeof(path), HOST_LOOK, HOST_IMAGE))
@@ -848,8 +901,13 @@ static bool host_publish_visit(string_address directory, string_address name,
 */
 static b32 host_attach(host_install address_to install)
 {
-        bipolar failed = host_mount(install->data, HOST_DATA, "ext4", 0);
+        bipolar failed;
         positive at;
+
+        if (!host_install_refresh(install))
+                return host_refuse("%s is no longer here\n", install->disk);
+
+        failed = host_mount(install->data, HOST_DATA, "ext4", 0);
 
         if (failed < 0)
                 return host_fail(install->data, failed);
@@ -898,6 +956,9 @@ static b32 host_update(host_install address_to install)
 
         if (!host_running_build(running, sizeof(running)))
                 return host_refuse("%s cannot read its own build\n", "moonwater");
+
+        if (!host_install_refresh(install))
+                return host_refuse("%s is no longer here\n", install->disk);
 
         if (!host_medium_find(address_of search, running, install->disk))
                 return host_refuse("this session's image is on no disk but %s, "
@@ -2705,7 +2766,8 @@ static bool host_settings_install(host_install address_to install,
         p8 path[HOST_PATH_ROOM];
         b32 found = -1;
 
-        if (host_mount(install->system, HOST_LOOK, "vfat", HOST_READ_ONLY) < 0)
+        if (!host_install_refresh(install) ||
+            host_mount(install->system, HOST_LOOK, "vfat", HOST_READ_ONLY) < 0)
                 return false;
 
         if (host_join(path, sizeof(path), HOST_LOOK, HOST_IMAGE))
