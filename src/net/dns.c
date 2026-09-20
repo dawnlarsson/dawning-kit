@@ -56,8 +56,10 @@
 #define DNS_CLASS_IN 1
 
 #define DNS_FLAG_RESPONSE 0x8000
+#define DNS_OPCODE_MASK 0x7800
 #define DNS_FLAG_TRUNCATED 0x0200
 #define DNS_FLAG_RECURSE 0x0100
+#define DNS_FLAG_RESERVED 0x0040
 #define DNS_CODE_MASK 0x000f
 
 #define DNS_MAX_MESSAGE 4096
@@ -338,7 +340,13 @@ static COLD bipolar dns_reply_result(
                 return DNS_MALFORMED;
 
         flags = network_load_16(reply + 2);
-        if (!(flags & DNS_FLAG_RESPONSE))
+        /* This resolver sends only standard QUERY requests.  A response with
+           another opcode is not an answer to the transaction merely because
+           its id and echoed question happen to match.  The one reserved DNS
+           header bit must likewise remain zero; AD and CD have their own bits
+           and are intentionally not rejected here. */
+        if (!(flags & DNS_FLAG_RESPONSE) ||
+            (flags & (DNS_OPCODE_MASK | DNS_FLAG_RESERVED)))
                 return DNS_MALFORMED;
         if (flags & DNS_FLAG_TRUNCATED)
                 return DNS_TRY_TCP;
