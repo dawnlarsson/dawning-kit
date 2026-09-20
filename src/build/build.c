@@ -838,7 +838,8 @@ static string_address build_resolve_privileged(string_address name)
 
 static bool build_have(string_address name)
 {
-        return build_resolve(name) != null;
+        return (build_root() ? build_resolve_privileged(name)
+                             : build_resolve(name)) != null;
 }
 
 /*
