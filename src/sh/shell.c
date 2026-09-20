@@ -1366,10 +1366,23 @@ static positive shell_flatten_strings(string_address address_to strings,
 
         while (strings[count])
         {
-                positive length = string_length(strings[count++]);
+                positive length;
 
+                /* Reject outside the wire contract before sizing, allocating
+                   or copying the rest of an in-memory expansion.  The caller
+                   repeats these checks before its 32-bit casts as a final ABI
+                   guard, but waiting until then could transiently allocate and
+                   copy an arbitrarily large argv or environment merely to take
+                   the ordinary fork/exec fallback. */
+                if (count >= SPARK_SPAWN_MAX_STRINGS)
+                {
+                        address_to count_out = positive_max;
+                        return 0;
+                }
+
+                length = string_length(strings[count++]);
                 if (length == positive_max ||
-                    used > positive_max - length - 1)
+                    length >= SPARK_SPAWN_MAX_BYTES - used)
                 {
                         address_to count_out = positive_max;
                         return 0;

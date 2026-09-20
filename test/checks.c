@@ -54672,6 +54672,34 @@ b32 main(void)
 {
         string_address arguments[8] = {0};
         shell_argv = arguments;
+
+        /* Spark's fast path must reject oversized vectors before reserving or
+           copying their flat representation.  Otherwise fallback remains
+           correct but a hostile expansion can force avoidable multi-megabyte
+           (or, before the wire limits existed, multi-gigabyte) work first. */
+        static p8 oversized[SPARK_SPAWN_MAX_BYTES + 1];
+        static string_address crowded[SPARK_SPAWN_MAX_STRINGS + 2];
+        p8 address_to flat = null;
+        positive flat_room = 0;
+        positive flat_count = 0;
+
+        memory_fill(oversized, 'x', sizeof(oversized));
+        oversized[sizeof(oversized) - 1] = 0;
+        string_address too_large[] = {oversized, null};
+        check("Spark argv byte ceiling rejects before allocation",
+              !shell_flatten_strings(too_large, address_of flat,
+                                     address_of flat_room,
+                                     address_of flat_count) &&
+                  flat_count == positive_max && !flat && !flat_room);
+
+        for (positive i = 0; i <= SPARK_SPAWN_MAX_STRINGS; i++)
+                crowded[i] = (string_address)"";
+        check("Spark argv count ceiling rejects before allocation",
+              !shell_flatten_strings(crowded, address_of flat,
+                                     address_of flat_room,
+                                     address_of flat_count) &&
+                  flat_count == positive_max && !flat && !flat_room);
+
         for (positive cycle = 0; cycle < 1024; cycle++)
         {
                 enable_name("echo", true);
