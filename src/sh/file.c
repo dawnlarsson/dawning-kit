@@ -9505,9 +9505,10 @@ static b32 file_run(string_address address_to words, bipolar directory)
         if (child < 0)
                 return 127;
 
-        system_wait4_retry(child, address_of status, 0, null);
+        bipolar waited =
+            system_wait4_retry(child, address_of status, 0, null);
 
-        if (status & 0x7f)
+        if (waited < 0 || (status & 0x7f))
                 return 125;
 
         return (b32)wait_status_code(status);
