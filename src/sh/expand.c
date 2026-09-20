@@ -3958,16 +3958,18 @@ static fn expand_run(string_address command, bool quoted)
         }
 
         expand_read_substitution(channel[0], mark, start);
-        system_wait4_retry(child, address_of status, 0, null);
+        bipolar waited =
+            system_wait4_retry(child, address_of status, 0, null);
 
         /* A substitution that went through a child shell already wrote this
            line there. A direct spawn has no such child, and dash still names
            the signal the way lima 0.5.x does. Bash keeps substitutions
            silent. */
-        if (!shell_bash_compat)
+        if (waited >= 0 && !shell_bash_compat)
                 shell_child_death(child, status, true);
 
-        expand_substitution_done(wait_status_code(status));
+        expand_substitution_done(waited < 0 ? 125
+                                            : wait_status_code(status));
 }
 
 /*
