@@ -121,11 +121,16 @@ static struct bowl_layer bowl_fast_layers[] = {
     {null, false},
 };
 
+static bipolar bowl_open_directory(string_address path, bool create,
+                                   bool address_to made);
+
 static bipolar bowl_mkdir(string_address path)
 {
-        bipolar made = system_make_directory_at(AT_FDCWD, path, 0755);
+        bipolar handle = bowl_open_directory(path, true, null);
 
-        return made == -EEXIST ? 0 : made;
+        if (handle < 0)
+                return handle;
+        return system_close(handle);
 }
 
 /* Pin every component with O_NOFOLLOW so a name such as /tmp/x -> /etc cannot
