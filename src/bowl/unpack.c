@@ -371,7 +371,7 @@ static b32 bowl_extract(string_address archive, string_address root)
                 if (extract == 0)
                 {
                         program_arguments_use(tar_file, 6);
-                        exit(file_tar());
+                        exit(file_tar_without_special());
                 }
 
                 return bowl_wait_applet(extract,

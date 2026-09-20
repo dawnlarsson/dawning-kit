@@ -699,6 +699,15 @@ static p8 tar_name[TAR_PATH];
 static p8 tar_link[TAR_PATH];
 static b32 tar_status;
 static bool tar_preserve;
+/* General-purpose tar preserves special files, but callers installing an
+   untrusted root filesystem can disable them before extraction. */
+static bool tar_extract_special = true;
+
+static bool tar_extract_type_allowed(p8 type)
+{
+        return tar_extract_special ||
+               (type != '3' && type != '4' && type != '6');
+}
 
 /* Directory permissions are an end-of-extraction property.  Applying an
    archived mode such as 0000 while later members still need to traverse the
@@ -2573,6 +2582,13 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                 return;
         }
 
+        if (!tar_extract_type_allowed(type))
+        {
+                tar_refuse("special files are not allowed");
+                tar_skip(archive, tar_padded(size), seekable);
+                return;
+        }
+
         parent = tar_stack_parent(path, leaf, sizeof(leaf),
                                   address_of parent_owned);
         if (parent < 0)
@@ -3856,6 +3872,20 @@ static b32 file_tar(void)
                 return tar_write_archive(address_of options);
 
         return tar_read_archive(address_of options);
+}
+
+/* Bowl bootstraps are network-fetched package roots, not system backups.
+   Keeping device nodes or FIFOs would turn an archive member into a host
+   kernel capability or a blocking endpoint. */
+static b32 file_tar_without_special(void)
+{
+        bool before = tar_extract_special;
+        b32 status;
+
+        tar_extract_special = false;
+        status = file_tar();
+        tar_extract_special = before;
+        return status;
 }
 
 #endif /* TAR_PARSE_ONLY */

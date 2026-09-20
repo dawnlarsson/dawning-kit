@@ -51313,6 +51313,23 @@ static fn room(void)
               bowl_room_short(address_of huge, 0) == 0);
 }
 
+static fn archive_policy(void)
+{
+        bool before = tar_extract_special;
+
+        tar_extract_special = false;
+        check("Bowl extraction rejects character devices",
+              !tar_extract_type_allowed('3'));
+        check("Bowl extraction rejects block devices",
+              !tar_extract_type_allowed('4'));
+        check("Bowl extraction rejects FIFOs",
+              !tar_extract_type_allowed('6'));
+        check("Bowl extraction keeps ordinary archive members",
+              tar_extract_type_allowed('0') && tar_extract_type_allowed('1') &&
+              tar_extract_type_allowed('2') && tar_extract_type_allowed('5'));
+        tar_extract_special = before;
+}
+
 b32 main(void)
 {
         names();
@@ -51320,6 +51337,7 @@ b32 main(void)
         isolation();
         kernel_settings();
         room();
+        archive_policy();
         return test_report(null);
 }
 #endif /* CHECK_bowl */
