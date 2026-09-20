@@ -984,7 +984,8 @@ static COLD bipolar tls_parse_extended_key_usage(p8 address_to value, positive l
 }
 
 static COLD bipolar tls_parse_extensions(p8 address_to der, positive tbs_stop,
-                                    positive at, tls_cert address_to cert,
+                                    positive at, p8 version,
+                                    tls_cert address_to cert,
                                     string_address host)
 {
         bool issuer_unique = false;
@@ -997,13 +998,23 @@ static COLD bipolar tls_parse_extensions(p8 address_to der, positive tbs_stop,
                 bool address_to seen = der[at] == 0x81 ? address_of issuer_unique
                                                        : address_of subject_unique;
 
-                if (address_to seen || tls_asn1_skip(der, tbs_stop, address_of at))
+                /* issuerUniqueID/subjectUniqueID were added in v2.  Treating
+                   them as ignorable on a v1 certificate accepts a structure
+                   X.509 never defined. */
+                if (!version || address_to seen ||
+                    tls_asn1_skip(der, tbs_stop, address_of at))
                         return TLS_FAIL;
                 address_to seen = true;
         }
         if (at == tbs_stop)
                 return TLS_OK;
-        if (tls_asn1_enter(der, tbs_stop, 0xa3, address_of at,
+
+        /* Extensions exist only in v3.  Without this gate a v1/v2 TBS could
+           smuggle v3 constraints into a shape whose version says they do not
+           exist, leaving different validators to disagree about the same
+           signed bytes. */
+        if (version != 2 ||
+            tls_asn1_enter(der, tbs_stop, 0xa3, address_of at,
                            address_of extensions_stop) ||
             extensions_stop != tbs_stop ||
             tls_asn1_enter(der, extensions_stop, 0x30, address_of at,
@@ -1109,6 +1120,7 @@ static COLD bipolar tls_parse_cert(p8 address_to der, positive length,
         positive oid_stop = 0;
         positive param_at;
         positive bit_stop = 0;
+        p8 version = 0;
 
         memory_fill(cert, 0, sizeof(*cert));
 
@@ -1137,11 +1149,34 @@ static COLD bipolar tls_parse_cert(p8 address_to der, positive length,
         at = (positive)(cert->tbs - der);
         if (tls_asn1_enter(der, length, 0x30, address_of at, address_of tbs_stop))
                 return TLS_FAIL;
-        if (at < tbs_stop && der[at] == 0xa0 &&
-            tls_asn1_skip(der, tbs_stop, address_of at))
-                return TLS_FAIL;
-        if (tls_asn1_skip(der, tbs_stop, address_of at))
-                return TLS_FAIL;
+        if (at < tbs_stop && der[at] == 0xa0)
+        {
+                positive version_stop = 0;
+                positive value_stop = 0;
+
+                if (tls_asn1_enter(der, tbs_stop, 0xa0, address_of at,
+                                   address_of version_stop) ||
+                    tls_asn1_enter(der, version_stop, 0x02, address_of at,
+                                   address_of value_stop) ||
+                    at + 1 != value_stop || value_stop != version_stop ||
+                    der[at] > 2)
+                        return TLS_FAIL;
+                version = der[at];
+                at = version_stop;
+        }
+        {
+                positive serial_stop = 0;
+                positive value_at;
+                positive value_length;
+
+                if (tls_asn1_enter(der, tbs_stop, 0x02, address_of at,
+                                   address_of serial_stop) ||
+                    !tls_positive_integer(der, at, serial_stop,
+                                          address_of value_at,
+                                          address_of value_length))
+                        return TLS_FAIL;
+                at = serial_stop;
+        }
         {
                 p8 address_to tbs_oid;
                 positive tbs_oid_length;
@@ -1155,9 +1190,12 @@ static COLD bipolar tls_parse_cert(p8 address_to der, positive length,
         }
         {
                 positive name_at = at;
+                positive name_stop = 0;
 
-                if (tls_asn1_skip(der, tbs_stop, address_of at))
+                if (tls_asn1_enter(der, tbs_stop, 0x30, address_of at,
+                                   address_of name_stop))
                         return TLS_FAIL;
+                at = name_stop;
                 cert->issuer = der + name_at;
                 cert->issuer_length = at - name_at;
         }
@@ -1165,9 +1203,12 @@ static COLD bipolar tls_parse_cert(p8 address_to der, positive length,
                 return TLS_FAIL;
         {
                 positive name_at = at;
+                positive name_stop = 0;
 
-                if (tls_asn1_skip(der, tbs_stop, address_of at))
+                if (tls_asn1_enter(der, tbs_stop, 0x30, address_of at,
+                                   address_of name_stop))
                         return TLS_FAIL;
+                at = name_stop;
                 cert->subject = der + name_at;
                 cert->subject_length = at - name_at;
         }
@@ -1275,7 +1316,8 @@ static COLD bipolar tls_parse_cert(p8 address_to der, positive length,
         else
                 return TLS_FAIL;
 
-        return tls_parse_extensions(der, tbs_stop, spki_stop, cert, host);
+        return tls_parse_extensions(der, tbs_stop, spki_stop, version,
+                                    cert, host);
 }
 
 /* An anchor's key laid out the way tls_parse_cert lays out a served one. */
