@@ -1439,44 +1439,26 @@ static bool shell_spawn_request(struct spawn address_to request,
 {
         positive argc = 0;
         positive envc = 0;
-        positive argv_bytes;
-        positive envp_bytes;
 
         request->path = (unsigned long)path;
-        argv_bytes = shell_flatten_strings(
+        request->argv_bytes = shell_flatten_strings(
             arguments, address_of spawn_argv_block,
             address_of spawn_argv_room, address_of argc);
-
-        /*
-                The in-memory shell stores are deliberately unbounded, while
-                Spark's wire ABI uses 32-bit counts and byte lengths and has a
-                much smaller copy ceiling.  Decide that the complete request
-                fits before narrowing anything into the ABI.  Otherwise a
-                multi-gigabyte expansion can wrap argv_bytes/argc into an
-                apparently valid small request and execute only a prefix rather
-                than taking the ordinary fork/exec fallback.
-        */
-        if (argc == positive_max || argc > SPARK_SPAWN_MAX_STRINGS ||
-            argv_bytes > SPARK_SPAWN_MAX_BYTES)
+        if (argc == positive_max)
                 return false;
 
         request->argv = (unsigned long)spawn_argv_block;
-        request->argv_bytes = (unsigned int)argv_bytes;
         request->argv_count = (unsigned int)argc;
-
-        envp_bytes = shell_flatten_env(address_of envc);
+        request->envp_bytes = shell_flatten_env(address_of envc);
 
         /* An allocation failure must take the fork/exec fallback.  Sending a
            syntactically valid request with envc zero silently stripped every
-           exported variable from the child instead.  The same pre-narrowing
-           rule as argv keeps an oversized environment on that fallback too. */
-        if (envc == positive_max || envc > SPARK_SPAWN_MAX_STRINGS ||
-            envp_bytes > SPARK_SPAWN_MAX_BYTES)
+           exported variable from the child instead. */
+        if (envc == positive_max)
                 return false;
 
         request->envp = (unsigned long)spawn_envp_block;
-        request->envp_bytes = (unsigned int)envp_bytes;
-        request->envp_count = (unsigned int)envc;
+        request->envp_count = envc;
         request->envp_generation = spawn_envp_generation;
         return true;
 }
