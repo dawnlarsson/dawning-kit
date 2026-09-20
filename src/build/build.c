@@ -542,6 +542,10 @@ static b32 build_tool(string_address name, ...)
 //      Named below, defined below that: the spawn helpers need it and it
 //      needs the text ring, so one of the two orders has to be broken.
 static string_address build_resolve(string_address name);
+static string_address build_resolve_privileged(string_address name);
+
+#define BUILD_PRIVILEGED_PATH \
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 /*
         Spawning something that is not ours.
@@ -601,32 +605,48 @@ static b32 build_start(build_command address_to what)
 {
         string_address raised[BUILD_ARGUMENT_ROOM];
         string_address address_to words = what->words;
+        string_address command;
         string_address path;
         b32 child;
 
-        //      sudo only when we are not already it. Under the documented
-        //      invocation this program is root and the prefix is a no-op; run
-        //      as somebody else, it asks, which is what the shell did.
+        /*
+                Anything marked privileged is resolved independently of the
+                caller's PATH.  A build commonly starts as `sudo sh build.sh`,
+                so inheriting a writable PATH here would let a same-name make,
+                cp or shell become the program root executes.
+
+                When elevation is still needed, sudo itself comes from that
+                trusted path and is handed the already-resolved command.  This
+                also avoids a fake sudo earlier in PATH collecting a password.
+        */
+        command = what->privileged ? build_resolve_privileged(words[0])
+                                   : build_resolve(words[0]);
+
+        if (!command)
+                return string_report(log_error, -1, "build: %s not found\n", words[0]);
+
         if (what->privileged && !build_root())
         {
+                string_address sudo = build_resolve_privileged("sudo");
                 positive count = 0;
 
-                raised[count++] = "sudo";
+                if (!sudo)
+                        return string_report(log_error, -1,
+                                             "build: sudo not found in trusted system paths\n");
 
-                while (words[count - 1] && count + 1 < BUILD_ARGUMENT_ROOM)
-                {
-                        raised[count] = words[count - 1];
-                        count++;
-                }
+                raised[count++] = sudo;
+                raised[count++] = command;
+
+                for (positive at = 1;
+                     words[at] && count + 1 < BUILD_ARGUMENT_ROOM; at++)
+                        raised[count++] = words[at];
 
                 raised[count] = null;
                 words = (string_address address_to)raised;
+                path = sudo;
         }
-
-        path = build_resolve(words[0]);
-
-        if (!path)
-                return string_report(log_error, -1, "build: %s not found\n", words[0]);
+        else
+                path = command;
 
         //      BUILD_TRACE prints every command before it runs. A build tool
         //      that drives six other programs has to be able to say exactly
@@ -761,10 +781,10 @@ static bipolar build_capture_words(string_address address_to words,
         build with no PATH at all is one that should say the tool is missing
         rather than guess at /bin.
 */
-static string_address build_resolve(string_address name)
+static string_address build_resolve_from(string_address name,
+                                         string_address path)
 {
-        static p8 found[BUILD_WORD_ROOM];
-        string_address path = string_get_environment(environ, "PATH");
+        p8 found[BUILD_WORD_ROOM];
 
         if (!name || !*name || (!path && !string_first_of(name, '/')))
                 return null;
@@ -774,6 +794,16 @@ static string_address build_resolve(string_address name)
                 return null;
 
         return build_text_keep((string_address)found, string_length(found));
+}
+
+static string_address build_resolve(string_address name)
+{
+        return build_resolve_from(name, string_get_environment(environ, "PATH"));
+}
+
+static string_address build_resolve_privileged(string_address name)
+{
+        return build_resolve_from(name, BUILD_PRIVILEGED_PATH);
 }
 
 static bool build_have(string_address name)
@@ -3380,22 +3410,26 @@ static bool build_install(string_address what)
         string_address words[BUILD_ARGUMENT_ROOM];
         string_address command = null;
         positive count = 0;
-        positive at;
+        bool privileged = true;
+        b32 status;
 
         if (build_is_file("/etc/debian_version"))
-                command = "sudo apt-get install";
+                command = "apt-get install";
         else if (build_is_file("/etc/redhat-release"))
-                command = "sudo yum install";
+                command = "yum install";
         else if (build_is_file("/etc/arch-release"))
-                command = "sudo pacman -S";
+                command = "pacman -S";
         else if (build_is_file("/etc/alpine-release"))
-                command = "sudo apk add";
+                command = "apk add";
         else if (build_is_file("/etc/SuSE-release"))
-                command = "sudo zypper install";
+                command = "zypper install";
         else if (build_is_file("/etc/gentoo-release"))
-                command = "sudo emerge";
+                command = "emerge";
         else if (build_have("brew"))
+        {
                 command = "brew install";
+                privileged = false;
+        }
         else
         {
                 string_format(log,
@@ -3408,9 +3442,14 @@ static bool build_install(string_address what)
                                 BUILD_ARGUMENT_ROOM, command);
         words[count++] = what;
         words[count] = null;
-        at = (positive)build_run_words((string_address address_to)words);
 
-        return at == 0;
+        build_command request = {
+            .words = (string_address address_to)words,
+            .privileged = privileged,
+        };
+        status = build_execute(address_of request);
+
+        return status == 0;
 }
 
 //      environ with a few more entries on the end, for the two places the
@@ -4273,18 +4312,12 @@ static b32 build_local(string_address address_to profiles, positive count)
                 merge_config and olddefconfig drop unmet options without a
                 word, so anything a profile asked for and did not get is
                 reported here rather than discovered later as hardware that
-                does not work.
-
-                Called with no profiles, which is what the shell did: the
-                variable it expanded here was never assigned, so this has
-                always reported on an empty list and said "All 0 requested
-                options took effect." That is preserved rather than fixed,
-                because fixing it changes what every build prints and belongs
-                in a change that is about this check rather than about who
-                runs it. `build verify-config <config> <profile ...>` is the
-                same code with the list supplied.
+                does not work.  Verify the same composed profile list that
+                produced this .config; passing an empty list made the normal
+                build silently report "All 0 requested options took effect."
         */
-        build_verify_config(build_join(tree, "/.config", null), null, 0);
+        build_verify_config(build_join(tree, "/.config", null),
+                            (string_address address_to)chosen, chosen_count);
 
         build_label("", "ASSEMBLY");
 
