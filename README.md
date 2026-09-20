@@ -98,8 +98,11 @@ empties `/home` and everything under `/root` except the overlay
 pre-installed software survives. The builtin `moonwater_init` always wipes
 once the boot verdict is `live` or `disk`. Overlay the script and start
 whatever is already there after that line: Chromium, Weston, a bowl binary.
-A machine that should keep `/home` overlays a script without
-`moonwater_init`; bind init then still runs.
+Start it in the background. `moonwater_init` runs in the process that reads
+the event queue, and that process does not start reading until the function
+returns, so a kiosk command left in the foreground is a machine whose power
+button, lid and keys are queued and never run. A machine that should keep
+`/home` overlays a script without `moonwater_init`; bind init then still runs.
 
 Canvas, the desktop, is part of the kernel: a compositor that draws with the CPU
 through DRM, so it works on any display the kernel can drive.

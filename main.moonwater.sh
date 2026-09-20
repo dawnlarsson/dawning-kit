@@ -24,15 +24,22 @@
 
 # Once, after boot has written a verdict. $1 is that line: live,
 # disk <name>, or ask ...
+#
+# It has to come back. The same process reads the event queue, and it
+# does not start reading until this returns, so anything that runs for
+# as long as the machine is up goes in the background with & -- a
+# desktop, a kiosk browser, a player. One that holds the process here
+# is a machine whose power button, lid and keys are queued and never
+# read.
 function moonwater_init {
   case $1 in
   live|disk*)
     # moonwater wipe
     # After wipe, start whatever this machine is. A kiosk is one line
-    # of already-installed software, for example:
-    # chromium --kiosk --user-data-dir=/tmp/kiosk "$URL"
-    # weston
-    # /bowls/bin/exhibit
+    # of already-installed software, backgrounded, for example:
+    # chromium --kiosk --user-data-dir=/tmp/kiosk "$URL" &
+    # weston &
+    # /bowls/bin/exhibit &
     # moonwater wifi add "ssid" "password"
     # moonwater wifi on
     # moonwater bluetooth on
