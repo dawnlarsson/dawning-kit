@@ -546,6 +546,25 @@ static string_address build_resolve_privileged(string_address name);
 
 #define BUILD_PRIVILEGED_PATH \
         "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+#define BUILD_PRIVILEGED_ENV_PATH "PATH=" BUILD_PRIVILEGED_PATH
+
+static string_address address_to build_environment_privileged(
+    string_address address_to source)
+{
+        positive have = pointer_vector_count(source);
+        string_address address_to answer =
+            (string_address address_to)build_text_take(
+                (have + 2) * sizeof(string_address));
+        positive kept = 0;
+
+        for (positive at = 0; at < have; at++)
+                if (!string_has_prefix(source[at], "PATH="))
+                        answer[kept++] = source[at];
+
+        answer[kept++] = BUILD_PRIVILEGED_ENV_PATH;
+        answer[kept] = null;
+        return answer;
+}
 
 /*
         Spawning something that is not ours.
@@ -607,25 +626,34 @@ static b32 build_start(build_command address_to what)
         string_address address_to words = what->words;
         string_address command;
         string_address path;
+        string_address address_to environment =
+            what->environment ? what->environment : environ;
+        bool root = build_root();
+        bool trusted = root || what->privileged;
         b32 child;
 
         /*
-                Anything marked privileged is resolved independently of the
-                caller's PATH.  A build commonly starts as `sudo sh build.sh`,
-                so inheriting a writable PATH here would let a same-name make,
-                cp or shell become the program root executes.
+                Any command which is privileged now, or will become privileged,
+                is resolved independently of the caller's PATH.  A build
+                commonly starts as `sudo sh build.sh`; in that case every
+                child is already root, not only the few operations carrying
+                the privileged flag.
+
+                The child also receives a fixed PATH.  Resolving /usr/bin/make
+                safely but letting that root make resolve cc or sh through an
+                inherited writable PATH is the same bug one process later.
 
                 When elevation is still needed, sudo itself comes from that
                 trusted path and is handed the already-resolved command.  This
                 also avoids a fake sudo earlier in PATH collecting a password.
         */
-        command = what->privileged ? build_resolve_privileged(words[0])
-                                   : build_resolve(words[0]);
+        command = trusted ? build_resolve_privileged(words[0])
+                          : build_resolve(words[0]);
 
         if (!command)
                 return string_report(log_error, -1, "build: %s not found\n", words[0]);
 
-        if (what->privileged && !build_root())
+        if (what->privileged && !root)
         {
                 string_address sudo = build_resolve_privileged("sudo");
                 positive count = 0;
@@ -647,6 +675,9 @@ static b32 build_start(build_command address_to what)
         }
         else
                 path = command;
+
+        if (trusted)
+                environment = build_environment_privileged(environment);
 
         //      BUILD_TRACE prints every command before it runs. A build tool
         //      that drives six other programs has to be able to say exactly
@@ -675,8 +706,7 @@ static b32 build_start(build_command address_to what)
                 if (sink > 0 && dup2(sink, 1) < 0)
                         exit(127);
 
-                execve(path, words,
-                       what->environment ? what->environment : environ);
+                execve(path, words, environment);
                 //      exec only returns having failed, and this is the child:
                 //      leaving would run the rest of the build twice.
                 exit(127);
