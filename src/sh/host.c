@@ -1361,36 +1361,21 @@ static b32 host_install_disk(string_address asked, bool removable)
         }
 
         host_join(device, sizeof(device), "/dev/", name);
-
-        /*
-                Pin the destructive target before describing it or asking for
-                confirmation, and keep that exact open description through the
-                final write.  Closing a read-only probe here and reopening
-                /dev/<name> after the prompt leaves a hot-unplug/name-reuse
-                window in which the operator confirms one disk and a different
-                disk receives the partition table.
-        */
-        handle = system_open_at(AT_FDCWD, device,
-                                FILE_READ_WRITE | FILE_EXCLUSIVE | O_CLOEXEC);
-        if (handle < 0)
+        handle = system_open_at(AT_FDCWD, device, FILE_READ | O_CLOEXEC);
+        failed = handle;
+        if (handle >= 0)
         {
-                host_unmount(HOST_MEDIUM);
-                return handle == -ERROR_BUSY
-                           ? host_refuse("%s is in use: something on it is mounted\n",
-                                         name)
-                           : host_fail(device, handle);
+                failed = system_control(handle, HOST_BLKGETSIZE64, address_of bytes);
+                if (failed >= 0)
+                        failed = system_control(handle, HOST_BLKSSZGET,
+                                                address_of sector);
+                system_close(handle);
         }
-
-        failed = system_control(handle, HOST_BLKGETSIZE64, address_of bytes);
-        if (failed >= 0)
-                failed = system_control(handle, HOST_BLKSSZGET,
-                                        address_of sector);
 
         if (failed < 0 || bytes < HOST_SMALLEST || sector < 512 ||
             !storage_gpt_span(bytes / (p64)sector, (p32)sector, address_of first,
                               address_of last))
         {
-                system_close(handle);
                 host_unmount(HOST_MEDIUM);
                 return failed < 0 ? host_fail(device, failed)
                                   : host_refuse("%s is smaller than the 2 GiB an "
@@ -1410,11 +1395,21 @@ static b32 host_install_disk(string_address asked, bool removable)
         if (host_read_line(answer, sizeof(answer)) < 0 ||
             !string_equals(answer, name))
         {
-                system_close(handle);
                 host_unmount(HOST_MEDIUM);
                 string_format(log, host_label "nothing written\n");
                 log_flush();
                 return 1;
+        }
+
+        handle = system_open_at(AT_FDCWD, device,
+                                FILE_READ_WRITE | FILE_EXCLUSIVE | O_CLOEXEC);
+        if (handle < 0)
+        {
+                host_unmount(HOST_MEDIUM);
+                return handle == -ERROR_BUSY
+                           ? host_refuse("%s is in use: something on it is mounted\n",
+                                         name)
+                           : host_fail(device, handle);
         }
 
         failed = system_random_fill(random, sizeof(random), 0);
