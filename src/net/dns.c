@@ -567,6 +567,8 @@ static COLD bipolar dns_resolve_at(p32 server, p16 port, string_address name,
            original total deadline. */
         for (;;)
         {
+                positive available;
+
                 got = network_wait_readable_until(handle, address_of deadline);
 
                 if (got <= 0)
@@ -584,22 +586,9 @@ static COLD bipolar dns_resolve_at(p32 server, p16 port, string_address name,
                         failure = DNS_NO_SERVER;
                         goto failed;
                 }
-
-                /*
-                        MSG_TRUNC returns the datagram's real length even when
-                        only sizeof(reply) bytes were stored.  That length must
-                        never become the parser's bound: doing so turns every
-                        size check below into permission to read past this stack
-                        buffer.  A server which needs a larger DNS answer sets
-                        TC and lets the bounded UDP reply trigger TCP instead.
-                */
-                if ((positive)got > sizeof reply)
-                {
-                        failure = DNS_MALFORMED;
-                        goto failed;
-                }
-
-                if (!dns_reply_identity(reply, (positive)got, id, request,
+                available = (positive)got > sizeof reply
+                    ? sizeof reply : (positive)got;
+                if (!dns_reply_identity(reply, available, id, request,
                                         question_length))
                         continue;
 
