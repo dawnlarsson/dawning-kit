@@ -407,13 +407,21 @@ static b32 bowl_refuse(string_address message)
 */
 static bipolar bowl_bind_ro(string_address source, string_address target)
 {
-        bipolar failed = system_mount(source, target, 0, MS_BIND | MS_REC, 0);
+        /*
+                Bowl roots are unpacked directory trees, not mount trees.
+                A recursive bind would also clone any mount an operator or a
+                compromised guest had placed below one of those directories.
+                The bind remount below makes this mount read-only, but does not
+                reliably turn every cloned child mount read-only on older mount
+                APIs.  Do not import child mounts in the first place.
+        */
+        bipolar failed = system_mount(source, target, 0, MS_BIND, 0);
 
         if (failed)
                 return failed;
 
         return system_mount(0, target, 0,
-                            MS_BIND | MS_REC | MS_REMOUNT | MS_RDONLY, 0);
+                            MS_BIND | MS_REMOUNT | MS_RDONLY, 0);
 }
 
 /*
