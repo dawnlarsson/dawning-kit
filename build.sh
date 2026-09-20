@@ -38,6 +38,17 @@
 # shellcheck disable=SC1091
 set -e
 
+# Root must not resolve even the bootstrap's first utility through a caller
+# supplied PATH.  This runs before dirname, uname, find or the compiler.  The
+# Linux build wants root later, and sudo commonly preserves enough environment
+# for a writable PATH to otherwise become code execution before the C tool has
+# a chance to apply its own policy.
+bootstrap_uid=$(/usr/bin/id -u 2>/dev/null || /bin/id -u) || exit 1
+if [ "$bootstrap_uid" = 0 ]; then
+        PATH=/usr/sbin:/usr/bin:/sbin:/bin
+        export PATH
+fi
+
 # Sourced and compiled by this file's own path rather than a relative one, so
 # that being in the wrong directory produces is_safe's explanation rather than
 # a bare "No such file or directory". The working directory is deliberately
@@ -50,13 +61,25 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 if [ "$(uname)" = "Linux" ]; then
         tool=$here/build
         source=$here/src/build/build.c
+        compiler=${CC:-cc}
+
+        # CC is useful to an ordinary build, but root must not be pointed at an
+        # arbitrary pathname by inherited environment. The native bootstrap
+        # needs no special compiler; anyone needing one can build ./build
+        # explicitly before elevating.
+        if [ "$bootstrap_uid" = 0 ]; then
+                compiler=cc
+        fi
 
         # The freestanding tool includes the shared runtime and utilities.
         # All of its project dependencies live under src; a conservative tree
         # check avoids another generated manifest and makefile parser here.
-        if [ ! -x "$tool" ] ||
+        #
+        # Root always rebuilds. Otherwise an old user-writable ./build with a
+        # future timestamp could be exec'd unchanged by an elevated invocation.
+        if [ "$bootstrap_uid" = 0 ] || [ ! -x "$tool" ] ||
                 [ -n "$(find "$here/src" "$here/build.sh" -newer "$tool" -print -quit)" ]; then
-                ${CC:-cc} -O2 -static -nostdlib -nostartfiles \
+                "$compiler" -O2 -static -nostdlib -nostartfiles \
                         -fno-stack-protector -fno-builtin -w \
                         -o "$tool" "$source" ||
                         {
