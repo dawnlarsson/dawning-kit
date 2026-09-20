@@ -29,9 +29,29 @@
 #define LOCALE_WAIT_NOHANG 1
 #define LOCALE_NTP_RATE_AGAIN 300
 #define LOCALE_NTP_EXIT_RATE 2
-#define ADJ_STATUS 0x10
-#define ADJ_SETOFFSET 0x80
+/*
+        The kernel's own numbering, from uapi/linux/timex.h. ADJ_SETOFFSET
+        is 0x0100. It was 0x80 here, which is ADJ_TAI: a request to set the
+        TAI offset from the constant word, not to step the clock from the
+        time words. The kernel read word 6, which is zero, wrote that as
+        the system TAI offset, ignored the offset we had gone to such
+        lengths to measure, and returned the clock state -- a number the
+        caller reads as success. So every sample, every filter and every
+        guard in sntp.c fed a call that could not set the clock, said it
+        had, and cleared STA_UNSYNC on the way out so the machine reported
+        itself synchronised.
+*/
+#define ADJ_OFFSET 0x0001
+#define ADJ_FREQUENCY 0x0002
+#define ADJ_MAXERROR 0x0004
+#define ADJ_ESTERROR 0x0008
+#define ADJ_STATUS 0x0010
+#define ADJ_TIMECONST 0x0020
+#define ADJ_SETOFFSET 0x0100
 #define ADJ_NANO 0x2000
+#define STA_PLL 0x0001
+#define STA_UNSYNC 0x0040
+#define STA_NANO 0x2000
 
 static p64 locale_ntp_next;
 static positive locale_ntp_retry = LOCALE_NTP_RETRY_LEAST;
