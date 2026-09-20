@@ -16798,6 +16798,12 @@ def harness_core_state(argv):
     pointer = (root / "src/canvas/pointer.c").read_text()
     keys = (root / "src/canvas/keys.c").read_text()
     spark = (root / "src/spark.c").read_text()
+    # The machine script this build bakes into the module. The scanner that
+    # decides which rows the machine process owns is compiled here for real,
+    # so the shipped file is scanned here for real as well: an edit to it that
+    # stops arming the power button is a red check rather than a dead button.
+    shipped_machine = (root / "main.moonwater.sh").read_text()
+    assert shipped_machine.isascii(), "the machine script is ASCII"
 
 
     def section(source, first, following):
@@ -17606,6 +17612,10 @@ static unsigned bind_named(const char *first, const char *second) {
     return 0;
 }
 """
+    source += ("static const char machine_shipped_script[] =\n" +
+               "".join("    " + json.dumps(line) + "\n"
+                       for line in shipped_machine.splitlines(keepends=True)) +
+               "    ;\n")
     # moonwater canvas on and off: what the request decides before Canvas
     # is touched, with Canvas itself mocked.
     source += r'''
@@ -18609,6 +18619,117 @@ static void check_machine_script(void) {
           "and setting nothing puts the built-in script back");
 }
 
+/*
+        Who runs an owned event, and what happens when nobody can.
+
+        A function moonwater_<event> in the machine script hands that row to
+        the machine process: the kernel queues the press there instead of
+        spawning the image line, and the image line is the only other copy.
+        That is right while the process is draining the queue and wrong the
+        moment it is not, because the rows that go through here are the three
+        that stop the machine. An attached process is not by itself a process
+        that will run the event: it may have been told to stop, and its queue
+        may have no room. Handing the press to neither is a power button that
+        does nothing, so a queue that cannot take it has to let the image line
+        through.
+
+        The script is the one this build ships, scanned by the real scanner,
+        so the ownership these checks stand on is the ownership a machine
+        gets rather than a fixture's idea of it.
+*/
+static void check_machine_events(void) {
+    struct machine_script script;
+    struct machine_control control;
+    struct file machine;
+    struct bind_row *power=bind_row(SPARK_BIND_POWEROFF);
+    unsigned queued;
+
+    memset(&machine,0,sizeof machine);
+    power_admin=1; power_capable=1;
+
+    memset(&script,0,sizeof script);
+    script.op=MOONWATER_SCRIPT_SET;
+    script.length=(unsigned)(sizeof machine_shipped_script-1);
+    script.address=(unsigned long)machine_shipped_script;
+    check(!report_machine_script(&script) &&
+          (machine_script_overlay.hooks & MOONWATER_HOOK_INIT) &&
+          (machine_script_overlay.hooks & MOONWATER_HOOK_EVENT),
+          "the machine script this build ships names moonwater_init and moonwater_event");
+    check(moonwater_bind_line(&machine_script_overlay,SPARK_BIND_POWEROFF) &&
+          moonwater_bind_line(&machine_script_overlay,SPARK_BIND_RESET) &&
+          moonwater_bind_line(&machine_script_overlay,SPARK_BIND_CTRL_ALT_DELETE),
+          "and gives poweroff, reset and ctrl_alt_delete a function each");
+    check((machine_script_owned & (1u<<(SPARK_BIND_POWEROFF-1))) &&
+          (machine_script_owned & (1u<<(SPARK_BIND_RESET-1))) &&
+          (machine_script_owned & (1u<<(SPARK_BIND_CTRL_ALT_DELETE-1))),
+          "so the kernel hands those three rows to the machine process");
+
+    snprintf(power->command,sizeof(power->command),"poweroff");
+    atomic_set(&power->bound,1);
+
+    bind_idle(power); queued=bind_queued;
+    bind_queue(power);
+    check(bind_queued==queued+1,
+          "with no machine process the power button spawns the image line");
+
+    memset(&control,0,sizeof control);
+    control.op=MOONWATER_ATTACH;
+    check(!report_machine(&machine,&control) &&
+          (control.flags & MOONWATER_ATTACHED) && atomic_read(&bind_machine_live),
+          "a machine process attaches and owns its rows");
+
+    bind_idle(power); queued=bind_queued; bind_machine.count=0;
+    bind_queue(power);
+    check(bind_queued==queued && bind_machine.count==1 &&
+          bind_machine.event[0]==SPARK_BIND_POWEROFF,
+          "an attached machine process is handed the press, not the image line");
+
+    /* The first press is still sitting there a debounce window later, so the
+       process is not reading its queue and the button is dead without this. */
+    bind_idle(power); queued=bind_queued;
+    bind_queue(power);
+    check(bind_queued==queued+1 && bind_machine.count==1,
+          "a second press of a stop event the machine process never read runs the image line");
+
+    /* Every slot a stop event, so nothing in the queue may be shifted out to
+       make room and the press cannot be handed over at all. */
+    bind_machine.count=0;
+    while (bind_machine.count < BIND_MACHINE_QUEUE)
+        bind_machine.event[bind_machine.count++]=SPARK_BIND_RESET;
+    bind_idle(power); queued=bind_queued;
+    bind_queue(power);
+    check(bind_queued==queued+1,
+          "a press the machine queue has no room for still reaches the image line");
+    check(bind_machine.count==BIND_MACHINE_QUEUE,
+          "and nothing already queued for the machine process was thrown away for it");
+
+    bind_machine.count=0;
+    memset(&control,0,sizeof control);
+    control.op=MOONWATER_END;
+    check(!report_machine(&machine,&control) && bind_machine.ending,
+          "the machine process is told the machine is stopping");
+    bind_idle(power); queued=bind_queued;
+    bind_queue(power);
+    check(bind_queued==queued+1 && !bind_machine.count,
+          "a press after that is not queued for a process that is leaving: the image line runs");
+
+    bind_machine_detach(&machine);
+    check(!atomic_read(&bind_machine_live) && !bind_machine.owner &&
+          !bind_machine.ending,
+          "and detaching gives the rows back");
+    bind_idle(power); queued=bind_queued;
+    bind_queue(power);
+    check(bind_queued==queued+1,
+          "a press once the machine process is gone spawns the image line again");
+
+    bind_idle(power);
+    memset(&script,0,sizeof script);
+    script.op=MOONWATER_SCRIPT_SET;
+    (void)report_machine_script(&script);
+    check(!machine_script_owned,
+          "and the built-in script this harness stands in for owns nothing");
+}
+
 static void check_settings_sum(void) {
     static struct spark_settings slot;
     check(~hash_crc32(~0u, "123456789", 9) == 0xcbf43926u, "the reference CRC-32 is CRC-32");
@@ -19149,6 +19270,7 @@ int main(void) {
     check_bind_edges();
     check_canvas_control();
     check_machine_script();
+    check_machine_events();
     check_settings_sum();
     check_input_suspension();
     free(output);

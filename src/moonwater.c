@@ -852,6 +852,24 @@ static void bind_machine_watch_all(_Bool on)
         spin_unlock_irqrestore(&bind_lock, flags);
 }
 
+/*
+        Hand one press to the machine process, and say whether it took it.
+
+        The answer is about this event, not about the process: bind_queue has
+        only two copies of what a row means -- the function in the machine
+        script and the image line -- and it gives the press to the second
+        whenever the first did not get it. Anything else is a press that goes
+        nowhere, and the rows that come through here own the power button.
+
+        Three ways it does not get it. A process that has been told the
+        machine is stopping will not come back for the queue, so the wait
+        answers the end and everything behind it is never read. A queue with
+        no room left and nothing in it that may be dropped cannot hold one
+        more. And a stop event still sitting in the queue was not taken: the
+        debounce on those rows is a second, so a second press means the
+        process has not read the first in all that time, and the image line is
+        the only other way to stop this machine.
+*/
 static _Bool bind_machine_push(struct bind_row *row)
 {
         unsigned long flags;
@@ -859,10 +877,16 @@ static _Bool bind_machine_push(struct bind_row *row)
 
         spin_lock_irqsave(&bind_machine_lock, flags);
         if (!bind_machine.owner || bind_machine.ending) {
-                _Bool attached = bind_machine.owner || bind_machine.ending;
-
                 spin_unlock_irqrestore(&bind_machine_lock, flags);
-                return attached;
+                return false;
+        }
+
+        if (spark_bind_is_stop(event)) {
+                for (i = 0; i < bind_machine.count; i++)
+                        if (bind_machine.event[i] == event) {
+                                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                                return false;
+                        }
         }
 
         if (moonwater_paired(event)) {
@@ -885,7 +909,7 @@ static _Bool bind_machine_push(struct bind_row *row)
         }
         if (bind_machine.count == BIND_MACHINE_QUEUE) {
                 spin_unlock_irqrestore(&bind_machine_lock, flags);
-                return true;
+                return false;
         }
 
         bind_machine.event[bind_machine.count++] = event;
@@ -903,6 +927,10 @@ static void bind_queue(struct bind_row *row)
         if (system_state != SYSTEM_RUNNING || !atomic_read(&bind_alive))
                 return;
 
+        //      Owned and taken is the machine process's press and nobody
+        //      else's. Owned and not taken falls through to the image line
+        //      below, because a row the script owns has no third copy and
+        //      dropping it here is the button that does nothing.
         owned = READ_ONCE(machine_script_owned) & (1u << (row->event - 1));
         if (atomic_read(&bind_machine_live) &&
             ((READ_ONCE(machine_script_hooks) & MOONWATER_HOOK_EVENT) || owned) &&
