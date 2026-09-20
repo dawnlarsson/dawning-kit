@@ -22,10 +22,22 @@
 
 static bool bowl_has(string_address root, string_address path)
 {
-        p8 installed[BOWL_PATH_LIMIT];
+        bipolar found;
 
-        return bowl_root_path(installed, sizeof(installed), root, path) &&
-               system_access_at(AT_FDCWD, installed, 0) >= 0;
+        if (!bowl_named_root(root) || bowl_path_steps(path))
+                return false;
+
+        /*
+                In particular, /usr/bin/pacman -> /bin/true means the bowl's
+                /bin/true, never the host's. A plain access(ROOT + path) would
+                cross that boundary for absolute symlinks.
+        */
+        found = bowl_open_in_root(root, path, O_PATH | O_CLOEXEC);
+        if (found < 0)
+                return false;
+
+        system_close(found);
+        return true;
 }
 
 static bool bowl_root_busy(string_address root)
