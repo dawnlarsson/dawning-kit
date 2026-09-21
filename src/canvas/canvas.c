@@ -5976,18 +5976,25 @@ static void wheel_deliver(void)
         millimetres whatever mode it is in, and QEMU synthesises an EDID too,
         so neither the size nor the presence of one separates them.
 */
+/* Is this device's driver one of these? Asked of two lists below, with
+   the same answer for a device that has no driver or no name. */
+static PURE _Bool canvas_driver_among(struct drm_device *dev,
+                                      const char *const *names, positive count)
+{
+        if (!dev->driver || !dev->driver->name)
+                return false;
+
+        return string_table_find((string_address)dev->driver->name, names,
+                                 sizeof(names[0]), count) < count;
+}
+
 static PURE _Bool canvas_is_virtual(struct drm_device *dev)
 {
         static const char *const guests[] = {
             "bochs-drm", "virtio_gpu", "qxl", "vmwgfx", "cirrus-qemu",
             "hyperv_drm", "vkms"};
 
-        if (!dev->driver || !dev->driver->name)
-                return false;
-
-        return string_table_find((string_address)dev->driver->name, guests,
-                                 sizeof(guests[0]), array_count(guests)) <
-               array_count(guests);
+        return canvas_driver_among(dev, guests, array_count(guests));
 }
 
 /*
@@ -6004,12 +6011,7 @@ static PURE _Bool canvas_is_firmware(struct drm_device *dev)
 {
         static const char *const firmware[] = {"simpledrm", "efidrm"};
 
-        if (!dev->driver || !dev->driver->name)
-                return false;
-
-        return string_table_find((string_address)dev->driver->name, firmware,
-                                 sizeof(firmware[0]), array_count(firmware)) <
-               array_count(firmware);
+        return canvas_driver_among(dev, firmware, array_count(firmware));
 }
 
 static PURE unsigned int output_mode_count(struct drm_connector *connector)
