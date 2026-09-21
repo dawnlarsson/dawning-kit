@@ -13070,14 +13070,15 @@ __asm__(
     "popq %r12\n"
     "popq %rbp\n"
     "popq %rbx\n"
-    "ret\n"
-    //  The table lives in .rodata: bytes after ret in .text read to objtool as
-    //  an instruction stream that falls through, and the kernel refuses to link.
+    ASM_RET
+    //  The table lives in .rodata: bytes after the return in .text read to
+    //  objtool as an instruction stream that falls through, and the kernel
+    //  refuses to link. The return is ASM_RET, which the kernel spells as
+    //  its return thunk.
     ".pushsection .rodata\n"
     ".Lhl_x64_widths:\n"
     ".byte 0, 1, 2, 3, 4, 5, 6, 7, 8, 5, 5, 6, 6, 7, 7, 8, 8, 6, 6, 7, 7, 7, 8, 8, 8, 7, 7, 7, 7, 8, 8, 8, 8\n"
     ".popsection\n"
-    ASM_RET
     ASM_END(huffman_lengths)
     /* huffman_codes(length, n, table): deflate's canonical codes for n
        code lengths of at most 15, shortest codes first and each length's
@@ -13145,7 +13146,7 @@ __asm__(
     ".Lhcodes_x64_done:\n"
     "addq $64, %rsp\n"
     "popq %rbx\n"
-    "ret\n"
+    ASM_RET
     //  In .rodata for the same reason as huffman_lengths' widths table.
     ".pushsection .rodata\n"
     ".Lhcodes_x64_reverse:\n"
@@ -13158,7 +13159,6 @@ __asm__(
     ".byte 3, 131, 67, 195, 35, 163, 99, 227, 19, 147, 83, 211, 51, 179, 115, 243, 11, 139, 75, 203, 43, 171, 107, 235, 27, 155, 91, 219, 59, 187, 123, 251\n"
     ".byte 7, 135, 71, 199, 39, 167, 103, 231, 23, 151, 87, 215, 55, 183, 119, 247, 15, 143, 79, 207, 47, 175, 111, 239, 31, 159, 95, 223, 63, 191, 127, 255\n"
     ".popsection\n"
-    ASM_RET
     ASM_END(huffman_codes)
     /* zstd_huffman_cells(cells, weight, count, max_bits, first): the
        literal decoder's table at eleven bits from the weights of count
