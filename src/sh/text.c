@@ -6357,6 +6357,25 @@ static bool nl_signed(string_address said, bipolar address_to into)
 // behind its sign, none of which cut a number that is wider than the field.
 static fn nl_put_number(bipolar number, positive width, p8 justify, bool zeros)
 {
+        /*
+                Right justified and not negative, which is every nl that was
+                not asked otherwise: the library writes the whole field,
+                padding and digits, into the output in one call.
+        */
+        if (justify != 'l' && number >= 0 && width <= positive_char_max)
+        {
+                p8 address_to field = text_reserve(positive_char_max);
+
+                if (field)
+                {
+                        positive length = positive_into_padded(field, (positive)number, width,
+                                                               zeros ? '0' : ' ');
+
+                        text_out_used -= positive_char_max - length;
+                        return;
+                }
+        }
+
         p8 digits[24];
         positive magnitude = number < 0 ? 0 - (positive)number : (positive)number;
         positive length = positive_into_string(digits, magnitude);
@@ -6392,19 +6411,20 @@ static fn nl_put_number(bipolar number, positive width, p8 justify, bool zeros)
 // How many times over the delimiter is written, and nothing else on the line.
 // An empty delimiter -- nl -d '' -- makes an empty line the header marker,
 // which is what GNU does with it whatever its manual says.
-static b32 nl_section_of(p8 address_to delimiter)
+static b32 nl_section_of(p8 address_to delimiter, const p8 address_to line,
+                         positive length)
 {
         if (!delimiter[0])
-                return text_line_length ? 0 : 3;
+                return length ? 0 : 3;
 
-        if (text_line_length != 2 && text_line_length != 4 && text_line_length != 6)
+        if (length != 2 && length != 4 && length != 6)
                 return 0;
 
-        for (positive c = 0; c < text_line_length; c += 2)
-                if (text_line[c] != delimiter[0] || text_line[c + 1] != delimiter[1])
+        for (positive c = 0; c < length; c += 2)
+                if (line[c] != delimiter[0] || line[c + 1] != delimiter[1])
                         return 0;
 
-        return (b32)(text_line_length / 2);
+        return (b32)(length / 2);
 }
 
 // GNU checks every occurrence of an option, not only the last: nl -hx with
@@ -6553,9 +6573,14 @@ static b32 text_nl()
                 if (!text_open(text_file_name(i)))
                         continue;
 
-                while (text_line_next(text_line, 0))
+                p8 address_to line;
+                positive length;
+
+                // Each line is looked at where it lies in the reader, not
+                // copied out first.
+                while (text_line_view(address_of line, address_of length, null, 0, null))
                 {
-                        b32 marker = nl_section_of(delimiter);
+                        b32 marker = nl_section_of(delimiter, line, length);
 
                         if (marker)
                         {
@@ -6579,7 +6604,7 @@ static b32 text_nl()
 
                         if (style == 'a')
                         {
-                                if (text_line_length)
+                                if (length)
                                 {
                                         blanks = 0;
                                         numbered = true;
@@ -6593,12 +6618,12 @@ static b32 text_nl()
                         else if (style == 't')
                         {
                                 blanks = 0;
-                                numbered = text_line_length != 0;
+                                numbered = length != 0;
                         }
                         else if (style == 'p' && patterns[section] >= 0)
                         {
                                 regex_current = nl_patterns[patterns[section]];
-                                numbered = regex_find(REGEX_FIRST, text_line, text_line_length, 0);
+                                numbered = regex_find(REGEX_FIRST, line, length, 0);
                         }
 
                         if (numbered)
@@ -6629,7 +6654,10 @@ static b32 text_nl()
                                 writer_fill_bulk(text_put, width + separator_length, ' ');
                         }
 
-                        text_put_line();
+                        text_put(line, length);
+
+                        if (text_line_ended)
+                                text_put_character(text_delimiter);
 
                         // nl produces complete display lines even when the
                         // final input line had no terminator. The other line
