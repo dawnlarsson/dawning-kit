@@ -21615,6 +21615,7 @@ static void drm_client_release(struct drm_client_dev *c) {
 '''
 
     bodies = "".join(function(file, name) for file, name in [
+        ("src/canvas/canvas.c", "cursor_buffers_drop"),
         ("src/canvas/canvas.c", "plane_drop"),
         ("src/canvas/canvas.c", "plane_lost"),
         ("src/canvas/canvas.c", "plane_claim"),
