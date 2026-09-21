@@ -618,6 +618,8 @@ cover('worth_it', 'mode', 'lzma_range_encode lzma_range_decode',
 cover('folds_already', 'n', 'huffman_encode_back',
       'literal stream lengths are runtime block slices; empty input already '
       'takes the exact terminal-byte path')
+cover('nothing_to_fold', None, 'zstd_huffman_cells',
+      'the weights and the depth are read from each block')
 cover('folds_already', 'limit', 'huffman_lengths',
       'the limit only matters on the rare path that splits codes; the sort '
       'and joins do not depend on it')

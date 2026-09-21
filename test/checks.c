@@ -77032,6 +77032,56 @@ static fn floor_deflate_tokens(void)
         check("deflate tokens counted into both alphabets with their extra bits", counted);
 }
 
+/* zstd_huffman_cells against a cell at a time: complete codes from
+   huffman_lengths over random counts, as weights, into a guarded table. */
+static fn floor_zstd_huffman_cells(void)
+{
+        static p32 freq[256];
+        p8 length[256], weight[256];
+        p16 want[2048 + 8], got[2048 + 8];
+        p32 random = 0x6b43a9b5u;
+        bool same = true;
+
+        for (positive trial = 0; trial < 20000; trial++)
+        {
+#define FLOOR_RANDOM() (random ^= random << 13, random ^= random >> 17, random ^= random << 5, random)
+                positive count = 2 + FLOOR_RANDOM() % 255, max_bits = 0;
+                p32 first[13] = {0}, place[13] = {0}, rank[13] = {0};
+
+                for (positive i = 0; i < count; i++)
+                        freq[i] = FLOOR_RANDOM() % 3 ? FLOOR_RANDOM() % (1 + FLOOR_RANDOM() % 5000) : 0;
+                freq[0] |= 1;
+                freq[count - 1] |= 1;
+                if (!huffman_lengths(freq, count, length, 11))
+                        continue;
+                for (positive i = 0; i < count; i++)
+                        if (length[i] > max_bits)
+                                max_bits = length[i];
+                for (positive i = 0; i < count; i++)
+                {
+                        weight[i] = length[i] ? (p8)(max_bits + 1 - length[i]) : 0;
+                        rank[weight[i]]++;
+                }
+                for (positive w = 1, start = 0; w <= 12; w++)
+                {
+                        first[w] = place[w] = (p32)start;
+                        if (w <= max_bits)
+                                start += (positive)rank[w] << (w - 1 + 11 - max_bits);
+                }
+                memory_fill(want, 0xa5, sizeof(want));
+                memory_fill(got, 0xa5, sizeof(got));
+                for (positive i = 0; i < count; i++)
+                        if (weight[i])
+                                for (positive k = 0; k < (positive)1 << (weight[i] - 1 + 11 - max_bits); k++)
+                                        want[place[weight[i]]++] = (p16)((max_bits + 1 - weight[i]) | i << 8);
+                zstd_huffman_cells(got, weight, count, max_bits, first);
+                if (memory_compare(got, want, sizeof(got)) || memory_compare(first, place, sizeof(first)))
+                        same = false;
+#undef FLOOR_RANDOM
+        }
+        check("zstd Huffman cells fill the table a symbol at a time would", same);
+}
+
 #ifdef CHECK_compression_floor
 b32 main(void)
 {
@@ -77044,6 +77094,7 @@ b32 main(void)
         floor_deflate_codes();
         floor_deflate_tokens();
         floor_huffman_lengths();
+        floor_zstd_huffman_cells();
         return test_report(null);
 }
 #endif

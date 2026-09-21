@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        340 routines (327 public, 13 local), 339 of them on all three and 1 local to one.
+        341 routines (328 public, 13 local), 340 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -407,6 +407,7 @@
           zstd_bits_open                 public  yes     yes     yes
           zstd_bits_reload               public  yes     yes     yes
           zstd_huffman_4x                public  yes     yes     yes
+          zstd_huffman_cells             public  yes     yes     yes
           zstd_huffman_stream            public  yes     yes     yes
           zstd_sequences_run             public  yes     yes     yes
 
@@ -13064,6 +13065,76 @@ __asm__(
     ".byte 0, 1, 2, 3, 4, 5, 6, 7, 8, 5, 5, 6, 6, 7, 7, 8, 8, 6, 6, 7, 7, 7, 8, 8, 8, 7, 7, 7, 7, 8, 8, 8, 8\n"
     ASM_RET
     ASM_END(huffman_lengths)
+    /* zstd_huffman_cells(cells, weight, count, max_bits, first): the
+       literal decoder's table at eleven bits from the weights of count
+       symbols. A symbol of weight w takes 1 << (w - 1 + 11 - max_bits)
+       cells from first[w] on, first[w] moving past them, each cell
+       max_bits + 1 - w in its low byte and the symbol in its high one.
+       The caller has checked that the weights fill 2048 cells exactly and
+       that none is above max_bits. */
+    ASM_FUNC(zstd_huffman_cells)
+    "pushq %rbx\n"
+    "pushq %r12\n"
+    "pushq %r13\n"
+    "pushq %r14\n"
+    "movl %ecx, %r10d\n"
+    "incl %r10d\n"
+    "movl $10, %r9d\n"
+    "subl %ecx, %r9d\n"
+    "movabsq $0x0001000100010001, %r11\n"
+    "xorl %eax, %eax\n"
+    "testq %rdx, %rdx\n"
+    "jz .Lzhc_x64_done\n"
+    ".Lzhc_x64_symbol:\n"
+    "movzbl (%rsi,%rax), %ecx\n"
+    "testl %ecx, %ecx\n"
+    "jz .Lzhc_x64_skip\n"
+    "leaq (%r8,%rcx,4), %r13\n"
+    "movl (%r13), %r12d\n"
+    "movl %r10d, %ebx\n"
+    "subl %ecx, %ebx\n"
+    "movl %eax, %r14d\n"
+    "shll $8, %r14d\n"
+    "orl %r14d, %ebx\n"
+    "addl %r9d, %ecx\n"
+    "movl $1, %r14d\n"
+    "shll %cl, %r14d\n"
+    "leal (%r12,%r14), %ecx\n"
+    "movl %ecx, (%r13)\n"
+    "leaq (%rdi,%r12,2), %r12\n"
+    "cmpl $2, %r14d\n"
+    "ja .Lzhc_x64_wide\n"
+    "je .Lzhc_x64_two\n"
+    "movw %bx, (%r12)\n"
+    "jmp .Lzhc_x64_skip\n"
+    ".Lzhc_x64_two:\n"
+    "imull $0x10001, %ebx, %ebx\n"
+    "movl %ebx, (%r12)\n"
+    "jmp .Lzhc_x64_skip\n"
+    ".Lzhc_x64_wide:\n"
+    "movzwl %bx, %ebx\n"
+    "imulq %r11, %rbx\n"
+    "cmpl $4, %r14d\n"
+    "jne .Lzhc_x64_eight\n"
+    "movq %rbx, (%r12)\n"
+    "jmp .Lzhc_x64_skip\n"
+    ".Lzhc_x64_eight:\n"
+    "movq %rbx, (%r12)\n"
+    "movq %rbx, 8(%r12)\n"
+    "addq $16, %r12\n"
+    "subl $8, %r14d\n"
+    "jnz .Lzhc_x64_eight\n"
+    ".Lzhc_x64_skip:\n"
+    "incq %rax\n"
+    "cmpq %rdx, %rax\n"
+    "jb .Lzhc_x64_symbol\n"
+    ".Lzhc_x64_done:\n"
+    "popq %r14\n"
+    "popq %r13\n"
+    "popq %r12\n"
+    "popq %rbx\n"
+    ASM_RET
+    ASM_END(zstd_huffman_cells)
 
     /* Range decoder (24-byte state): range:u32, code:u32, next, limit.
        mode and aligned probability arrays follow lzma_range_encode. The
@@ -25533,6 +25604,61 @@ __asm__(
     ".p2align 2\n"
     ASM_RET
     ASM_END(huffman_lengths)
+    /* See the x86_64 zstd_huffman_cells contract. */
+    ASM_FUNC(zstd_huffman_cells)
+    "add w10, w3, #1\n"
+    "mov w9, #10\n"
+    "sub w9, w9, w3\n"
+    "mov x11, #0x0001000100010001\n"
+    "mov x5, #0\n"
+    "cbz x2, .Lzhc_arm64_done\n"
+    ".Lzhc_arm64_symbol:\n"
+    "ldrb w6, [x1, x5]\n"
+    "cbz w6, .Lzhc_arm64_skip\n"
+    "add x13, x4, x6, lsl #2\n"
+    "ldr w12, [x13]\n"
+    "sub w7, w10, w6\n"
+    "orr w7, w7, w5, lsl #8\n"
+    "add w6, w6, w9\n"
+    "mov w14, #1\n"
+    "lsl w14, w14, w6\n"
+    "add w15, w12, w14\n"
+    "str w15, [x13]\n"
+    "add x12, x0, x12, lsl #1\n"
+    "cmp w14, #2\n"
+    "b.hi .Lzhc_arm64_wide\n"
+    "b.eq .Lzhc_arm64_two\n"
+    "strh w7, [x12]\n"
+    "b .Lzhc_arm64_skip\n"
+    ".Lzhc_arm64_two:\n"
+    "orr w7, w7, w7, lsl #16\n"
+    "str w7, [x12]\n"
+    "b .Lzhc_arm64_skip\n"
+    ".Lzhc_arm64_wide:\n"
+    "and x7, x7, #0xffff\n"
+    "mul x7, x7, x11\n"
+    "cmp w14, #4\n"
+    "b.ne .Lzhc_arm64_eight\n"
+    "str x7, [x12]\n"
+    "b .Lzhc_arm64_skip\n"
+    ".Lzhc_arm64_eight:\n"
+    "cmp w14, #8\n"
+    "b.ne .Lzhc_arm64_sixteen\n"
+    "stp x7, x7, [x12]\n"
+    "b .Lzhc_arm64_skip\n"
+    ".Lzhc_arm64_sixteen:\n"
+    "stp x7, x7, [x12]\n"
+    "stp x7, x7, [x12, #16]\n"
+    "add x12, x12, #32\n"
+    "subs w14, w14, #16\n"
+    "b.ne .Lzhc_arm64_sixteen\n"
+    ".Lzhc_arm64_skip:\n"
+    "add x5, x5, #1\n"
+    "cmp x5, x2\n"
+    "b.lo .Lzhc_arm64_symbol\n"
+    ".Lzhc_arm64_done:\n"
+    ASM_RET
+    ASM_END(zstd_huffman_cells)
 
     /* See the x86_64 bounded range decoder contract. */
     /* See the x86_64 LZMA span contract. */
@@ -38869,6 +38995,41 @@ __asm__(
     "add sp, sp, t0\n"
     ASM_RET
     ASM_END(huffman_lengths)
+    /* See the x86_64 zstd_huffman_cells contract. */
+    ASM_FUNC(zstd_huffman_cells)
+    "addi t0, a3, 1\n"
+    "li t1, 10\n"
+    "sub t1, t1, a3\n"
+    "li a5, 0\n"
+    "beqz a2, .Lzhc_rv_done\n"
+    ".Lzhc_rv_symbol:\n"
+    "add t2, a1, a5\n"
+    "lbu t2, 0(t2)\n"
+    "beqz t2, .Lzhc_rv_skip\n"
+    "slli t3, t2, 2\n"
+    "add t3, a4, t3\n"
+    "lwu t4, 0(t3)\n"
+    "sub t5, t0, t2\n"
+    "slli t6, a5, 8\n"
+    "or t5, t5, t6\n"
+    "add t2, t2, t1\n"
+    "li t6, 1\n"
+    "sll t6, t6, t2\n"
+    "add t2, t4, t6\n"
+    "sw t2, 0(t3)\n"
+    "slli t4, t4, 1\n"
+    "add t4, a0, t4\n"
+    ".Lzhc_rv_cell:\n"
+    "sh t5, 0(t4)\n"
+    "addi t4, t4, 2\n"
+    "addi t6, t6, -1\n"
+    "bnez t6, .Lzhc_rv_cell\n"
+    ".Lzhc_rv_skip:\n"
+    "addi a5, a5, 1\n"
+    "bltu a5, a2, .Lzhc_rv_symbol\n"
+    ".Lzhc_rv_done:\n"
+    ASM_RET
+    ASM_END(zstd_huffman_cells)
 
     /* See the x86_64 bounded range decoder contract. */
     /* See the x86_64 LZMA span contract. */
@@ -45963,6 +46124,9 @@ READS_WRITES(1) fn deflate_tokens_encode(address_any job);
    2^22; 0 when they cannot be limited. */
 READS(1) WRITES(3) bool huffman_lengths(const p32 address_to freq, positive n,
                                         p8 address_to length, positive limit);
+/* The zstd literal decoder's eleven-bit table from checked weights. */
+WRITES(1) fn zstd_huffman_cells(address_any cells, const p8 address_to weight, positive count,
+                                positive max_bits, p32 address_to first);
 READS_WRITES(1) fn lzma_range_shift(address_any state);
 READS_WRITES(1) READS_WRITES(2) bipolar lzma_range_decode(address_any state, address_any probs,
                                              positive mode);

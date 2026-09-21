@@ -396,6 +396,10 @@ cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'lzma_range_d
       'scalar-model differential and guarded input; end-to-end xz timing is '
       'available, but there is no isolated decode timing row',
       anchors={'lzma_range_decode': 'floor_range'})
+cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'zstd_huffman_cells',
+      'cell for cell against a one-at-a-time fill of complete codes into a '
+      'guarded table; end-to-end zstd -d timing',
+      anchors={'zstd_huffman_cells': 'floor_zstd_huffman_cells'})
 cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'huffman_lengths',
       'the same lengths as the heap it replaced over 60000 count shapes; '
       'end-to-end gzip and zstd timing, and the native arm64 row against '

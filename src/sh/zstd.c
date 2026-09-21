@@ -744,26 +744,9 @@ static bool zstd_huff_from_weights(zstd_huff address_to huff, p8 address_to weig
         }
         if (start != ((positive)1 << 11))
                 return zstd_fail("zstd Huffman table did not fill");
-        for (s = 0; s <= provided; s++)
-        {
-                p8 const weight_s = weight[s];
-                positive at;
-                positive stop;
-                p16 cell;
-
-                if (!weight_s)
-                        continue;
-                if (weight_s > max_bits)
-                        return zstd_fail("zstd Huffman table overflow");
-                /* nbits in the low byte, symbol in the high byte: Facebook's
-                   4X1 walker shifts by the cell itself, and x86 can store %ah. */
-                cell = (p16)(max_bits + 1 - weight_s) | (p16)((p16)s << 8);
-                at = first_cell[weight_s];
-                stop = at + ((positive)1 << (weight_s - 1 + 11 - max_bits));
-                first_cell[weight_s] = (p32)stop;
-                for (; at < stop; at++)
-                        huff->cell[at] = cell;
-        }
+        //      A weight never passes max_bits: 2^(w-1) is within the sum, and
+        //      the last weight's power of two is below 2^max_bits.
+        zstd_huffman_cells(huff->cell, weight, provided + 1, max_bits, first_cell);
         huff->valid = true;
         return true;
 }
