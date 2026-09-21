@@ -14763,11 +14763,14 @@ static b32 text_uniq()
                         // The compared part starts after the skipped fields
                         // and then after the skipped characters, which is the
                         // order POSIX puts them in.
-                        positive skip = uniq_skipped(
-                            line, line_length, skip_fields, skip_characters);
-                        positive previous_skip = uniq_skipped(
-                            previous, previous_length, skip_fields,
-                            skip_characters);
+                        bool skipping = skip_fields || skip_characters;
+                        positive skip = skipping ? uniq_skipped(line, line_length, skip_fields,
+                                                                skip_characters)
+                                                 : 0;
+                        positive previous_skip =
+                            skipping ? uniq_skipped(previous, previous_length, skip_fields,
+                                                    skip_characters)
+                                     : 0;
 
                         positive one = line_length - skip;
                         positive two = previous_length - previous_skip;
