@@ -52610,6 +52610,403 @@ static fn landing(void)
         bowl_forget_path(pointed);
 }
 
+/*
+        Fedora, which is not a root tarball: the rows, the JSON of Fedora's
+        real OCI layout, and a two-layer image whose second layer whites out,
+        unpacked on real directories.
+*/
+static fn unpack_path(p8 address_to into, string_address name,
+                      string_address rest)
+{
+        p8 digits[24];
+
+        digits[positive_into(digits, (positive)system_call_1(syscall(getpid), 0))] = end;
+        string_copy_bounded(into, BOWL_ROOT_PREFIX, 256);
+        string_append_bounded(into, name, 256);
+        string_append_bounded(into, digits, 256);
+        string_append_bounded(into, rest, 256);
+}
+
+static bool unpack_write(string_address base, string_address rest,
+                         string_address text, positive mode)
+{
+        p8 path[256];
+        positive length = string_length(text);
+
+        string_copy_bounded(path, base, sizeof path);
+        string_append_bounded(path, rest, sizeof path);
+        bipolar handle = system_open_at_mode(AT_FDCWD, path,
+                                             O_CREAT | O_TRUNC | O_WRONLY | O_CLOEXEC,
+                                             mode);
+        bool wrote = handle >= 0 &&
+                     system_write_all((positive)handle, text, length) == length;
+
+        if (handle >= 0)
+                system_close(handle);
+        return wrote;
+}
+
+static fn unpack_directory(string_address base, string_address rest)
+{
+        p8 path[256];
+
+        string_copy_bounded(path, base, sizeof path);
+        string_append_bounded(path, rest, sizeof path);
+        bowl_mkdir_parents(path);
+}
+
+static bool unpack_says(string_address base, string_address rest,
+                        string_address want)
+{
+        p8 path[256];
+        p8 text[64];
+
+        string_copy_bounded(path, base, sizeof path);
+        string_append_bounded(path, rest, sizeof path);
+        bipolar got = file_slurp(path, text, sizeof text - 1);
+
+        if (got < 0)
+                return false;
+        text[got] = end;
+        return string_equals(text, want);
+}
+
+static positive unpack_mode(string_address base, string_address rest)
+{
+        p8 path[256];
+        file_facts facts;
+
+        string_copy_bounded(path, base, sizeof path);
+        string_append_bounded(path, rest, sizeof path);
+        return file_look_link(path, address_of facts) ? facts.mode & 07777 : 0;
+}
+
+// Our own tar, in a child, as bowl runs it.
+static bool unpack_tar(string_address archive, string_address directory,
+                       bool gzip, string_address address_to members)
+{
+        string_address argv[16];
+        positive n = 0;
+        positive status = 0;
+
+        argv[n++] = "tar";
+        argv[n++] = "-c";
+        if (gzip)
+                argv[n++] = "-z";
+        argv[n++] = "-f";
+        argv[n++] = archive;
+        argv[n++] = "-C";
+        argv[n++] = directory;
+        for (; *members && n + 1 < array_count(argv); members++)
+                argv[n++] = *members;
+        argv[n] = null;
+
+        bipolar child = system_fork();
+
+        if (child == 0)
+        {
+                program_arguments_use(argv, (b32)n);
+                exit(file_tar());
+        }
+        return child > 0 &&
+               system_wait4_retry(child, address_of status, 0, null) >= 0 &&
+               !wait_status_code(status);
+}
+
+// A file moved into the layout under its own digest; its descriptor appended.
+static bool unpack_blob(string_address layout, string_address file,
+                        string_address type, p8 address_to descriptor,
+                        positive room, p8 address_to named)
+{
+        p8 hex[BOWL_DIGEST_HEX + 1];
+        p8 to[256];
+        p8 digits[24];
+        p64 size = 0;
+        bipolar handle = system_open_at(AT_FDCWD, file, FILE_READ | O_CLOEXEC);
+        bool hashed = handle >= 0 && bowl_sha256_of(handle, hex, address_of size);
+
+        if (handle >= 0)
+                system_close(handle);
+        if (!hashed)
+                return false;
+        if (named)
+                string_copy_bounded(named, hex, BOWL_DIGEST_HEX + 1);
+
+        string_copy_bounded(to, layout, sizeof to);
+        string_append_bounded(to, "/blobs/sha256/", sizeof to);
+        string_append_bounded(to, hex, sizeof to);
+        digits[positive_into(digits, (positive)size)] = end;
+
+        string_append_bounded(descriptor, "{\"mediaType\":\"", room);
+        string_append_bounded(descriptor, type, room);
+        string_append_bounded(descriptor, "\",\"digest\":\"sha256:", room);
+        string_append_bounded(descriptor, hex, room);
+        string_append_bounded(descriptor, "\",\"size\":", room);
+        string_append_bounded(descriptor, digits, room);
+        string_append_bounded(descriptor, "}", room);
+        return system_rename_at(AT_FDCWD, file, AT_FDCWD, to, 0) == 0;
+}
+
+static fn distros(void)
+{
+        for (positive at = 0; at < array_count(bowl_distros); at++)
+        {
+                const struct bowl_distro address_to row = bowl_distros + at;
+                bool isolated = true;
+
+                for (string_address address_to program = row->expose;
+                     program && *program; program++)
+                        isolated &= bowl_needs_isolated(*program);
+
+                if (row->refuse)
+                        continue;
+                check("Every setup row is a bowl with a marker, a URL and a manager",
+                      bowl_named_root(row->root) && row->marker[0] == '/' &&
+                          row->url &&
+                          !string_compare_max(row->url, "https://", 8) &&
+                          row->store && row->expose && row->expose[0] &&
+                          row->archive_bytes && row->tree_bytes && row->next);
+                check("A setup's manager is launched isolated", isolated);
+                check("A pinned download is pinned by a whole SHA-256",
+                      !row->sha256 ||
+                          bowl_hex_digest(row->sha256, string_length(row->sha256)));
+        }
+
+        const struct bowl_distro address_to fedora = bowl_find_distro("fedora");
+
+        check("Fedora is set up, pinned, and unpacked from its OCI layout",
+              fedora && !fedora->refuse && fedora->sha256 &&
+                  fedora->unpack == bowl_extract_oci);
+}
+
+static fn json(void)
+{
+        //      Fedora 44's own index.json and manifest, as published.
+        static const p8 index[] =
+            "{\"schemaVersion\":2,\"mediaType\":\"application/vnd.oci.image.index.v1+json\","
+            "\"manifests\":[{\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\","
+            "\"digest\":\"sha256:f1e66cdd6eff2c9ccad192f8865af9be6d69b46b3f13329d2975a2d61a1296c5\","
+            "\"size\":572,\"annotations\":{\"org.opencontainers.image.ref.name\":\"fedora:44\"}}]}";
+        static const p8 manifest[] =
+            "{\"schemaVersion\":2,\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\","
+            "\"config\":{\"mediaType\":\"application/vnd.oci.image.config.v1+json\","
+            "\"digest\":\"sha256:9eaa56a730854ae53f57e58c16179d09c2fa1f4157a5d69ccb39647e33c6464d\","
+            "\"size\":819},\"layers\":[{\"mediaType\":\"application/vnd.oci.image.layer.v1.tar+gzip\","
+            "\"digest\":\"sha256:d93cacdefe7f7526297a08879cb444d1eeb526adf9cb7e34ab1f0609759a3044\","
+            "\"size\":70935316}],\"annotations\":{\"org.opencontainers.image.base.digest\":\"\","
+            "\"org.opencontainers.image.base.name\":\"\","
+            "\"org.opencontainers.image.created\":\"2026-04-22T13:55:28.538633259Z\"}}";
+        static const p8 platforms[] =
+            " { \"manifests\" : [ {\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\","
+            "\"digest\":\"sha256:1\",\"platform\":{\"architecture\":\"s390x\",\"os\":\"linux\"}},"
+            "{\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:2\","
+            "\"platform\":{\"os\":\"linux\",\"architecture\":\"" BOWL_OCI_ARCHITECTURE "\"}} ] }\n";
+        static string_address broken[] = {
+            "", "{", "{\"a\":1", "{\"a\":1}x", "{\"a\" 1}", "[1,]", "{\"a\":tru}",
+            "\"\\x\"", "\"a\nb\"", "{\"a\":1,}", "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+        };
+        string_address stop = index + sizeof(index) - 1;
+        string_address chosen = bowl_oci_pick(index, stop);
+        string_address cursor;
+        string_address layer;
+        p8 text[128];
+        p64 size = 0;
+        positive layers = 0;
+
+        check("Fedora's index and manifest are whole JSON",
+              bowl_json_whole(index, stop) &&
+                  bowl_json_whole(manifest, manifest + sizeof(manifest) - 1));
+        check("Fedora's index names its one manifest",
+              chosen && bowl_oci_type_is(chosen, stop, bowl_oci_manifest_types) &&
+                  bowl_json_text(bowl_json_member(chosen, stop, "digest"), stop,
+                                 text, sizeof text) &&
+                  string_equals(text, "sha256:f1e66cdd6eff2c9ccad192f8865af9be6d69b46b3f13329d2975a2d61a1296c5") &&
+                  bowl_json_count(bowl_json_member(chosen, stop, "size"), stop,
+                                  address_of size) &&
+                  size == 572);
+
+        stop = manifest + sizeof(manifest) - 1;
+        cursor = bowl_json_member(manifest, stop, "layers");
+        while ((layer = bowl_json_next(address_of cursor, stop)))
+                layers += bowl_oci_type_is(layer, stop, bowl_oci_layer_types) &&
+                          bowl_json_count(bowl_json_member(layer, stop, "size"),
+                                          stop, address_of size) &&
+                          size == 70935316;
+        check("Fedora's manifest has one gzip layer of the size it says",
+              layers == 1);
+        check("A member not there is not found, and the config is not a layer",
+              !bowl_json_member(manifest, stop, "layer") &&
+                  !bowl_oci_type_is(bowl_json_member(manifest, stop, "config"),
+                                    stop, bowl_oci_layer_types));
+
+        stop = platforms + sizeof(platforms) - 1;
+        chosen = bowl_oci_pick(platforms, stop);
+        check("An index with platforms gives this machine's manifest",
+              bowl_json_whole(platforms, stop) && chosen &&
+                  bowl_json_text(bowl_json_member(chosen, stop, "digest"), stop,
+                                 text, sizeof text) &&
+                  string_equals(text, "sha256:2"));
+
+        for (positive at = 0; at < array_count(broken); at++)
+                check("Malformed JSON is refused whole",
+                      !bowl_json_whole(broken[at],
+                                       broken[at] + string_length(broken[at])));
+
+        string_address escaped = "\"a\\u003cb\\/c\\\"\"";
+        string_address control = "\"a\\u0001\"";
+        string_address wide = "\"\\u00e9\"";
+
+        check("A string's ASCII escapes are read, and nothing else is",
+              bowl_json_text(escaped, escaped + string_length(escaped), text,
+                             sizeof text) &&
+                  string_equals(text, "a<b/c\"") &&
+                  !bowl_json_text(control, control + string_length(control),
+                                  text, sizeof text) &&
+                  !bowl_json_text(wide, wide + string_length(wide), text,
+                                  sizeof text) &&
+                  !bowl_json_text(escaped, escaped + string_length(escaped),
+                                  text, 4));
+}
+
+static fn oci(void)
+{
+        static const p8 manifest_type[] = "application/vnd.oci.image.manifest.v1+json";
+        static string_address layer_one[] = {"a", "opq", "d", null};
+        static string_address layer_two[] = {"a", "opq", "d", "new", null};
+        static string_address layout_members[] = {"index.json", "oci-layout", "blobs", null};
+        p8 base[256];
+        p8 root[256];
+        p8 spoiled[256];
+        p8 layout[256];
+        p8 path[256];
+        p8 image[256];
+        p8 bad[256];
+        p8 layers[512] = "";
+        p8 document[2048];
+        p8 descriptor[256] = "";
+        p8 second[BOWL_DIGEST_HEX + 1] = "";
+
+        unpack_path(base, "ociwork", "");
+        unpack_path(root, "oci", "");
+        unpack_path(spoiled, "ocibad", "");
+        string_copy_bounded(layout, base, sizeof layout);
+        string_append_bounded(layout, "/oci", sizeof layout);
+        string_copy_bounded(image, base, sizeof image);
+        string_append_bounded(image, "/image.tar", sizeof image);
+        string_copy_bounded(bad, base, sizeof bad);
+        string_append_bounded(bad, "/bad.tar", sizeof bad);
+
+        unpack_directory(base, "/one/a/sub");
+        unpack_directory(base, "/one/opq");
+        unpack_directory(base, "/one/d");
+        unpack_directory(base, "/two/a");
+        unpack_directory(base, "/two/opq");
+        unpack_directory(base, "/two/d");
+        unpack_directory(base, "/two/new");
+        unpack_directory(base, "/oci/blobs/sha256");
+        unpack_directory(root, "");
+        unpack_directory(spoiled, "");
+
+        bool made = unpack_write(base, "/one/a/keep", "one", 0644) &&
+                    unpack_write(base, "/one/a/gone", "gone", 0644) &&
+                    unpack_write(base, "/one/a/sub/x", "x", 0644) &&
+                    unpack_write(base, "/one/opq/old", "old", 0644) &&
+                    unpack_write(base, "/one/d/f", "f", 0644) &&
+                    unpack_write(base, "/two/a/keep", "two", 0644) &&
+                    unpack_write(base, "/two/a/.wh.gone", "", 0644) &&
+                    unpack_write(base, "/two/opq/.wh..wh..opq", "", 0644) &&
+                    unpack_write(base, "/two/opq/new", "new", 0644) &&
+                    unpack_write(base, "/two/new/.wh.ghost", "", 0644) &&
+                    unpack_write(base, "/two/new/n", "n", 0644);
+
+        string_copy_bounded(path, base, sizeof path);
+        string_append_bounded(path, "/two/d", sizeof path);
+        made &= system_change_mode_at(AT_FDCWD, path, 0700) == 0;
+
+        string_copy_bounded(path, base, sizeof path);
+        string_append_bounded(path, "/one", sizeof path);
+        string_copy_bounded(document, base, sizeof document);
+        string_append_bounded(document, "/one.tar", sizeof document);
+        made &= unpack_tar(document, path, false, layer_one) &&
+                unpack_blob(layout, document, "application/vnd.oci.image.layer.v1.tar",
+                            layers, sizeof layers, null);
+        string_append_bounded(layers, ",", sizeof layers);
+        string_copy_bounded(path, base, sizeof path);
+        string_append_bounded(path, "/two", sizeof path);
+        string_copy_bounded(document, base, sizeof document);
+        string_append_bounded(document, "/two.tar.gz", sizeof document);
+        made &= unpack_tar(document, path, true, layer_two) &&
+                unpack_blob(layout, document,
+                            "application/vnd.oci.image.layer.v1.tar+gzip", layers,
+                            sizeof layers, second);
+
+        string_copy_bounded(document, "{\"schemaVersion\":2,\"mediaType\":\"", sizeof document);
+        string_append_bounded(document, manifest_type, sizeof document);
+        string_append_bounded(document, "\",\"layers\":[", sizeof document);
+        string_append_bounded(document, layers, sizeof document);
+        string_append_bounded(document, "]}", sizeof document);
+        made &= unpack_write(base, "/manifest.json", document, 0644);
+        string_copy_bounded(path, base, sizeof path);
+        string_append_bounded(path, "/manifest.json", sizeof path);
+        made &= unpack_blob(layout, path, manifest_type, descriptor, sizeof descriptor,
+                            null);
+
+        //      A manifest for another machine comes first, naming a blob that
+        //      is not there: taking it would fail the landing.
+        string_copy_bounded(document,
+                            "{\"schemaVersion\":2,\"manifests\":[{\"mediaType\":\"", sizeof document);
+        string_append_bounded(document, manifest_type, sizeof document);
+        string_append_bounded(document,
+                              "\",\"digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\","
+                              "\"size\":1,\"platform\":{\"architecture\":\"s390x\",\"os\":\"linux\"}},",
+                              sizeof document);
+        string_append_bounded(document, descriptor, sizeof document);
+        string_append_bounded(document, "]}", sizeof document);
+        made &= unpack_write(layout, "/index.json", document, 0644) &&
+                unpack_write(layout, "/oci-layout", "{\"imageLayoutVersion\":\"1.0.0\"}", 0644) &&
+                unpack_tar(image, layout, false, layout_members);
+
+        //      The same layout with its second layer's bytes changed under
+        //      the digest that names them.
+        {
+                string_copy_bounded(path, "/blobs/sha256/", sizeof path);
+                string_append_bounded(path, second, sizeof path);
+                made &= unpack_write(layout, path, "not the layer", 0644) &&
+                        unpack_tar(bad, layout, false, layout_members);
+        }
+
+        check("A two-layer OCI image is made for the check", made);
+        if (!made)
+                return;
+
+        check("A two-layer OCI image lands",
+              bowl_extract_oci(image, root) == 0);
+        check("A later layer's file replaces an earlier one's",
+              unpack_says(root, "/a/keep", "two") && bowl_has(root, "/a/sub/x"));
+        check("A whiteout takes a lower file away and is not left",
+              !bowl_has(root, "/a/gone") && !bowl_has(root, "/a/.wh.gone"));
+        check("An opaque directory hides what was under it and keeps its own",
+              !bowl_has(root, "/opq/old") && unpack_says(root, "/opq/new", "new") &&
+                  !bowl_has(root, "/opq/.wh..wh..opq"));
+        check("A whiteout in a new directory is dropped",
+              unpack_says(root, "/new/n", "n") && !bowl_has(root, "/new/.wh.ghost"));
+        check("A directory in both layers takes the upper one's mode",
+              unpack_mode(root, "/d") == 0700 && unpack_says(root, "/d/f", "f"));
+        string_copy_bounded(path, root, sizeof path);
+        string_append_bounded(path, ".oci", sizeof path);
+        check("The layout and the download are gone after landing",
+              system_access_at(AT_FDCWD, path, 0) < 0 &&
+                  system_access_at(AT_FDCWD, image, 0) < 0);
+
+        check("A layer that is not what its digest says is refused",
+              bowl_extract_oci(bad, spoiled) != 0 &&
+                  !bowl_has(spoiled, "/opq/new"));
+
+        bowl_forget_path(root);
+        bowl_forget_path(spoiled);
+        bowl_forget_path(base);
+}
+
 b32 main(void)
 {
         names();
@@ -52619,6 +53016,9 @@ b32 main(void)
         room();
         archive_policy();
         landing();
+        distros();
+        json();
+        oci();
         return test_report(null);
 }
 #endif /* CHECK_bowl */

@@ -2774,8 +2774,852 @@ static b32 bowl_write_pacman(string_address root)
         return bowl_write_bytes(path, out.bytes, out.used);
 }
 
+/* ---- Digests: the download a setup pins, and every blob an OCI layout names. ---- */
+
+#define BOWL_DIGEST_HEX 64
+#define BOWL_RESOLVE_NO_SYMLINKS 0x04
+#define BOWL_RESOLVE_BENEATH 0x08
+
+static bool bowl_hex_digest(string_address text, positive length)
+{
+        if (length != BOWL_DIGEST_HEX)
+                return false;
+
+        for (positive at = 0; at < length; at++)
+                if (!((text[at] >= '0' && text[at] <= '9') ||
+                      (text[at] >= 'a' && text[at] <= 'f')))
+                        return false;
+
+        return true;
+}
+
+/* The SHA-256 of what a descriptor reads, as lower-case hex, with how many
+   bytes that was. */
+static bool bowl_sha256_of(bipolar handle, p8 address_to hex, p64 address_to size)
+{
+        static p8 chunk[65536];
+        static const p8 digits[] = "0123456789abcdef";
+        digest_state digest;
+        p8 sum[32];
+        bipolar got;
+        p64 total = 0;
+
+        digest_open(address_of digest, DIGEST_SHA256, 32);
+        while ((got = system_read_once(handle, chunk, sizeof(chunk))) > 0)
+        {
+                digest_write(address_of digest, chunk, (positive)got);
+                total += (p64)got;
+        }
+        digest_close(address_of digest, sum);
+        if (got < 0)
+                return false;
+
+        for (positive at = 0; at < sizeof(sum); at++)
+        {
+                hex[2 * at] = digits[sum[at] >> 4];
+                hex[2 * at + 1] = digits[sum[at] & 15];
+        }
+        hex[BOWL_DIGEST_HEX] = end;
+        if (size)
+                address_to size = total;
+        return true;
+}
+
+/* Whether a download is the one the table pins; a row that pins none -- a
+   distribution whose URL follows its latest release -- takes any. */
+static bool bowl_archive_digest_ok(string_address path, string_address want)
+{
+        p8 hex[BOWL_DIGEST_HEX + 1];
+        bipolar handle;
+        bool same;
+
+        if (!want)
+                return true;
+
+        handle = system_open_at(AT_FDCWD, path,
+                                FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        if (handle < 0)
+                return false;
+
+        same = bowl_sha256_of(handle, hex, null) && string_equals(hex, want);
+        system_close(handle);
+        return same;
+}
+
+/* ---- Just enough JSON for an OCI layout. ---- */
+
+/*
+        An OCI layout says what it holds in three small JSON documents: the
+        index names a manifest, the manifest names the layers. What is read is
+        a member of an object, the elements of an array and a string without
+        anything but ASCII in it. A document is checked whole before anything
+        is taken from it, so a walk that stops early has reached the end and
+        not a fault; anything else is a refusal, never a guess.
+*/
+#define BOWL_JSON_DEPTH 32
+#define BOWL_JSON_ROOM 65536
+
+static string_address bowl_json_space(string_address at, string_address stop)
+{
+        while (at < stop &&
+               (*at == ' ' || *at == '\t' || *at == '\n' || *at == '\r'))
+                at++;
+        return at;
+}
+
+// Past a string that starts at its quote, or null.
+static string_address bowl_json_string_end(string_address at,
+                                           string_address stop)
+{
+        if (at >= stop || *at != '"')
+                return null;
+
+        for (at++; at < stop; at++)
+        {
+                if (*at == '"')
+                        return at + 1;
+                if (*at < 0x20)
+                        return null;
+                if (*at != '\\')
+                        continue;
+                if (++at >= stop || !*at || !string_first_of("\"\\/bfnrtu", *at))
+                        return null;
+                if (*at == 'u')
+                {
+                        if (stop - at < 5)
+                                return null;
+                        for (positive digit = 1; digit <= 4; digit++)
+                                if (!byte_is_hexadecimal(at[digit]))
+                                        return null;
+                        at += 4;
+                }
+        }
+
+        return null;
+}
+
+// Past one value, or null when it is not one.
+static string_address bowl_json_skip(string_address at, string_address stop,
+                                     positive depth)
+{
+        at = bowl_json_space(at, stop);
+        if (at >= stop || depth > BOWL_JSON_DEPTH)
+                return null;
+
+        if (*at == '"')
+                return bowl_json_string_end(at, stop);
+
+        if (*at == '{' || *at == '[')
+        {
+                bool object = *at == '{';
+                p8 close = object ? '}' : ']';
+
+                at = bowl_json_space(at + 1, stop);
+                if (at < stop && *at == close)
+                        return at + 1;
+
+                while (at < stop)
+                {
+                        if (object)
+                        {
+                                at = bowl_json_string_end(at, stop);
+                                if (!at)
+                                        return null;
+                                at = bowl_json_space(at, stop);
+                                if (at >= stop || *at != ':')
+                                        return null;
+                                at++;
+                        }
+
+                        at = bowl_json_skip(at, stop, depth + 1);
+                        if (!at)
+                                return null;
+                        at = bowl_json_space(at, stop);
+                        if (at < stop && *at == close)
+                                return at + 1;
+                        if (at >= stop || *at != ',')
+                                return null;
+                        at = bowl_json_space(at + 1, stop);
+                }
+
+                return null;
+        }
+
+        static string_address words[] = {"true", "false", "null"};
+
+        for (positive word = 0; word < array_count(words); word++)
+        {
+                positive length = string_length(words[word]);
+
+                if ((positive)(stop - at) >= length &&
+                    !memory_compare(at, words[word], length))
+                        return at + length;
+        }
+
+        string_address from = at;
+
+        while (at < stop && ((*at >= '0' && *at <= '9') || *at == '-' ||
+                             *at == '+' || *at == '.' || *at == 'e' ||
+                             *at == 'E'))
+                at++;
+
+        return at > from ? at : null;
+}
+
+// Whether text..stop is one value and nothing else.
+static bool bowl_json_whole(string_address text, string_address stop)
+{
+        string_address after = bowl_json_skip(text, stop, 0);
+
+        return after && bowl_json_space(after, stop) == stop;
+}
+
+// The value of a member of the object at at, or null when there is none.
+static string_address bowl_json_member(string_address at, string_address stop,
+                                       string_address key)
+{
+        positive length = string_length(key);
+
+        at = bowl_json_space(at, stop);
+        if (at >= stop || *at != '{')
+                return null;
+        at = bowl_json_space(at + 1, stop);
+
+        while (at < stop && *at == '"')
+        {
+                string_address name_end = bowl_json_string_end(at, stop);
+                string_address value;
+
+                if (!name_end)
+                        return null;
+                value = bowl_json_space(name_end, stop);
+                if (value >= stop || *value != ':')
+                        return null;
+                value = bowl_json_space(value + 1, stop);
+
+                if ((positive)(name_end - at) == length + 2 &&
+                    !memory_compare(at + 1, key, length))
+                        return value;
+
+                at = bowl_json_skip(value, stop, 1);
+                if (!at)
+                        return null;
+                at = bowl_json_space(at, stop);
+                if (at >= stop || *at != ',')
+                        return null;
+                at = bowl_json_space(at + 1, stop);
+        }
+
+        return null;
+}
+
+/* The next element of an array. The cursor starts at the array's '[' and
+   moves past each element handed back; null is the end. */
+static string_address bowl_json_next(string_address address_to cursor,
+                                     string_address stop)
+{
+        string_address at = address_to cursor ? bowl_json_space(address_to cursor, stop)
+                                              : stop;
+        string_address element;
+
+        if (at >= stop || (*at != '[' && *at != ','))
+                return null;
+        at = bowl_json_space(at + 1, stop);
+        if (at < stop && *at == ']')
+        {
+                address_to cursor = null;
+                return null;
+        }
+
+        element = at;
+        at = bowl_json_skip(at, stop, 1);
+        if (!at)
+                return null;
+        at = bowl_json_space(at, stop);
+        address_to cursor = at < stop && *at == ',' ? at : null;
+        return element;
+}
+
+static bipolar bowl_json_hex(p8 digit)
+{
+        if (digit >= '0' && digit <= '9')
+                return digit - '0';
+        if (digit >= 'a' && digit <= 'f')
+                return digit - 'a' + 10;
+        if (digit >= 'A' && digit <= 'F')
+                return digit - 'A' + 10;
+        return -1;
+}
+
+/* A string value into out: printable ASCII only, which is all a media type,
+   a digest or a platform name is. */
+static bool bowl_json_text(string_address at, string_address stop,
+                           p8 address_to out, positive room)
+{
+        positive n = 0;
+
+        if (!at || at >= stop || *at != '"' || !room)
+                return false;
+
+        for (at++; at < stop && *at != '"'; at++)
+        {
+                p8 byte = *at;
+
+                if (byte == '\\')
+                {
+                        if (++at >= stop)
+                                return false;
+                        byte = *at;
+                        if (byte == 'u')
+                        {
+                                positive value = 0;
+
+                                if (stop - at < 5)
+                                        return false;
+                                for (positive digit = 1; digit <= 4; digit++)
+                                {
+                                        bipolar nibble = bowl_json_hex(at[digit]);
+
+                                        if (nibble < 0)
+                                                return false;
+                                        value = value * 16 + (positive)nibble;
+                                }
+                                at += 4;
+                                byte = value < 0x80 ? (p8)value : 0;
+                        }
+                        else if (byte != '"' && byte != '\\' && byte != '/')
+                                return false;
+                }
+
+                if (byte < 0x20 || byte >= 0x7f || n + 1 >= room)
+                        return false;
+                out[n++] = byte;
+        }
+
+        if (at >= stop)
+                return false;
+        out[n] = end;
+        return true;
+}
+
+// A member that is a string, compared whole.
+static bool bowl_json_says(string_address object, string_address stop,
+                           string_address key, string_address want)
+{
+        p8 text[128];
+
+        return bowl_json_text(bowl_json_member(object, stop, key), stop, text,
+                              sizeof(text)) &&
+               string_equals(text, want);
+}
+
+// A member that is a whole number, or false.
+static bool bowl_json_count(string_address at, string_address stop,
+                            p64 address_to value)
+{
+        p64 total = 0;
+        string_address from = at;
+
+        while (at && at < stop && *at >= '0' && *at <= '9' &&
+               total < ((p64)1 << 58))
+                total = total * 10 + (p64)(*at++ - '0');
+
+        if (!at || at == from || (at < stop && *at >= '0' && *at <= '9'))
+                return false;
+        address_to value = total;
+        return true;
+}
+
+/* ---- An OCI image layout, unpacked into a root. ---- */
+
+/*
+        Fedora publishes its base as an OCI image layout in a tar.xz, not as a
+        root tarball: index.json names a manifest, the manifest names the
+        layers, and each is a blob named by its own SHA-256. The layout is
+        extracted beside the root (/bowls/NAME.oci), every blob read is checked
+        against the digest and size that named it, and the layers go on in
+        order, each extracted by itself and then merged down, which is where
+        the whiteouts apply: .wh.NAME takes NAME away from the layers below,
+        and .wh..wh..opq empties its directory of them first. A whiteout is
+        never left in the tree.
+
+        A hard link in a layer can only name a member of the same layer --
+        tar refuses one naming anything it did not make -- so a layer that
+        links to a file under it fails, and says so, instead of landing
+        without the file.
+*/
+#define BOWL_OCI_DEPTH 64
+#define BOWL_OCI_WHITEOUT ".wh."
+#define BOWL_OCI_OPAQUE ".wh..wh..opq"
+
+#if X64
+#define BOWL_OCI_ARCHITECTURE "amd64"
+#elif ARM64
+#define BOWL_OCI_ARCHITECTURE "arm64"
+#else
+#define BOWL_OCI_ARCHITECTURE "riscv64"
+#endif
+
+static string_address bowl_oci_manifest_types[] = {
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json", null};
+static string_address bowl_oci_index_types[] = {
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json", null};
+static string_address bowl_oci_layer_types[] = {
+    "application/vnd.oci.image.layer.v1.tar",
+    "application/vnd.oci.image.layer.v1.tar+gzip",
+    "application/vnd.oci.image.layer.v1.tar+zstd",
+    "application/vnd.docker.image.rootfs.diff.tar.gzip", null};
+
+static bool bowl_oci_type_is(string_address object, string_address stop,
+                             string_address address_to types)
+{
+        p8 text[128];
+
+        if (!bowl_json_text(bowl_json_member(object, stop, "mediaType"), stop,
+                            text, sizeof(text)))
+                return false;
+
+        for (; *types; types++)
+                if (string_equals(text, *types))
+                        return true;
+
+        return false;
+}
+
+/*
+        The blob a descriptor names, checked: its digest must be sha256 and
+        match what the file hashes to, and its size what the descriptor says.
+        The name is opened beneath the layout without following a link, so a
+        layout cannot point a blob at anything outside itself. path gets
+        blobs/sha256/HEX under the layout.
+*/
+static b32 bowl_oci_blob(string_address layout, string_address descriptor,
+                         string_address stop, p8 address_to path,
+                         positive room)
+{
+        p8 digest[96];
+        p8 hex[BOWL_DIGEST_HEX + 1];
+        p8 rel[128];
+        p64 want = 0;
+        p64 size = 0;
+        struct
+        {
+                p64 flags;
+                p64 mode;
+                p64 resolve;
+        } how = {FILE_READ | O_CLOEXEC, 0,
+                 BOWL_RESOLVE_BENEATH | BOWL_RESOLVE_NO_SYMLINKS};
+        bipolar directory;
+        bipolar handle;
+        bool same;
+
+        if (!bowl_json_text(bowl_json_member(descriptor, stop, "digest"), stop,
+                            digest, sizeof(digest)) ||
+            string_compare_max(digest, "sha256:", 7) ||
+            !bowl_hex_digest(digest + 7, string_length(digest + 7)) ||
+            !bowl_json_count(bowl_json_member(descriptor, stop, "size"), stop,
+                             address_of want))
+                return bowl_refuse("OCI layout names a blob by something other "
+                                   "than its sha256 and size\n");
+
+        path_join(rel, sizeof(rel), "blobs/sha256", digest + 7);
+        if (!path_join(path, room, layout, rel))
+                return bowl_refuse("bowl path is too long\n");
+
+        directory = system_open_at(AT_FDCWD, layout,
+                                   FILE_READ | O_DIRECTORY | O_NOFOLLOW |
+                                       O_CLOEXEC);
+        if (directory < 0)
+                return bowl_fail(layout, directory);
+        handle = system_call_4(syscall(openat2), (positive)directory,
+                               (positive)rel, (positive)address_of how,
+                               sizeof(how));
+        system_close(directory);
+        if (handle < 0)
+                return bowl_fail(path, handle);
+
+        same = bowl_sha256_of(handle, hex, address_of size) &&
+               string_equals(hex, digest + 7) && size == want;
+        system_close(handle);
+        if (!same)
+                return bowl_refuse("an OCI blob does not match its digest\n");
+
+        return 0;
+}
+
+/* A JSON document into text, checked whole; the length is returned. */
+static bipolar bowl_oci_json(string_address path, p8 address_to text,
+                             positive room)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        bipolar got;
+
+        if (handle < 0)
+                return handle;
+        got = system_read_retry((positive)handle, text, room);
+        system_close(handle);
+        if (got < 0)
+                return got;
+        if ((positive)got >= room ||
+            !bowl_json_whole(text, text + got))
+                return -ERROR_INVALID;
+        return got;
+}
+
+// This machine's manifest in an index: one for linux on this architecture,
+// or one that names no platform, which a single-architecture image does.
+static string_address bowl_oci_pick(string_address index, string_address stop)
+{
+        string_address cursor = bowl_json_member(index, stop, "manifests");
+        string_address entry;
+
+        while ((entry = bowl_json_next(address_of cursor, stop)))
+        {
+                string_address platform = bowl_json_member(entry, stop, "platform");
+
+                if (!bowl_oci_type_is(entry, stop, bowl_oci_manifest_types) &&
+                    !bowl_oci_type_is(entry, stop, bowl_oci_index_types))
+                        continue;
+                if (!platform ||
+                    (bowl_json_says(platform, stop, "os", "linux") &&
+                     bowl_json_says(platform, stop, "architecture",
+                                    BOWL_OCI_ARCHITECTURE)))
+                        return entry;
+        }
+
+        return null;
+}
+
+static bipolar bowl_oci_remove_at(bipolar directory, string_address name)
+{
+        bipolar failed;
+
+        if (file_is_directory(directory, name))
+        {
+                failed = bowl_reset_walk_at(directory, name, 0, false, null);
+                if (!failed)
+                        failed = system_remove_at(directory, name, AT_REMOVEDIR);
+        }
+        else
+                failed = system_remove_at(directory, name, 0);
+
+        return failed == -ERROR_NO_ENTRY ? 0 : failed;
+}
+
+static bool bowl_oci_whiteout(string_address name)
+{
+        return !string_compare_max(name, BOWL_OCI_WHITEOUT,
+                                   sizeof(BOWL_OCI_WHITEOUT) - 1);
+}
+
+// Whiteouts out of a tree no lower layer is under.
+static bipolar bowl_oci_strip(bipolar directory, positive depth)
+{
+        file_walk walk;
+        struct linux_dirent64 address_to entry;
+        bipolar failed = 0;
+
+        if (depth > BOWL_OCI_DEPTH)
+                return -ERROR_LOOP;
+        if (!file_walk_open(address_of walk, directory, "."))
+                return walk.error;
+
+        while (!failed && (entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name))
+                        continue;
+                if (bowl_oci_whiteout(entry->d_name))
+                        failed = bowl_oci_remove_at(walk.handle, entry->d_name);
+                else if (file_is_directory(walk.handle, entry->d_name))
+                {
+                        bipolar below = system_open_at(walk.handle, entry->d_name,
+                                                       FILE_READ | O_DIRECTORY |
+                                                           O_NOFOLLOW | O_CLOEXEC);
+
+                        failed = below < 0 ? below : bowl_oci_strip(below, depth + 1);
+                        if (below >= 0)
+                                system_close(below);
+                }
+        }
+
+        if (!failed)
+                failed = walk.error;
+        file_walk_close(address_of walk);
+        return failed;
+}
+
+/*
+        One layer's tree, upper, merged down onto the tree below it. What the
+        layer has goes in by rename, replacing what was there; a directory on
+        both sides is merged into, taking the upper one's owner and mode.
+        Entries leave upper as they are dealt with, so the walk goes round
+        until a pass finds nothing left.
+*/
+static bipolar bowl_oci_merge(bipolar upper, bipolar lower, positive depth)
+{
+        bipolar failed = 0;
+        bool moved = true;
+
+        if (depth > BOWL_OCI_DEPTH)
+                return -ERROR_LOOP;
+
+        if (system_access_at(upper, BOWL_OCI_OPAQUE, 0) >= 0)
+        {
+                failed = bowl_reset_walk_at(lower, ".", 0, true, null);
+                if (!failed)
+                        failed = system_remove_at(upper, BOWL_OCI_OPAQUE, 0);
+        }
+
+        while (!failed && moved)
+        {
+                file_walk walk;
+                struct linux_dirent64 address_to entry;
+
+                moved = false;
+                if (!file_walk_open(address_of walk, upper, "."))
+                        return walk.error;
+
+                while (!failed && (entry = file_walk_next(address_of walk)))
+                {
+                        string_address name = entry->d_name;
+
+                        if (file_is_dot(name))
+                                continue;
+                        moved = true;
+
+                        if (bowl_oci_whiteout(name))
+                        {
+                                string_address hidden = name + sizeof(BOWL_OCI_WHITEOUT) - 1;
+
+                                // .wh..wh. is the whiteout tools' own bookkeeping.
+                                if (string_compare_max(hidden, BOWL_OCI_WHITEOUT,
+                                                       sizeof(BOWL_OCI_WHITEOUT) - 1))
+                                {
+                                        if (!hidden[0] || file_is_dot(hidden))
+                                                failed = -ERROR_INVALID;
+                                        else
+                                                failed = bowl_oci_remove_at(lower, hidden);
+                                }
+                                if (!failed)
+                                        failed = bowl_oci_remove_at(walk.handle, name);
+                                continue;
+                        }
+
+                        if (file_is_directory(walk.handle, name) &&
+                            file_is_directory(lower, name))
+                        {
+                                file_facts facts;
+                                bipolar from = system_open_at(walk.handle, name,
+                                    FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+                                bipolar onto = system_open_at(lower, name,
+                                    FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+
+                                failed = from < 0 ? from : onto < 0 ? onto :
+                                    bowl_oci_merge(from, onto, depth + 1);
+                                if (!failed &&
+                                    !file_look(walk.handle, name,
+                                               AT_SYMLINK_NOFOLLOW, address_of facts))
+                                        failed = -ERROR_INPUT_OUTPUT;
+                                if (!failed)
+                                        failed = system_change_owner_at(onto, "",
+                                            facts.owner, facts.group, AT_EMPTY_PATH);
+                                if (!failed)
+                                        failed = system_change_mode_at(lower, name,
+                                                                       facts.mode & 07777);
+                                if (from >= 0)
+                                        system_close(from);
+                                if (onto >= 0)
+                                        system_close(onto);
+                                if (!failed)
+                                        failed = system_remove_at(walk.handle, name,
+                                                                  AT_REMOVEDIR);
+                                continue;
+                        }
+
+                        failed = bowl_oci_remove_at(lower, name);
+                        if (!failed)
+                                failed = system_rename_at(walk.handle, name, lower,
+                                                          name, 0);
+                        if (!failed && file_is_directory(lower, name))
+                        {
+                                bipolar below = system_open_at(lower, name,
+                                    FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+
+                                failed = below < 0 ? below : bowl_oci_strip(below, depth + 1);
+                                if (below >= 0)
+                                        system_close(below);
+                        }
+                }
+
+                if (!failed)
+                        failed = walk.error;
+                file_walk_close(address_of walk);
+        }
+
+        return failed;
+}
+
+static b32 bowl_oci_layer(string_address blob, string_address layout,
+                          string_address root)
+{
+        p8 upper[BOWL_PATH_LIMIT];
+        bipolar from;
+        bipolar onto;
+        bipolar failed;
+
+        if (!bowl_root_path(upper, sizeof(upper), layout, "/.layer"))
+                return bowl_refuse("bowl path is too long\n");
+
+        failed = bowl_forget_path(upper);
+        if (!failed)
+        {
+                failed = bowl_mkdir(upper);
+                if (failed < 0)
+                        return bowl_fail(upper, failed);
+        }
+        if (!failed)
+                failed = bowl_extract(blob, upper);
+        if (failed)
+                return failed;
+
+        from = system_open_at(AT_FDCWD, upper,
+                              FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        onto = system_open_at(AT_FDCWD, root,
+                              FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        failed = from < 0 ? from : onto < 0 ? onto : bowl_oci_merge(from, onto, 0);
+        if (from >= 0)
+                system_close(from);
+        if (onto >= 0)
+                system_close(onto);
+        if (failed)
+                return bowl_fail(root, failed);
+
+        return bowl_forget_path(upper);
+}
+
+static b32 bowl_extract_oci(string_address archive, string_address root)
+{
+        static p8 text[BOWL_JSON_ROOM];
+        p8 layout[BOWL_PATH_LIMIT];
+        p8 path[BOWL_PATH_LIMIT];
+        string_address stop;
+        string_address chosen;
+        string_address cursor;
+        string_address layer;
+        positive layers = 0;
+        bipolar got;
+        b32 failed;
+
+        if (!bowl_root_path(layout, sizeof(layout), root, ".oci") ||
+            !path_join(path, sizeof(path), layout, "index.json"))
+                return bowl_refuse("bowl path is too long\n");
+
+        failed = bowl_forget_path(layout);
+        if (!failed)
+        {
+                bipolar made = bowl_mkdir(layout);
+
+                if (made < 0)
+                        return bowl_fail(layout, made);
+        }
+        if (!failed)
+                failed = bowl_extract(archive, layout);
+        if (failed)
+                return failed;
+
+        /*
+                The archive is in the layout now, blob for blob, and every
+                blob is checked before it is used; the download takes as much
+                room again as the layers and is not needed for any of them.
+        */
+        system_remove_at(AT_FDCWD, archive, 0);
+
+        got = bowl_oci_json(path, text, sizeof(text));
+        if (got < 0)
+        {
+                bowl_forget_path(layout);
+                return got == -ERROR_INVALID
+                    ? bowl_refuse("archive is not an OCI image layout\n")
+                    : bowl_fail(path, got);
+        }
+        stop = text + got;
+        chosen = bowl_oci_pick(text, stop);
+
+        //      An index may name an index, one per platform; one level is
+        //      what registries write.
+        for (positive nested = 0; !failed && chosen &&
+                                  bowl_oci_type_is(chosen, stop, bowl_oci_index_types);
+             nested++)
+        {
+                failed = nested ? bowl_refuse("OCI indexes nest too deeply\n")
+                                : bowl_oci_blob(layout, chosen, stop, path,
+                                                sizeof(path));
+                if (!failed)
+                {
+                        got = bowl_oci_json(path, text, sizeof(text));
+                        if (got < 0)
+                                failed = bowl_fail(path, got);
+                        else
+                        {
+                                stop = text + got;
+                                chosen = bowl_oci_pick(text, stop);
+                        }
+                }
+        }
+
+        if (!failed && !chosen)
+                failed = bowl_refuse("OCI layout has no image for linux/"
+                                     BOWL_OCI_ARCHITECTURE "\n");
+        if (!failed)
+                failed = bowl_oci_blob(layout, chosen, stop, path, sizeof(path));
+        if (!failed)
+        {
+                got = bowl_oci_json(path, text, sizeof(text));
+                if (got < 0)
+                        failed = bowl_fail(path, got);
+                else
+                        stop = text + got;
+        }
+
+        cursor = failed ? null : bowl_json_member(text, stop, "layers");
+        while (!failed && (layer = bowl_json_next(address_of cursor, stop)))
+        {
+                if (!bowl_oci_type_is(layer, stop, bowl_oci_layer_types))
+                        failed = bowl_refuse("an OCI layer is not a tar\n");
+                if (!failed)
+                        failed = bowl_oci_blob(layout, layer, stop, path,
+                                               sizeof(path));
+                if (!failed)
+                        failed = bowl_oci_layer(path, layout, root);
+                if (!failed)
+                {
+                        // Taken as it is used, so the room the layers
+                        // need is the tree's and one blob's.
+                        system_remove_at(AT_FDCWD, path, 0);
+                        layers++;
+                }
+        }
+
+        if (!failed && !layers)
+                failed = bowl_refuse("OCI manifest has no layers\n");
+
+        if (!failed)
+                failed = bowl_forget_path(layout);
+        else
+                bowl_forget_path(layout);
+        return failed;
+}
+
+/*
+        unpack puts the archive's tree under root: bowl_extract for a root
+        tarball, or a distribution's own way of unpacking one that is not.
+*/
 static b32 bowl_land(string_address archive, string_address root,
-                     string_address marker)
+                     string_address marker,
+                     b32(address_to unpack)(string_address, string_address))
 {
         bipolar failed;
 
@@ -2812,7 +3656,8 @@ static b32 bowl_land(string_address archive, string_address root,
 
                 if (!bowl_has(root, marker))
                 {
-                        failed = bowl_extract(archive, root);
+                        failed = (unpack ? unpack : bowl_extract)(archive,
+                                                                  root);
                         if (!failed)
                                 failed = bowl_flatten(root, marker);
                         if (failed)
@@ -2851,6 +3696,15 @@ static b32 bowl_land(string_address archive, string_address root,
         "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-minirootfs-3.24.1-x86_64.tar.gz"
 #define BOWL_DEBIAN_URL \
         "https://github.com/debuerreotype/docker-debian-artifacts/raw/dist-amd64/stable/oci/blobs/rootfs.tar.gz"
+/*
+        Fedora is pinned to a release and to its SHA-256, taken from the
+        CHECKSUM file beside the image, which Fedora signs. A newer release
+        is a new pair of lines here.
+*/
+#define BOWL_FEDORA_URL \
+        "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Container/x86_64/images/Fedora-Container-Base-Generic-44-1.7.x86_64.oci.tar.xz"
+#define BOWL_FEDORA_SHA256 \
+        "75200f5752a74a21a616ca9a75e25beb594e2e117a0195c54f87c0b3e3974d1b"
 #define BOWL_INTERPRETER "/bowl"
 #define BOWL_BIN_DIRECTORY "/bin"
 
@@ -2873,6 +3727,10 @@ struct bowl_distro
         p64 tree_bytes;
         p8 prime;
         string_address address_to expose;
+        // The download's SHA-256 when the URL names one release, or null.
+        string_address sha256;
+        // How a download that is not a root tarball is unpacked, or null.
+        b32(address_to unpack)(string_address archive, string_address root);
 };
 
 static string_address bowl_sudo_places[] = {
@@ -2913,7 +3771,7 @@ static b32 bowl_setup_run(string_address path, string_address address_to argv,
 }
 
 static b32 bowl_setup_download(string_address dest, string_address url,
-                               p64 floor)
+                               p64 floor, string_address sha256)
 {
         p8 self[BOWL_PATH_LIMIT];
         p8 part[BOWL_PATH_LIMIT];
@@ -2949,6 +3807,13 @@ static b32 bowl_setup_download(string_address dest, string_address url,
         {
                 system_remove_at(AT_FDCWD, part, 0);
                 return bowl_refuse("download was not a bootstrap archive\n");
+        }
+
+        if (!bowl_archive_digest_ok(part, sha256))
+        {
+                system_remove_at(AT_FDCWD, part, 0);
+                return bowl_refuse("download is not the release setup pins: "
+                                   "its SHA-256 differs\n");
         }
 
         system_remove_at(AT_FDCWD, dest, 0);
@@ -3144,33 +4009,41 @@ static string_address bowl_arch_expose[] = {
 static string_address bowl_alpine_expose[] = {"/sbin/apk", null};
 static string_address bowl_debian_expose[] = {
     "/usr/bin/apt-get", "/usr/bin/apt", null};
+static string_address bowl_fedora_expose[] = {"/usr/bin/dnf", null};
+
 
 /*
         The sizes are what each download and its unpacked tree took on a
         4 KiB-page tmpfs on 2026-09-15, with nothing added, so a setup that
         fits is never refused: Arch 126,491,574 bytes unpacking to 607,944,704,
-        Alpine 3,698,422 to 8,675,328, Debian 49,337,828 to 130,928,640. A
-        release that has grown since is what the check after the download is
-        for, and a failure part way still says how much room is left.
+        Alpine 3,698,422 to 8,675,328, Debian 49,337,828 to 130,928,640. On
+        2026-09-21 the same way: Fedora 70,170,200 to 191,016,960, and its
+        tree counts the 70,938,624 its one layer takes while it is unpacked,
+        which the download does not outlive. A release that has grown since
+        is what the check after the download is for, and a failure part way
+        still says how much room is left.
 */
 static const struct bowl_distro bowl_distros[] = {
     {"arch", "Arch", BOWL_ROOT_PREFIX "arch",
      BOWL_ROOT_PREFIX "archlinux-bootstrap-x86_64.tar.zst", BOWL_ARCH_URL,
      "/usr/bin/pacman", "pacman -Syu", null, (p64)32 * 1024 * 1024,
-     126491574, 607944704, BOWL_PRIME_ARCH, bowl_arch_expose},
+     126491574, 607944704, BOWL_PRIME_ARCH, bowl_arch_expose, null, null},
     {"alpine", "Alpine", BOWL_ROOT_PREFIX "alpine",
      BOWL_ROOT_PREFIX "alpine-minirootfs-x86_64.tar.gz", BOWL_ALPINE_URL, "/sbin/apk",
      "apk update", null, (p64)1024 * 1024, 3698422, 8675328, BOWL_PRIME_NONE,
-     bowl_alpine_expose},
+     bowl_alpine_expose, null, null},
     {"debian", "Debian", BOWL_ROOT_PREFIX "debian", BOWL_ROOT_PREFIX "debian-rootfs-amd64.tar.gz",
      BOWL_DEBIAN_URL, "/usr/bin/apt-get", "apt-get update", null,
      (p64)8 * 1024 * 1024, 49337828, 130928640, BOWL_PRIME_NONE,
-     bowl_debian_expose},
-    {"fedora", "Fedora", BOWL_ROOT_PREFIX "fedora", null, null, "/usr/bin/dnf",
-     null, "fedora is an OCI image, not a rootfs tarball\n", 0, 0, 0,
-     BOWL_PRIME_NONE, null},
+     bowl_debian_expose, null, null},
+    {"fedora", "Fedora", BOWL_ROOT_PREFIX "fedora",
+     BOWL_ROOT_PREFIX "fedora-container-x86_64.oci.tar.xz", BOWL_FEDORA_URL,
+     "/usr/bin/dnf", "dnf makecache", null, (p64)32 * 1024 * 1024,
+     70170200, 261955584, BOWL_PRIME_NONE, bowl_fedora_expose,
+     BOWL_FEDORA_SHA256, bowl_extract_oci},
     {"nix", "Nix", BOWL_ROOT_PREFIX "nix", null, null, "/bin/nix", null,
-     "nix is a /nix store, not a distro root\n", 0, 0, 0, BOWL_PRIME_NONE, null},
+     "nix is a /nix store, not a distro root\n", 0, 0, 0, BOWL_PRIME_NONE, null,
+     null, null},
 };
 
 static const struct bowl_distro address_to bowl_find_distro(string_address name)
@@ -3223,7 +4096,8 @@ static b32 bowl_setup_distro(const struct bowl_distro address_to distro)
 
         if (!bowl_has(distro->root, distro->marker))
         {
-                bool kept = bowl_archive_usable(distro->store, distro->floor);
+                bool kept = bowl_archive_usable(distro->store, distro->floor) &&
+                            bowl_archive_digest_ok(distro->store, distro->sha256);
 
                 if (bowl_room_short(distro, distro->tree_bytes +
                                                 (kept ? 0 : distro->archive_bytes)))
@@ -3233,7 +4107,7 @@ static b32 bowl_setup_distro(const struct bowl_distro address_to distro)
                 {
                         system_remove_at(AT_FDCWD, distro->store, 0);
                         failed = bowl_setup_download(distro->store, distro->url,
-                                                     distro->floor);
+                                                     distro->floor, distro->sha256);
                         if (failed)
                                 return failed;
 
@@ -3248,7 +4122,8 @@ static b32 bowl_setup_distro(const struct bowl_distro address_to distro)
                 string_format(log, bowl_label "landing %s at %s\n",
                               distro->label, distro->root);
                 log_flush();
-                failed = bowl_land(distro->store, distro->root, distro->marker);
+                failed = bowl_land(distro->store, distro->root, distro->marker,
+                                   distro->unpack);
                 if (failed)
                 {
                         if (!bowl_has(distro->root, distro->marker))
