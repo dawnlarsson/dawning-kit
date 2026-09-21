@@ -9424,35 +9424,31 @@ static b32 file_vdir()
 //      Why a command could not be run, in the words the reference uses.
 //      Only what an exec can answer with is here; anything else keeps the
 //      commonest reading, which is the one a missing command gives.
+//
+//      Which codes are told apart is this interface's policy; the words are
+//      not. system_error_message carries glibc's wording for every code, so
+//      the ten spelled out here were a second copy of ten of them, free to
+//      drift from the first. Same shape as file_reason above.
 static string_address file_exec_refusal(bipolar answer)
 {
-        switch (-answer)
-        {
-        case ERROR_ACCESS:
-                return "Permission denied";
-        case ERROR_NOT_PERMITTED:
-                //      A filter refused the call rather than the file being
-                //      unreachable. Without this a seccomp refusal read as
-                //      "No such file or directory", which sent a whole
-                //      afternoon looking for a missing echo.
-                return "Operation not permitted";
-        case ERROR_NOT_DIRECTORY:
-                return "Not a directory";
-        case ERROR_IS_DIRECTORY:
-                return "Is a directory";
-        case ERROR_ARGUMENT_LIST:
-                return "Argument list too long";
-        case ERROR_NAME_TOO_LONG:
-                return "File name too long";
-        case ERROR_NO_MEMORY:
-                return "Cannot allocate memory";
-        case ERROR_LOOP:
-                return "Too many levels of symbolic links";
-        case ERROR_EXEC_FORMAT:
-                return "Exec format error";
-        }
+        static const p8 accepted[] = {
+            ERROR_ACCESS,
+            //      A filter refused the call rather than the file being
+            //      unreachable. Without this a seccomp refusal read as
+            //      "No such file or directory", which sent a whole
+            //      afternoon looking for a missing echo.
+            ERROR_NOT_PERMITTED,
+            ERROR_NOT_DIRECTORY, ERROR_IS_DIRECTORY, ERROR_ARGUMENT_LIST,
+            ERROR_NAME_TOO_LONG, ERROR_NO_MEMORY, ERROR_LOOP,
+            ERROR_EXEC_FORMAT,
+        };
+        positive code = (positive)-answer;
 
-        return "No such file or directory";
+        return code <= p8_max &&
+               memory_first_of((address_any)accepted, (p8)code,
+                               sizeof(accepted))
+                   ? system_error_message((bipolar)code)
+                   : system_error_message(ERROR_NO_ENTRY);
 }
 
 /*
