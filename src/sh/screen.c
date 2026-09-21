@@ -254,12 +254,19 @@ static b32 screen_term()
                 is before init has mounted devpts -- there is no ordering
                 between the two and there does not need to be, so long as this
                 is willing to wait a moment for it.
+
+                Two milliseconds a try, for the same four seconds. The first
+                terminal is started as the initcalls finish and init mounts
+                devpts a few milliseconds later, so this always waits, and
+                twenty milliseconds a try left it asleep long after the mount:
+                its first frame came 18 ms later at the median of ten paired
+                boots. A failed open of /dev/ptmx is one system call.
         */
-        timespec wait = {0, 20000000};
+        timespec wait = {0, 2000000};
         b32 master = -1;
         b32 slave = -1;
 
-        for (int tries = 0; tries < 200 && master < 0; tries++)
+        for (int tries = 0; tries < 2000 && master < 0; tries++)
         {
                 if (process_pty_open(address_of master, address_of slave,
                                      true) < 0)
