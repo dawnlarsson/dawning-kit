@@ -35604,6 +35604,104 @@ static fn check_live(void)
                 good((string_address) "a word that is no zone is not one",
                      !clock_zone_named((string_address) "mars"));
 
+                //      The table is tzdata's, generated: every zone, link
+                //      and country code, sorted so a lookup can bisect, and
+                //      every rule one this parser reads. A row out of order
+                //      is a zone that silently stops being found.
+                {
+                        bool sorted = true;
+                        bool parsed = true;
+                        bool spoken = true;
+
+                        for (positive at = 1; at < array_count(clock_zones); at++)
+                                if (clock_zone_order((string_address)clock_zones[at - 1].name,
+                                                     (string_address)clock_zones[at].name) >= 0)
+                                        sorted = false;
+                        for (positive at = 1; at < array_count(clock_zone_links); at++)
+                                if (clock_zone_order((string_address)clock_zone_links[at - 1].name,
+                                                     (string_address)clock_zone_links[at].name) >= 0)
+                                        sorted = false;
+                        for (positive at = 1; at < array_count(clock_zone_codes); at++)
+                                if (clock_zone_order((string_address)clock_zone_codes[at - 1].code,
+                                                     (string_address)clock_zone_codes[at].code) >= 0)
+                                        sorted = false;
+                        for (positive at = 0; at < array_count(clock_zones); at++)
+                        {
+                                if (!clock_tz_parse((string_address)clock_zones[at].posix) ||
+                                    clock_zone_row((string_address)clock_zones[at].name) !=
+                                        (bipolar)at)
+                                        parsed = false;
+                                if (!clock_zone_spoken((string_address)clock_zones[at].name))
+                                        spoken = false;
+                        }
+                        for (positive at = 0; at < array_count(clock_zone_links); at++)
+                                if (clock_zone_row((string_address)clock_zone_links[at].name) < 0)
+                                        parsed = false;
+                        for (positive at = 0; at < array_count(clock_zone_codes); at++)
+                                if (!clock_zone_country((string_address)clock_zone_codes[at].code))
+                                        parsed = false;
+                        tzset();
+                        good((string_address) "the zone tables are in bisecting order",
+                             sorted);
+                        good((string_address) "every zone, link and country finds a rule that parses",
+                             parsed);
+                        good((string_address) "and every zone has a name in words",
+                             spoken);
+                        good((string_address) "hundreds of zones, not a handful",
+                             array_count(clock_zones) > 400 &&
+                                 array_count(clock_zone_codes) > 240);
+                }
+                good((string_address) "a tzdata link names its zone",
+                     string_equals(clock_zone_named((string_address) "Asia/Calcutta"),
+                                   (string_address) "Asia/Kolkata") &&
+                         string_equals(clock_zone_named((string_address) "us/eastern"),
+                                       (string_address) "America/New_York"));
+                good((string_address) "a country from the network is its ISO code",
+                     string_equals(clock_zone_country((string_address) "SE"),
+                                   (string_address) "Europe/Stockholm") &&
+                         string_equals(clock_zone_country((string_address) "sv"),
+                                       (string_address) "America/El_Salvador") &&
+                         !clock_zone_country((string_address) "uk") &&
+                         !clock_zone_country((string_address) "Europe/Stockholm"));
+                good((string_address) "while a typed layout word keeps its own country",
+                     string_equals(clock_zone_named((string_address) "sv"),
+                                   (string_address) "Europe/Stockholm"));
+
+                //      Rules whose change falls outside the day: Jerusalem's
+                //      at 26:00 of a Thursday, Nuuk's at -1:00, Chatham's at
+                //      2:45 with a 12:45 offset. Each read against the offset
+                //      glibc gives for the same instant.
+                {
+                        static const struct
+                        {
+                                char zone[24];
+                                time_t when;
+                                bipolar east;
+                        } rules[] = {
+                                {"Asia/Jerusalem", 1774569599, 7200},  // 2026-03-26 23:59:59Z
+                                {"Asia/Jerusalem", 1774569600, 10800}, // a second later
+                                {"America/Nuuk", 1774745999, -7200},   // 2026-03-29 00:59:59Z
+                                {"America/Nuuk", 1774746000, -3600},   // a second later
+                                {"Pacific/Chatham", 1784116800, 45900},
+                                {"Pacific/Chatham", 1768478400, 49500},
+                                {"Asia/Gaza", 1784116800, 10800},
+                        };
+                        bool all = true;
+
+                        for (positive at = 0; at < array_count(rules); at++)
+                        {
+                                setenv((string_address) "TZ",
+                                       (string_address)rules[at].zone, 1);
+                                tzset();
+                                if (localtime(address_of rules[at].when)->tm_gmtoff !=
+                                    rules[at].east)
+                                        all = false;
+                        }
+                        good((string_address) "rules past midnight and before it read as glibc reads them",
+                             all);
+                }
+
+
                 //      An offset is written with the clock's sign, and the
                 //      proof is what localtime then says, not the string.
                 {
