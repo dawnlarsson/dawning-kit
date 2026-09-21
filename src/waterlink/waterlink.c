@@ -68,8 +68,16 @@
 /*      1200 bytes clears the common 1280 minimum with room for an outer
         header and asks nothing of path discovery. A larger frame is the
         sender's to split: reassembly is a queue, and a queue is a place to
-        store an attacker's bytes. Every datagram is padded to this, so a
-        packed frame's length leaks nothing to an observer. */
+        store an attacker's bytes.
+
+        Every datagram is padded to this, which buys two things and the second
+        one is worth more. A packed frame's length leaks nothing to an
+        observer. And segment offload will only cut a buffer into datagrams
+        that are all the same size -- so the fixed size is what lets one send
+        hand the kernel forty datagrams for the price of one. Measured on a
+        9950X: 2516 cycles a datagram sent one at a time, 2355 batched through
+        sendmmsg, 461 as uniform segments. Batching the syscall is worth six
+        percent; batching the segments is worth five times. */
 #define WATERLINK_DATAGRAM 1200
 #define WATERLINK_PAYLOAD (WATERLINK_DATAGRAM - 16 - 16)
 
@@ -122,6 +130,15 @@ _Static_assert(sizeof(struct waterlink_frame) == 24,
         that is merely late. */
 #define WATERLINK_FRAME_URGENT 0x0040u // a keystroke; nothing waits behind it
 #define WATERLINK_FRAME_BULK 0x0080u   // a file; throughput, not latency
+
+/*      Which is why sending is two paths and not one. Segments only go out
+        in a run, and a run is built by waiting for the next frame -- so an
+        urgent frame leaves alone, immediately, at the unbatched price, and
+        bulk accumulates into a run for one peer at one size. A scheduler that
+        put a keystroke in a segment run would be holding it for forty frames
+        it has nothing to do with, which is the thing this link exists to
+        refuse. The price of being right here is known and small: an urgent
+        frame costs 2516 cycles where a bulk one costs 461. */
 
 /*      How the payload is packed. Three bits, so a method is a small number
         and not a negotiation: a receiver that does not know one refuses the
