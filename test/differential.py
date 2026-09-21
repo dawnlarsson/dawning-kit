@@ -16889,7 +16889,7 @@ typedef int64_t s64;
 #define clamp(a,b,c) min(max(a,b),c)
 #define clamp_t(t,a,b,c) clamp((t)(a),(t)(b),(t)(c))
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
-static unsigned allocations, fail_allocation, copies, fail_copy, failures, checks;
+static unsigned allocations, fail_allocation, copies, fail_copy, partial_copy, failures, checks;
 static unsigned cpu_records, network_records, growing, captures;
 /* Takes void * so it serves both a bare int lock and a struct mutex whose
    first member is one. */
@@ -16902,7 +16902,15 @@ static void *kvrealloc(void *old, size_t bytes, int flags) {
     return ++allocations == fail_allocation ? NULL : realloc(old, bytes);
 }
 static int user_copy(void *to, const void *from, size_t bytes) {
-    if (++copies == fail_copy) return 1;
+    if (++copies == fail_copy) {
+        /* A real copy_from_user can land a prefix and then fault. partial_copy
+           says how many bytes land before the refusal; zero, which is what
+           every check that does not set it gets, lands none and is exactly
+           what this mock did before. */
+        if (partial_copy)
+            memcpy(to, from, partial_copy < bytes ? partial_copy : bytes);
+        return 1;
+    }
     memcpy(to, from, bytes); return 0;
 }
 #define copy_from_user user_copy
@@ -17144,6 +17152,14 @@ static long stat_task_ns, stat_spawns;
     source += section(core, "static long do_spawn", "static long report_stats")
     source += r'''
 static long report_stats(struct stats *out) { (void)out; return 322; }
+/* memdup_user answers an ERR_PTR, and IS_ERR above is the test it is read
+   with. A failed copy frees what it took, so a refused SET leaks nothing. */
+static void *memdup_user(const void *from, unsigned long bytes) {
+    void *got = kvrealloc(NULL, bytes, 0);
+    if (!got) return (void *)(long)-ENOMEM;
+    if (user_copy(got, from, bytes)) { free(got); return (void *)(long)-EFAULT; }
+    return got;
+}
 '''
     # The machine control ABI the bind rows and report_machine both name:
     # ioctl numbers, struct machine_control, the overlay and the script,
@@ -18618,6 +18634,33 @@ static void check_machine_script(void) {
     answer = report_machine_script(&request);
     check(!answer && request.length == wrote,
           "a GET for the overlay alone names no address and needs no room");
+
+    /* A SET whose copy faults after landing a prefix. Taken straight into the
+       live text, the front of the new script would sit on the tail of the old
+       one while the length and the overlay still described the old one, and
+       the machine would read a script nobody wrote. Nothing may change. */
+    memset(&request, 0, sizeof request);
+    request.op = MOONWATER_SCRIPT_SET;
+    request.length = wrote;
+    request.address = (unsigned long)text;
+    check(!report_machine_script(&request) && machine_script_length == wrote,
+          "the script is the disk one again before the faulting set");
+
+    {
+        static const char other[] = "moonwater_event() { echo other; }\n";
+
+        copies = 0; fail_copy = 2; partial_copy = 12;
+        memset(&request, 0, sizeof request);
+        request.op = MOONWATER_SCRIPT_SET;
+        request.length = (unsigned int)(sizeof other - 1);
+        request.address = (unsigned long)other;
+        answer = report_machine_script(&request);
+        copies = 0; fail_copy = 0; partial_copy = 0;
+        check(answer == -EFAULT && machine_script_length == wrote &&
+              !memcmp(machine_script_text, text, wrote) &&
+              (machine_script_hooks & MOONWATER_HOOK_INIT),
+              "a set whose copy faults part way leaves the live script whole");
+    }
 
     memset(&request, 0, sizeof request);
     request.op = MOONWATER_SCRIPT_SET;

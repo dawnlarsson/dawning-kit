@@ -1215,29 +1215,42 @@ static long report_machine_script(struct machine_script __user *out)
                 mutex_unlock(&machine_script_lock);
                 break;
         }
-        case MOONWATER_SCRIPT_SET:
+        case MOONWATER_SCRIPT_SET: {
+                /*      The whole new script is taken before the live one is
+                        touched. copy_from_user may copy a prefix and then
+                        fault, and copying straight into the live text leaves
+                        the front of the new script spliced onto the tail of
+                        the old one -- a script nobody wrote, with a length
+                        and an overlay that still describe the old one, and
+                        the refusal says nothing about it. Taking it whole
+                        first means a refused SET changes nothing at all. */
+                char *fresh = NULL;
+
                 if (!capable(CAP_SYS_ADMIN))
                         return -EPERM;
                 if (request.length > MOONWATER_SCRIPT_BYTES)
                         return -EINVAL;
                 if (request.length && !request.address)
                         return -EINVAL;
+                if (request.length) {
+                        fresh = memdup_user((void __user *)request.address,
+                                            request.length);
+                        if (IS_ERR(fresh))
+                                return PTR_ERR(fresh);
+                }
                 mutex_lock(&machine_script_lock);
-                if (!request.length)
+                if (fresh)
+                        machine_script_commit(fresh, request.length,
+                                              MOONWATER_ORIGIN_DISK);
+                else
                         machine_script_commit(moonwater_machine_builtin,
                                               machine_script_builtin,
                                               MOONWATER_ORIGIN_BUILTIN);
-                else if (copy_from_user(machine_script_text,
-                                        (void __user *)request.address,
-                                        request.length)) {
-                        mutex_unlock(&machine_script_lock);
-                        return -EFAULT;
-                } else
-                        machine_script_commit(machine_script_text, request.length,
-                                              MOONWATER_ORIGIN_DISK);
                 machine_script_answer(&request);
                 mutex_unlock(&machine_script_lock);
+                kfree(fresh);
                 break;
+        }
         default:
                 return -EINVAL;
         }
