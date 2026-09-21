@@ -13199,6 +13199,15 @@ static positive cut_lines(p8 address_to base, positive left, p8 delimiter,
         positive line_start = 0;
         positive fields = 0;
         positive scan = 0;
+        bool extra = false;
+        // One range of fields, first to last, is kept by position alone; the
+        // delimiters past the last are only counted as being there.
+        bool single = text_list_single && !complement;
+        positive first = text_list_single_first;
+        positive last = text_list_single_last;
+        positive wanted = !single ? positive_max
+                          : last == TEXT_UNSET ? first - 1
+                                               : last;
 
         for (;;)
         {
@@ -13212,6 +13221,15 @@ static positive cut_lines(p8 address_to base, positive left, p8 delimiter,
 
                         if (base[ending] != text_delimiter)
                         {
+                                // One range of fields needs only the
+                                // delimiters up to its last, and then only
+                                // to know there were more.
+                                if (fields == wanted)
+                                {
+                                        extra = true;
+                                        continue;
+                                }
+
                                 if (fields == CUT_FIELDS)
                                         return line_start;
 
@@ -13222,10 +13240,33 @@ static positive cut_lines(p8 address_to base, positive left, p8 delimiter,
                         p8 address_to line = base + line_start;
                         positive line_length = ending - line_start;
 
-                        if (!fields)
+                        if (!fields && !extra)
                         {
                                 if (!only_delimited)
                                         text_put(line, line_length + 1);
+                        }
+                        else if (wanted != positive_max)
+                        {
+                                /*
+                                        Fields first to last are one run of
+                                        the line, delimiters and all: from
+                                        past the delimiter before the first
+                                        to the one after the last, or the
+                                        line's end. A line with fewer fields
+                                        writes only its end.
+                                */
+                                positive from = first == 1 ? line_start
+                                                : fields >= first - 1 ? cut_fields[first - 2] + 1
+                                                                      : ending;
+                                positive to = last != TEXT_UNSET && fields >= last
+                                                  ? cut_fields[last - 1]
+                                                  : ending;
+
+                                if (from > to)
+                                        from = to;
+
+                                text_put(base + from, to - from);
+                                text_put_character(text_delimiter);
                         }
                         else
                         {
@@ -13289,6 +13330,7 @@ static positive cut_lines(p8 address_to base, positive left, p8 delimiter,
 
                         line_start = ending + 1;
                         fields = 0;
+                        extra = false;
                 }
 
                 if (count < CUT_OFFSETS)
