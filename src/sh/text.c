@@ -4100,7 +4100,6 @@ typedef struct
 
 static const b8 text_set_ascii[STRING_SET_BYTES] = {[0 ... 127] = 1};
 static const b8 wc_set_graphic[STRING_SET_BYTES] = {[0x21 ... 0x7e] = 1};
-static const b8 wc_set_printing[STRING_SET_BYTES] = {[0x20 ... 0x7e] = 1};
 
 static fn wc_utf8_step(wc_utf8 address_to state, bool valid, p32 code)
 {
@@ -4369,12 +4368,7 @@ static fn wc_bytes_general(const p8 address_to at, positive left, bool want_line
                 p8 character = at[c];
                 positive run = 0;
 
-                // Without words a space is only a column, so a run can go
-                // on through it: a line of text is then one span, not one
-                // a word, and -L alone ran seven percent behind GNU.
-                if (!want_words && character >= 0x20 && character < 0x7f)
-                        run = string_span_max(at + c, left - c, wc_set_printing);
-                else if (character >= 0x21 && character < 0x7f)
+                if (character >= 0x21 && character < 0x7f)
                         run = string_span_max(at + c, left - c, wc_set_graphic);
                 if (run)
                 {
@@ -6920,6 +6914,29 @@ static fn text_unexpand_pending(positive count, bool first_tab)
         writer_fill_bulk(text_put, count, ' ');
 }
 
+#define TEXT_TAB_SPECIALS 4096
+
+static p32 text_tab_specials[TEXT_TAB_SPECIALS];
+
+// What expand writes for a backspace, a tab or a newline at a column, and
+// the column after it.
+static positive text_tab_expand_one(p8 character, positive column)
+{
+        if (character == '\t')
+        {
+                positive stop;
+                bool explicit;
+                bool have = text_tab_next(column, address_of stop, address_of explicit);
+                positive after = have ? stop : column + (column != positive_max);
+
+                writer_fill_bulk(text_put, after - column, ' ');
+                return after;
+        }
+
+        text_put_character(character);
+        return character == '\n' ? 0 : column ? column - 1 : 0;
+}
+
 static fn text_tab_transform(bool unexpand, bool initial_only)
 {
         positive column = 0;
@@ -7152,6 +7169,50 @@ static fn text_tab_transform(bool unexpand, bool initial_only)
                                         continue;
                                 }
 
+                                /*
+                                        expand with no -i: only a backspace, a
+                                        tab and a newline ask anything, and
+                                        they are one range, so the library
+                                        hands over where each is in the rest
+                                        of the read and the bytes between go
+                                        out whole. A span asked for per run
+                                        paid its latency per run.
+                                */
+                                if (!initial_only)
+                                {
+                                        positive count = memory_offsets_between(
+                                            text_tab_specials, data + at, left - at,
+                                            '\b', '\n', TEXT_TAB_SPECIALS);
+                                        positive done = at;
+
+                                        for (positive i = 0; i < count; i++)
+                                        {
+                                                positive special = at + text_tab_specials[i];
+                                                positive run = special - done;
+
+                                                text_put(data + done, run);
+                                                column = column > positive_max - run
+                                                             ? positive_max
+                                                             : column + run;
+                                                done = special + 1;
+                                                column = text_tab_expand_one(data[special], column);
+                                        }
+
+                                        if (count < TEXT_TAB_SPECIALS)
+                                        {
+                                                positive run = left - done;
+
+                                                text_put(data + done, run);
+                                                column = column > positive_max - run
+                                                             ? positive_max
+                                                             : column + run;
+                                                done = left;
+                                        }
+
+                                        at = done;
+                                        continue;
+                                }
+
                                 positive run = string_span_max(
                                     data + at, left - at,
                                     text_tab_expand_span);
@@ -7167,33 +7228,8 @@ static fn text_tab_transform(bool unexpand, bool initial_only)
                                 }
 
                                 character = data[at++];
-
-                                if (character == '\t')
-                                {
-                                        positive stop;
-                                        bool explicit;
-                                        bool have = text_tab_next(
-                                            column, address_of stop,
-                                            address_of explicit);
-
-                                        positive after = have ? stop
-                                                              : column +
-                                                                    (column != positive_max);
-                                        writer_fill_bulk(text_put, after - column, ' ');
-                                        column = after;
-
-                                        continue;
-                                }
-
-                                text_put_character(character);
-
-                                if (character == '\n')
-                                {
-                                        column = 0;
-                                        convert = true;
-                                }
-                                else if (character == '\b')
-                                        column = column ? column - 1 : 0;
+                                column = text_tab_expand_one(character, column);
+                                convert = convert || character == '\n';
                         }
 
                         text_input.position = text_input.filled;
