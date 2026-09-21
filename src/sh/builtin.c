@@ -4666,7 +4666,7 @@ typedef struct
         bool plus_too;
 } shell_option_walk;
 
-static inline INLINE bool shell_option_letter(shell_option_walk address_to walk,
+static INLINE inline bool shell_option_letter(shell_option_walk address_to walk,
                                               p8 address_to letter)
 {
         while (1)
@@ -4721,7 +4721,7 @@ static string_address shell_option_argument(shell_option_walk address_to walk)
 // list through it too so that the four agree on the order.
 typedef fn(address_to shell_name_writer)(writer write, string_address name,
                                          positive length, b32 mark);
-static inline INLINE bool shell_inventory_sorted(
+static inline bool shell_inventory_sorted(
     writer write, b32 mark, shell_name_writer written, bool functions, bool bodies);
 
 /*
@@ -8740,7 +8740,7 @@ static bool shell_declare_print_one(writer write, string_address name,
         so it naturally takes this same path instead of needing a second name
         registry.
 */
-static inline INLINE bool shell_inventory_sorted(
+static inline bool shell_inventory_sorted(
     writer write, b32 mark, shell_name_writer written, bool functions, bool bodies)
 {
         shell_mark held = shell_store_mark(address_of expand_store);

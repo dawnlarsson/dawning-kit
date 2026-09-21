@@ -2678,7 +2678,7 @@ static inline INLINE fn table_measure(const table_view address_to view, positive
                 }
 }
 
-static inline INLINE fn table_row(const table_view address_to view, positive row,
+static inline fn table_row(const table_view address_to view, positive row,
                      positive address_to widths)
 {
         /* Measured once a row; a row of one field writes no separator. */
@@ -5946,7 +5946,7 @@ static inline INLINE address_any last_of_known(address_any block, b8 value,
         a loud one, so a caller that reaches past it gets a wrong answer and
         no diagnostic.
 */
-static inline INLINE positive number_known(string_address input,
+static inline positive number_known(string_address input,
                                            string_address address_to stopped,
                                            positive base, bool is_signed,
                                            b32 address_to out_of_range)

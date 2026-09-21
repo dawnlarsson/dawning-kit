@@ -4753,7 +4753,7 @@ typedef struct
 /* cp and split share the kernel-copy cascade. Sparse extents supply explicit
    source/destination offsets; streams use the current descriptor positions.
    Capability bits persist across pieces so each unavailable floor is tried once. */
-static inline INLINE bool file_copy_stream(
+static inline bool file_copy_stream(
     bipolar in, bipolar out, p64 length, bool bounded,
     bool address_to range_copy, bool address_to send_copy,
     p64 address_to offsets, file_copy_stop address_to stopped)
