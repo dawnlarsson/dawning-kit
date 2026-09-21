@@ -153,7 +153,8 @@ struct waterlink_frame {
         unsigned short length;
         unsigned short deadline; // milliseconds, 0 for none
         unsigned short flags;    // WATERLINK_FRAME_*
-        unsigned int reserved;   // must be 0
+        unsigned short inflated; // bytes after unpacking, 0 when not packed
+        unsigned short reserved; // must be 0
 };
 
 _Static_assert(sizeof(struct waterlink_frame) == 24,
@@ -169,6 +170,70 @@ _Static_assert(sizeof(struct waterlink_frame) == 24,
 
 // The final frame for a key: the receiver may forget the key after it.
 #define WATERLINK_FRAME_LAST 0x0004u
+
+/*
+        How the payload is packed, in the frame because the receiver must be
+        able to undo it, and nowhere else. Three bits, so a method is a small
+        number and not a negotiation.
+
+        A receiver that does not know a method refuses the frame. It does not
+        fall back and it does not ask: a sender only ever packs with a method
+        the handshake said the far side has, and the handshake says that by
+        version, not by a list -- a list is a negotiation and a negotiation is
+        a downgrade.
+*/
+#define WATERLINK_FRAME_PACK_SHIFT 3
+#define WATERLINK_FRAME_PACK_MASK 0x0038u
+
+#define WATERLINK_PACK_NONE 0u
+#define WATERLINK_PACK_DEFLATE 1u // gzip's coder, one frame at a time
+#define WATERLINK_PACK_ZSTD 2u
+#define WATERLINK_PACK_LZMA 3u // xz's coder, for durable bulk only
+
+/*
+        THE RULE THAT MAKES PACKING CORRECT, AND IS EASY TO GET WRONG
+
+        A packed replaceable frame must be self contained.
+
+        Every one of these coders earns its ratio from history: the window is
+        what the last frames said. But a replaceable frame may be dropped --
+        that is the whole point of the supersession rule above -- and a
+        dropped frame takes the decoder's history with it, so every later
+        frame on that key unpacks into garbage that the tag still says is
+        authentic. A checksum will not save this; the bytes are genuinely
+        what the sender sent.
+
+        So history across frames is permitted only on a stream whose frames
+        are all durable and therefore all ordered and all delivered. That is
+        WATERLINK_STREAM_HISTORY below, and it is a promise about the frames,
+        not a hint about the coder.
+
+        Which also says plainly what packing is worth here: 1168 bytes with a
+        fresh window is not much of a corpus. Packing pays on files and on the
+        log, and it is close to free money on a terminal's own output, which
+        is mostly spaces and repeated escapes. It does not pay on a desktop
+        frame, which is already coded, and it does not pay on a keystroke.
+
+        AND WHAT PACKING COSTS THAT IS NOT TIME
+
+        A packed length is a measurement of the plaintext, and it is outside
+        the box. The ceiling is not: a datagram is padded to
+        WATERLINK_DATAGRAM, so a packed frame's length leaks nothing to an
+        observer -- only to the far side, which already has the plaintext.
+        The rule that keeps this true is that packing is per datagram and the
+        datagram size is fixed, which is why the size is a constant and not a
+        path discovery.
+
+        The other cost is the receiver's. WATERLINK_PAYLOAD bounds what
+        arrives, not what it becomes, and a paired peer is authenticated, not
+        benign. So a frame declares what it unpacks to and the receiver
+        refuses it before unpacking anything, against one ceiling and one
+        scratch buffer taken at startup. Otherwise "the datapath allocates
+        nothing" stops being true the first time somebody sends a well formed
+        frame that claims a gigabyte.
+*/
+#define WATERLINK_INFLATED 65536
+
 
 /*
         What a peer may do, granted one at a time and starting at none.
@@ -238,5 +303,147 @@ _Static_assert(sizeof(struct waterlink_peer) == 96,
 
 // How far behind the highest counter a datagram may arrive and still be new.
 #define WATERLINK_REPLAY_WINDOW 2048
+
+/*
+        ------------------------------------------------------------------
+        BELOW HERE IS WHAT THIS MACHINE KEEPS, NOT WHAT THE TWO ENDS AGREE ON
+        ------------------------------------------------------------------
+
+        Everything above is on the wire or is a rule both ends check. What
+        follows is one sender's own settings, and the far side never sees any
+        of it. That distinction is the point: a sender may change its mind
+        about effort, order or packing between one frame and the next, and
+        nothing has to be renegotiated, because there was never a negotiation.
+        The only thing that crosses is the pack method in the frame, and that
+        is there because unpacking needs it.
+
+        STREAM SETTINGS, WHICH ARE CONTROLS AND NOT A STREAM TYPE
+
+        A channel is not a kind of traffic. It is a channel with parameters,
+        and the parameters can change under it: a terminal carrying a file for
+        a moment is the ordinary case, not the exception. So there are no
+        stream types here, only a small block of dials, and the things that
+        look like types -- a shell, a desktop, a log -- are named presets that
+        set those dials.
+
+        A preset is a sender's convenience. It is not on the wire, it has no
+        number the far side knows, and two machines running different presets
+        interoperate exactly as well as two running the same one. Put a preset
+        identifier on the wire and you have reinvented the version matrix that
+        dropping cipher agility just bought us.
+*/
+
+/*
+        Four dials, and each of them earns its place by naming a decision the
+        other three cannot make.
+
+        method  is what the receiver must know, and the only one on the wire.
+
+        effort  is how hard to try, on the method's own scale, because no
+                coder in this tree takes a time budget as input -- a
+                microsecond figure would be nicer to reason about and would
+                need a measured cost table per method per architecture that
+                does not exist. So it is a level, and the honest part is the
+                rule the scheduler applies around it: when a frame's deadline
+                is closer than the last measured cost of packing at this
+                effort, send it unpacked. Effort is what to do when there is
+                time, not a promise about time.
+
+        band    is the tiebreak, and only the tiebreak. The deadline already
+                says when a frame is worth sending; the band says which frame
+                goes first when two of them are both about to miss. Without
+                it, a desktop that is always late starves a keystroke that is
+                merely late.
+
+        deadline is the stream's default for frames that name none, so that
+                the common case -- a whole stream of frames that all want the
+                same latency -- is a setting rather than a field repeated by
+                every caller.
+
+        There is deliberately no pacing share. Share of what a link has is a
+        policy that deadline plus band already expresses for every case found
+        so far, and a fourth control that overlaps the first two is how a
+        scheduler becomes something nobody can predict.
+*/
+struct waterlink_stream {
+        unsigned short channel;
+        unsigned char method; // WATERLINK_PACK_*
+        unsigned char effort; // 0 to 9, the method's own scale
+        unsigned short deadline; // default for frames that give none
+        unsigned char band;      // WATERLINK_BAND_*
+        unsigned char flags;     // WATERLINK_STREAM_*
+};
+
+_Static_assert(sizeof(struct waterlink_stream) == 8,
+               "waterlink stream settings must be exactly 8 bytes");
+
+#define WATERLINK_BAND_URGENT 0u // a keystroke; nothing waits behind it
+#define WATERLINK_BAND_LIVE 1u   // a frame that is worth less late
+#define WATERLINK_BAND_BULK 2u   // a file; it wants throughput, not latency
+
+/*
+        Permission to keep a coder's window across frames. Legal only where
+        every frame on the stream is durable, for the reason spelled out at
+        WATERLINK_PACK_NONE above. A sender that sets this and then emits a
+        replaceable frame has made the stream undecodable, so the sender
+        refuses that frame rather than the receiver discovering it later.
+*/
+#define WATERLINK_STREAM_HISTORY 0x01u
+
+// Pack even when the result is barely smaller. Off by default: below about a
+// tenth saved, the far side's time to unpack costs more than the bytes did.
+#define WATERLINK_STREAM_ALWAYS_PACK 0x02u
+
+/*
+        The presets. Sender side, and a starting point to edit rather than a
+        closed set -- the whole reason the dials are separate from the names
+        is so that content nobody anticipated gets its own block.
+
+        SHELL       urgent, no deadline to speak of, packed cheaply because
+                    terminal output is repetitive and a keystroke is too small
+                    to pack at all.
+        SCREEN      live, one frame time, unpacked: pixels arrive already
+                    coded and packing them again spends time to grow them.
+        LOG         bulk, packed hard with history, because a log is durable,
+                    ordered, and the most compressible thing this machine
+                    produces.
+        FILES       bulk, packed hard with history, deadline none: a file is
+                    worth waiting for and worth nothing half delivered.
+        CONTROL     urgent, unpacked. A verb is shorter than a window.
+        REALTIME    urgent, one tick, unpacked, and replaceable per frame --
+                    a position that is 16 ms stale is not worth the bytes to
+                    correct, which is the case the supersession rule was
+                    written for.
+*/
+#define WATERLINK_PRESET_CONTROL 0u
+#define WATERLINK_PRESET_SHELL 1u
+#define WATERLINK_PRESET_SCREEN 2u
+#define WATERLINK_PRESET_LOG 3u
+#define WATERLINK_PRESET_FILES 4u
+#define WATERLINK_PRESET_REALTIME 5u
+#define WATERLINK_PRESET_COUNT 6u
+
+static const struct waterlink_stream waterlink_presets[WATERLINK_PRESET_COUNT] = {
+        [WATERLINK_PRESET_CONTROL] = { WATERLINK_CHANNEL_CONTROL,
+                                       WATERLINK_PACK_NONE, 0, 0,
+                                       WATERLINK_BAND_URGENT, 0 },
+        [WATERLINK_PRESET_SHELL] = { WATERLINK_CHANNEL_SHELL,
+                                     WATERLINK_PACK_DEFLATE, 1, 0,
+                                     WATERLINK_BAND_URGENT, 0 },
+        [WATERLINK_PRESET_SCREEN] = { WATERLINK_CHANNEL_SCREEN,
+                                      WATERLINK_PACK_NONE, 0, 16,
+                                      WATERLINK_BAND_LIVE, 0 },
+        [WATERLINK_PRESET_LOG] = { WATERLINK_CHANNEL_LOG,
+                                   WATERLINK_PACK_ZSTD, 6, 0,
+                                   WATERLINK_BAND_BULK,
+                                   WATERLINK_STREAM_HISTORY },
+        [WATERLINK_PRESET_FILES] = { WATERLINK_CHANNEL_FILES,
+                                     WATERLINK_PACK_ZSTD, 6, 0,
+                                     WATERLINK_BAND_BULK,
+                                     WATERLINK_STREAM_HISTORY },
+        [WATERLINK_PRESET_REALTIME] = { WATERLINK_CHANNEL_OPEN,
+                                        WATERLINK_PACK_NONE, 0, 16,
+                                        WATERLINK_BAND_URGENT, 0 },
+};
 
 #endif // WATERLINK_INCLUDED
