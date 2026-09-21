@@ -496,6 +496,9 @@ typedef struct
         // moment it happens; cmp keeps its own answer and asks later.
         bool failed;
         string_address name;
+        // How many reads have filled the buffer, so a walk holding offsets
+        // into it can tell they are of a read that is gone.
+        positive fills;
         p8 buffer[TEXT_READ_MAX];
 } text_reader;
 
@@ -643,6 +646,7 @@ static bool text_reader_fill_amount(text_reader address_to reader,
 
         reader->filled = (positive)got;
         reader->position = 0;
+        reader->fills++;
         return true;
 }
 
@@ -3461,18 +3465,17 @@ static bool cat_blank_before;
 static bool cat_at_line_start;
 
 /*
-        The bytes cat has to decide something about, found for a whole read
-        at a time: with -v everything that is not printable, otherwise the
-        newline and, under -T, the tab. Every byte between two of them is
-        copied as it is. Offsets are relative to the scan's base, and
-        scanned is how far the scan has got.
+        The bytes a walk has to decide something about, found a whole read at
+        a time by one library pass over a table of them; every byte between
+        two is only copied or counted. cat, expand's -i and unexpand walk
+        this way. Offsets are relative to the scan's base, and scanned is how
+        far the pass has got. The state lives in the walk's own frame so that
+        the bytes it writes are never taken to be this.
 */
-#define CAT_SPECIALS 4096
+#define TEXT_SCAN_OFFSETS 4096
 
-static p32 cat_specials[CAT_SPECIALS];
+static p32 text_scan_offsets[TEXT_SCAN_OFFSETS];
 
-// Where the scan of the current read stands, kept in the walk's own frame
-// so that the bytes it writes are never taken to be this.
 typedef struct
 {
         positive count;
@@ -3480,7 +3483,53 @@ typedef struct
         p8 address_to base;
         p8 address_to scanned;
         const b8 address_to set;
-} cat_scan;
+} text_scan;
+
+// A walk that goes back, as fold -s does to its last blank, takes the scan
+// back with it before asking again.
+static fn text_scan_back(text_scan address_to scan, p8 address_to at)
+{
+        if (at < scan->base)
+        {
+                scan->count = scan->index = 0;
+                scan->scanned = at;
+        }
+
+        while (scan->index && scan->base + text_scan_offsets[scan->index - 1] >= at)
+                scan->index--;
+}
+
+// The first byte of the set at or after at, or stop; at never goes back.
+static inline INLINE p8 address_to text_scan_next(text_scan address_to scan, p8 address_to at,
+                                                  p8 address_to stop)
+{
+        for (;;)
+        {
+                while (scan->index < scan->count)
+                {
+                        p8 address_to special = scan->base + text_scan_offsets[scan->index];
+
+                        if (special >= at)
+                                return special;
+
+                        scan->index++;
+                }
+
+                if (scan->scanned >= stop)
+                        return stop;
+
+                p8 address_to from = at > scan->scanned ? at : scan->scanned;
+
+                scan->count = memory_offsets_in_set(text_scan_offsets, from,
+                                                    (positive)(stop - from), scan->set,
+                                                    TEXT_SCAN_OFFSETS);
+                scan->index = 0;
+                scan->base = from;
+                scan->scanned = scan->count < TEXT_SCAN_OFFSETS
+                                    ? stop
+                                    : from + text_scan_offsets[scan->count - 1] + 1;
+        }
+}
 
 /*
         The bytes cat decides about, by what was asked: -v, -T, and whether
@@ -3497,36 +3546,6 @@ static const b8 cat_special_set[8][256] = {
     {[0 ... 9] = 1, [11 ... 31] = 1, [127 ... 255] = 1},
     {[0 ... 31] = 1, [127 ... 255] = 1},
 };
-
-static inline INLINE p8 address_to cat_special_next(cat_scan address_to scan, p8 address_to at,
-                                                         p8 address_to stop)
-{
-        for (;;)
-        {
-                while (scan->index < scan->count)
-                {
-                        p8 address_to special = scan->base + cat_specials[scan->index];
-
-                        if (special >= at)
-                                return special;
-
-                        scan->index++;
-                }
-
-                if (scan->scanned >= stop)
-                        return stop;
-
-                p8 address_to from = at > scan->scanned ? at : scan->scanned;
-                positive size = (positive)(stop - from);
-                scan->count = memory_offsets_in_set(cat_specials, from, size, scan->set,
-                                                    CAT_SPECIALS);
-                scan->index = 0;
-                scan->base = from;
-                scan->scanned = scan->count < CAT_SPECIALS
-                                      ? stop
-                                      : from + cat_specials[scan->count - 1] + 1;
-        }
-}
 
 static fn cat_number()
 {
@@ -3570,7 +3589,7 @@ static fn cat_walked()
                 p8 address_to limit = field + room;
                 bool line_start = cat_at_line_start, blank_before = cat_blank_before;
                 positive number = cat_line_number;
-                cat_scan scan = {.scanned = at, .set = set};
+                text_scan scan = {.scanned = at, .set = set};
                 while (at < stop && (positive)(limit - into) >= positive_char_max + 6)
                 {
                         p8 value = *at;
@@ -3591,7 +3610,7 @@ static fn cat_walked()
                                 }
                                 line_start = false;
                         }
-                        p8 address_to special = cat_special_next(address_of scan, at, stop);
+                        p8 address_to special = text_scan_next(address_of scan, at, stop);
 
                         if (special > at)
                         {
@@ -6706,10 +6725,10 @@ static bool text_tab_option_seen;
 // Bytes expand copies as they are, and the space alone.
 static const b8 text_tab_expand_span[256] = {[0 ... 7] = 1, [11 ... 255] = 1};
 static const b8 text_tab_space_span[256] = {[' '] = 1};
-// What unexpand passes through untouched: everything but a blank, a
-// backspace and a newline, each of which moves a column or ends a line.
-static const b8 text_tab_unexpand_span[256] = {[0 ... 7] = 1, [11 ... 31] = 1,
-                                               [33 ... 255] = 1};
+// What unexpand has to decide about: a blank, a backspace and a newline,
+// each of which moves a column or ends a line. Everything else passes.
+static const b8 text_tab_unexpand_special[256] = {['\b'] = 1, ['\t'] = 1, ['\n'] = 1,
+                                                  [' '] = 1};
 
 static fn text_tab_reset()
 {
@@ -7047,6 +7066,7 @@ static fn text_tab_transform(bool unexpand, bool initial_only)
                         p8 address_to data = text_input.buffer + text_input.position;
                         positive left = text_input.filled - text_input.position;
                         positive at = 0;
+                        text_scan scan = {.scanned = data, .set = text_tab_unexpand_special};
 
                         while (at < left)
                         {
@@ -7082,33 +7102,25 @@ static fn text_tab_transform(bool unexpand, bool initial_only)
                                 */
                                 if (unexpand && !pending && !initial_only)
                                 {
-                                        positive run = 0;
+                                        p8 address_to stop = data + left;
+                                        p8 address_to special =
+                                            text_scan_next(address_of scan, data + at, stop);
 
                                         /*
-                                                A lone space between two such
-                                                bytes goes out as itself
-                                                wherever it falls, so it joins
-                                                the run: a space between words
-                                                is the blank unexpand meets
-                                                most, and waiting on it and
-                                                flushing it cost more than the
-                                                word did.
+                                                A lone space between two bytes
+                                                that are not blanks goes out as
+                                                itself wherever it falls, so it
+                                                joins the run: a space between
+                                                words is the blank unexpand
+                                                meets most.
                                         */
-                                        for (;;)
-                                        {
-                                                positive more = string_span_max(
-                                                    data + at + run, left - at - run,
-                                                    text_tab_unexpand_span);
+                                        while (special > data + at && special + 1 < stop &&
+                                               *special == ' ' &&
+                                               !text_tab_unexpand_special[special[1]])
+                                                special = text_scan_next(address_of scan,
+                                                                         special + 1, stop);
 
-                                                run += more;
-
-                                                if (!run || at + run + 1 >= left ||
-                                                    data[at + run] != ' ' ||
-                                                    !text_tab_unexpand_span[data[at + run + 1]])
-                                                        break;
-
-                                                run++;
-                                        }
+                                        positive run = (positive)(special - (data + at));
 
                                         if (run)
                                         {
@@ -12672,12 +12684,10 @@ static bool fold_option_seen(p8 letter, string_address value)
         a return move the column otherwise unless every byte is a column, and
         in UTF-8 a byte past ASCII begins a character that is decoded whole.
 */
-static const b8 fold_span_bytes[256] = {[0 ... 255] = 1};
-static const b8 fold_span_bytes_ascii[256] = {[0 ... 127] = 1};
-static const b8 fold_span_columns[256] = {[0 ... 7] = 1, [10 ... 12] = 1,
-                                          [14 ... 255] = 1};
-static const b8 fold_span_columns_ascii[256] = {[0 ... 7] = 1, [10 ... 12] = 1,
-                                                [14 ... 127] = 1};
+static const b8 fold_special_bytes_utf8[256] = {[128 ... 255] = 1};
+static const b8 fold_special_columns[256] = {['\b'] = 1, ['\t'] = 1, ['\r'] = 1};
+static const b8 fold_special_columns_utf8[256] = {['\b'] = 1, ['\t'] = 1, ['\r'] = 1,
+                                                  [128 ... 255] = 1};
 
 static b32 text_fold()
 {
@@ -12716,19 +12726,41 @@ static b32 text_fold()
                 return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'w'), "invalid number of columns"));
 
         b32 inputs = text_input_count();
-        const b8 address_to plain = bytes ? (utf8 ? fold_span_bytes_ascii : fold_span_bytes)
-                                          : (utf8 ? fold_span_columns_ascii : fold_span_columns);
+        // With -b outside UTF-8 every byte is one column and nothing needs
+        // finding.
+        const b8 address_to special = bytes ? (utf8 ? fold_special_bytes_utf8 : null)
+                                            : (utf8 ? fold_special_columns_utf8
+                                                    : fold_special_columns);
 
         for (b32 i = 0; i < inputs; i++)
         {
                 if (!text_open(text_file_name(i)))
                         continue;
 
-                while (text_line_next(text_line, 0))
+                text_scan scan = {0};
+                positive scan_fills = 0;
+                p8 address_to line;
+                positive length;
+
+                // Each line where it lies in the reader, with the bytes that
+                // ask for more than a column found for the whole read at
+                // once; a line too long for a read has its own pass.
+                while (text_line_view(address_of line, address_of length, null, 0, null))
                 {
                         positive from = 0;
+                        bool in_read = line >= text_input.buffer &&
+                                       line < text_input.buffer + text_input.filled;
+                        p8 address_to scan_stop = in_read ? text_input.buffer + text_input.filled
+                                                          : line + length;
 
-                        while (from < text_line_length)
+                        if (special && (!in_read || scan_fills != text_input.fills ||
+                                        line < scan.base))
+                        {
+                                scan = (text_scan){.scanned = line, .set = special};
+                                scan_fills = in_read ? text_input.fills : 0;
+                        }
+
+                        while (from < length)
                         {
                                 positive column = 0;
                                 positive at = from;
@@ -12738,7 +12770,7 @@ static b32 text_fold()
                                 // to the next stop of eight and a backspace
                                 // moves back, which is what makes the width
                                 // mean what it looks like on a terminal.
-                                while (at < text_line_length)
+                                while (at < length)
                                 {
                                         /*
                                                 A run of bytes a column each,
@@ -12749,26 +12781,34 @@ static b32 text_fold()
                                                 eight cycles a byte.
                                         */
                                         positive room = column < width ? width - column : 0;
-                                        positive bound = min(room, text_line_length - at);
-                                        positive run = bound ? string_span_max(text_line + at,
-                                                                               bound, plain)
-                                                             : 0;
+                                        positive bound = min(room, length - at);
+                                        positive run = bound;
+
+                                        if (bound && special)
+                                        {
+                                                positive plain = (positive)(
+                                                    text_scan_next(address_of scan, line + at,
+                                                                   scan_stop) -
+                                                    (line + at));
+
+                                                run = min(plain, bound);
+                                        }
 
                                         if (run)
                                         {
                                                 if (spaces)
                                                 {
                                                         p8 address_to space = memory_last_of(
-                                                            text_line + at, ' ', run);
+                                                            line + at, ' ', run);
                                                         p8 address_to tab = bytes
-                                                                                ? memory_last_of(text_line + at, '\t', run)
+                                                                                ? memory_last_of(line + at, '\t', run)
                                                                                 : null;
 
                                                         if (tab > space)
                                                                 space = tab;
 
                                                         if (space)
-                                                                gap = (positive)(space - text_line) + 1;
+                                                                gap = (positive)(space - line) + 1;
                                                 }
 
                                                 column += run;
@@ -12776,7 +12816,7 @@ static b32 text_fold()
                                                 continue;
                                         }
 
-                                        p8 character = text_line[at];
+                                        p8 character = line[at];
                                         positive size = 1;
                                         positive after = column + 1;
                                         bool blank = byte_is_blank(character);
@@ -12797,8 +12837,8 @@ static b32 text_fold()
                                                 positive got;
 
                                                 if (wc_utf8_decode(
-                                                        text_line + at,
-                                                        text_line_length - at,
+                                                        line + at,
+                                                        length - at,
                                                         address_of code,
                                                         address_of got) == WC_VALID)
                                                 {
@@ -12840,9 +12880,9 @@ static b32 text_fold()
                                                 gap = at;
                                 }
 
-                                if (at >= text_line_length)
+                                if (at >= length)
                                 {
-                                        text_put(text_line + from, text_line_length - from);
+                                        text_put(line + from, length - from);
 
                                         if (text_line_ended)
                                                 text_put_character('\n');
@@ -12851,14 +12891,19 @@ static b32 text_fold()
                                 }
 
                                 if (spaces && gap > from)
+                                {
                                         at = gap;
 
-                                text_put(text_line + from, at - from);
+                                        if (special)
+                                                text_scan_back(address_of scan, line + at);
+                                }
+
+                                text_put(line + from, at - from);
                                 text_put_character('\n');
                                 from = at;
                         }
 
-                        if (!text_line_length && text_line_ended)
+                        if (!length && text_line_ended)
                                 text_put_character('\n');
                 }
 
