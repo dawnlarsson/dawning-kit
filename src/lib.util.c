@@ -16749,8 +16749,9 @@ CONST decimal difftime(time_t later, time_t earlier)
         test through gmtime can never see, because gmtime only ever hands back
         a structure that was already normal.
 
-        tm_isdst is ignored rather than consulted. There is no daylight saving
-        without a timezone database, so there is no ambiguous hour to resolve.
+        tm_isdst is ignored rather than consulted: this is UTC, which has no
+        daylight saving and so no ambiguous hour. mktime, further down beside
+        localtime, is the one that answers in the machine's zone.
 */
 time_t timegm(tm address_to broken)
 {
@@ -16782,7 +16783,7 @@ time_t timegm(tm address_to broken)
         return (time_t)seconds;
 }
 
-time_t mktime(tm address_to broken) __attribute__((alias("timegm")));
+time_t mktime(tm address_to broken);
 
 tm address_to gmtime_r(const time_t address_to stamp, tm address_to into)
 {
@@ -16811,6 +16812,16 @@ tm address_to gmtime(const time_t address_to stamp)
 tm address_to localtime_r(const time_t address_to stamp, tm address_to into);
 tm address_to localtime(const time_t address_to stamp);
 string_address clock_zone_posix(string_address name);
+string_address clock_zone_named(string_address name);
+bool clock_zone_offset(string_address text, p8 address_to into,
+                       positive room);
+string_address clock_zone_known(positive which, bool address_to code);
+positive clock_zone_tzif(string_address zone, p8 address_to into,
+                         positive room);
+bipolar clock_local_east(b64 utc);
+string_address clock_zone_spoken(string_address name);
+b64 clock_local_to_utc(b64 civil);
+bool clock_local_exists(b64 civil);
 
 /*
         Two shapes of decimal field, which between them are every number this
@@ -17721,11 +17732,17 @@ static fn clock_format_core(clock_format_state address_to state,
                 */
                 case 's':
                 {
+                        //      The seconds since the epoch are the same
+                        //      in every zone, so the wall clock's own offset
+                        //      comes back off: timegm reads the fields as
+                        //      UTC, and a local time is not.
                         tm copy = address_to broken;
                         p8 body[40];
                         positive at;
                         positive length = clock_number_text(
-                                body, (bipolar)timegm(address_of copy),
+                                body,
+                                (bipolar)timegm(address_of copy) -
+                                        (bipolar)broken->tm_gmtoff,
                                 address_of at);
 
                         clock_format_append(state, body + at, length);
@@ -18601,76 +18618,132 @@ static const struct
 {
         char name[40];
         char posix[40];
+        char spoken[32]; // what the zone is called, not where
 } clock_zones[] = {
-        {"UTC", "UTC0"},
-        {"GMT", "GMT0"},
-        {"Zulu", "UTC0"},
-        {"CET", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"EET", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
-        {"WET", "WET0WEST,M3.5.0/1,M10.5.0"},
-        {"Europe/London", "GMT0BST,M3.5.0/1,M10.5.0"},
-        {"Europe/Dublin", "IST-1GMT0,M10.5.0,M3.5.0/1"},
-        {"Europe/Lisbon", "WET0WEST,M3.5.0/1,M10.5.0"},
-        {"Europe/Paris", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Berlin", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Amsterdam", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Brussels", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Madrid", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Rome", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Stockholm", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Oslo", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Copenhagen", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Helsinki", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
-        {"Europe/Athens", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
-        {"Europe/Warsaw", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Prague", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Vienna", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Zurich", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"Europe/Moscow", "MSK-3"},
-        {"Europe/Istanbul", "TRT-3"},
-        {"America/New_York", "EST5EDT,M3.2.0,M11.1.0"},
-        {"America/Chicago", "CST6CDT,M3.2.0,M11.1.0"},
-        {"America/Denver", "MST7MDT,M3.2.0,M11.1.0"},
-        {"America/Los_Angeles", "PST8PDT,M3.2.0,M11.1.0"},
-        {"America/Phoenix", "MST7"},
-        {"America/Anchorage", "AKST9AKDT,M3.2.0,M11.1.0"},
-        {"America/Honolulu", "HST10"},
-        {"Pacific/Honolulu", "HST10"},
-        {"America/Toronto", "EST5EDT,M3.2.0,M11.1.0"},
-        {"America/Vancouver", "PST8PDT,M3.2.0,M11.1.0"},
-        {"America/Sao_Paulo", "BRT3"},
-        {"America/Mexico_City", "CST6"},
-        {"America/Argentina/Buenos_Aires", "ART3"},
-        {"Asia/Tokyo", "JST-9"},
-        {"Asia/Seoul", "KST-9"},
-        {"Asia/Shanghai", "CST-8"},
-        {"Asia/Hong_Kong", "HKT-8"},
-        {"Asia/Singapore", "SGT-8"},
-        {"Asia/Kolkata", "IST-5:30"},
-        {"Asia/Calcutta", "IST-5:30"},
-        {"Asia/Dubai", "GST-4"},
-        {"Asia/Jakarta", "WIB-7"},
-        {"Asia/Bangkok", "ICT-7"},
-        {"Asia/Taipei", "CST-8"},
-        {"Australia/Sydney", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
-        {"Australia/Melbourne", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
-        {"Australia/Perth", "AWST-8"},
-        {"Australia/Adelaide", "ACST-9:30ACDT,M10.1.0,M4.1.0/3"},
-        {"Pacific/Auckland", "NZST-12NZDT,M9.5.0,M4.1.0/3"},
-        {"Africa/Johannesburg", "SAST-2"},
-        {"Africa/Cairo", "EET-2"},
-        {"Africa/Lagos", "WAT-1"},
-        {"Atlantic/Reykjavik", "GMT0"},
-        {"se", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"sv", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"de", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"fr", "CET-1CEST,M3.5.0,M10.5.0/3"},
-        {"gb", "GMT0BST,M3.5.0/1,M10.5.0"},
-        {"uk", "GMT0BST,M3.5.0/1,M10.5.0"},
-        {"us/eastern", "EST5EDT,M3.2.0,M11.1.0"},
-        {"us/central", "CST6CDT,M3.2.0,M11.1.0"},
-        {"us/mountain", "MST7MDT,M3.2.0,M11.1.0"},
-        {"us/pacific", "PST8PDT,M3.2.0,M11.1.0"},
+        {"UTC", "UTC0",
+         "Coordinated Universal Time"},
+        {"GMT", "GMT0",
+         "Greenwich Mean Time"},
+        {"Zulu", "UTC0",
+         "Coordinated Universal Time"},
+        {"CET", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"EET", "EET-2EEST,M3.5.0/3,M10.5.0/4",
+         "Eastern European Time"},
+        {"WET", "WET0WEST,M3.5.0/1,M10.5.0",
+         "Western European Time"},
+        {"Europe/London", "GMT0BST,M3.5.0/1,M10.5.0",
+         "British Time"},
+        {"Europe/Dublin", "IST-1GMT0,M10.5.0,M3.5.0/1",
+         "Irish Time"},
+        {"Europe/Lisbon", "WET0WEST,M3.5.0/1,M10.5.0",
+         "Western European Time"},
+        {"Europe/Paris", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Berlin", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Amsterdam", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Brussels", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Madrid", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Rome", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Stockholm", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Oslo", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Copenhagen", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Helsinki", "EET-2EEST,M3.5.0/3,M10.5.0/4",
+         "Eastern European Time"},
+        {"Europe/Athens", "EET-2EEST,M3.5.0/3,M10.5.0/4",
+         "Eastern European Time"},
+        {"Europe/Warsaw", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Prague", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Vienna", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Zurich", "CET-1CEST,M3.5.0,M10.5.0/3",
+         "Central European Time"},
+        {"Europe/Moscow", "MSK-3",
+         "Moscow Time"},
+        {"Europe/Istanbul", "<+03>-3",
+         "Turkey Time"},
+        {"America/New_York", "EST5EDT,M3.2.0,M11.1.0",
+         "Eastern Time"},
+        {"America/Chicago", "CST6CDT,M3.2.0,M11.1.0",
+         "Central Time"},
+        {"America/Denver", "MST7MDT,M3.2.0,M11.1.0",
+         "Mountain Time"},
+        {"America/Los_Angeles", "PST8PDT,M3.2.0,M11.1.0",
+         "Pacific Time"},
+        {"America/Phoenix", "MST7",
+         "Mountain Standard Time"},
+        {"America/Anchorage", "AKST9AKDT,M3.2.0,M11.1.0",
+         "Alaska Time"},
+        {"Pacific/Honolulu", "HST10",
+         "Hawaii Time"},
+        {"America/Toronto", "EST5EDT,M3.2.0,M11.1.0",
+         "Eastern Time"},
+        {"America/Vancouver", "PST8PDT,M3.2.0,M11.1.0",
+         "Pacific Time"},
+        {"America/Sao_Paulo", "<-03>3",
+         "Brasilia Time"},
+        {"America/Mexico_City", "CST6",
+         "Central Time (Mexico)"},
+        {"America/Argentina/Buenos_Aires", "<-03>3",
+         "Argentina Time"},
+        {"Asia/Tokyo", "JST-9",
+         "Japan Standard Time"},
+        {"Asia/Seoul", "KST-9",
+         "Korea Standard Time"},
+        {"Asia/Shanghai", "CST-8",
+         "China Standard Time"},
+        {"Asia/Hong_Kong", "HKT-8",
+         "Hong Kong Time"},
+        {"Asia/Singapore", "<+08>-8",
+         "Singapore Time"},
+        {"Asia/Kolkata", "IST-5:30",
+         "India Standard Time"},
+        {"Asia/Calcutta", "IST-5:30",
+         "India Standard Time"},
+        {"Asia/Dubai", "<+04>-4",
+         "Gulf Standard Time"},
+        {"Asia/Jakarta", "WIB-7",
+         "Western Indonesia Time"},
+        {"Asia/Bangkok", "<+07>-7",
+         "Indochina Time"},
+        {"Asia/Taipei", "CST-8",
+         "Taipei Time"},
+        {"Australia/Sydney", "AEST-10AEDT,M10.1.0,M4.1.0/3",
+         "Australian Eastern Time"},
+        {"Australia/Melbourne", "AEST-10AEDT,M10.1.0,M4.1.0/3",
+         "Australian Eastern Time"},
+        {"Australia/Perth", "AWST-8",
+         "Australian Western Time"},
+        {"Australia/Adelaide", "ACST-9:30ACDT,M10.1.0,M4.1.0/3",
+         "Australian Central Time"},
+        {"Pacific/Auckland", "NZST-12NZDT,M9.5.0,M4.1.0/3",
+         "New Zealand Time"},
+        {"Africa/Johannesburg", "SAST-2",
+         "South Africa Standard Time"},
+        {"Africa/Cairo", "EET-2EEST,M4.5.5/0,M10.5.4/24",
+         "Eastern European Time"},
+        {"Africa/Lagos", "WAT-1",
+         "West Africa Time"},
+        {"Atlantic/Reykjavik", "GMT0",
+         "Greenwich Mean Time"},
+        {"us/eastern", "EST5EDT,M3.2.0,M11.1.0",
+         "Eastern Time"},
+        {"us/central", "CST6CDT,M3.2.0,M11.1.0",
+         "Central Time"},
+        {"us/mountain", "MST7MDT,M3.2.0,M11.1.0",
+         "Mountain Time"},
+        {"us/pacific", "PST8PDT,M3.2.0,M11.1.0",
+         "Pacific Time"},
 };
 
 static bool clock_zone_same(string_address a, string_address b)
@@ -18694,16 +18767,196 @@ static bool clock_zone_same(string_address a, string_address b)
         return a[0] == 0 && b[0] == 0;
 }
 
+/*
+        Country codes, so a zone can be named the way a keyboard layout is:
+        "se" is Sweden's zone because "se" is Sweden's layout, and one word
+        sets both. A code names its country's zone; where a country spans
+        several, it names the one most of its people live in -- "us" is New
+        York, which is the zone of close to half the country.
+
+        These are names for zones in the table above, not zones of their own,
+        which is what lets a caller store the real name. "Europe/Stockholm"
+        means the same thing to every program on the machine, including a
+        bowl's glibc; "se" only means anything here.
+*/
+static const struct
+{
+        char code[4];
+        char zone[20];
+} clock_zone_codes[] = {
+        {"us", "America/New_York"}, {"uk", "Europe/London"},
+        {"gb", "Europe/London"},    {"de", "Europe/Berlin"},
+        {"se", "Europe/Stockholm"}, {"sv", "Europe/Stockholm"},
+        {"no", "Europe/Oslo"},      {"nb", "Europe/Oslo"},
+        {"dk", "Europe/Copenhagen"}, {"fi", "Europe/Helsinki"},
+        {"fr", "Europe/Paris"},     {"es", "Europe/Madrid"},
+        {"it", "Europe/Rome"},
+};
+
+/* What a zone is called in words -- "Central European Time" for Stockholm --
+   or null for one the table does not hold, such as a fixed offset. */
+string_address clock_zone_spoken(string_address name)
+{
+        string_address named = clock_zone_named(name);
+
+        if (!named)
+                return null;
+        for (positive at = 0; at < array_count(clock_zones); at++)
+                if (string_equals(named, (string_address)clock_zones[at].name))
+                        return (string_address)clock_zones[at].spoken;
+        return null;
+}
+
+/* The table's own spelling of a zone or a country code, or null for neither.
+   Matching ignores case, so "europe/stockholm" and "SE" both come back as
+   "Europe/Stockholm". */
+string_address clock_zone_named(string_address name)
+{
+        positive at;
+
+        if (!name || !name[0])
+                return null;
+        for (at = 0; at < array_count(clock_zone_codes); at++)
+                if (clock_zone_same(name,
+                                    (string_address)clock_zone_codes[at].code))
+                        return (string_address)clock_zone_codes[at].zone;
+        for (at = 0; at < array_count(clock_zones); at++)
+                if (clock_zone_same(name, (string_address)clock_zones[at].name))
+                        return (string_address)clock_zones[at].name;
+        return null;
+}
+
 string_address clock_zone_posix(string_address name)
 {
         positive at;
 
         if (!name || !name[0])
                 return (string_address) "UTC0";
+        name = clock_zone_named(name) ? clock_zone_named(name) : name;
         for (at = 0; at < array_count(clock_zones); at++)
                 if (clock_zone_same(name, (string_address)clock_zones[at].name))
                         return (string_address)clock_zones[at].posix;
         return null;
+}
+
+/*
+        A fixed offset as people say it -- "+1", "-3", "+5:30", "UTC+2" --
+        written as the POSIX zone that means it.
+
+        The sign is the one on a clock: +1 is an hour ahead of UTC, where
+        Sweden is in winter. POSIX counts the other way, hours west, so +1 is
+        "<+01>-1", and that inversion is the reason this exists at all:
+        TZ=UTC+1 is a valid POSIX zone that is an hour *behind*, and a person
+        who types it gets a clock two hours from the one they meant. So the
+        prefix is accepted and ignored, the sign is always the clock's, and
+        what is written names itself in brackets so the abbreviation a
+        program prints is the offset and not a guess at a place.
+
+        Hours run to fourteen (Kiribati) and minutes, where given, are two
+        digits. A fixed offset has no daylight saving, which is the one thing
+        a country code gives and this does not. Returns false and writes
+        nothing for text that is not an offset.
+*/
+bool clock_zone_offset(string_address text, p8 address_to into,
+                       positive room)
+{
+        string_address s = text;
+        bool ahead;
+        positive hours = 0;
+        positive minutes = 0;
+        positive digits = 0;
+        p8 name[8];
+        p8 written[24];
+        positive at = 0;
+
+        if (!s)
+                return false;
+        if ((s[0] == 'U' || s[0] == 'u') && (s[1] == 'T' || s[1] == 't') &&
+            (s[2] == 'C' || s[2] == 'c'))
+                s += 3;
+        else if ((s[0] == 'G' || s[0] == 'g') &&
+                 (s[1] == 'M' || s[1] == 'm') && (s[2] == 'T' || s[2] == 't'))
+                s += 3;
+        if (s[0] != '+' && s[0] != '-')
+                return false;
+        ahead = s[0] == '+';
+        s++;
+        while (s[0] >= '0' && s[0] <= '9' && digits < 2)
+        {
+                hours = hours * 10 + (positive)(s++[0] - '0');
+                digits++;
+        }
+        if (!digits || hours > 14)
+                return false;
+        if (s[0] == ':')
+        {
+                s++;
+                if (s[0] < '0' || s[0] > '9' || s[1] < '0' || s[1] > '9')
+                        return false;
+                minutes = (positive)(s[0] - '0') * 10 + (positive)(s[1] - '0');
+                s += 2;
+                if (minutes > 59)
+                        return false;
+        }
+        if (s[0])
+                return false;
+
+        if (!hours && !minutes)
+        {
+                if (room < 4)
+                        return false;
+                string_copy_bounded(into, "UTC", room);
+                return true;
+        }
+
+        name[0] = ahead ? '+' : '-';
+        name[1] = (p8)('0' + hours / 10);
+        name[2] = (p8)('0' + hours % 10);
+        digits = 3;
+        if (minutes)
+        {
+                name[3] = (p8)('0' + minutes / 10);
+                name[4] = (p8)('0' + minutes % 10);
+                digits = 5;
+        }
+
+        written[at++] = '<';
+        memory_copy(written + at, name, digits);
+        at += digits;
+        written[at++] = '>';
+        if (ahead)
+                written[at++] = '-';
+        at += positive_into(written + at, hours);
+        if (minutes)
+        {
+                written[at++] = ':';
+                written[at++] = (p8)('0' + minutes / 10);
+                written[at++] = (p8)('0' + minutes % 10);
+        }
+        written[at] = end;
+
+        if (at + 1 > room)
+                return false;
+        memory_copy(into, written, at + 1);
+        return true;
+}
+
+/*
+        Which zones and codes clock_zone_named knows, one at a time: the
+        codes first, then the table. Returns null past the end.
+*/
+string_address clock_zone_known(positive which, bool address_to code)
+{
+        if (which < array_count(clock_zone_codes))
+        {
+                address_to code = true;
+                return (string_address)clock_zone_codes[which].code;
+        }
+        which -= array_count(clock_zone_codes);
+        address_to code = false;
+        return which < array_count(clock_zones)
+                       ? (string_address)clock_zones[which].name
+                       : null;
 }
 
 static bool clock_tz_name(const char address_to address_to at, p8 address_to into,
@@ -19014,12 +19267,41 @@ static fn clock_tz_load_file(void)
         }
 }
 
+/*
+        What the zone in force was read from, so localtime can tell whether it
+        has to read it again.
+
+        localtime used to call tzset every time, and with no TZ that is an
+        open, a read and a close of /root/timezone per call: a listing of ten
+        thousand files was thirty thousand system calls to learn the same
+        eight bytes. It still has to notice a change -- a clock on screen for
+        an hour should follow moonwater timezone without a restart -- so the
+        file is read again once the processor's own counter has moved on by
+        CLOCK_TZ_REREAD ticks, which needs no system call to ask: fifteen
+        milliseconds on a 9950X, a few seconds where the counter is a slow
+        timer, and either way sooner than anyone looks.
+
+        TZ in the environment is different. It is a program's own statement,
+        it can change between two calls (bash's printf %(...)T with TZ in
+        front of it), and reading it costs nothing, so it is compared on every
+        call and parsed again only when its text changed. tzset itself always
+        reads, because a program that calls it is asking for exactly that.
+*/
+#define CLOCK_TZ_REREAD (1ull << 26)
+
+static p8 clock_tz_env_held[64];
+static bool clock_tz_env_valid;
+static bool clock_tz_file_valid;
+static p64 clock_tz_file_at;
+
 fn tzset(void)
 {
         string_address value = getenv((string_address) "TZ");
         string_address posix;
 
         clock_tz_reset();
+        clock_tz_env_valid = false;
+        clock_tz_file_valid = false;
         if (value)
         {
                 posix = clock_zone_posix(value);
@@ -19027,9 +19309,110 @@ fn tzset(void)
                         posix = value;
                 if (!clock_tz_parse(posix))
                         clock_tz_reset();
+                if (string_length(value) < sizeof(clock_tz_env_held))
+                {
+                        string_copy_bounded(clock_tz_env_held, value,
+                                            sizeof(clock_tz_env_held));
+                        clock_tz_env_valid = true;
+                }
                 return;
         }
         clock_tz_load_file();
+        clock_tz_file_valid = true;
+        clock_tz_file_at = get_cpu_time();
+}
+
+static fn clock_tz_current(void)
+{
+        string_address value = getenv((string_address) "TZ");
+
+        if (value ? clock_tz_env_valid &&
+                            string_equals(value, clock_tz_env_held)
+                  : clock_tz_file_valid &&
+                            get_cpu_time() - clock_tz_file_at < CLOCK_TZ_REREAD)
+                return;
+        tzset();
+}
+
+static positive clock_tzif_word(p8 address_to at, p64 value, positive bytes)
+{
+        for (positive i = 0; i < bytes; i++)
+                at[i] = (p8)(value >> (8 * (bytes - 1 - i)));
+        return bytes;
+}
+
+/*
+        A zone as a TZif file, for the programs on this machine that read
+        /etc/localtime rather than /root/timezone -- a bowl's glibc or musl.
+
+        The file carries no history, only the rule: one type for the standard
+        offset, and the POSIX zone itself in the footer, which RFC 8536 says
+        governs every time after the last transition. There is exactly one
+        transition, at the start of time, and it is there for glibc: a file
+        with none never reaches the footer, so its daylight saving would be
+        silently lost and Stockholm would be an hour out all summer. zic
+        writes the same "big bang" first transition for the same reason.
+
+        Version 2, so the 64-bit block is the one a reader uses; the 32-bit
+        block ahead of it says the same with its first transition at the
+        earliest 32-bit second. Returns the bytes written, or zero for a zone
+        that does not parse or does not fit.
+*/
+positive clock_zone_tzif(string_address zone, p8 address_to into,
+                         positive room)
+{
+        string_address posix = clock_zone_posix(zone);
+        p8 name[CLOCK_TZ_NAME];
+        bipolar east;
+        positive letters;
+        positive posix_length;
+        positive at = 0;
+
+        if (!posix)
+                posix = zone;
+        if (!clock_tz_parse(posix))
+        {
+                tzset();
+                return 0;
+        }
+        string_copy_bounded(name, clock_std_name, sizeof(name));
+        east = -clock_std_west;
+        tzset();
+
+        letters = string_length(name) + 1;
+        posix_length = string_length(posix);
+        if (2 * (44 + 1 + 6 + letters) + 4 + 8 + posix_length + 2 > room)
+                return 0;
+
+        for (positive block = 0; block < 2; block++)
+        {
+                memory_copy(into + at, "TZif2", 5);
+                memory_zero(into + at + 5, 15);
+                at += 20;
+                at += clock_tzif_word(into + at, 0, 4);       // isutcnt
+                at += clock_tzif_word(into + at, 0, 4);       // isstdcnt
+                at += clock_tzif_word(into + at, 0, 4);       // leapcnt
+                at += clock_tzif_word(into + at, 1, 4);       // timecnt
+                at += clock_tzif_word(into + at, 1, 4);       // typecnt
+                at += clock_tzif_word(into + at, letters, 4); // charcnt
+                if (block == 0)
+                        at += clock_tzif_word(into + at, 0x80000000ull, 4);
+                else
+                        at += clock_tzif_word(into + at,
+                                              (p64)0 - (1ull << 59), 8);
+                into[at++] = 0;
+                at += clock_tzif_word(into + at, (p64)(p32)(b32)east, 4);
+                into[at++] = 0; // not daylight saving
+                into[at++] = 0; // the one designation
+                memory_copy(into + at, name, letters);
+                at += letters;
+        }
+
+        into[at++] = '\n';
+        memory_copy(into + at, posix, posix_length);
+        at += posix_length;
+        into[at++] = '\n';
+        return at;
 }
 
 tm address_to localtime_r(const time_t address_to stamp, tm address_to into)
@@ -19040,7 +19423,7 @@ tm address_to localtime_r(const time_t address_to stamp, tm address_to into)
 
         if (is_null(stamp) || is_null(into))
                 return null;
-        tzset();
+        clock_tz_current();
         utc = (bipolar)(address_to stamp);
         dst = clock_tz_in_dst(utc);
         west = dst ? clock_dst_west : clock_std_west;
@@ -19056,6 +19439,85 @@ tm address_to localtime_r(const time_t address_to stamp, tm address_to into)
 tm address_to localtime(const time_t address_to stamp)
 {
         return localtime_r(stamp, address_of clock_broken_shared);
+}
+
+/*
+        The zone's offset at one instant, in seconds east of UTC, and its
+        inverse. These are the two questions every program that shows or
+        reads a wall-clock time asks, and they were asked nowhere: date, ls,
+        stat, ps and touch all worked in UTC and said so, so moonwater
+        timezone changed what moonwater printed and nothing else.
+
+        clock_local_east is what a display adds before it splits a second
+        into a date. clock_local_to_utc takes a wall-clock time, written as
+        if it were UTC -- which is what clock_days_from_civil and friends
+        produce -- and says which instant it names. That is mktime's job and
+        the reason mktime is now a function rather than a second name for
+        timegm.
+
+        Twice a year a wall-clock time names no instant or two, and here the
+        answer is whichever the reference date gives, because a script that
+        runs both should not see two different seconds. glibc's mktime finds
+        it by searching: start at the wall-clock time read as if it were UTC,
+        step by the offset in force there, and stop where the offset stops
+        changing. So in the repeated hour a zone east of UTC lands on its
+        standard reading and a zone west of it on its summer one -- Stockholm
+        and New York answer differently, and both are what GNU prints. In the
+        skipped hour the search never settles; mktime then takes the standard
+        reading, which lands after the gap, and a parser that must refuse asks
+        clock_local_exists first -- the reference calls 02:30 on the spring
+        Sunday an invalid date, and so does this one. Under TZ=UTC0 all of it
+        is the identity, which is the zone every comparison with the
+        reference tools runs in.
+*/
+bipolar clock_local_east(b64 utc)
+{
+        clock_tz_current();
+        if (clock_has_dst && clock_tz_in_dst((bipolar)utc))
+                return -clock_dst_west;
+        return -clock_std_west;
+}
+
+b64 clock_local_to_utc(b64 civil)
+{
+        b64 at = civil;
+
+        clock_tz_current();
+        for (positive step = 0; step < 4; step++)
+        {
+                b64 next = civil - clock_local_east(at);
+
+                if (next == at)
+                        return at;
+                at = next;
+        }
+        return civil + clock_std_west;
+}
+
+//      Whether a wall-clock time happens at all here: false only inside the
+//      hour the clocks skip.
+bool clock_local_exists(b64 civil)
+{
+        clock_tz_current();
+        return !clock_has_dst ||
+               !clock_tz_in_dst((bipolar)(civil + clock_std_west)) ||
+               clock_tz_in_dst((bipolar)(civil + clock_dst_west));
+}
+
+time_t mktime(tm address_to broken)
+{
+        time_t civil;
+        time_t utc;
+
+        if (is_null(broken))
+                return (time_t)-1;
+        civil = timegm(broken);
+        if (civil == (time_t)-1)
+                return civil;
+        utc = (time_t)clock_local_to_utc((b64)civil);
+        if (!localtime_r(address_of utc, broken))
+                return (time_t)-1;
+        return utc;
 }
 
 #endif // KERNEL_MODE / STANDARD_NO_PLATFORM

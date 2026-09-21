@@ -2013,7 +2013,7 @@ fn file_stamp(writer write, b64 seconds, positive nanoseconds)
 {
         date_shape(write, seconds, 0, (string_address)"%Y-%m-%d %H:%M:%S.");
         positive_to_padded(write, nanoseconds, 9, '0', 0);
-        write(" +0000", 6);
+        date_shape(write, seconds, 0, (string_address)" %z");
 }
 
 b64 file_now()
@@ -2058,8 +2058,9 @@ fn file_stamp_short(writer write, b64 seconds, b64 now)
         b64 year;
         positive month, day, hour, minute, second;
 
-        file_split_moment(seconds, address_of year, address_of month, address_of day,
-                          address_of hour, address_of minute, address_of second);
+        file_split_moment(seconds + clock_local_east(seconds), address_of year,
+                          address_of month, address_of day, address_of hour,
+                          address_of minute, address_of second);
 
         file_month_short(write, month);
         write(" ", 1);
@@ -2298,7 +2299,8 @@ static bool file_moment_read_from(string_address text, b64 now, positive fractio
         b64 year;
         positive month, day, hour, minute, second;
 
-        file_split_moment(now, address_of year, address_of month, address_of day,
+        file_split_moment(now + clock_local_east(now), address_of year,
+                          address_of month, address_of day,
                           address_of hour, address_of minute, address_of second);
 
         bool dated = false;
@@ -2312,6 +2314,7 @@ static bool file_moment_read_from(string_address text, b64 now, positive fractio
         // qualifies; a weekday counts only when no date pins the day.
         bool year_wanted = false;
         bool named_date = false;
+        bool universal = false; // UTC, GMT or Z said by name
         bool zoned = false;
         bipolar weekday = -1;
         b64 zone = 0;
@@ -2773,6 +2776,7 @@ static bool file_moment_read_from(string_address text, b64 now, positive fractio
                         if (zoned)
                                 return false;
 
+                        universal = true;
                         continue;
                 }
 
@@ -2911,8 +2915,18 @@ static bool file_moment_read_from(string_address text, b64 now, positive fractio
                 }
         }
 
-        address_to out = days * 86400 + (b64)hour * 3600 + (b64)minute * 60 +
-                         (b64)second + shift - zone;
+        //      A time with a zone of its own names its instant. One without
+        //      names a wall-clock time here, which the zone turns into an
+        //      instant; relative amounts are then added as elapsed seconds.
+        b64 civil = days * 86400 + (b64)hour * 3600 + (b64)minute * 60 +
+                    (b64)second;
+
+        if (!zoned && !universal && !clock_local_exists(civil))
+                return false;
+
+        address_to out = (zoned || universal ? civil - zone
+                                             : clock_local_to_utc(civil)) +
+                         shift;
 
         return true;
 }
@@ -6208,9 +6222,9 @@ static bool file_source_destination(string_address program, positive first,
         counts, and the questions are kept apart (what to show, what order,
         which time, how to spell a name, what to follow).
 
-        Times are UTC. Nothing in this tree reads /usr/share/zoneinfo, and a
-        listing that quietly used the wrong zone would be worse than one that
-        says which zone it used.
+        Times are the machine's wall clock, in the zone moonwater timezone
+        set, with daylight saving taken for the date of each file rather than
+        for today.
 */
 /*
         A directory of more entries than this is refused. It was 8192, which a
@@ -13094,7 +13108,8 @@ static b32 file_find()
         parsed, so every specifier there prints exactly one field and nothing
         else -- %s is the size and not "size: 12".
 
-        Times are UTC, and say so in the +0000 they carry.
+        Times are the machine's wall clock, and carry the offset in force on
+        that date -- a winter file reads +0100 in Stockholm all summer.
 */
 static bool stat_follow;
 static bool stat_file_system;
@@ -30027,8 +30042,9 @@ static bool touch_stamp(string_address text, b64 now, b64 address_to out)
         b64 year;
         positive month, day, hour, minute, second;
 
-        file_split_moment(now, address_of year, address_of month, address_of day,
-                          address_of hour, address_of minute, address_of second);
+        file_split_moment(now + clock_local_east(now), address_of year,
+                          address_of month, address_of day, address_of hour,
+                          address_of minute, address_of second);
 
         if (field[1] < 0)
                 ;
@@ -30048,7 +30064,8 @@ static bool touch_stamp(string_address text, b64 now, b64 address_to out)
 
         b64 days = clock_days_from_civil(year, field[2], field[3]);
 
-        address_to out = days * 86400 + field[4] * 3600 + field[5] * 60 +
+        address_to out = clock_local_to_utc(days * 86400 + field[4] * 3600 +
+                                            field[5] * 60) +
                          stamp_second;
 
         return true;
@@ -35160,8 +35177,8 @@ static b32 file_cal()
                                               "cal: failed to parse timestamp or unknown month name: %s\n",
                                               word);
                         positive hour, minute, second;
-                        file_split_moment(stamp, address_of year,
-                                          address_of month,
+                        file_split_moment(stamp + clock_local_east(stamp),
+                                          address_of year, address_of month,
                                           address_of selected_day,
                                           address_of hour, address_of minute,
                                           address_of second);
@@ -35295,7 +35312,7 @@ static bool date_shape(writer write, b64 when, positive nanoseconds,
         p8 fixed[512];
         positive length;
 
-        if (!gmtime_r(address_of stamp, address_of broken))
+        if (!localtime_r(address_of stamp, address_of broken))
                 return false;
 
         length = clock_format_extended(fixed, sizeof(fixed), format,
@@ -35516,6 +35533,12 @@ static b32 file_date()
         string_address set_text = file_option_value(address_of taking, 's');
         bool resolution = (taking.flags & FILE_FLAG('Q')) != 0;
         bool set_date = (taking.flags & FILE_FLAG('s')) != 0;
+
+        //      -u is UTC for everything date does -- what it prints and what
+        //      it reads with -d -- which is how the reference does it too: TZ
+        //      for this process, and every conversion below follows it.
+        if (taking.flags & FILE_FLAG('u'))
+                setenv((string_address) "TZ", (string_address) "UTC0", 1);
         positive sources = (given ? 1u : 0u) + (batch ? 1u : 0u) +
                            (of_file ? 1u : 0u) + (resolution ? 1u : 0u);
         b64 when;

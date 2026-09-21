@@ -35121,6 +35121,112 @@ static fn check_live(void)
                 good((string_address) "Stockholm maps to CET",
                      clock_zone_posix((string_address) "Europe/Stockholm") &&
                          clock_zone_posix((string_address) "Europe/Stockholm")[0] == 'C');
+
+                //      A keyboard layout's code names its country's zone, and
+                //      comes back as the table's own spelling -- that is what
+                //      gets stored, so a bowl's glibc can read it too.
+                good((string_address) "se is Stockholm",
+                     clock_zone_named((string_address) "se") &&
+                         string_equals(clock_zone_named((string_address) "SE"),
+                                       (string_address) "Europe/Stockholm"));
+                good((string_address) "us is the zone most Americans live in",
+                     string_equals(clock_zone_named((string_address) "us"),
+                                   (string_address) "America/New_York"));
+                good((string_address) "a name comes back in the table's case",
+                     string_equals(clock_zone_named((string_address)
+                                                        "europe/london"),
+                                   (string_address) "Europe/London"));
+                good((string_address) "every code resolves to a zone",
+                     clock_zone_posix((string_address) "no") &&
+                         clock_zone_posix((string_address) "dk") &&
+                         clock_zone_posix((string_address) "fi") &&
+                         clock_zone_posix((string_address) "es") &&
+                         clock_zone_posix((string_address) "it"));
+                good((string_address) "a word that is no zone is not one",
+                     !clock_zone_named((string_address) "mars"));
+
+                //      An offset is written with the clock's sign, and the
+                //      proof is what localtime then says, not the string.
+                {
+                        static const struct
+                        {
+                                char text[12];
+                                bipolar east;
+                        } offsets[] = {
+                                {"+1", 3600},      {"-1", -3600},
+                                {"UTC+2", 7200},   {"utc-3", -10800},
+                                {"+5:30", 19800},  {"-9:30", -34200},
+                                {"+14", 50400},    {"GMT+0", 0},
+                        };
+                        bool all = true;
+
+                        for (positive at = 0; at < array_count(offsets); at++)
+                        {
+                                p8 zone[24];
+                                time_t epoch = 86400;
+
+                                if (!clock_zone_offset(
+                                        (string_address)offsets[at].text, zone,
+                                        sizeof(zone)))
+                                {
+                                        all = false;
+                                        continue;
+                                }
+                                setenv((string_address) "TZ", zone, 1);
+                                tzset();
+                                if (localtime(address_of epoch)->tm_gmtoff !=
+                                    offsets[at].east)
+                                        all = false;
+                        }
+                        good((string_address) "offsets read the way a clock shows them",
+                             all);
+                }
+                {
+                        p8 zone[24];
+
+                        good((string_address) "+1 is written as its own name",
+                             clock_zone_offset((string_address) "+1", zone,
+                                               sizeof(zone)) &&
+                                 string_equals(zone, (string_address) "<+01>-1"));
+                        good((string_address) "and not as TZ=UTC+1, an hour behind",
+                             !string_equals(zone, (string_address) "UTC+1"));
+                        good((string_address) "offsets past fourteen hours are refused",
+                             !clock_zone_offset((string_address) "+15", zone,
+                                                sizeof(zone)));
+                        good((string_address) "an offset needs its sign",
+                             !clock_zone_offset((string_address) "1", zone,
+                                                sizeof(zone)));
+                        //      The TZif a bowl reads: glibc and Python's
+                        //      zoneinfo were checked against real tzdata by
+                        //      hand; this holds the shape that made them agree
+                        //      -- version 2, and the rule in the footer.
+                        {
+                                static p8 tzif[512];
+                                string_address rule = (string_address)
+                                        "\nCET-1CEST,M3.5.0,M10.5.0/3\n";
+                                positive length = clock_zone_tzif(
+                                        (string_address) "se", tzif,
+                                        sizeof(tzif));
+                                positive tail = string_length(rule);
+
+                                good((string_address) "a zone makes a version 2 TZif",
+                                     length > tail &&
+                                         !memory_compare(tzif, "TZif2", 5));
+                                good((string_address) "whose footer is the zone's rule",
+                                     length > tail &&
+                                         !memory_compare(tzif + length - tail,
+                                                         rule, tail));
+                                good((string_address) "and a zone that does not parse makes none",
+                                     !clock_zone_tzif((string_address) "mars",
+                                                      tzif, sizeof(tzif)));
+                        }
+                        good((string_address) "and nothing after it",
+                             !clock_zone_offset((string_address) "+1x", zone,
+                                                sizeof(zone)) &&
+                                 !clock_zone_offset((string_address) "+5:3",
+                                                    zone, sizeof(zone)));
+                }
+
                 setenv((string_address) "TZ", (string_address) "UTC", 1);
                 tzset();
         }

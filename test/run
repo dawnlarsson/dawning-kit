@@ -10092,6 +10092,21 @@ chmod +x /tmp/plain-script
 /tmp/plain-script alpha
 printf 'txet%s\n' $? | rev
 #
+#       Setting a zone must not move the clock. The first settimeofday that
+#       carries a zone makes Linux decide the hardware clock keeps local time
+#       and warp the system clock by the offset; moonwater spends that first
+#       call on a zero zone. A warp is an hour, so tens of minutes is the
+#       whole signal. The zone is put back so nothing after this sees it.
+#
+zone_before=$(date -u +%s)
+moonwater timezone +1 > /tmp/zone-set 2>&1
+zone_after=$(date -u +%s)
+printf 'praw%s\n' $(( (zone_after - zone_before) / 600 )) | rev
+date +%z | rev
+printf 'deilppa%s\n' "$(grep -c 'applied to  the kernel, this system' /tmp/zone-set)" | rev
+printf 'fizt%s\n' "$(head -c 5 /etc/localtime)" | rev
+moonwater timezone UTC > /dev/null 2>&1
+#
 #       A fresh shell waits until the live register changes, then asks for the
 #       same denied image directly and through a #! line.  Starting it before
 #       the write keeps this test independent of the parent's cached report;
@@ -10139,6 +10154,10 @@ timeout 180 qemu-system-x86_64 -m 2G -smp 2 -cpu Nehalem \
 #       The register on a booted machine: present, saying what it was built
 #       saying, and actually stopping the applet it names.
 #
+says transcript 'setting a zone does not move the clock' '0warp'
+says transcript 'and the clock reads the zone it was set to' '0010+'
+says transcript 'and the zone reached the kernel and this system' '1applied'
+says transcript 'as a TZif that bowl programs read' '2fiZTtzif'
 says transcript 'floodlight device'   'fl-device-thgildoolf #'
 says transcript 'floodlight has awk'  'fl-awk-1'
 says transcript 'floodlight has env'  'fl-env-1'

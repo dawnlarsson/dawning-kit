@@ -8325,7 +8325,7 @@ static bool pr_date(p8 address_to into, positive room, b64 stamp,
         time_t time = (time_t)stamp;
         tm broken;
 
-        if (!gmtime_r(address_of time, address_of broken))
+        if (!localtime_r(address_of time, address_of broken))
                 return false;
 
         address_to length = clock_format_extended(into, room, pr_date_format,

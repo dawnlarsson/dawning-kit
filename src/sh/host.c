@@ -6570,6 +6570,13 @@ static positive locale_ntp_retry = LOCALE_NTP_RETRY_LEAST;
 static bipolar locale_ntp_child;
 
 static fn locale_ntp_keep(void);
+static bipolar locale_ntp_apply(void);
+
+//      What the last answer moved the clock by, and who gave it, for the
+//      person who asked by hand. The scheduled queries run in a child and
+//      nobody reads these there.
+static bipolar locale_ntp_moved_ns;
+static p8 locale_ntp_answered[80];
 
 static fn locale_word(string_address path, p8 address_to into, positive room)
 {
@@ -6611,54 +6618,355 @@ static bool locale_clock_synced(void)
         return logger_clock_synced(null);
 }
 
-static bool locale_zone_ok(string_address name)
+/*
+        What a stored zone is called when it is shown. A country code or a
+        zone name comes back as the table spells it; a fixed offset stored as
+        "<+0530>-5:30" is shown as UTC+05:30, which is how it was asked for,
+        rather than the POSIX spelling that exists to get the sign right.
+*/
+static fn locale_zone_describe(string_address zone, p8 address_to into,
+                               positive room)
 {
-        positive at;
+        string_address named = clock_zone_named(zone);
+        positive at = 3;
+
+        if (named)
+        {
+                string_copy_bounded(into, named, room);
+                return;
+        }
+        if (zone[0] != '<' || room < 16)
+        {
+                string_copy_bounded(into, zone[0] ? zone : (string_address) "UTC",
+                                    room);
+                return;
+        }
+        memory_copy(into, "UTC", 3);
+        for (positive in = 1; zone[in] && zone[in] != '>' && at + 2 < room; in++)
+        {
+                if (in == 4)
+                        into[at++] = ':';
+                into[at++] = zone[in];
+        }
+        into[at] = end;
+}
+
+/*
+        A zone this machine can keep: a name or country code from the table,
+        an offset as a clock shows it, or a POSIX zone string the parser takes
+        whole. The written form lands in into -- the table's spelling for a
+        name, the POSIX form for an offset -- so what is stored means the same
+        to every program that reads it, not only to this one.
+*/
+static bool locale_zone_resolve(string_address name, p8 address_to into,
+                                positive room)
+{
+        string_address named;
+        bool parsed;
 
         if (!name || !name[0])
                 return false;
-        if (clock_zone_posix(name))
+        named = clock_zone_named(name);
+        if (named)
+        {
+                string_copy_bounded(into, named, room);
                 return true;
-        for (at = 0; name[at]; at++)
-                if (name[at] >= '0' && name[at] <= '9')
-                        return true;
-        return false;
+        }
+        if (clock_zone_offset(name, into, room))
+                return true;
+
+        //      clock_tz_parse leaves the process's zone set to what it read,
+        //      so the one in force is put back whichever way it goes.
+        parsed = string_length(name) < room && clock_tz_parse(name);
+        tzset();
+        if (!parsed)
+                return false;
+        string_copy_bounded(into, name, room);
+        return true;
+}
+
+static b32 locale_zone_list(void)
+{
+        bool code = false;
+        bool was = true;
+        string_address name;
+
+        string_format(log, "  codes  ");
+        for (positive at = 0; (name = clock_zone_known(at, address_of code));
+             at++)
+        {
+                if (was && !code)
+                        string_format(log, "\n  zones  ");
+                else if (at)
+                        string_format(log, " ");
+                string_format(log, "%s", name);
+                was = code;
+        }
+        string_format(log, "\n  offsets  +1  -5  +5:30  UTC+2"
+                           TERM_DIM "   +1 is an hour ahead of UTC,"
+                           " with no daylight saving" TERM_RESET "\n");
+        log_flush();
+        return 0;
+}
+
+/*
+        A zone as a person reads it: the name it is stored under, and what it
+        is called -- "Europe/Stockholm, Central European Time". An offset has
+        no name in words, so it says what it is instead.
+*/
+static fn locale_zone_title(string_address zone, p8 address_to into,
+                            positive room)
+{
+        p8 shown[80];
+        string_address spoken = clock_zone_spoken(zone[0] ? zone
+                                                          : (string_address) "UTC");
+
+        locale_zone_describe(zone, shown, sizeof(shown));
+        string_copy_bounded(into, shown, room);
+        if (spoken && !string_equals(spoken, shown))
+        {
+                string_append_bounded(into, ", ", room);
+                string_append_bounded(into, spoken, room);
+        }
+        else if (zone[0] == '<')
+                string_append_bounded(into,
+                                      ", a fixed offset with no daylight saving",
+                                      room);
+}
+
+//      The wall clock now, in the zone in force, with its abbreviation.
+static fn locale_zone_moment(p8 address_to into, positive room)
+{
+        p64 now[2] = {0, 0};
+        time_t stamp;
+        tm broken;
+
+        system_call_2(syscall(clock_gettime), CLOCK_REALTIME, (positive)now);
+        stamp = (time_t)now[0];
+        tzset();
+        if (!localtime_r(address_of stamp, address_of broken) ||
+            !strftime(into, room, "%Y-%m-%d %H:%M:%S %Z", address_of broken))
+                string_copy_bounded(into, "(the clock could not be read)", room);
 }
 
 static b32 locale_zone_status(void)
 {
         p8 zone[80];
-        p64 now[2] = {0, 0};
-        tm broken;
-        time_t stamp;
-        p8 when[40];
+        p8 title[128];
+        p8 when[48];
 
         locale_word(LOCALE_ZONE_PATH, zone, sizeof(zone));
-        if (!zone[0])
-                string_copy_bounded(zone, "UTC", sizeof(zone));
-        system_call_2(syscall(clock_gettime), CLOCK_REALTIME, (positive)now);
-        stamp = (time_t)now[0];
-        tzset();
-        if (!localtime_r(address_of stamp, address_of broken))
-                return host_fail("timezone", -1);
-        strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", address_of broken);
-        string_format(log, host_label "timezone %s\n", zone);
-        string_format(log, "  local %s %s\n", when,
-                      (string_address)broken.tm_zone);
+        locale_zone_title(zone, title, sizeof(title));
+        locale_zone_moment(when, sizeof(when));
+        string_format(log, host_label "timezone %s\n", title);
+        string_format(log, "  local %s\n", when);
         log_flush();
         return 0;
 }
 
+/*
+        The kernel's own idea of the zone, sys_tz.
+
+        Almost nothing reads it -- programs here read /root/timezone and
+        bowls read their /etc/localtime -- but FAT does: every timestamp on
+        the EFI partition and on a USB stick is written in local time using
+        it, so left at zero a file saved at noon in Stockholm shows as ten in
+        the morning on the Mac or Windows machine it is carried to. It is a
+        plain offset, so it is re-applied whenever the offset changes, which
+        includes the two nights a year daylight saving does.
+
+        The trap is the first call. The first settimeofday that carries a
+        zone and no time makes Linux decide the hardware clock keeps local
+        time and move the system clock by the offset -- an hour into the
+        future for Sweden, the moment the zone is set. Passing a zero zone
+        first spends that first call on nothing, because the kernel only
+        warps when the offset is not zero. hwclock does the same.
+*/
+#define LOCALE_ZONE_NOT_APPLIED ((bipolar)1 << 40)
+
+static bipolar locale_zone_kernel_east = LOCALE_ZONE_NOT_APPLIED;
+static bool locale_zone_kernel_first_spent;
+
+static bipolar locale_zone_east_now(void)
+{
+        p64 now[2] = {0, 0};
+        time_t stamp;
+        tm broken;
+
+        system_call_2(syscall(clock_gettime), CLOCK_REALTIME, (positive)now);
+        stamp = (time_t)now[0];
+        if (!localtime_r(address_of stamp, address_of broken))
+                return 0;
+        return (bipolar)broken.tm_gmtoff;
+}
+
+static bipolar locale_zone_kernel(void)
+{
+        b32 zone[2] = {0, 0};
+        bipolar east = locale_zone_east_now();
+        bipolar failed;
+
+        if (east == locale_zone_kernel_east)
+                return 0;
+        if (!locale_zone_kernel_first_spent)
+        {
+                failed = system_call_2(syscall(settimeofday), 0,
+                                       (positive)zone);
+                if (failed < 0)
+                        return failed;
+                locale_zone_kernel_first_spent = true;
+        }
+        zone[0] = (b32)(-east / 60);
+        failed = system_call_2(syscall(settimeofday), 0, (positive)zone);
+        if (failed < 0)
+                return failed;
+        locale_zone_kernel_east = east;
+        return 0;
+}
+
+//      The zone, everywhere that does not read /root/timezone for itself:
+//      the kernel, and every bowl's /etc/localtime. Says where it went.
+static fn locale_zone_list_add(p8 address_to into, positive room,
+                                string_address what)
+{
+        if (into[0])
+                string_append_bounded(into, ", ", room);
+        string_append_bounded(into, what, room);
+}
+
+static fn locale_zone_apply(void)
+{
+        positive refused = 0;
+        bipolar kernel = locale_zone_kernel();
+        b32 host = bowl_write_localtime_host();
+        positive bowls = bowl_write_localtime_all(address_of refused);
+        p8 took[96] = {0};
+        p8 kept[128] = {0};
+        p8 count[32];
+        positive at;
+
+        if (kernel >= 0)
+                locale_zone_list_add(took, sizeof(took), "the kernel");
+        else
+        {
+                locale_zone_list_add(kept, sizeof(kept), "the kernel (");
+                string_append_bounded(kept, file_reason(kernel), sizeof(kept));
+                string_append_bounded(kept, ")", sizeof(kept));
+        }
+        locale_zone_list_add(host ? kept : took, host ? sizeof(kept) : sizeof(took),
+                             "this system");
+        for (positive side = 0; side < 2; side++)
+        {
+                positive n = side ? refused : bowls;
+
+                if (!n)
+                        continue;
+                at = positive_into(count, n);
+                string_copy_bounded(count + at, n == 1 ? " bowl" : " bowls",
+                                    sizeof(count) - at);
+                locale_zone_list_add(side ? kept : took,
+                                     side ? sizeof(kept) : sizeof(took), count);
+        }
+        if (took[0])
+                string_format(log, "  applied to  %s\n", took);
+        if (kept[0])
+                string_format(log, "  refused by  %s\n", kept);
+}
+
+//      Setting prints what the clock now reads, so a wrong zone -- an offset
+//      with the sign the other way round, a country in the wrong half of a
+//      continent -- is visible at the moment it is set, not at the next
+//      meeting.
 static b32 locale_zone_set(string_address name)
 {
-        if (!locale_zone_ok(name) || !radio_text_plain(name, string_length(name)))
-                return host_refuse("unknown timezone %s\n", name);
-        if (radio_write_word(LOCALE_ZONE_PATH, name) < 0)
+        p8 zone[80];
+        p8 was[80];
+        p8 before[48];
+        p8 after[48];
+        p8 title[128];
+        p8 old_shown[80];
+
+        if (!radio_text_plain(name, string_length(name)) ||
+            !locale_zone_resolve(name, zone, sizeof(zone)))
+                return host_refuse("unknown timezone %s -- "
+                                   "moonwater timezone list shows the names\n",
+                                   name);
+
+        locale_word(LOCALE_ZONE_PATH, was, sizeof(was));
+        locale_zone_describe(was, old_shown, sizeof(old_shown));
+        locale_zone_moment(before, sizeof(before));
+
+        if (radio_write_word(LOCALE_ZONE_PATH, zone) < 0)
                 return host_fail("timezone", -1);
-        tzset();
-        string_format(log, host_label "timezone %s\n", name);
+
+        locale_zone_moment(after, sizeof(after));
+        locale_zone_title(zone, title, sizeof(title));
+        string_format(log, host_label "timezone %s\n", title);
+        string_format(log, "  before  %s  " TERM_DIM "%s" TERM_RESET "\n",
+                      before, old_shown);
+        string_format(log, "  after   %s\n", after);
+        locale_zone_apply();
         log_flush();
         return 0;
+}
+
+/*
+        moonwater time: the clock now, and by hand what otherwise happens on
+        its own -- a network query, and the zone put back everywhere.
+*/
+static b32 locale_time_status(void)
+{
+        p64 now[2] = {0, 0};
+        time_t stamp;
+        tm broken;
+        p8 when[40];
+
+        locale_zone_status();
+        system_call_2(syscall(clock_gettime), CLOCK_REALTIME, (positive)now);
+        stamp = (time_t)now[0];
+        gmtime_r(address_of stamp, address_of broken);
+        strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", address_of broken);
+        string_format(log, "  utc   %s\n", when);
+        string_format(log, "  ntp %s, %s\n",
+                      locale_ntp_wanted() ? "on" : "off",
+                      locale_clock_synced() ? "synchronised" : "waiting");
+        log_flush();
+        return 0;
+}
+
+static b32 locale_time_sync(void)
+{
+        bipolar failed;
+
+        locale_ntp_moved_ns = 0;
+        locale_ntp_answered[0] = end;
+        failed = locale_ntp_apply();
+        if (failed < 0 && locale_ntp_answered[0])
+                string_format(log, host_label "time: %s answered, but the "
+                                   "clock could not be set: %s\n",
+                              locale_ntp_answered, file_reason(failed));
+        else if (failed < 0)
+                string_format(log, host_label "time: no server answered%s\n",
+                              failed == SNTP_RATE_LIMITED
+                                  ? " -- asked too often, try in a minute"
+                                  : "");
+        else
+        {
+                bipolar moved = locale_ntp_moved_ns;
+                positive whole = (positive)(moved < 0 ? -moved : moved);
+                p8 fraction[4];
+
+                positive_into_padded(fraction, whole / 1000000 % 1000, 3, '0');
+                fraction[3] = end;
+                string_format(log, host_label "time moved %s%p.%s s by %s\n",
+                              moved < 0 ? "-" : "+", whole / 1000000000,
+                              fraction, locale_ntp_answered);
+        }
+        locale_zone_kernel_east = LOCALE_ZONE_NOT_APPLIED;
+        locale_zone_status();
+        locale_zone_apply();
+        log_flush();
+        return failed < 0 ? 1 : 0;
 }
 
 static fn locale_clock_mark_synced(void)
@@ -6863,6 +7171,9 @@ static bipolar locale_ntp_one(string_address server, bool filter, bool tight)
         failed = sntp_query(server, filter, tight, address_of offset_ns);
         if (failed < 0)
                 return failed;
+        locale_ntp_moved_ns = offset_ns;
+        string_copy_bounded(locale_ntp_answered, server,
+                            sizeof(locale_ntp_answered));
         return locale_ntp_apply_offset(offset_ns);
 }
 
@@ -7018,10 +7329,25 @@ static b32 locale_keyboard_status(void)
         return 0;
 }
 
+static b32 locale_keyboard_list(void)
+{
+        string_format(log, "  layouts");
+        for (positive at = 0; at < array_count(locale_keyboards); at++)
+                string_format(log, " %s",
+                              (string_address)locale_keyboards[at].name);
+        string_format(log, "\n" TERM_DIM "  a layout's code is its country's,"
+                           " so moonwater timezone takes it too" TERM_RESET
+                           "\n");
+        log_flush();
+        return 0;
+}
+
 static b32 locale_keyboard_set(string_address name)
 {
         if (!locale_keyboard_ok(name))
-                return host_refuse("unknown keyboard layout %s\n", name);
+                return host_refuse("unknown keyboard layout %s -- "
+                                   "moonwater keyboard list shows them\n",
+                                   name);
         if (radio_write_word(LOCALE_KEYBOARD_PATH, name) < 0)
                 return host_fail("keyboard", -1);
         (void)locale_keyboard_live(name);
@@ -7037,7 +7363,12 @@ static fn locale_restore(void)
 
         locale_word(LOCALE_ZONE_PATH, zone, sizeof(zone));
         if (zone[0])
+        {
                 tzset();
+                (void)locale_zone_kernel();
+                (void)bowl_write_localtime_host();
+                (void)bowl_write_localtime_all(null);
+        }
 
         locale_word(LOCALE_KEYBOARD_PATH, keyboard, sizeof(keyboard));
         if (keyboard[0])
@@ -7107,8 +7438,12 @@ static fn locale_ntp_keep(void)
         locale_ntp_child = child;
 }
 
+//      Daylight saving moves the offset twice a year without anyone setting
+//      anything; the kernel's copy follows it here. Bowls need nothing, since
+//      their file carries the rule rather than the offset.
 static fn locale_recover(void)
 {
+        (void)locale_zone_kernel();
         if (locale_ntp_wanted())
                 locale_ntp_keep();
 }
@@ -7118,12 +7453,25 @@ static b32 host_locale(string_address address_to arguments, positive count)
         string_address verb = arguments[1];
         string_address word = count > 2 ? arguments[2] : null;
 
+        if (string_equals(verb, "time"))
+        {
+                if (count == 2)
+                        return locale_time_status();
+                if (count != 3 || !string_equals(word, "sync"))
+                        return host_usage();
+                if (!bowl_is_root())
+                        return host_refuse("%s needs root\n", "moonwater");
+                return locale_time_sync();
+        }
+
         if (string_equals(verb, "timezone"))
         {
                 if (count == 2)
                         return locale_zone_status();
                 if (count != 3)
                         return host_usage();
+                if (string_equals(word, "list"))
+                        return locale_zone_list();
                 if (!bowl_is_root())
                         return host_refuse("%s needs root\n", "moonwater");
                 return locale_zone_set(word);
@@ -7154,6 +7502,8 @@ static b32 host_locale(string_address address_to arguments, positive count)
                 return locale_keyboard_status();
         if (count != 3)
                 return host_usage();
+        if (string_equals(word, "list"))
+                return locale_keyboard_list();
         if (!bowl_is_root())
                 return host_refuse("%s needs root\n", "moonwater");
         return locale_keyboard_set(word);
@@ -7548,14 +7898,16 @@ static fn host_usage_write(writer out)
                       "          " TERM_DIM "remember a bluetooth device" TERM_RESET "\n"
                       TERM_BOLD "  priority internet [wired|wifi]" TERM_RESET
                       " " TERM_DIM "which link when both are up [wired]" TERM_RESET "\n"
-                      TERM_BOLD "  timezone [ZONE]" TERM_RESET
-                      "             " TERM_DIM "the clock's zone [UTC]" TERM_RESET "\n"
+                      TERM_BOLD "  time [sync]" TERM_RESET
+                      "                 " TERM_DIM "the clock; sync sets it and the zone now" TERM_RESET "\n"
+                      TERM_BOLD "  timezone [ZONE|se|+1|list]" TERM_RESET
+                      " " TERM_DIM "the clock's zone [UTC]" TERM_RESET "\n"
                       TERM_BOLD "  ntp [on|off]" TERM_RESET
                       "                " TERM_DIM "set the clock from the network [on]" TERM_RESET "\n"
                       TERM_BOLD "  ntp filter [on|off]" TERM_RESET
                       "         " TERM_DIM "keep the lowest-delay sample of five [on]" TERM_RESET "\n"
-                      TERM_BOLD "  keyboard [LAYOUT]" TERM_RESET
-                      "           " TERM_DIM "Canvas keys: us uk de se no dk fi fr es it" TERM_RESET "\n"
+                      TERM_BOLD "  keyboard [LAYOUT|list]" TERM_RESET
+                      "      " TERM_DIM "Canvas keys: us uk de se no dk fi fr es it" TERM_RESET "\n"
                       TERM_BOLD "  wipe" TERM_RESET
                       "                        " TERM_DIM "forget /home and /root, keep the machine" TERM_RESET "\n"
                       "\n"
@@ -7641,11 +7993,12 @@ static b32 host_status(void)
                 p8 zone[80];
                 p8 keyboard[16];
 
+                p8 shown[128];
+
                 locale_word(LOCALE_ZONE_PATH, zone, sizeof(zone));
                 locale_word(LOCALE_KEYBOARD_PATH, keyboard, sizeof(keyboard));
-                string_format(log, "  timezone %s\n",
-                              zone[0] ? (string_address)zone
-                                      : (string_address) "UTC");
+                locale_zone_title(zone, shown, sizeof(shown));
+                string_format(log, "  timezone %s\n", shown);
                 string_format(log, "  ntp %s, filter %s\n",
                               locale_ntp_wanted() ? (string_address) "on"
                                                   : (string_address) "off",
@@ -7756,7 +8109,7 @@ static b32 host_main()
                 return host_radio(arguments, count);
 
         if (string_equals(verb, "timezone") || string_equals(verb, "ntp") ||
-            string_equals(verb, "keyboard"))
+            string_equals(verb, "keyboard") || string_equals(verb, "time"))
                 return host_locale(arguments, count);
 
         if (string_equals(verb, "wipe") && count == 2)

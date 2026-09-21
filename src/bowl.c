@@ -2353,6 +2353,122 @@ static b32 bowl_write_resolv(string_address root)
         return bowl_write_bytes(path, out.bytes, out.used);
 }
 
+/*
+        The machine's zone, as the bowl's /etc/localtime.
+
+        A bowl's programs read their own /etc/localtime, not the file
+        moonwater timezone writes, so without this every guest shows the
+        zone its distribution shipped with -- usually UTC -- whatever the
+        machine is set to. The file is a TZif carrying the POSIX rule
+        (clock_zone_tzif), which needs no tzdata in the guest.
+
+        The old /etc/localtime is usually a symlink into the guest's own
+        zoneinfo. bowl_write_bytes renames over the link rather than writing
+        through it, so the guest's tzdata is never touched. A machine that
+        has never set a zone leaves the bowl's alone.
+*/
+static b32 bowl_write_localtime_at(string_address path)
+{
+        p8 zone[80];
+        p8 file[512];
+        bipolar got = file_slurp(CLOCK_ZONE_PATH, zone, sizeof(zone));
+        positive length;
+
+        if (got <= 0)
+                return 0;
+        if ((positive)got >= sizeof(zone))
+                got = (bipolar)(sizeof(zone) - 1);
+        while (got > 0 && (zone[got - 1] == '\n' || zone[got - 1] == '\r'))
+                got--;
+        zone[got] = end;
+        if (!zone[0])
+                return 0;
+
+        length = clock_zone_tzif(zone, file, sizeof(file));
+        if (!length)
+                return bowl_refuse("the machine's timezone does not parse\n");
+
+        //      Every boot re-applies the zone, and a write here is an fsync
+        //      per bowl on the way to a prompt. A file that already says the
+        //      same thing is left alone. The read does not follow a link --
+        //      a symlink into the guest's zoneinfo is exactly what differs.
+        {
+                p8 held[sizeof(file)];
+                bipolar handle = system_open_at(AT_FDCWD, path,
+                                                O_RDONLY | O_NOFOLLOW |
+                                                        O_CLOEXEC);
+
+                if (handle >= 0)
+                {
+                        bipolar had = system_read_once(handle, held,
+                                                       sizeof(held));
+
+                        system_close(handle);
+                        if (had == (bipolar)length &&
+                            !memory_compare(held, file, length))
+                                return 0;
+                }
+        }
+        return bowl_write_bytes(path, file, length);
+}
+
+static b32 bowl_write_localtime(string_address root)
+{
+        p8 path[BOWL_PATH_LIMIT];
+
+        if (!bowl_has(root, "/etc"))
+                return 0;
+        if (!bowl_root_path(path, sizeof(path), root, "/etc/localtime"))
+                return bowl_refuse("bowl path is too long\n");
+        return bowl_write_localtime_at(path);
+}
+
+/*
+        Moonwater's own /etc/localtime. A bowl program launched in the fast
+        view -- which is most of them, btop included -- sees Moonwater's /etc
+        and not its bowl's, so this is the file its glibc reads. Without it
+        such a program shows UTC however the machine is set, which is exactly
+        what a clock two hours behind in btop was.
+*/
+static b32 bowl_write_localtime_host(void)
+{
+        bipolar made = bowl_mkdir("/etc");
+
+        if (made < 0)
+                return bowl_fail("/etc", made);
+        return bowl_write_localtime_at("/etc/localtime");
+}
+
+/* Every bowl's /etc/localtime, after the machine's zone changes. Returns how
+   many took it and counts the ones that refused; a refusal is skipped, not
+   fatal, and bowl_write_bytes has already said which and why. */
+static positive bowl_write_localtime_all(positive address_to refused)
+{
+        file_walk walk;
+        struct linux_dirent64 address_to entry;
+        p8 root[BOWL_PATH_LIMIT];
+        positive written = 0;
+
+        if (!file_walk_open(address_of walk, AT_FDCWD, BOWL_ROOT_DIRECTORY))
+                return 0;
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name) ||
+                    string_equals(entry->d_name, "bin"))
+                        continue;
+                if (!path_join(root, sizeof(root), BOWL_ROOT_DIRECTORY,
+                               entry->d_name) ||
+                    !bowl_named_root(root) || !bowl_has(root, "/etc"))
+                        continue;
+                if (!bowl_write_localtime(root))
+                        written++;
+                else if (refused)
+                        address_to refused += 1;
+        }
+        file_walk_close(address_of walk);
+        return written;
+}
+
 static b32 bowl_write_mirror(string_address root)
 {
         p8 path[BOWL_PATH_LIMIT];
@@ -2430,6 +2546,9 @@ static b32 bowl_write_apt(string_address root);
 static b32 bowl_configure(string_address root)
 {
         b32 failed = bowl_write_resolv(root);
+
+        if (!failed)
+                failed = bowl_write_localtime(root);
 
         if (!failed && bowl_has(root, "/etc/pacman.conf"))
         {

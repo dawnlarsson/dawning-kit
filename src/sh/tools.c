@@ -361,7 +361,7 @@ static positive tools_clock_text(p8 address_to into, positive room,
 {
         time_t stamp = (time_t)seconds;
         tm broken;
-        positive made = gmtime_r(address_of stamp, address_of broken)
+        positive made = localtime_r(address_of stamp, address_of broken)
                             ? strftime(into, room, format, address_of broken)
                             : 0;
 
@@ -12363,8 +12363,8 @@ static byte_span ps_draw(struct snapshot_process address_to process,
                             (b64)(process->start_ns / SYSTEM_NANOSECONDS);
                 time_t stamp = (time_t)began, now = (time_t)ps_wall;
                 tm then, today;
-                bool this_year = gmtime_r(address_of stamp, address_of then) &&
-                                 gmtime_r(address_of now, address_of today) &&
+                bool this_year = localtime_r(address_of stamp, address_of then) &&
+                                 localtime_r(address_of now, address_of today) &&
                                  then.tm_year == today.tm_year;
                 string_address format =
                     field == PS_FIELD_LSTART ? "%a %b %e %H:%M:%S %Y"
@@ -17742,7 +17742,7 @@ static positive ul_lsclock_iso(p8 address_to into, timespec value)
 {
         time_t stamp = value.tv_sec;
         tm broken;
-        if (!gmtime_r(address_of stamp, address_of broken))
+        if (!localtime_r(address_of stamp, address_of broken))
         {
                 into[0] = end;
                 return 0;
@@ -17750,8 +17750,18 @@ static positive ul_lsclock_iso(p8 address_to into, timespec value)
         positive used = strftime(into, 48, "%Y-%m-%dT%H:%M:%S", address_of broken);
         into[used++] = '.';
         used += positive_into_padded(into + used, value.tv_nsec, 9, '0');
-        memory_copy_end(into + used, "+00:00", 6);
-        return used + 6;
+        {
+                bipolar east = (bipolar)broken.tm_gmtoff;
+                positive whole = (positive)(east < 0 ? -east : east);
+
+                into[used++] = east < 0 ? '-' : '+';
+                used += positive_into_padded(into + used, whole / 3600, 2, '0');
+                into[used++] = ':';
+                used += positive_into_padded(into + used, whole / 60 % 60, 2,
+                                             '0');
+        }
+        into[used] = end;
+        return used;
 }
 
 static string_address ul_lsclock_field(address_any opaque, p8 column,
