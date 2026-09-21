@@ -61,7 +61,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format machine differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net waterlink bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format machine differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
 
 describe()
 {
@@ -74,6 +74,7 @@ describe()
         fold)     echo "the constant-size fold we put in the kernel string header" ;;
         allocator) echo "malloc, free, calloc and realloc against glibc's" ;;
         reserve) echo "movable mappings, growth failures, relocation and sparse-page residency" ;;
+        waterlink) echo "the waterlink core as a pure transform: supersession, durable ordering, deadlines, stale arrivals and the replay window" ;;
         utf8) echo "bounded UTF-8 character traversal, malformed bytes and guard pages on three machines" ;;
         hex) echo "bounded hexadecimal encoding, alignment and guard pages on three machines" ;;
         codec) echo "bounded radix codecs, malformed symbols and exact spans on three machines" ;;
@@ -1972,6 +1973,7 @@ known_one()
 lane_declare()   { freestanding_checks_lane declare declare; }
 lane_fold()      { freestanding_checks_lane fold fold; }
 lane_reserve()   { freestanding_checks_lane reserve reserve; }
+lane_waterlink() { freestanding_checks_lane waterlink waterlink; }
 lane_utf8()      { freestanding_checks_lane utf8 utf8; }
 lane_hex()       { freestanding_checks_lane hex hex; }
 lane_codec()     { freestanding_checks_lane codec codec; }

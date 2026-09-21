@@ -169,11 +169,16 @@ _Static_assert(sizeof(struct waterlink_frame) == 24,
 #define WATERLINK_PACK_ZSTD 2u
 #define WATERLINK_PACK_LZMA 3u
 
-/*      What a frame may unpack to. A paired peer is authenticated, not
-        benign, so this is one scratch buffer taken at startup and a declared
-        length checked against it -- otherwise the datapath allocates nothing
-        only until somebody sends a well formed frame claiming a gigabyte. */
-#define WATERLINK_INFLATED 65536
+/*      What a frame may unpack to: one scratch buffer taken at startup, and
+        nothing may claim more. A paired peer is authenticated, not benign, so
+        without a ceiling the datapath allocates nothing only until somebody
+        sends a well formed frame claiming a gigabyte.
+
+        The ceiling is the width of the field that declares it. Sixteen bits
+        cannot ask for more than this, so there is no bound to check and no
+        check to get wrong -- the only such rule in this file that a reader
+        can confirm by looking at the struct. */
+#define WATERLINK_INFLATED 65535
 
 /*      Effort is a level on the method's own scale, not a time budget: no
         coder here takes microseconds as input, and a cost table per method

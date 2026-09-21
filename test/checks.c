@@ -50940,6 +50940,351 @@ b32 main(void)
 }
 #endif /* CHECK_net */
 
+#ifdef CHECK_waterlink
+#include "../src/lib.util.c"
+#include "../src/waterlink/link.c"
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+/*
+        Waterlink's core, which is a pure transform and so can be tested to
+        the end with no socket, no clock and no key.
+
+        The three rules that are bugs if they are wrong get their own cases:
+        supersession keeps a frame's place, a durable frame is never jumped or
+        dropped, and a frame that arrives behind the one that replaced it is
+        refused rather than applied backwards. The rest is bounds.
+*/
+
+static struct waterlink_link one;
+
+static p64 heard_key[64];
+static p32 heard_sequence[64];
+static p16 heard_length[64];
+static p8 heard_first[64];
+static positive heard;
+
+static fn hear(address_any context, struct waterlink_frame address_to head,
+               p8 address_to payload)
+{
+        (void)context;
+
+        if (heard >= 64)
+                return;
+
+        heard_key[heard] = head->key;
+        heard_sequence[heard] = head->sequence;
+        heard_length[heard] = head->length;
+        heard_first[heard] = head->length ? payload[0] : 0;
+        heard++;
+}
+
+//      One datagram out of the sender and straight into the receiver, which
+//      is the whole link minus the two things this file does not do.
+static positive carry(p32 now, bool address_to alone)
+{
+        p8 body[WATERLINK_PAYLOAD];
+        positive used = waterlink_fill(address_of one, body, now, alone);
+
+        heard = 0;
+        if (used)
+                check("a filled body walks back out",
+                      waterlink_deliver(address_of one, body, used, hear,
+                                        null));
+        return used;
+}
+
+static fn post_one(p64 key, p16 flags, p16 deadline, p8 mark, p32 now)
+{
+        p8 payload[4];
+
+        payload[0] = mark;
+        payload[1] = mark;
+        payload[2] = mark;
+        payload[3] = mark;
+        waterlink_post(address_of one, key, WATERLINK_CHANNEL_OPEN, flags,
+                       deadline, 0, payload, 4, now);
+}
+
+static fn refusals(void)
+{
+        p8 payload[4] = { 1, 1, 1, 1 };
+        p64 before;
+
+        waterlink_link_reset(address_of one);
+        before = one.refused;
+
+        //      Neither bit says nothing about whether it may be dropped, and
+        //      both bits say two things at once.
+        check("a frame with no class is refused",
+              !waterlink_post(address_of one, 1, 0, 0, 0, 0, payload, 4, 0));
+        check("a frame with both classes is refused",
+              !waterlink_post(address_of one, 1, 0,
+                              WATERLINK_FRAME_REPLACEABLE |
+                                      WATERLINK_FRAME_DURABLE,
+                              0, 0, payload, 4, 0));
+
+        //      History on a droppable frame makes every later frame on that
+        //      key undecodable the moment it is dropped.
+        check("history on a replaceable frame is refused",
+              !waterlink_post(address_of one, 1, 0,
+                              WATERLINK_FRAME_REPLACEABLE |
+                                      WATERLINK_FRAME_HISTORY,
+                              0, 0, payload, 4, 0));
+        check("history on a durable frame is allowed",
+              waterlink_post(address_of one, 1, 0,
+                             WATERLINK_FRAME_DURABLE |
+                                     WATERLINK_FRAME_HISTORY,
+                             0, 0, payload, 4, 0));
+
+        check("a frame larger than a datagram is refused",
+              !waterlink_post(address_of one, 2, 0, WATERLINK_FRAME_DURABLE, 0,
+                              0, payload, WATERLINK_FRAME_MAX + 1, 0));
+
+        //      An unpacked length and a packing method must agree, either way.
+        check("an inflated length with no method is refused",
+              !waterlink_post(address_of one, 3, 0, WATERLINK_FRAME_DURABLE, 0,
+                              900, payload, 4, 0));
+        check("a method with no inflated length is refused",
+              !waterlink_post(address_of one, 3, 0,
+                              WATERLINK_FRAME_DURABLE |
+                                      (WATERLINK_PACK_ZSTD
+                                       << WATERLINK_FRAME_PACK_SHIFT),
+                              0, 0, payload, 4, 0));
+
+        check("every refusal was counted", one.refused - before == 6);
+}
+
+static fn supersession(void)
+{
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+
+        //      Three states for one key. Only the last is worth sending, and
+        //      it must arrive where the first one stood.
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'a', 0);
+        post_one(9, WATERLINK_FRAME_REPLACEABLE, 0, 'x', 0);
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'b', 0);
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'c', 0);
+
+        check("two supersessions happened", one.superseded == 2);
+        check("only two slots were ever posted", one.posted == 2);
+
+        carry(0, address_of alone);
+        check("both keys arrived", heard == 2);
+        check("the superseded key kept its place", heard_key[0] == 7);
+        check("and carries the newest value", heard_first[0] == 'c');
+        check("the untouched key is behind it", heard_key[1] == 9);
+        check("a replaceable run needs no urgency", !alone);
+}
+
+static fn durable_is_a_wall(void)
+{
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+
+        //      The rule: a replaceable frame may only be dropped if no
+        //      durable frame sits between it and the one replacing it.
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'a', 0);
+        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'S', 0);
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'b', 0);
+
+        check("nothing was superseded across the durable frame",
+              one.superseded == 0);
+
+        carry(0, address_of alone);
+        check("all three went out", heard == 3);
+        check("in the order they were posted",
+              heard_first[0] == 'a' && heard_first[1] == 'S' &&
+                      heard_first[2] == 'b');
+        check("with sequences that increase",
+              heard_sequence[0] == 0 && heard_sequence[1] == 1 &&
+                      heard_sequence[2] == 2);
+}
+
+static fn deadlines(void)
+{
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+
+        //      A replaceable frame that has run out of time is worthless. A
+        //      durable one is late, which still beats never.
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 16, 'a', 100);
+        post_one(8, WATERLINK_FRAME_DURABLE, 16, 'S', 100);
+
+        carry(400, address_of alone);
+        check("the late replaceable frame was dropped", one.expired == 1);
+        check("the late durable frame was not", heard == 1);
+        check("and it is the durable one", heard_first[0] == 'S');
+}
+
+static fn urgency(void)
+{
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+
+        post_one(1, WATERLINK_FRAME_BULK | WATERLINK_FRAME_DURABLE, 0, 'B', 0);
+        post_one(2, WATERLINK_FRAME_URGENT | WATERLINK_FRAME_DURABLE, 0, 'U', 0);
+
+        //      An urgent frame cannot wait in a segment run for the frames
+        //      behind it, so the datagram carrying it says so.
+        carry(0, address_of alone);
+        check("the urgent frame went first", heard_first[0] == 'U');
+        check("its datagram must travel alone", alone);
+
+        //      The bulk frame rides along in the same datagram rather than
+        //      waiting for the next one. It was already queued, the datagram
+        //      is padded to a fixed size either way, and the urgent frame is
+        //      in front of it -- so the ride is free and nothing is delayed.
+        check("the bulk frame rode along behind it", heard == 2);
+        check("and it is the bulk one", heard_first[1] == 'B');
+
+        check("nothing is left to send", carry(0, address_of alone) == 0);
+        check("and an empty fill claims no urgency", !alone);
+}
+
+static fn stale_arrivals(void)
+{
+        p8 body[WATERLINK_PAYLOAD];
+        p8 first[WATERLINK_PAYLOAD];
+        positive used;
+        positive kept;
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'a', 0);
+        kept = waterlink_fill(address_of one, first, 0, address_of alone);
+
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'b', 0);
+        used = waterlink_fill(address_of one, body, 0, address_of alone);
+
+        heard = 0;
+        waterlink_deliver(address_of one, body, used, hear, null);
+        check("the newer frame was delivered", heard == 1);
+
+        //      The older frame arrives after the one that replaced it. This
+        //      is the receiving half of supersession: it is dropped, not
+        //      applied, or a window's damage lands after the window closed.
+        heard = 0;
+        check("a stale frame is still well formed",
+              waterlink_deliver(address_of one, first, kept, hear, null));
+        check("but nothing was delivered from it", heard == 0);
+        check("and it was counted stale", one.stale == 1);
+}
+
+static fn malformed_bodies(void)
+{
+        p8 body[WATERLINK_PAYLOAD];
+        positive used;
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'a', 0);
+        used = waterlink_fill(address_of one, body, 0, address_of alone);
+
+        check("a body longer than a datagram is refused",
+              !waterlink_deliver(address_of one, body, WATERLINK_PAYLOAD + 1,
+                                 null, null));
+        check("a body cut inside its payload is refused",
+              !waterlink_deliver(address_of one, body, used - 1, null, null));
+        check("a body cut inside its header is refused",
+              !waterlink_deliver(address_of one, body, 12, null, null));
+
+        //      A length that reaches past what arrived is the shape every
+        //      parser gets wrong once. It sits at offset 14 of the frame
+        //      header -- key 8, sequence 4, channel 2 -- and 1000 is a length
+        //      this link would otherwise carry, so what refuses it is the
+        //      bound against the body and not the sanity check above it.
+        body[14] = 0xe8;
+        body[15] = 0x03;
+        check("a length past the end of the body is refused",
+              !waterlink_deliver(address_of one, body, used, null, null));
+}
+
+static fn replay(void)
+{
+        struct waterlink_replay window;
+
+        memory_zero(address_of window, sizeof window);
+
+        check("the first counter is new",
+              waterlink_replay_new(address_of window, 1));
+        check("the same counter is not",
+              !waterlink_replay_new(address_of window, 1));
+        check("a later counter is new",
+              waterlink_replay_new(address_of window, 5));
+        check("a counter behind it, unseen, is new",
+              waterlink_replay_new(address_of window, 3));
+        check("and is not new twice",
+              !waterlink_replay_new(address_of window, 3));
+
+        //      A jump past the whole window clears it rather than shifting
+        //      bits that can no longer mean anything.
+        check("a far jump is new",
+              waterlink_replay_new(address_of window,
+                                   5 + WATERLINK_REPLAY_WINDOW * 2));
+        check("what the jump left behind is too old to judge",
+              !waterlink_replay_new(address_of window, 5));
+        check("the top of the window is still itself",
+              !waterlink_replay_new(address_of window,
+                                    5 + WATERLINK_REPLAY_WINDOW * 2));
+
+        //      The edge the shift has to get right: exactly one below the
+        //      window is out, exactly at the edge is in.
+        memory_zero(address_of window, sizeof window);
+        check("a fresh window takes a high counter",
+              waterlink_replay_new(address_of window,
+                                   WATERLINK_REPLAY_WINDOW * 4));
+        check("the oldest counter still inside is new",
+              waterlink_replay_new(address_of window,
+                                   WATERLINK_REPLAY_WINDOW * 4 -
+                                           (WATERLINK_REPLAY_WINDOW - 1)));
+        check("one below the window is refused",
+              !waterlink_replay_new(address_of window,
+                                    WATERLINK_REPLAY_WINDOW * 4 -
+                                            WATERLINK_REPLAY_WINDOW));
+}
+
+static fn saturation(void)
+{
+        p8 payload[4] = { 1, 1, 1, 1 };
+        positive taken = 0;
+
+        waterlink_link_reset(address_of one);
+
+        //      A full queue refuses rather than choosing what to throw away.
+        //      Choosing is the caller's, which is why this returns false
+        //      instead of quietly dropping the oldest durable frame.
+        for (positive at = 0; at < WATERLINK_SLOTS + 8; at++)
+                if (waterlink_post(address_of one, 1000 + at, 0,
+                                   WATERLINK_FRAME_DURABLE, 0, 0, payload, 4,
+                                   0))
+                        taken++;
+
+        check("the queue filled to its ceiling", taken == WATERLINK_SLOTS);
+        check("and refused everything past it", one.refused == 8);
+}
+
+b32 main(void)
+{
+        refusals();
+        supersession();
+        durable_is_a_wall();
+        deadlines();
+        urgency();
+        stale_arrivals();
+        malformed_bodies();
+        replay();
+        saturation();
+        return test_report(null);
+}
+#endif /* CHECK_waterlink */
+
 #ifdef CHECK_bowl
 #include "../src/lib.util.c"
 #include "../src/moonwater/spark.c"
