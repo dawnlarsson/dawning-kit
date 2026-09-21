@@ -16626,34 +16626,27 @@ static fn grep_binary_settle(grep_binary address_to binary, positive line_end)
         byte's high bit survives (b & 7f) + 7f, b and 7f or-ed together only
         where b is zero, and a word is written back only when it held one.
 */
+// Every NUL made the delimiter: the library's table translation from the
+// first NUL on, with a table built the first time for this delimiter.
 static fn grep_binary_zap(p8 address_to at, positive size)
 {
-        p64 delimiter = text_delimiter;
+        static p8 table[256];
+        static b32 built = -1;
         p8 address_to first = memory_first_of(at, 0, size);
 
         if (!first)
                 return;
 
-        positive i = (positive)(first - at);
-
-        for (; i + 8 <= size; i += 8)
+        if (built != (b32)text_delimiter)
         {
-                p64 word;
+                for (positive i = 0; i < 256; i++)
+                        table[i] = (p8)i;
 
-                __builtin_memcpy(address_of word, at + i, 8);
-
-                p64 zero = ~(((word & 0x7f7f7f7f7f7f7f7full) + 0x7f7f7f7f7f7f7f7full) |
-                             word | 0x7f7f7f7f7f7f7f7full);
-
-                if (!zero)
-                        continue;
-
-                word |= (zero >> 7) * delimiter;
-                __builtin_memcpy(at + i, address_of word, 8);
+                table[0] = text_delimiter;
+                built = text_delimiter;
         }
 
-        for (; i < size; i++)
-                at[i] = at[i] ? at[i] : (p8)delimiter;
+        memory_translate(first, size - (positive)(first - at), table);
 }
 
 // Whether a regular file has a hole anywhere past where reading begins.
