@@ -7022,24 +7022,26 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
         initcalls are done, and a canvas that comes up after that -- a late
         card, or the module loaded by init -- starts it at once.
 
-        Both sides under desktop.lock, which canvas_start already holds; the
-        spawn itself happens on the canvas thread, outside that lock.
+        The two sides meet in one word, not under desktop.lock. The
+        initcall that says they are done runs on the thread that goes on to
+        exec init, and the lock is held for whole frames -- the first picture,
+        a blocking flush -- so taking it there put up to a display period, and
+        on real hardware a modeset, in front of Run /init on about a third of
+        boots. Each side sets its own bit and looks at the other's in the same
+        atomic step, so exactly one of them sees both and asks for the spawn,
+        which happens on the canvas thread as it always did.
 */
+#define CANVAS_FIRST_DONE 1u
+#define CANVAS_FIRST_WANTED 2u
+
 #ifdef MODULE
-static _Bool canvas_initcalls_done = true;
+static atomic_t canvas_first = ATOMIC_INIT(CANVAS_FIRST_DONE);
 #else
-static _Bool canvas_initcalls_done;
+static atomic_t canvas_first = ATOMIC_INIT(0);
 #endif
-static _Bool canvas_terminal_waiting;
 
-static void canvas_terminal_first(void)
+static void canvas_first_spawn(void)
 {
-        if (!canvas_initcalls_done)
-        {
-                canvas_terminal_waiting = true;
-                return;
-        }
-
         /*
                 Outside desktop.lock, on the canvas thread.
 
@@ -7052,22 +7054,19 @@ static void canvas_terminal_first(void)
         canvas_thread_wake();
 }
 
+static void canvas_terminal_first(void)
+{
+        if (atomic_fetch_or(CANVAS_FIRST_WANTED, &canvas_first) &
+            CANVAS_FIRST_DONE)
+                canvas_first_spawn();
+}
+
 #ifndef MODULE
 static int __init canvas_initcalls_finished(void)
 {
-        _Bool waiting;
-
-        rt_mutex_lock(&desktop.lock);
-        canvas_initcalls_done = true;
-        waiting = canvas_terminal_waiting;
-        canvas_terminal_waiting = false;
-        rt_mutex_unlock(&desktop.lock);
-
-        if (waiting)
-        {
-                atomic_set(&desktop.spawn, 1);
-                canvas_thread_wake();
-        }
+        if (atomic_fetch_or(CANVAS_FIRST_DONE, &canvas_first) &
+            CANVAS_FIRST_WANTED)
+                canvas_first_spawn();
 
         return 0;
 }
