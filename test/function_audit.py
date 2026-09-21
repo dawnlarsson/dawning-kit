@@ -42,6 +42,7 @@ GENERATORS = {
     ('src/sh/expand.c', 'ARITH_LEVEL'): ('{}',),
     ('src/sh/expand.c', 'ARITH_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/exec.c', 'CONDITIONAL_LOGICAL_LEVEL'): ('{}',),
+    ('src/sh/file.c', 'FILE_TREE_NODE_NEW'): ('{}',),
     ('src/sh/snapshot.c', 'SYSTEM_FIELD'): ('{}',),
     ('src/sh/builtin.c', 'STORAGE_ADAPTER'):
         ('shell_{}', 'storage_program_{}'),

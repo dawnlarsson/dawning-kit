@@ -3812,23 +3812,44 @@ typedef struct file_change_tree_node
         p8 path[];
 } file_change_tree_node;
 
-static file_change_tree_node address_to file_change_tree_node_new(
-    file_change_tree_node address_to parent, string_address name,
-    positive name_length)
-{
-        positive length = 0;
-        file_change_tree_node address_to node = file_tree_node_take(
-            parent, __builtin_offsetof(file_change_tree_node, path),
-            parent ? parent->length : 0, name, name_length, address_of length);
+/*
+        The four walkers' node constructors, which differ in their type and
+        in what each walk keeps besides the path.
 
-        if (!node)
-                return null;
+        file_tree_node_take does the work -- the allocation, and the join of
+        the parent's path with one name -- and is handed the offset of the
+        path inside the node so that it need not know the type. What was
+        left was written out four times: the same zeroed length, the same
+        call, the same refusal, the same parent. find's constructor is not
+        here, because its depth comes from its caller and not its parent.
 
-        node->parent = parent;
-        node->length = length;
-        node->name_at = length - name_length;
-        return node;
-}
+        `kept` is what that walk keeps, in the order it kept it, so every
+        one of the four expands to the instructions it had. This is where
+        the shape is written down; it is not an indirection put between a
+        walk and its nodes.
+*/
+#define FILE_TREE_NODE_NEW(function, type, kept)                               \
+        static type address_to function(type address_to parent,                \
+                                        string_address name,                   \
+                                        positive name_length)                  \
+        {                                                                      \
+                positive length = 0;                                           \
+                type address_to node = file_tree_node_take(                    \
+                    parent, __builtin_offsetof(type, path),                    \
+                    parent ? parent->length : 0, name, name_length,            \
+                    address_of length);                                        \
+                                                                               \
+                if (!node)                                                     \
+                        return null;                                           \
+                                                                               \
+                node->parent = parent;                                         \
+                kept                                                           \
+                return node;                                                   \
+        }
+
+FILE_TREE_NODE_NEW(file_change_tree_node_new, file_change_tree_node,
+                   node->length = length;
+                   node->name_at = length - name_length;)
 #endif
 
 //      A walk of the tool's own for everything under an operand of -R, when
@@ -13738,23 +13759,9 @@ static positive du_tree_levels_room;
 static p64 du_tree_result;
 static du_tree_node address_to du_tree_skipping;
 
-static du_tree_node address_to du_tree_node_new(du_tree_node address_to parent,
-                                               string_address name,
-                                               positive name_length)
-{
-        positive length = 0;
-        du_tree_node address_to node = file_tree_node_take(
-            parent, __builtin_offsetof(du_tree_node, path),
-            parent ? parent->length : 0, name, name_length, address_of length);
-
-        if (!node)
-                return null;
-
-        node->parent = parent;
-        node->depth = parent ? parent->depth + 1 : 0;
-        node->length = length;
-        return node;
-}
+FILE_TREE_NODE_NEW(du_tree_node_new, du_tree_node,
+                   node->depth = parent ? parent->depth + 1 : 0;
+                   node->length = length;)
 
 //      A name's whole path, on the stack when it fits.
 static p8 address_to du_tree_path(du_tree_node address_to node, string_address name,
@@ -25360,24 +25367,10 @@ static positive cp_tree_depth;
 static bool cp_tree_complete;
 static cp_tree_node address_to cp_tree_top;
 
-static cp_tree_node address_to cp_tree_node_new(cp_tree_node address_to parent,
-                                               string_address name,
-                                               positive name_length)
-{
-        positive length = 0;
-        cp_tree_node address_to node = file_tree_node_take(
-            parent, __builtin_offsetof(cp_tree_node, path),
-            parent ? parent->length : 0, name, name_length, address_of length);
-
-        if (!node)
-                return null;
-
-        node->parent = parent;
-        node->level = parent ? parent->level + 1 : 0;
-        node->length = length;
-        node->name_at = length - name_length;
-        return node;
-}
+FILE_TREE_NODE_NEW(cp_tree_node_new, cp_tree_node,
+                   node->level = parent ? parent->level + 1 : 0;
+                   node->length = length;
+                   node->name_at = length - name_length;)
 
 /* A directory below root by its relative path, a piece at a time where the
    whole would not fit one open.  Every piece but the last is a directory
@@ -29084,23 +29077,9 @@ typedef struct
 
 static rm_tree_node address_to rm_tree_top;
 
-static rm_tree_node address_to rm_tree_node_new(rm_tree_node address_to parent,
-                                               string_address name,
-                                               positive name_length)
-{
-        positive length = 0;
-        rm_tree_node address_to node = file_tree_node_take(
-            parent, __builtin_offsetof(rm_tree_node, path),
-            parent ? parent->length : 0, name, name_length, address_of length);
-
-        if (!node)
-                return null;
-
-        node->parent = parent;
-        node->length = length;
-        node->name_at = length - name_length;
-        return node;
-}
+FILE_TREE_NODE_NEW(rm_tree_node_new, rm_tree_node,
+                   node->length = length;
+                   node->name_at = length - name_length;)
 
 //      A line to say and the whole path it names: head, and name when
 //      there is one, written straight into the output.
