@@ -55,7 +55,7 @@
 #define HOST_MACHINE_RUNTIME HOST_STATE "/machine.sh"
 #define HOST_MACHINE_DIRTY HOST_STATE "/machine.dirty"
 
-#include "../moonwater.c"
+#include "../moonwater/moonwater.c"
 
 #define HOST_SYSTEM_NAME "moonwater-boot"
 #define HOST_DATA_NAME "moonwater-data"
@@ -7829,4 +7829,4 @@ static b32 host_main()
 }
 
 #define MOONWATER_CLI
-#include "../moonwater.c"
+#include "../moonwater/moonwater.c"

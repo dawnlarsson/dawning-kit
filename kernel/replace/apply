@@ -4,7 +4,7 @@
 #       builds, which is the other half of what `build asm` is for: not everything
 #       worth writing in assembly can live in a module.
 #
-#       Its own directory, and that is not tidiness. src/Makefile globs every
+#       Its own directory, and that is not tidiness. src/moonwater/Makefile globs every
 #       .asm beside it and links the result into the module, so a replacement
 #       left in src/ is built twice -- once as part of moonwater and once over
 #       the kernel file it replaces -- and the link fails on a multiple

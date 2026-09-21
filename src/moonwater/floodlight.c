@@ -24,7 +24,7 @@
  *
  * This is the whole of it. Not a directory, not a library, not a header shared
  * with anything: the file you are reading is the entire trusted base of the
- * decision. Moonwater's own module is the opposite by necessity -- src/core.c
+ * decision. Moonwater's own module is the opposite by necessity -- src/moonwater/core.c
  * includes the compositor, which includes the terminal emulator -- and a
  * policy living in there would have two hundred thousand lines inside its
  * trusted base. So this is ordinary kernel C, built on its own, exporting no

@@ -773,7 +773,7 @@ static bool floodlight_descendants_blocking();
 static fn job_child_watch();
 static bool floodlight_parent_supervised;
 #include "expand.c"
-#include "../canvas/window.c"
+#include "../moonwater/window.c"
 #include "term.c"
 #include "host.c"
 #include "screen.c"

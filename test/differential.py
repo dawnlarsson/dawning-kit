@@ -16436,7 +16436,7 @@ def ul_check_lscpu_summary(farm):
     duplicated node, node -1, an exhausted arena and a failed row growth.
     Built at run time from the current source by function-name markers."""
     root = Path(__file__).resolve().parents[1]
-    source_path = root / "src" / "sh" / "util_linux.c"
+    source_path = root / "src" / "sh" / "tools.c"
     if not source_path.exists():
         return 0, 1, ["source tree not at hand"]
     compiler = None
@@ -16537,7 +16537,7 @@ import unittest
 from unittest.mock import patch
 
 def canvas_part(canvas, name):
-    """One named section of src/canvas/canvas.c, the way it used to be a file.
+    """One named section of src/moonwater/canvas.c, the way it used to be a file.
 
     The eleven files canvas.c expanded are folded into it, each behind a
     one-line banner, "/* ---- <name>: <what it is> ---- */". The anchors the
@@ -16801,11 +16801,11 @@ def canvas_assembly(library, arch):
 def harness_core_state(argv):
     """Kernel snapshot allocation and Canvas geometry, with syscall/DRM-free mocks."""
     root = HARNESS_ROOT
-    core = (root / "src/core.c").read_text()
+    core = (root / "src/moonwater/core.c").read_text()
     # The bind subsystem and the machine script moved out of core.c into
     # moonwater.c; core.c includes it. The slices below follow them.
-    moonwater = (root / "src/moonwater.c").read_text()
-    canvas = (root / "src/canvas/canvas.c").read_text()
+    moonwater = (root / "src/moonwater/moonwater.c").read_text()
+    canvas = (root / "src/moonwater/canvas.c").read_text()
     pane = canvas_part(canvas, "pane")
     compose = canvas_part(canvas, "compose")
     console = canvas_part(canvas, "console")
@@ -16813,7 +16813,7 @@ def harness_core_state(argv):
     output = canvas_part(canvas, "output")
     pointer = canvas_part(canvas, "pointer")
     keys = canvas_part(canvas, "keys")
-    spark = (root / "src/spark.c").read_text()
+    spark = (root / "src/moonwater/spark.c").read_text()
     # The machine script this build bakes into the module. The scanner that
     # decides which rows the machine process owns is compiled here for real,
     # so the shipped file is scanned here for real as well: an edit to it that
@@ -16829,7 +16829,7 @@ def harness_core_state(argv):
     def canvas_sources(work, arch):
         paint = canvas_part(canvas, "paint")
         text = canvas_part(canvas, "text")
-        window = (root / "src/canvas/window.c").read_text()
+        window = (root / "src/moonwater/window.c").read_text()
         cells = section(window, "// The colour an index names", "#define WINDOW_CELL_BOLD")
         cells += section(canvas, "#define target_mark(pixels)",
                          "// The border and titlebar")
@@ -16954,7 +16954,7 @@ static unsigned int hash_crc32(unsigned int crc, const void *data, unsigned long
     return crc;
 }
 '''
-    source += spark.replace('#include "platform/spark.inc"',
+    source += spark.replace('#include "../platform/spark.inc"',
                             (root / "src/platform/spark.inc").read_text())
     source += section(spark, "struct snapshot_builder", "static HOT void snapshot_system")
     source += r'''
@@ -19450,7 +19450,7 @@ line_add_padded() { line_add "$@"; }
                     assert preserved.read_text() == "preserve me\n"
                     assert not link.is_symlink()
                 else:
-                    assert link.resolve() == (tree / "src").resolve()
+                    assert link.resolve() == (tree / "src/moonwater").resolve()
                     # Reapplying retains the same source and header contents.
                     before = header.read_bytes()
                     settings_before = {name: (tree / name).read_bytes() for name in settings_anchors}
@@ -19497,7 +19497,7 @@ line_add_padded() { line_add "$@"; }
 def harness_spark_entry(argv):
     """Actual Spark entry publication plus exhaustive kernel capability/state gates."""
     root = HARNESS_ROOT
-    spark = (root / "src/spark.c").read_text()
+    spark = (root / "src/moonwater/spark.c").read_text()
     start = spark.index("static unsigned long __ro_after_init spark_cpu_features;")
     features = spark[start:spark.index("#endif", start)]
     source = r'''
@@ -21615,17 +21615,17 @@ static void drm_client_release(struct drm_client_dev *c) {
 '''
 
     bodies = "".join(function(file, name) for file, name in [
-        ("src/canvas/canvas.c", "cursor_buffers_drop"),
-        ("src/canvas/canvas.c", "plane_drop"),
-        ("src/canvas/canvas.c", "plane_lost"),
-        ("src/canvas/canvas.c", "plane_claim"),
-        ("src/canvas/canvas.c", "output_free"),
-        ("src/canvas/canvas.c", "output_flush_done"),
-        ("src/canvas/canvas.c", "output_drop"),
-        ("src/canvas/canvas.c", "cursor_plane_recover"),
-        ("src/canvas/canvas.c", "canvas_release"),
-        ("src/canvas/canvas.c", "canvas_claimed_forget"),
-        ("src/canvas/canvas.c", "client_unregister"),
+        ("src/moonwater/canvas.c", "cursor_buffers_drop"),
+        ("src/moonwater/canvas.c", "plane_drop"),
+        ("src/moonwater/canvas.c", "plane_lost"),
+        ("src/moonwater/canvas.c", "plane_claim"),
+        ("src/moonwater/canvas.c", "output_free"),
+        ("src/moonwater/canvas.c", "output_flush_done"),
+        ("src/moonwater/canvas.c", "output_drop"),
+        ("src/moonwater/canvas.c", "cursor_plane_recover"),
+        ("src/moonwater/canvas.c", "canvas_release"),
+        ("src/moonwater/canvas.c", "canvas_claimed_forget"),
+        ("src/moonwater/canvas.c", "client_unregister"),
     ])
 
     runner = r'''
@@ -21903,7 +21903,7 @@ def harness_canvas_view(argv):
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
 
-    pane = canvas_part((args.source_root / "src/canvas/canvas.c").read_text(),
+    pane = canvas_part((args.source_root / "src/moonwater/canvas.c").read_text(),
                        "pane")
     first = "// One line of the ring"
     following = "/*\n        A window, of pixels or of cells."
@@ -22152,7 +22152,7 @@ def harness_floodlight(argv):
     from inventory import c_bodies, lex
     from collections import defaultdict
 
-    FILE = ROOT / 'src' / 'floodlight.c'
+    FILE = ROOT / 'src' / 'moonwater' / 'floodlight.c'
     IDENTIFIER = re.compile(r'^[A-Za-z_]\w*$')
     check = Checks()
 
@@ -22201,7 +22201,7 @@ def harness_floodlight(argv):
 
     #   Which applets can start a program, transitively, through any helper.
     graph = defaultdict(set)
-    for pattern in ('src/sh/*.c', 'src/core.c', 'src/bowl.c',
+    for pattern in ('src/sh/*.c', 'src/moonwater/core.c', 'src/bowl.c',
                     'src/lib.util.c'):
         for path in sorted(ROOT.glob(pattern)):
             for name, seen in bodies(graph_source(path)).items():
@@ -25205,10 +25205,10 @@ def harness_image_nodes(argv):
     check = Checks()
 
     build = (ROOT / 'src/build/build.c').read_text()
-    spark = (ROOT / 'src/spark.c').read_text()
-    flood = (ROOT / 'src/floodlight.c').read_text()
+    spark = (ROOT / 'src/moonwater/spark.c').read_text()
+    flood = (ROOT / 'src/moonwater/floodlight.c').read_text()
     bowl = (ROOT / 'src/bowl.c').read_text()
-    window = (ROOT / 'src/canvas/window.c').read_text()
+    window = (ROOT / 'src/moonwater/window.c').read_text()
     host = (ROOT / 'src/sh/host.c').read_text()
 
     def setting(name):
@@ -25309,7 +25309,7 @@ def harness_image_nodes(argv):
     #   waits for -- and the desktop comes up with nothing on it while the
     #   log still says terminal: 0. Three files have to agree and none of
     #   them can see the other two.
-    core = (ROOT / 'src/core.c').read_text()
+    core = (ROOT / 'src/moonwater/core.c').read_text()
     tools = (ROOT / 'src/sh/tools.inc').read_text()
     system = {name for category, name in re.findall(
         r'SHELL_TOOL\(\s*(\w+)\s*,\s*([^,\s]+)\s*,', tools)

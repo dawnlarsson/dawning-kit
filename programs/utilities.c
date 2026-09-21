@@ -1,6 +1,6 @@
 #define STANDARD_APPLETS
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #define SHELL_UTILITY_PROGRAM
 #include "../src/sh/shell.c"
 

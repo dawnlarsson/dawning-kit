@@ -35,7 +35,7 @@
 #define STANDARD_APPLETS
 #define STANDARD_KEEP_SPOOL
 #include "../lib.util.c"
-#include "../spark.c"
+#include "../moonwater/spark.c"
 #include "../sh/shell.c"
 
 /*
@@ -181,9 +181,9 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
 
         /*      The image's own layout: the directories every build makes and
                 the device nodes it boots with, as name, type, major, minor.
-                The spark minor has to match SPARK_DEVICE_MINOR in src/spark.c,
+                The spark minor has to match SPARK_DEVICE_MINOR in src/moonwater/spark.c,
                 and the floodlight one FLOODLIGHT_DEVICE_MINOR in
-                src/floodlight.c. Both are fixed rather than allocated because
+                src/moonwater/floodlight.c. Both are fixed rather than allocated because
                 the node is made here, before there is a devtmpfs to make it. */
         {"image_directories",
          "sys proc dev tmp run etc root bin sbin usr lib lib64 var opt bowls/bin"},
@@ -2463,7 +2463,7 @@ static string_address build_binutil(string_address compiler,
 /*
         Compiling C to the flat spark format.
 
-        The layout is described in src/spark.c, which the kernel loader
+        The layout is described in src/moonwater/spark.c, which the kernel loader
         includes too, so the two sides cannot drift apart -- and this file
         includes it as well, so the header written here is that struct rather
         than a second description of it. Every region is a whole number of

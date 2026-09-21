@@ -33,7 +33,7 @@ Definition = namedtuple('Definition', 'path line name kind')
 # first macro argument.  Keeping this table tiny and explicit also makes a new
 # body-generating macro a visible inventory event rather than a parser guess.
 GENERATORS = {
-    ('src/core.c', 'REPORT_CANVAS'): ('{}',),
+    ('src/moonwater/core.c', 'REPORT_CANVAS'): ('{}',),
     ('src/lib.util.c', 'SEARCH_KNOWN'): ('{}',),
     ('src/sh/awk.c', 'AWK_BINARY_LEVEL'): ('{}',),
     ('src/sh/awk.c', 'AWK_EVALUATOR'): ('{}',),

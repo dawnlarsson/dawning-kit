@@ -317,7 +317,7 @@ MEMSET64:void *memset64(uint64_t *, uint64_t, __kernel_size_t)"
 esac
 
 #
-#       The same switch src/Makefile reads. With it set the
+#       The same switch src/moonwater/Makefile reads. With it set the
 #       kernel keeps every symbol it came with, so an image
 #       built this way and one built without it differ in
 #       exactly the thing being measured.
@@ -442,12 +442,12 @@ fi
 #       starting on a page of its own, laid down by the linker script with
 #       their magic and the rest zero. The moonwater command rewrites the
 #       older slot in place, so the section's file offset never moves once
-#       an image is built, and src/spark.c says what the bytes mean.
+#       an image is built, and src/moonwater/spark.c says what the bytes mean.
 #
 #       The stub copies the section into EFI pool memory of the type the
 #       random seed table uses and installs it as a configuration table, and
 #       efi.c records where, the way it records the seed. It reads nothing:
-#       src/core.c checks both slots, keeps the newest that holds, and boots
+#       src/moonwater/core.c checks both slots, keeps the newest that holds, and boots
 #       on the defaults when neither does, so a torn write can never stop a
 #       machine starting. A kernel started any other way -- QEMU's -kernel,
 #       a loader using the handover entry with no image -- has no table and
@@ -652,7 +652,7 @@ line_add_padded "linux/kernel/Makefile" "obj-y += moonwater/" ||
 #
 #       So: where does it actually point, and is that here.
 #
-want_src="$(pwd)/src"
+want_src="$(pwd)/src/moonwater"
 have_src=$(readlink linux/kernel/moonwater 2>/dev/null || true)
 
 if [ "$have_src" != "$want_src" ]; then

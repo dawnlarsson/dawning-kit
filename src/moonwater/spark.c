@@ -31,7 +31,7 @@
 #ifndef SPARK_INCLUDED
 #define SPARK_INCLUDED
 
-#include "platform/spark.inc"
+#include "../platform/spark.inc"
 
 // "SPRK", little endian
 #define SPARK_MAGIC 0x4b525053u
@@ -786,7 +786,7 @@ _Static_assert(sizeof(struct spark_settings_request) == 16,
 /*
         Implementing the format above, for the kernel that loads it.
 
-        Everything below is expanded by src/core.c a second time, after the
+        Everything below is expanded by src/moonwater/core.c a second time, after the
         device context and the compositor it has to be written against, and
         by nothing else: the guard above means the first expansion took only
         the header, the numbers and the structures, which is all a program

@@ -6881,7 +6881,7 @@ static inline INLINE address_any copy_until_known(address_any destination,
 /*
         Nothing here in a kernel build, and nothing here on Windows.
 
-        src/core.c defines STANDARD_MODERN_C_KERNEL and then includes
+        src/moonwater/core.c defines STANDARD_MODERN_C_KERNEL and then includes
         lib.util.c, so everything in this file would otherwise be
         compiled into the module, where mmap is not a thing that can be
         called and where a symbol named free would be a very bad idea. A
@@ -9896,7 +9896,7 @@ pub bool parallel_tree(parallel_node_job enter, parallel_node_job leave,
         all three.
 
         Guarded one at a time because the tree already spells some of these
-        elsewhere: src/sh/term.c defines EINTR as 4 and src/core.c uses bare
+        elsewhere: src/sh/term.c defines EINTR as 4 and src/moonwater/core.c uses bare
         -EINTR and -ENOENT, and the shell is one binary. A plain #define here
         would be a redefinition the moment those two land in a translation
         unit with this one.
@@ -24919,7 +24919,7 @@ b32 fputs(string_address text, stream address_to handle)
 /*
         WHY THE WHOLE FILE IS BEHIND KERNEL_MODE
 
-        src/core.c includes lib.util.c, so everything here is compiled
+        src/moonwater/core.c includes lib.util.c, so everything here is compiled
         into the kernel build as well as into every program. The kernel build
         refuses a decimal in a signature on arm64 whether or not anything calls
         it, which is the same reason decimal_to_string and fast_sin are guarded

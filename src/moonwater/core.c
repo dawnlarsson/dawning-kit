@@ -97,7 +97,7 @@
 #endif
 
 #define STANDARD_MODERN_C_KERNEL
-#include "lib.util.c"
+#include "../lib.util.c"
 #include "spark.c"
 #include "moonwater.c"
 
@@ -152,7 +152,7 @@ struct device_context
 #include <linux/font.h>
 #include <drm/drm_file.h>
 #include <drm/drm_rect.h>
-#include "canvas/canvas.c"
+#include "canvas.c"
 #endif
 
 /*

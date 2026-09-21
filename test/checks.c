@@ -26689,7 +26689,7 @@ static fn table_capture(address_any bytes, positive length)
 }
 
 #define log table_capture
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
 #undef log
 #define SHARED_counted
@@ -50935,7 +50935,7 @@ b32 main(void)
 
 #ifdef CHECK_bowl
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
 
 /* Use Bowl's production include context; execute only pure validation. */
@@ -51340,7 +51340,7 @@ b32 main(void)
 
 #ifdef CHECK_tar
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #define TAR_PARSE_ONLY
 #include "../src/sh/tar.c"
 #undef TAR_PARSE_ONLY
@@ -51924,7 +51924,7 @@ b32 main(void)
 
 #ifdef CHECK_zstd
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #define ZSTD_CORE_ONLY
 #include "../src/sh/zstd.c"
 #undef ZSTD_CORE_ONLY
@@ -52617,7 +52617,7 @@ b32 main(void)
 
 #ifdef CHECK_gzip
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #define GZIP_CORE_ONLY
 #include "../src/sh/gzip.c"
 #undef GZIP_CORE_ONLY
@@ -52776,7 +52776,7 @@ b32 main(void)
 
 #ifdef CHECK_xz
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #define XZ_CORE_ONLY
 #include "../src/sh/xz.c"
 #undef XZ_CORE_ONLY
@@ -53417,7 +53417,7 @@ b32 main(void)
 
 #ifdef CHECK_reuse_shell
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
 #define SHARED_counted
 #include "checks.c"
@@ -54226,7 +54226,7 @@ b32 main(void)
 
 #ifdef CHECK_path_stage
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
@@ -54637,7 +54637,7 @@ b32 main(void)
 /* Pure-state regressions for the verified enable/formatter/signal repairs.
    No machine-control builtin or utility is invoked. */
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
 #define SHARED_counted
 #include "checks.c"
@@ -55881,7 +55881,7 @@ static bipolar storage_test_call1(positive number, positive one)
 #define system_call_3(...) storage_test_call3(__VA_ARGS__)
 #define system_call_4(...) storage_test_call4(__VA_ARGS__)
 #define system_call_6(...) storage_test_call6(__VA_ARGS__)
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
 #undef system_call_1
 #undef system_call_4
@@ -57206,7 +57206,7 @@ b32 main(void)
 
 #ifdef CHECK_storage_format
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
 
 #define SHARED_counted
@@ -57991,7 +57991,7 @@ b32 main(void)
 
 #ifdef CHECK_machine
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #define MOONWATER_SCAN
 #include "../src/sh/shell.c"
 
@@ -58386,7 +58386,7 @@ b32 main(void)
 
 #ifdef CHECK_probe
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 
 /*
         The things only a separate process can prove.
@@ -58655,7 +58655,7 @@ b32 main()
 
 #ifdef CHECK_checksum_crc
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
 #define SHARED_counted
 #include "checks.c"
@@ -60341,7 +60341,7 @@ static void check_pane_layout(void) {
    reading the whole unit finds the same spans reading pane.c alone once did.
 */
 static void check_pane_focus_policy(void) {
-    FILE *source=fopen("src/canvas/canvas.c","rb");check(source!=NULL);
+    FILE *source=fopen("src/moonwater/canvas.c","rb");check(source!=NULL);
     assert(!fseek(source,0,SEEK_END));long size=ftell(source);assert(size>0);
     rewind(source);char *text=malloc((size_t)size+1);assert(text);
     assert(fread(text,1,(size_t)size,source)==(size_t)size);text[size]=0;
@@ -62628,7 +62628,7 @@ int main(void)
 /* Counted lexer views borrow input; parser text must survive its reuse.
    Build with `build freestanding` or the shell lane's freestanding-checks runner. */
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
 #define SHARED_counted
 #include "checks.c"
@@ -62754,7 +62754,7 @@ b32 main(void)
 /* Built by the regex lane. Compare complete-literal shortcuts with their original
    VM fallback, using the real shared library and injected resource budgets. */
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
 
 static positive proof_checks, proof_failures;
@@ -71782,7 +71782,7 @@ b32 main(void)
    file creation, initial touching, formatting and validation are outside.
    Usage: storage-read [bytes 1..65536] [iterations 1..1000000]. */
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
 
 b32 main(void)
@@ -72856,7 +72856,7 @@ b32 main(void)
 
 #ifdef BENCH_exec
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 
 // Times fork + exec + wait for a target, repeatedly. The fork and wait cost is
 // identical for both formats, so the difference between two runs is the cost
@@ -73312,7 +73312,7 @@ b32 main()
         counters are reported over the device-spawn rounds as a second clock.
 */
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 
 #define CLOCK_MONOTONIC 1
 #define ROUNDS 100
@@ -73486,7 +73486,7 @@ b32 main(void)
 
 #ifdef BENCH_shell_document
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
 
 /* Isolate the shared here-body expansion path from parsing/forking. Build
@@ -73629,7 +73629,7 @@ b32 main()
 #endif /* BENCH_one */
 #if defined(CHECK_compression_floor) || defined(BENCH_compression_floor)
 #include "../src/lib.util.c"
-#include "../src/spark.c"
+#include "../src/moonwater/spark.c"
 #define GZIP_CORE_ONLY
 #include "../src/sh/gzip.c"
 #undef GZIP_CORE_ONLY

@@ -415,10 +415,11 @@ if [ "$do_clean" -eq 1 ]; then
         rm -rf dist fs linux \
                 artifacts/merge.config artifacts/.config artifacts/info \
                 artifacts/asm.applied artifacts/asm.arch artifacts/asm.requested
-        rm -f src/*.a src/*.o src/*.o.d src/*.cmd src/*.order
+        rm -f src/moonwater/*.a src/moonwater/*.o src/moonwater/*.o.d \
+                src/moonwater/*.cmd src/moonwater/*.order
         # The .S `build asm` generates from each .asm, which kbuild writes here
-        # because src/ is the kernel tree's kernel/moonwater.
-        rm -f src/*.S src/*.asm_tmp
+        # because src/moonwater/ is the kernel tree's kernel/moonwater.
+        rm -f src/moonwater/*.S src/moonwater/*.asm_tmp
         exit 0
 fi
 

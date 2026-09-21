@@ -3806,7 +3806,7 @@ need_policy_farm()
         if [ ! -x "$work/policy-utilities" ]; then
                 cat > "$work/policy-utilities.c" <<POLICY_UTILITIES
 #include "$root/src/lib.util.c"
-#include "$root/src/spark.c"
+#include "$root/src/moonwater/spark.c"
 #define SHELL_UTILITY_PROGRAM
 #include "$root/src/sh/shell.c"
 
@@ -5569,8 +5569,8 @@ section_total=0
 #       The emulator, with a page of memory where the window would be.
 cat > "$work/harness.c" <<'HARNESS'
 #include "src/lib.util.c"
-#include "src/spark.c"
-#include "src/canvas/window.c"
+#include "src/moonwater/spark.c"
+#include "src/moonwater/window.c"
 #include "src/sh/term.c"
 #include "src/sh/pty.c"
 // The terminal fixture does not execute the desktop launcher.
@@ -7293,8 +7293,8 @@ section_total=0
 
 cat > "$work/harness.c" <<'HARNESS'
 #include "src/lib.util.c"
-#include "src/spark.c"
-#include "src/canvas/window.c"
+#include "src/moonwater/spark.c"
+#include "src/moonwater/window.c"
 #include "src/sh/pty.c"
 #include "src/sh/term.c"
 
@@ -9613,10 +9613,10 @@ same 'immutable firmware source' '1:3:0' \
 #       kernel to end the attach this process is holding and then polls ten
 #       seconds for a detach only it could perform, which is a power button
 #       that looks dead for ten seconds.
-machine_claims=$(grep -c 'host_machine_self = true;' src/moonwater.c)
-machine_claim_line=$(grep -n 'host_machine_self = true;' src/moonwater.c |
+machine_claims=$(grep -c 'host_machine_self = true;' src/moonwater/moonwater.c)
+machine_claim_line=$(grep -n 'host_machine_self = true;' src/moonwater/moonwater.c |
         head -1 | cut -d: -f1)
-machine_wait_line=$(grep -n 'host_machine_wait_verdict(verdict' src/moonwater.c |
+machine_wait_line=$(grep -n 'host_machine_wait_verdict(verdict' src/moonwater/moonwater.c |
         head -1 | cut -d: -f1)
 if [ -n "$machine_claim_line" ] && [ -n "$machine_wait_line" ] &&
         [ "$machine_claim_line" -lt "$machine_wait_line" ]; then
@@ -9638,7 +9638,7 @@ same 'the machine process claims its attach before anything can stop it' \
 #       moonwater_init nothing runs at boot at all. Not being root keeps
 #       host_refuse's 1, which every other refusal in the command answers.
 machine_run_body=$(awk '/^static b32 host_machine_run\(void\)$/,/^}$/' \
-        src/moonwater.c)
+        src/moonwater/moonwater.c)
 machine_run_fails=$(printf '%s\n' "$machine_run_body" |
         grep -c 'return host_fail(')
 machine_run_failed=$(printf '%s\n' "$machine_run_body" |
@@ -9658,7 +9658,7 @@ same 'a machine that could not start is not a machine init has retired' \
 #       to do it before the event is named, because naming it is what decides
 #       whether the script owns it.
 machine_run_body=$(awk '/^static b32 host_machine_run\(void\)$/,/^}$/' \
-        src/moonwater.c)
+        src/moonwater/moonwater.c)
 machine_reload_line=$(printf '%s\n' "$machine_run_body" |
         grep -n 'host_machine_reload(slot);' | head -1 | cut -d: -f1)
 machine_named_line=$(printf '%s\n' "$machine_run_body" |
@@ -9679,7 +9679,7 @@ same 'an edited script is taken up before the event it changed is named' \
 #       refused and the source carries on past it -- so a reload that kept
 #       the lock would take the new file and keep every old function.
 machine_reload_body=$(awk '/^static fn host_machine_reload\(positive address_to slot\)$/,/^}$/' \
-        src/moonwater.c)
+        src/moonwater/moonwater.c)
 machine_gives=$(printf '%s\n' "$machine_reload_body" |
         grep -n 'host_machine_hold(slot, false);' | head -1 | cut -d: -f1)
 machine_sources=$(printf '%s\n' "$machine_reload_body" |
@@ -9696,7 +9696,7 @@ fi
 #       And what was sourced is recorded where the sourcing happens, because
 #       that is the only thing the next event can compare the kernel against.
 machine_sourced=$(grep -c 'host_machine_sourced_overlay = host_machine.overlay;' \
-        src/moonwater.c)
+        src/moonwater/moonwater.c)
 same 'a reload gives the lock back, re-sources, and takes it again' \
         'yes:1' "$machine_reload_holds:$machine_sourced"
 
@@ -9706,7 +9706,7 @@ same 'a reload gives the lock back, re-sources, and takes it again' \
 #       second copy behind the call. It should be unreachable now, which is
 #       the reason to say it out loud rather than return into silence.
 machine_emit_body=$(awk '/^static fn host_machine_emit\(positive event_slot, unsigned int event,$/,/^}$/' \
-        src/moonwater.c)
+        src/moonwater/moonwater.c)
 #       The recover call below is not one of these: recover is not a bind
 #       row, nothing was routed away from an image line for it, and a script
 #       with no recover handler is the ordinary case.
