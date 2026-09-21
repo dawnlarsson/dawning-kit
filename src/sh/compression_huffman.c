@@ -14,83 +14,52 @@ static inline INLINE p16 compression_hash3(p8 address_to bytes)
         return (p16)(h >> 16);
 }
 
-typedef struct
-{
-        p32 freq;
-        b32 dad;
-} compression_tree;
-
-static fn compression_heap_up(compression_tree address_to node, p32 address_to heap,
-                       positive at)
-{
-        p32 item = heap[at];
-        p32 freq = node[item].freq;
-
-        while (at > 1)
-        {
-                positive parent = at >> 1;
-
-                if (node[heap[parent]].freq < freq ||
-                    (node[heap[parent]].freq == freq &&
-                     heap[parent] <= item))
-                        break;
-                heap[at] = heap[parent];
-                at = parent;
-        }
-        heap[at] = item;
-}
-
-static fn compression_heap_down(compression_tree address_to node, p32 address_to heap,
-                         positive used, positive at)
-{
-        p32 item = heap[at];
-        p32 freq = node[item].freq;
-
-        for (;;)
-        {
-                positive child = at << 1;
-
-                if (child > used)
-                        break;
-                if (child < used &&
-                    (node[heap[child + 1]].freq < node[heap[child]].freq ||
-                     (node[heap[child + 1]].freq == node[heap[child]].freq &&
-                      heap[child + 1] < heap[child])))
-                        child++;
-                if (freq < node[heap[child]].freq ||
-                    (freq == node[heap[child]].freq && item <= heap[child]))
-                        break;
-                heap[at] = heap[child];
-                at = child;
-        }
-        heap[at] = item;
-}
-
+/*
+        Code lengths for the counts, limited to limit bits. The symbols in
+        use go in order of count, equal counts in symbol order, by a byte
+        of the count a pass; then the two least are joined repeatedly,
+        taking from the leaves while theirs is no more than the next join's.
+        That is a heap's order of (count, node) exactly -- a join is always
+        numbered after every leaf -- so the tree is the heap's, in time
+        linear past the sort.
+*/
 static bool compression_build_lengths(p32 address_to freq, positive n, p8 address_to length,
-                               p8 limit)
+                                      p8 limit)
 {
-        compression_tree node[288 * 2];
-        p32 heap[288 * 2];
+        p32 order[288];
+        p32 spare[288];
+        p32 joined[288];
+        p32 up[576];
+        p8 deep[288];
+        p32 address_to from = order;
+        p32 address_to into = spare;
+        p32 top = 0;
         positive used = 0;
-        positive at;
-        positive next;
         positive counts[16] = {0};
         positive slots = 0;
 
         memory_fill(length, 0, n);
-        for (at = 0; at < n; at++)
-        {
-                node[at].freq = freq[at] ? freq[at] : 0;
-                node[at].dad = -1;
-        }
-
-        for (at = 0; at < n; at++)
-                if (node[at].freq)
+        for (positive at = 0; at < n; at++)
+                if (freq[at])
                 {
-                        used++;
-                        heap[used] = (p32)at;
-                        compression_heap_up(node, heap, used);
+                        order[used++] = (p32)at;
+                        top |= freq[at];
                 }
+        for (p8 shift = 0; shift < 32 && (top >> shift); shift += 8)
+        {
+                positive start[257] = {0};
+                p32 address_to swap;
+
+                for (positive i = 0; i < used; i++)
+                        start[((freq[from[i]] >> shift) & 255) + 1]++;
+                for (positive d = 1; d < 256; d++)
+                        start[d] += start[d - 1];
+                for (positive i = 0; i < used; i++)
+                        into[start[(freq[from[i]] >> shift) & 255]++] = from[i];
+                swap = from;
+                from = into;
+                into = swap;
+        }
 
         if (!used)
         {
@@ -101,52 +70,52 @@ static bool compression_build_lengths(p32 address_to freq, positive n, p8 addres
         }
         if (used == 1)
         {
-                length[heap[1]] = 1;
-                if (heap[1] == 0 && n > 1)
+                length[from[0]] = 1;
+                if (from[0] == 0 && n > 1)
                         length[1] = 1;
                 else if (n)
                         length[0] = 1;
                 return true;
         }
 
-        next = n;
-        while (used > 1)
+        //      Node i below used is the leaf from[i]; used + j is join j.
         {
-                p32 first;
-                p32 second;
+                positive leaf = 0;
+                positive head = 0;
+                positive made = 0;
 
-                first = heap[1];
-                heap[1] = heap[used--];
-                compression_heap_down(node, heap, used, 1);
-                second = heap[1];
-                node[next].freq = node[first].freq + node[second].freq;
-                node[first].dad = (b32)next;
-                node[second].dad = (b32)next;
-                node[next].dad = -1;
-                heap[1] = (p32)next;
-                compression_heap_down(node, heap, used, 1);
-                next++;
-        }
-        for (at = 0; at < n; at++)
-        {
-                bipolar walk;
-                p8 depth = 0;
-
-                if (!freq[at])
-                        continue;
-                walk = node[at].dad;
-                while (walk >= 0)
+                while (used - leaf + made - head > 1)
                 {
-                        depth++;
-                        walk = node[walk].dad;
-                        if (depth > 32)
-                                break;
+                        p32 pick[2];
+                        p32 weight[2];
+
+                        for (positive k = 0; k < 2; k++)
+                                if (leaf < used && (head == made || freq[from[leaf]] <= joined[head]))
+                                {
+                                        weight[k] = freq[from[leaf]];
+                                        pick[k] = (p32)leaf++;
+                                }
+                                else
+                                {
+                                        weight[k] = joined[head];
+                                        pick[k] = (p32)(used + head++);
+                                }
+                        joined[made] = weight[0] + weight[1];
+                        up[pick[0]] = (p32)(used + made);
+                        up[pick[1]] = (p32)(used + made);
+                        made++;
                 }
+                deep[made - 1] = 0;
+                for (positive j = made - 1; j--;)
+                        deep[j] = (p8)(deep[up[used + j] - used] + 1);
+        }
+        for (positive i = 0; i < used; i++)
+        {
+                positive depth = (positive)deep[up[i] - used] + 1;
+
                 if (depth > limit)
                         depth = limit;
-                if (!depth)
-                        depth = 1;
-                length[at] = depth;
+                length[from[i]] = (p8)depth;
                 counts[depth]++;
                 slots += (positive)1 << (limit - depth);
         }
@@ -154,7 +123,8 @@ static bool compression_build_lengths(p32 address_to freq, positive n, p8 addres
         /* Merely truncating deep leaves oversubscribes the code space and
            forces entire blocks into fixed or stored output. Split a shorter
            code and remove one maximum-length code until the Kraft sum is
-           exact, preserving the number of leaves at every step. */
+           exact, preserving the number of leaves at every step; then the
+           longest codes go to the least counts. */
         positive capacity = (positive)1 << limit;
         if (slots > capacity)
         {
@@ -168,23 +138,10 @@ static bool compression_build_lengths(p32 address_to freq, positive n, p8 addres
                         counts[limit]--;
                         slots--;
                 }
-                positive sorted = 0;
-                for (at = 0; at < n; at++)
-                        if (freq[at])
-                        {
-                                positive place = sorted;
-                                while (place && freq[heap[place - 1]] > freq[at])
-                                {
-                                        heap[place] = heap[place - 1];
-                                        place--;
-                                }
-                                heap[place] = (p32)at;
-                                sorted++;
-                        }
                 positive item = 0;
                 for (positive bits = limit; bits; bits--)
                         for (positive take = 0; take < counts[bits]; take++)
-                                length[heap[item++]] = (p8)bits;
+                                length[from[item++]] = (p8)bits;
         }
 
         return true;
