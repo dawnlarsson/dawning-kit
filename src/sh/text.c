@@ -23425,8 +23425,44 @@ static inline INLINE bipolar sort_windows_order(sort_item address_to a,
         return 0;
 }
 
-static fn sort_items_insert(positive from, positive to, b32 stage)
+/*
+        Two lines whose windows at this depth agreed, in a stage of plain
+        bytes: the key's first skip bytes are known equal, since every line
+        of a radix range shares what is above its window, so the comparison
+        takes up from there. Asked from the start, it loaded the first
+        window again and compared the shared bytes over.
+*/
+static PURE bipolar sort_compare_key_from(p32 left, p32 right, b32 stage, positive skip)
 {
+        sort_view a = sort_view_of(left);
+        sort_view b = sort_view_of(right);
+        positive from_a, to_a, from_b, to_b;
+
+        sort_view_span(address_of a, stage, address_of from_a, address_of to_a);
+        sort_view_span(address_of b, stage, address_of from_b, address_of to_b);
+
+        positive la = to_a - from_a - skip;
+        positive lb = to_b - from_b - skip;
+        bipolar order = memory_compare(a.at + from_a + skip, b.at + from_b + skip,
+                                       min(la, lb));
+
+        if (!order && la == lb)
+                return sort_compare_views(address_of a, address_of b, stage + 1);
+
+        bipolar answer = order ? (order < 0 ? -1 : 1) : la < lb ? -1 : 1;
+
+        return sort_stage_reverse[stage] ? -answer : answer;
+}
+
+static fn sort_items_insert(positive from, positive to, b32 stage, positive depth)
+{
+        // What two lines whose windows at this depth agree have in common:
+        // the window and everything above it. A depth of positive_max is a
+        // range from a merge, where nothing is known.
+        positive skip = depth != positive_max ? (depth & ~(positive)7) + 8 : 0;
+        bool plain = sort_stage_kind[stage] == SORT_STAGE_BYTES &&
+                     !sort_stage_fold[stage] && skip;
+
         for (positive at = from + 1; at < to; at++)
         {
                 sort_item value = sort_items[at];
@@ -23440,8 +23476,13 @@ static fn sort_items_insert(positive from, positive to, b32 stage)
                             address_of next);
 
                         if (!answer)
-                                answer = sort_compare_lines(
-                                    value.line, sort_items[into - 1].line, next);
+                                answer = plain && next == stage
+                                             ? sort_compare_key_from(
+                                                   value.line, sort_items[into - 1].line,
+                                                   stage, skip)
+                                             : sort_compare_lines(
+                                                   value.line, sort_items[into - 1].line,
+                                                   next);
 
                         if (answer >= 0)
                                 break;
@@ -23463,7 +23504,7 @@ static fn sort_items_merge(positive from, positive to, b32 stage)
 
         if (count < SORT_SMALL)
         {
-                sort_items_insert(from, to, stage);
+                sort_items_insert(from, to, stage, positive_max);
                 return;
         }
 
@@ -23521,7 +23562,7 @@ static fn sort_radix(positive from, positive to, b32 stage, positive depth)
 
                 if (to - from < SORT_SMALL)
                 {
-                        sort_items_insert(from, to, stage);
+                        sort_items_insert(from, to, stage, depth);
                         return;
                 }
 
