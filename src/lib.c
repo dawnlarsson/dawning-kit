@@ -9392,18 +9392,52 @@ __asm__(
     GHASH_ZMM_SPLIT_FOLD
     "add $768, %rdx\n   sub $48, %rcx\n   cmp $48, %rcx\n"
     "jae .Lghash_blocks_x64_zmm_turn\n"
+    //  Whatever is left under 48 blocks goes in one aggregated turn: r
+    //  blocks against H^r ... H^1 and a single reduction, where a turn of
+    //  four and then single blocks each paid a whole reduction on the
+    //  state's dependency chain -- nine of them for a 74-block datagram, and
+    //  most of what hashing one cost. The vectors are aligned to the end of
+    //  the data, so the last lane always meets H^1 at 704(%rsi); the front
+    //  vector is loaded masked from up to three blocks before the data, which
+    //  faults on nothing, and the state joins its first real lane.
     ".Lghash_blocks_x64_zmm_four:\n"
-    "cmp $4, %rcx\n   jb .Lghash_blocks_x64_zmm_one\n"
-    GHASH_ZMM_LOAD("0", "16") "vpxorq %zmm17, %zmm16, %zmm16\n"
-    "vpclmulqdq $0x00, 704(%rsi), %zmm16, %zmm21\n"
-    "vpclmulqdq $0x11, 704(%rsi), %zmm16, %zmm22\n"
-    "vpclmulqdq $0x01, 704(%rsi), %zmm16, %zmm19\n"
-    "vpclmulqdq $0x10, 704(%rsi), %zmm16, %zmm20\n"
-    "vpxorq %zmm20, %zmm19, %zmm23\n"
-    GHASH_ZMM_SPLIT_FOLD
-    "add $64, %rdx\n   sub $4, %rcx\n   jmp .Lghash_blocks_x64_zmm_four\n"
-    ".Lghash_blocks_x64_zmm_one:\n"
     "test %rcx, %rcx\n   jz .Lghash_blocks_x64_zmm_done\n"
+    "cmp $1, %rcx\n   je .Lghash_blocks_x64_zmm_one\n"
+    "lea 3(%rcx), %rax\n   shr $2, %rax\n"
+    "mov %rcx, %r8\n   neg %r8\n   and $3, %r8\n"
+    "mov %r8, %r9\n   shl $4, %r9\n   sub %r9, %rdx\n"
+    "mov %rax, %r10\n   shl $6, %r10\n"
+    "lea 768(%rsi), %r11\n   sub %r10, %r11\n"
+    "lea (%r8,%r8), %rcx\n"
+    "mov $0xff, %r9d\n   shl %cl, %r9d\n   kmovw %r9d, %k1\n"
+    "mov $3, %r9d\n   shl %cl, %r9d\n   kmovw %r9d, %k2\n"
+    "vmovdqu64 (%rdx), %zmm16{%k1}{z}\n"
+    "vpshufb %zmm31, %zmm16, %zmm16\n"
+    "vshufi64x2 $0, %zmm17, %zmm17, %zmm19\n"
+    "vpxorq %zmm19, %zmm16, %zmm16{%k2}\n"
+    "vpclmulqdq $0x00, (%r11), %zmm16, %zmm21\n"
+    "vpclmulqdq $0x11, (%r11), %zmm16, %zmm22\n"
+    "vpclmulqdq $0x01, (%r11), %zmm16, %zmm19\n"
+    "vpclmulqdq $0x10, (%r11), %zmm16, %zmm20\n"
+    "vpxorq %zmm20, %zmm19, %zmm23\n"
+    "add $64, %rdx\n   add $64, %r11\n   dec %rax\n"
+    "jz .Lghash_blocks_x64_zmm_fold\n"
+    ".Lghash_blocks_x64_zmm_more:\n"
+    GHASH_ZMM_LOAD("0", "16")
+    "vpclmulqdq $0x00, (%r11), %zmm16, %zmm19\n   vpxorq %zmm19, %zmm21, %zmm21\n"
+    "vpclmulqdq $0x11, (%r11), %zmm16, %zmm19\n   vpxorq %zmm19, %zmm22, %zmm22\n"
+    "vpclmulqdq $0x01, (%r11), %zmm16, %zmm19\n"
+    "vpclmulqdq $0x10, (%r11), %zmm16, %zmm20\n"
+    "vpternlogq $0x96, %zmm20, %zmm19, %zmm23\n"
+    "add $64, %rdx\n   add $64, %r11\n   dec %rax\n"
+    "jnz .Lghash_blocks_x64_zmm_more\n"
+    ".Lghash_blocks_x64_zmm_fold:\n"
+    GHASH_ZMM_SPLIT_FOLD
+    "jmp .Lghash_blocks_x64_zmm_done\n"
+    //  One block alone skips the vector: masking and folding four lanes to
+    //  keep one costs more than the reduction it would share, 46 cycles
+    //  against 32, and a lone block is what the lengths block always is.
+    ".Lghash_blocks_x64_zmm_one:\n"
     "vmovdqu64 (%rdx), %xmm16\n   vpshufb %xmm31, %xmm16, %xmm16\n"
     "vpxorq %xmm17, %xmm16, %xmm16\n"
     "vpclmulqdq $0x00, 752(%rsi), %xmm16, %xmm21\n"
@@ -9414,7 +9448,6 @@ __asm__(
     "vpslldq $8, %xmm23, %xmm19\n   vpsrldq $8, %xmm23, %xmm23\n"
     "vpxorq %xmm19, %xmm21, %xmm21\n   vpxorq %xmm23, %xmm22, %xmm22\n"
     GHASH_EVEX_REDUCE
-    "add $16, %rdx\n   dec %rcx\n   jmp .Lghash_blocks_x64_zmm_one\n"
     ".Lghash_blocks_x64_zmm_done:\n"
     "vpshufb %xmm31, %xmm17, %xmm17\n   vmovdqu64 %xmm17, (%rdi)\n"
     "vpxorq %xmm16, %xmm16, %xmm16\n   vpxorq %xmm17, %xmm17, %xmm17\n"
