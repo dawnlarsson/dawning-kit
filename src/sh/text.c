@@ -23185,13 +23185,59 @@ static fn sort_radix(positive from, positive to, b32 stage, positive depth)
                         return;
                 }
 
+                /*
+                        What the range shares, asked once before any bucket
+                        is counted. Every byte all its windows hold alike,
+                        with no key ending there, is a pass that would find
+                        one bucket, and the ranges this reaches are mostly a
+                        few hundred lines of one key: each such pass cleared
+                        and walked all 257 buckets to move nothing. And the
+                        bytes above this column are shared, so the least and
+                        greatest windows hold the least and greatest byte at
+                        it, and only the buckets between them are walked.
+                */
+                p64 first = sort_items[from].window;
+                p64 differ = 0;
+                p64 low = first;
+                p64 high = first;
+                p32 least = sort_items[from].left;
+
+                for (positive at = from + 1; at < to; at++)
+                {
+                        p64 window_at = sort_items[at].window;
+                        p32 left = sort_items[at].left;
+
+                        differ |= window_at ^ first;
+                        low = window_at < low ? window_at : low;
+                        high = window_at > high ? window_at : high;
+                        least = left < least ? left : least;
+                }
+
+                positive shared = differ ? (positive)__builtin_clzll(differ) >> 3 : 8;
+                positive clear = shared < least ? shared : least;
+
+                if (clear > column)
+                {
+                        depth += clear - column;
+                        continue;
+                }
+
                 positive boundary[258];
                 positive next[257];
                 p32 shift = 56 - 8 * (p32)column;
+                positive lowest = ((low >> shift) & 0xff) + base;
+                positive highest = ((high >> shift) & 0xff) + base;
                 positive occupied = 0;
                 positive only = 0;
 
-                memory_fill(boundary, 0, sizeof(boundary));
+                if (least <= column)
+                {
+                        lowest = ended < lowest ? ended : lowest;
+                        highest = ended > highest ? ended : highest;
+                }
+
+                memory_fill(boundary + lowest + 1, 0,
+                            (highest - lowest + 1) * sizeof(positive));
 
                 for (positive at = from; at < to; at++)
                 {
@@ -23203,9 +23249,9 @@ static fn sort_radix(positive from, positive to, b32 stage, positive depth)
                         boundary[bucket + 1]++;
                 }
 
-                boundary[0] = from;
+                boundary[lowest] = from;
 
-                for (positive bucket = 0; bucket < 257; bucket++)
+                for (positive bucket = lowest; bucket <= highest; bucket++)
                 {
                         if (boundary[bucket + 1])
                         {
@@ -23245,7 +23291,7 @@ static fn sort_radix(positive from, positive to, b32 stage, positive depth)
                 positive largest = 0;
                 positive largest_size = 0;
 
-                for (positive bucket = 0; bucket < 257; bucket++)
+                for (positive bucket = lowest; bucket <= highest; bucket++)
                 {
                         positive size = boundary[bucket + 1] - boundary[bucket];
 
