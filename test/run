@@ -3178,6 +3178,8 @@ python3 test/differential.py --harness native_extract "$lib" memory_decimal_seri
         > "$work/series.h" || exit 1
 python3 test/differential.py --harness native_extract "$lib" memory_squeeze_bytes \
         > "$work/squeeze.h" || exit 1
+python3 test/differential.py --harness native_extract "$lib" memory_offsets_of_either \
+        > "$work/offsets.h" || exit 1
 
 #       And one for the wide hunts, holding those eight and nothing else, so
 #       it never pulls in string_find and the routines that follow from it.
@@ -3239,7 +3241,7 @@ python3 test/differential.py --harness native_extract "$lib" memory_growth memor
         > "$work/reserve.h" || exit 1
 
 status=0
-for case in byte_hunts bounded riscv_bits bulk reverse squeeze series wide bases base_field human human_nearest fields input_bases network reserve; do
+for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets series wide bases base_field human human_nearest fields input_bases network reserve; do
         cc -O2 -w -I"$work" "-DCHECK_native_$case" test/checks.c -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done
@@ -12920,7 +12922,7 @@ counted
 #       absolute number that is not. A Linux host target runs directly.
 #
 
-benchmarks="floor baseline numbers bases hex escape codec fixed table padded input-bases fields human human-nearest hash-33 span-byte cells-ascii fill-u32 fill-u64 paths reverse writer-field writer-text text-hot prefix-known translate squeeze ascii-case ascii-case-fold line-break bounded-fold ascii-convert ascii-search grep-search grep-count last-of words clock scan-literal random allocator lock pool ordered tree reserve storage-read compare-max string-copy stream-get stream-write format-bounds startup montgomery shell tools awk find boot-time engines compression compression-floor cksum-crc unicode-width"
+benchmarks="floor baseline numbers bases hex escape codec fixed table padded input-bases fields human human-nearest hash-33 span-byte cells-ascii fill-u32 fill-u64 paths reverse writer-field writer-text text-hot prefix-known translate squeeze offsets ascii-case ascii-case-fold line-break bounded-fold ascii-convert ascii-search grep-search grep-count last-of words clock scan-literal random allocator lock pool ordered tree reserve storage-read compare-max string-copy stream-get stream-write format-bounds startup montgomery shell tools awk find boot-time engines compression compression-floor cksum-crc unicode-width"
 
 #       One benchmark's section and one line about it. A name with no section
 #       is one of the drivers below, which time a whole binary against the
@@ -12985,6 +12987,8 @@ bench_about()
                  bench_line="in-place byte deletion by table against the former scalar C" ;;
         squeeze) bench_section=BENCH_squeeze
                  bench_line="in-place squeezing of repeats by table against the former scalar C" ;;
+        offsets) bench_section=BENCH_offsets
+                 bench_line="every delimiter and line end of a read as offsets against a byte loop" ;;
         ascii-case) bench_section=BENCH_ascii_case
                  bench_line="ASCII-folded bounded comparison against a scalar reference" ;;
         ascii-case-fold) bench_section=BENCH_ascii_case_fold

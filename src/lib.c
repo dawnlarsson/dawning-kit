@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        333 routines (320 public, 13 local), 332 of them on all three and 1 local to one.
+        334 routines (321 public, 13 local), 333 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -213,6 +213,7 @@
           memory_into_hex                public  yes     yes     yes
           memory_into_hex_case           public  yes     yes     yes
           memory_last_of                 public  yes     yes     yes
+          memory_offsets_of_either       public  yes     yes     yes
           memory_release                 public  yes     yes     yes
           memory_reserve                 public  yes     yes     yes
           memory_reverse                 public  yes     yes     yes
@@ -11227,6 +11228,63 @@ __asm__(
     ".popsection\n"
 #endif
     ASM_END(memory_squeeze_bytes)
+
+    //
+    //       memory_offsets_of_either -- where every byte equal to first or to
+    //       second is, as 32-bit offsets from the block in order, until limit
+    //       of them. Answers how many; when that is limit the scan stopped
+    //       just after the last one, and the caller goes on from there. The
+    //       block is shorter than four gigabytes.
+    //
+    //       A field splitter's pass: cut -f walked each line for its end and
+    //       then each field for its delimiter, a library call apiece, where
+    //       one pass over the whole read hands it every boundary at once.
+    //       Sixty four bytes are asked both questions and the answer's
+    //       offsets are packed sixteen at a time with vpcompressd into a
+    //       register and stored whole -- compressing straight to memory is
+    //       microcoded and cost more than the byte loop -- which is why a
+    //       vector is only taken with sixty four offsets of room left; the
+    //       narrow body stores an offset for every byte and moves the count
+    //       on only for a match.
+    //
+    ASM_FUNC(memory_offsets_of_either)
+    "xor %eax, %eax\n   xor %r10d, %r10d\n   test %r9, %r9\n   jz .Lmemory_offsets_x64_done\n"
+#ifndef KERNEL_MODE
+    "cmp $64, %rdx\n   jb .Lmemory_offsets_x64_narrow\n"
+    ASM_NARROW("cpu_has_avx512", ".Lmemory_offsets_x64_narrow")
+    "vpbroadcastb %ecx, %zmm1\n   movzbl %r8b, %r11d\n   vpbroadcastb %r11d, %zmm2\n"
+    "vmovdqu64 .Lmemory_offsets_x64_iota(%rip), %zmm3\n"
+    "mov $16, %r11d\n   vpbroadcastd %r11d, %zmm5\n"
+    ".balign 16\n.Lmemory_offsets_x64_wide:\n"
+    "mov %rdx, %r11\n   sub %r10, %r11\n   cmp $64, %r11\n   jb .Lmemory_offsets_x64_wide_end\n"
+    "mov %r9, %r11\n   sub %rax, %r11\n   cmp $64, %r11\n   jb .Lmemory_offsets_x64_wide_end\n"
+    "vmovdqu64 (%rsi,%r10), %zmm0\n"
+    "vpcmpeqb %zmm1, %zmm0, %k1\n   vpcmpeqb %zmm2, %zmm0, %k2\n   korq %k2, %k1, %k1\n"
+    "kortestq %k1, %k1\n   jz .Lmemory_offsets_x64_next\n"
+    "vpbroadcastd %r10d, %zmm4\n   vpaddd %zmm3, %zmm4, %zmm4\n"
+    "vpcompressd %zmm4, %zmm6{%k1}{z}\n   vmovdqu32 %zmm6, (%rdi,%rax,4)\n   kmovw %k1, %r11d\n   popcnt %r11d, %r11d\n   add %r11, %rax\n"
+    "kshiftrq $16, %k1, %k1\n   vpaddd %zmm5, %zmm4, %zmm4\n"
+    "vpcompressd %zmm4, %zmm6{%k1}{z}\n   vmovdqu32 %zmm6, (%rdi,%rax,4)\n   kmovw %k1, %r11d\n   popcnt %r11d, %r11d\n   add %r11, %rax\n"
+    "kshiftrq $16, %k1, %k1\n   vpaddd %zmm5, %zmm4, %zmm4\n"
+    "vpcompressd %zmm4, %zmm6{%k1}{z}\n   vmovdqu32 %zmm6, (%rdi,%rax,4)\n   kmovw %k1, %r11d\n   popcnt %r11d, %r11d\n   add %r11, %rax\n"
+    "kshiftrq $16, %k1, %k1\n   vpaddd %zmm5, %zmm4, %zmm4\n"
+    "vpcompressd %zmm4, %zmm6{%k1}{z}\n   vmovdqu32 %zmm6, (%rdi,%rax,4)\n   kmovw %k1, %r11d\n   popcnt %r11d, %r11d\n   add %r11, %rax\n"
+    ".Lmemory_offsets_x64_next:\n   add $64, %r10\n   jmp .Lmemory_offsets_x64_wide\n"
+    ".Lmemory_offsets_x64_wide_end:\n   vzeroupper\n"
+    ".pushsection .rodata\n   .balign 64\n"
+    ".Lmemory_offsets_x64_iota:\n   .long 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15\n"
+    ".popsection\n"
+#endif
+    ".Lmemory_offsets_x64_narrow:\n   push %rbx\n"
+    ".balign 16\n.Lmemory_offsets_x64_one:\n"
+    "cmp %rdx, %r10\n   jae .Lmemory_offsets_x64_leave\n   cmp %r9, %rax\n   jae .Lmemory_offsets_x64_leave\n"
+    "movzbl (%rsi,%r10), %r11d\n   mov %r10d, (%rdi,%rax,4)\n   xor %ebx, %ebx\n"
+    "cmp %cl, %r11b\n   sete %bl\n   cmp %r8b, %r11b\n   sete %r11b\n   or %r11b, %bl\n"
+    "add %rbx, %rax\n   inc %r10\n   jmp .Lmemory_offsets_x64_one\n"
+    ".Lmemory_offsets_x64_leave:\n   pop %rbx\n"
+    ".Lmemory_offsets_x64_done:\n"
+    ASM_RET
+    ASM_END(memory_offsets_of_either)
 
     /*
             Exchange two separate byte runs in place.
@@ -23007,6 +23065,34 @@ __asm__(
     ".Lmemory_squeeze_arm64_done:\n   sub x0, x8, x7\n"
     ASM_RET
     ASM_END(memory_squeeze_bytes)
+
+    // memory_offsets_of_either: sixteen bytes a turn, both questions folded
+    // to a nibble a byte with shrn and one bit of each nibble kept, then the
+    // hits read off lowest first; the tail and a count near the limit go a
+    // byte at a time, every offset stored and the count moved on by cinc.
+    // The x86_64 block carries the full contract.
+    ASM_FUNC(memory_offsets_of_either)
+    "and w3, w3, #255\n   and w4, w4, #255\n   mov x6, xzr\n   mov x7, xzr\n"
+    "cbz x5, .Lmemory_offsets_arm64_done\n"
+    "dup v1.16b, w3\n   dup v2.16b, w4\n   mov x13, #0x8888888888888888\n"
+    ".Lmemory_offsets_arm64_wide:\n"
+    "sub x8, x2, x7\n   cmp x8, #16\n   b.lo .Lmemory_offsets_arm64_one\n"
+    "sub x8, x5, x6\n   cmp x8, #16\n   b.lo .Lmemory_offsets_arm64_one\n"
+    "ldr q0, [x1, x7]\n   cmeq v3.16b, v0.16b, v1.16b\n   cmeq v4.16b, v0.16b, v2.16b\n"
+    "orr v3.16b, v3.16b, v4.16b\n   shrn v3.8b, v3.8h, #4\n   fmov x9, d3\n   and x9, x9, x13\n"
+    "cbz x9, .Lmemory_offsets_arm64_next\n"
+    ".Lmemory_offsets_arm64_bits:\n   rbit x10, x9\n   clz x10, x10\n   add x10, x7, x10, lsr #2\n"
+    "str w10, [x0, x6, lsl #2]\n   add x6, x6, #1\n   sub x11, x9, #1\n   and x9, x9, x11\n"
+    "cbnz x9, .Lmemory_offsets_arm64_bits\n"
+    ".Lmemory_offsets_arm64_next:\n   add x7, x7, #16\n   b .Lmemory_offsets_arm64_wide\n"
+    ".Lmemory_offsets_arm64_one:\n"
+    "cmp x7, x2\n   b.hs .Lmemory_offsets_arm64_done\n   cmp x6, x5\n   b.hs .Lmemory_offsets_arm64_done\n"
+    "ldrb w9, [x1, x7]\n   str w7, [x0, x6, lsl #2]\n"
+    "cmp w9, w3\n   ccmp w9, w4, #4, ne\n   cinc x6, x6, eq\n"
+    "add x7, x7, #1\n   b .Lmemory_offsets_arm64_one\n"
+    ".Lmemory_offsets_arm64_done:\n   mov x0, x6\n"
+    ASM_RET
+    ASM_END(memory_offsets_of_either)
 
     // memory_exchange_apart: disjoint exchange with equal and zero-sized
     // no-op cases. The x86_64 block carries the full contract.
@@ -35684,6 +35770,20 @@ __asm__(
     ASM_RET
     ASM_END(memory_squeeze_bytes)
 
+    // memory_offsets_of_either: a byte at a time, every offset stored and the
+    // count moved on by the or of two seqz. The x86_64 block carries the full
+    // contract.
+    ASM_FUNC(memory_offsets_of_either)
+    "andi a3, a3, 255\n   andi a4, a4, 255\n   li t0, 0\n   li t1, 0\n"
+    ".Lmemory_offsets_rv_one:\n"
+    "bgeu t1, a2, .Lmemory_offsets_rv_done\n   bgeu t0, a5, .Lmemory_offsets_rv_done\n"
+    "add t2, a1, t1\n   lbu t2, 0(t2)\n   slli t3, t0, 2\n   add t3, a0, t3\n   sw t1, 0(t3)\n"
+    "xor t4, t2, a3\n   seqz t4, t4\n   xor t5, t2, a4\n   seqz t5, t5\n   or t4, t4, t5\n"
+    "add t0, t0, t4\n   addi t1, t1, 1\n   j .Lmemory_offsets_rv_one\n"
+    ".Lmemory_offsets_rv_done:\n   mv a0, t0\n"
+    ASM_RET
+    ASM_END(memory_offsets_of_either)
+
     // memory_exchange_apart: disjoint exchange with equal and zero-sized
     // no-op cases. The x86_64 block carries the full contract. RV64 may trap
     // on an unaligned wide access. The xor chooses the widest shared residue;
@@ -43379,6 +43479,14 @@ positive memory_delete_bytes(address_any block, positive size,
 READS_WRITES(1, 2)
 positive memory_squeeze_bytes(address_any block, positive size,
                               address_any table, positive previous);
+// Where every byte equal to first or to second is, as 32-bit offsets from the
+// block in order, until limit of them; answers how many. When that is limit
+// the scan stopped just after the last one. The block is shorter than four
+// gigabytes, and positions has room for limit offsets.
+WRITES(1) READS(2, 3)
+positive memory_offsets_of_either(p32 address_to positions, address_any block,
+                                  positive size, p8 first, p8 second,
+                                  positive limit);
 // Swap exactly size bytes between separate ranges. The ranges must be
 // disjoint unless left == right; equal addresses and zero size are no-ops and
 // do not dereference either address.

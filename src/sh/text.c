@@ -13047,6 +13047,127 @@ static const argument_option cut_options[] = {
 // A list given twice is two lists, and GNU refuses two -- which one value per
 // letter cannot say on its own, so the options are counted as they arrive.
 
+/*
+        cut -f over a whole read at once: every delimiter and every line end
+        in it comes from one library pass, and each complete line is then
+        its fields' copies and nothing else. The line reader asked for each
+        line's end and then each field's delimiter, a call apiece. Stops at
+        the first line that is not whole in the read, has more fields than
+        are kept here, or does not fit the output, and answers how many
+        bytes it took, all of them whole lines; the line reader has the
+        rest.
+*/
+#define CUT_OFFSETS 4096
+#define CUT_FIELDS 4096
+
+static p32 cut_offsets[CUT_OFFSETS];
+static p32 cut_fields[CUT_FIELDS];
+
+static positive cut_lines(p8 address_to base, positive left, p8 delimiter,
+                          bool complement, bool only_delimited)
+{
+        positive line_start = 0;
+        positive fields = 0;
+        positive scan = 0;
+
+        for (;;)
+        {
+                positive count = memory_offsets_of_either(
+                    cut_offsets, base + scan, left - scan, delimiter,
+                    text_delimiter, CUT_OFFSETS);
+
+                for (positive i = 0; i < count; i++)
+                {
+                        positive ending = scan + cut_offsets[i];
+
+                        if (base[ending] != text_delimiter)
+                        {
+                                if (fields == CUT_FIELDS)
+                                        return line_start;
+
+                                cut_fields[fields++] = (p32)ending;
+                                continue;
+                        }
+
+                        p8 address_to line = base + line_start;
+                        positive line_length = ending - line_start;
+
+                        if (!fields)
+                        {
+                                if (!only_delimited)
+                                        text_put(line, line_length + 1);
+                        }
+                        else
+                        {
+                                if (line_length + 1 > TEXT_OUT_MAX)
+                                        return line_start;
+
+                                positive reserved = line_length + 1;
+                                p8 address_to out = text_reserve(reserved);
+
+                                if (!out)
+                                        return line_start;
+
+                                positive out_length = 0;
+                                positive from = line_start;
+                                positive which = 1;
+                                bool wrote = false;
+
+                                for (positive f = 0;; f++)
+                                {
+                                        positive at = f < fields ? cut_fields[f] : ending;
+
+                                        if (text_list_has(which) != complement)
+                                        {
+                                                if (wrote)
+                                                        out[out_length++] = delimiter;
+
+                                                memory_copy_apart(out + out_length, base + from,
+                                                                  at - from);
+                                                out_length += at - from;
+                                                wrote = true;
+                                        }
+
+                                        if (f == fields)
+                                                break;
+
+                                        // No field past this one is listed:
+                                        // the rest is kept or dropped whole.
+                                        if (!text_list_open && which + 1 >= text_list_used)
+                                        {
+                                                if (complement)
+                                                {
+                                                        if (wrote)
+                                                                out[out_length++] = delimiter;
+
+                                                        memory_copy_apart(out + out_length,
+                                                                          base + at + 1,
+                                                                          ending - at - 1);
+                                                        out_length += ending - at - 1;
+                                                }
+
+                                                break;
+                                        }
+
+                                        from = at + 1;
+                                        which++;
+                                }
+
+                                out[out_length++] = text_delimiter;
+                                text_out_used -= reserved - out_length;
+                        }
+
+                        line_start = ending + 1;
+                        fields = 0;
+                }
+
+                if (count < CUT_OFFSETS)
+                        return line_start;
+
+                scan += cut_offsets[count - 1] + 1;
+        }
+}
+
 static b32 text_cut()
 {
         file_taking taking = {
@@ -13170,6 +13291,9 @@ static b32 text_cut()
                 at a time below; -b never is, at any locale.
         */
         bool characters = (flags & FILE_FLAG('c')) && text_locale_utf8();
+        // Fields by one byte with nothing else asked go a read at a time.
+        bool whole_lines = by_field && !whitespace && !separator && !trimmed &&
+                           delimiter != text_delimiter;
 
         for (b32 i = 0; i < inputs; i++)
         {
@@ -13180,6 +13304,19 @@ static b32 text_cut()
                 {
                         p8 address_to line = null;
                         positive line_length = 0;
+
+                        if (whole_lines && text_fill())
+                        {
+                                positive took = cut_lines(
+                                    text_input.buffer + text_input.position,
+                                    text_input.filled - text_input.position,
+                                    delimiter, complement, only_delimited);
+
+                                text_input.position += took;
+
+                                if (took)
+                                        continue;
+                        }
 
                         if (!text_line_view(address_of line,
                                             address_of line_length,
