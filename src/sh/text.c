@@ -6565,6 +6565,10 @@ static bool text_tab_option_seen;
 // Bytes expand copies as they are, and the space alone.
 static const b8 text_tab_expand_span[256] = {[0 ... 7] = 1, [11 ... 255] = 1};
 static const b8 text_tab_space_span[256] = {[' '] = 1};
+// What unexpand passes through untouched: everything but a blank, a
+// backspace and a newline, each of which moves a column or ends a line.
+static const b8 text_tab_unexpand_span[256] = {[0 ... 7] = 1, [11 ... 31] = 1,
+                                               [33 ... 255] = 1};
 
 static fn text_tab_reset()
 {
@@ -6862,6 +6866,10 @@ static fn text_tab_transform(bool unexpand, bool initial_only)
         bool one_blank_before_stop = false;
         bool previous_blank = true;
         bool convert = true;
+        // The tab stop unexpand last asked for, and the first column that
+        // was asked from: every column in [stop_from, stop_at) has that stop.
+        positive stop_from = 1;
+        positive stop_at = 0;
         b32 inputs = text_input_count();
 
 
@@ -6902,6 +6910,54 @@ static fn text_tab_transform(bool unexpand, bool initial_only)
                                         continue;
                                 }
 
+                                /*
+                                        With no blank waiting, a run of bytes
+                                        that are not blanks is only columns:
+                                        it goes out whole. unexpand -a spent
+                                        twelve cycles a byte asking each one.
+                                */
+                                if (unexpand && !pending && !initial_only)
+                                {
+                                        positive run = 0;
+
+                                        /*
+                                                A lone space between two such
+                                                bytes goes out as itself
+                                                wherever it falls, so it joins
+                                                the run: a space between words
+                                                is the blank unexpand meets
+                                                most, and waiting on it and
+                                                flushing it cost more than the
+                                                word did.
+                                        */
+                                        for (;;)
+                                        {
+                                                positive more = string_span_max(
+                                                    data + at + run, left - at - run,
+                                                    text_tab_unexpand_span);
+
+                                                run += more;
+
+                                                if (!run || at + run + 1 >= left ||
+                                                    data[at + run] != ' ' ||
+                                                    !text_tab_unexpand_span[data[at + run + 1]])
+                                                        break;
+
+                                                run++;
+                                        }
+
+                                        if (run)
+                                        {
+                                                text_put(data + at, run);
+                                                column = column > positive_max - run
+                                                             ? positive_max
+                                                             : column + run;
+                                                previous_blank = false;
+                                                at += run;
+                                                continue;
+                                        }
+                                }
+
                                 if (unexpand)
                                 {
                                         p8 character = data[at++];
@@ -6911,11 +6967,28 @@ static fn text_tab_transform(bool unexpand, bool initial_only)
 
                                         if (blank)
                                         {
-                                                positive stop;
-                                                bool explicit;
-                                                bool have = text_tab_next(
-                                                    column, address_of stop,
-                                                    address_of explicit);
+                                                /*
+                                                        The stop a column goes
+                                                        to is the same for every
+                                                        column before it, and a
+                                                        run of blanks asks for
+                                                        each: it is asked once
+                                                        for the run, not with a
+                                                        divide a blank.
+                                                */
+                                                positive stop = stop_at;
+                                                bool have = true;
+
+                                                if (column < stop_from || column >= stop_at)
+                                                {
+                                                        bool explicit;
+
+                                                        have = text_tab_next(
+                                                            column, address_of stop,
+                                                            address_of explicit);
+                                                        stop_from = have ? column : 1;
+                                                        stop_at = have ? stop : 0;
+                                                }
 
                                                 if (!have)
                                                         convert = false;
