@@ -43,6 +43,8 @@ moonwater bluetooth on|off             unblock or block bluetooth
 moonwater bluetooth add NAME           remember a bluetooth device
 moonwater priority internet            which link to use when cable and wifi are both up
 moonwater priority internet wired|wifi wired wins by default
+moonwater time                         the clock: local, UTC, and whether NTP has set it
+moonwater time sync                    ask an NTP server now, then put the zone back everywhere
 moonwater timezone                     the clock's zone [UTC]
 moonwater timezone ZONE                IANA name or POSIX TZ string
 moonwater ntp                          whether the clock is set from the network

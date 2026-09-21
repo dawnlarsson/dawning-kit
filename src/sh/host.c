@@ -5394,12 +5394,12 @@ static b32 host_radio(string_address address_to arguments, positive count)
         keep the lowest delay unless /root/ntp.filter says off. The kernel
         adds that offset with adjtimex; a kiss-o-death drops the server.
 
-        The forked query is reaped with wait4, not asked after with kill.
-        A pid that has exited but not been waited for is still a pid, so
-        kill(pid, 0) answers zero for a zombie exactly as it does for a
-        live child: the poll would see its first query running for ever,
-        never retry a boot that failed for want of a network, and never
-        poll again. wait4 is the only call that distinguishes the two.
+        The forked query is not asked after with kill. A pid that has
+        exited but not been waited for is still a pid, so kill(pid, 0)
+        answers zero for a zombie exactly as it does for a live child: the
+        poll would see its first query running for ever. Nor is it asked
+        with wait4 alone, since the machine loop reaps every child it has;
+        it says how it went on a pipe (locale_child).
 
         NOTHING BELOW HAS BEEN SEEN TO SET A CLOCK
 
@@ -6457,7 +6457,8 @@ static HOT bipolar sntp_exchange(b32 handle,
 }
 
 static COLD bipolar sntp_query_at(p32 server, bool filter, bool tight,
-                             bipolar address_to offset_ns)
+                             bipolar address_to offset_ns,
+                             bipolar address_to delay_ns)
 {
         socket_address_internet where = {
             .family = AF_INET,
@@ -6511,11 +6512,13 @@ static COLD bipolar sntp_query_at(p32 server, bool filter, bool tight,
         if (best < 0)
                 return failed < 0 ? failed : SNTP_NO_REPLY;
         address_to offset_ns = row[best].offset_ns;
+        address_to delay_ns = row[best].delay_ns;
         return SNTP_OK;
 }
 
 static COLD bipolar sntp_query(string_address name, bool filter, bool tight,
-                          bipolar address_to offset_ns)
+                          bipolar address_to offset_ns,
+                          bipolar address_to delay_ns)
 {
         bipolar numeric;
         p32 host = 0;
@@ -6525,13 +6528,14 @@ static COLD bipolar sntp_query(string_address name, bool filter, bool tight,
                 return SNTP_NO_SERVER;
         numeric = string_to_host(name);
         if (numeric >= 0)
-                return sntp_query_at((p32)numeric, filter, tight, offset_ns);
+                return sntp_query_at((p32)numeric, filter, tight, offset_ns,
+                                     delay_ns);
 
         found = dns_resolve_any((string_address) "/etc/resolv.conf", name,
                                 address_of host, SNTP_SECONDS);
         if (found != DNS_OK)
                 return SNTP_NO_SERVER;
-        return sntp_query_at(host, filter, tight, offset_ns);
+        return sntp_query_at(host, filter, tight, offset_ns, delay_ns);
 }
 
 #endif
@@ -6577,9 +6581,87 @@ static COLD bipolar sntp_query(string_address name, bool filter, bool tight,
 #define STA_UNSYNC 0x0040
 #define STA_NANO 0x2000
 
+/*
+        A query that runs in a child of the machine process, and how its
+        answer gets back.
+
+        It used to come back as the child's exit status, collected by a
+        wait4 on its pid. But the machine loop runs radio_recover first, and
+        that reaps every child it has with wait4(-1): the status was gone
+        before this side asked, wait4 answered ECHILD, and the status read
+        as zero. So a kiss-o-death never slowed anything down. The answer is
+        now one byte on a pipe, which nothing else in the process reads; the
+        pid is still reaped here when radio_reap has not got there first,
+        and a child that dies without writing reads as end of file, which
+        is a failure like any other.
+*/
+typedef struct
+{
+        bipolar pid;
+        bipolar answer;
+} locale_child;
+
+#define LOCALE_CHILD_RUNNING (-1)
+#define LOCALE_CHILD_IDLE (-2)
+
+static bipolar locale_child_fork(locale_child address_to child)
+{
+        b32 ends[2];
+        bipolar pid;
+
+        if (system_pipe(ends, O_CLOEXEC | O_NONBLOCK) < 0)
+                return -1;
+        pid = system_fork();
+        if (pid < 0)
+        {
+                system_close(ends[0]);
+                system_close(ends[1]);
+                return pid;
+        }
+        if (!pid)
+        {
+                system_close(ends[0]);
+                child->pid = 0;
+                child->answer = ends[1];
+                return 0;
+        }
+        system_close(ends[1]);
+        child->pid = pid;
+        child->answer = ends[0];
+        return pid;
+}
+
+static DEAD_END fn locale_child_end(locale_child address_to child, p8 code)
+{
+        (void)system_write_once(child->answer, address_of code, 1);
+        system_call_1(syscall(exit), code);
+        __builtin_unreachable();
+}
+
+//      LOCALE_CHILD_IDLE with none running, LOCALE_CHILD_RUNNING while it
+//      runs, then the byte it ended with -- once.
+static bipolar locale_child_poll(locale_child address_to child)
+{
+        p8 code = 1;
+        positive status = 0;
+        bipolar got;
+
+        if (child->pid <= 0)
+                return LOCALE_CHILD_IDLE;
+        got = system_read_once(child->answer, address_of code, 1);
+        if (got == -EAGAIN || got == -EINTR)
+                return LOCALE_CHILD_RUNNING;
+        system_close(child->answer);
+        (void)system_wait4_retry(child->pid, address_of status,
+                                 LOCALE_WAIT_NOHANG, null);
+        child->pid = 0;
+        child->answer = -1;
+        return got == 1 ? code : 1;
+}
+
 static p64 locale_ntp_next;
 static positive locale_ntp_retry = LOCALE_NTP_RETRY_LEAST;
-static bipolar locale_ntp_child;
+static locale_child locale_ntp_child = {0, -1};
 
 static fn locale_ntp_keep(void);
 static bipolar locale_ntp_apply(void);
@@ -6981,12 +7063,43 @@ static b32 locale_time_sync(void)
         return failed < 0 ? 1 : 0;
 }
 
-static fn locale_clock_mark_synced(void)
+/*
+        Half the round trip, in the microseconds the kernel keeps its error
+        bounds in. That is how far the offset can be from the truth, and it
+        is what the kernel is told the clock's error now is.
+
+        Telling it is not optional. The kernel adds 500 microseconds a second
+        to its maximum error and marks the clock unsynchronised the moment
+        that passes sixteen seconds -- and a clock nobody gave an error to
+        sits at sixteen seconds already. Every correction here cleared
+        STA_UNSYNC and never set ADJ_MAXERROR, so the next second put the
+        flag back: moonwater ntp said waiting a second after any answer, and
+        the machine, reading that as a failure, asked the pool again every
+        few seconds for as long as it ran. With the error given, the flag
+        stays down for the eight hours it takes 500 us/s to grow a
+        millisecond into sixteen seconds, and the next query comes long
+        before that.
+*/
+#define LOCALE_TIMEX_ESTERROR 4
+#define LOCALE_NTP_ERROR_MOST_US 1000000
+
+static CONST positive locale_ntp_error_us(bipolar delay_ns)
+{
+        bipolar us = (delay_ns < 0 ? 0 : delay_ns) / 2000 + 1;
+
+        return (positive)(us > LOCALE_NTP_ERROR_MOST_US
+                              ? LOCALE_NTP_ERROR_MOST_US
+                              : us);
+}
+
+static fn locale_clock_mark_synced(positive error_us)
 {
         positive words[LOGGER_TIMEX_WORDS] = {0};
 
-        words[0] = ADJ_STATUS;
+        words[0] = ADJ_STATUS | ADJ_MAXERROR | ADJ_ESTERROR;
         words[LOGGER_TIMEX_STATUS] = STA_PLL;
+        words[LOGGER_TIMEX_MAXERROR] = error_us;
+        words[LOCALE_TIMEX_ESTERROR] = error_us;
         system_call_1(syscall(adjtimex), (positive)words);
 }
 
@@ -7029,20 +7142,24 @@ static CONST bool locale_ntp_wants_step(bipolar offset_ns)
 }
 
 static fn locale_ntp_discipline_words(bipolar offset_ns, bipolar seconds,
-                                      bipolar nanoseconds,
+                                      bipolar nanoseconds, positive error_us,
                                       positive address_to words)
 {
         memory_zero(words, LOGGER_TIMEX_WORDS * sizeof(positive));
         words[LOGGER_TIMEX_STATUS] = STA_PLL;
+        words[LOGGER_TIMEX_MAXERROR] = error_us;
+        words[LOCALE_TIMEX_ESTERROR] = error_us;
         if (locale_ntp_wants_step(offset_ns))
         {
-                words[0] = ADJ_SETOFFSET | ADJ_OFFSET | ADJ_NANO | ADJ_STATUS;
+                words[0] = ADJ_SETOFFSET | ADJ_OFFSET | ADJ_NANO | ADJ_STATUS |
+                           ADJ_MAXERROR | ADJ_ESTERROR;
                 words[LOCALE_TIMEX_OFFSET] = 0;
                 words[LOGGER_TIMEX_TIME_SEC] = (positive)seconds;
                 words[LOGGER_TIMEX_TIME_NSEC] = (positive)nanoseconds;
                 return;
         }
-        words[0] = ADJ_OFFSET | ADJ_TIMECONST | ADJ_NANO | ADJ_STATUS;
+        words[0] = ADJ_OFFSET | ADJ_TIMECONST | ADJ_NANO | ADJ_STATUS |
+                   ADJ_MAXERROR | ADJ_ESTERROR;
         words[LOCALE_TIMEX_OFFSET] = (positive)offset_ns;
         words[LOCALE_TIMEX_CONSTANT] = LOCALE_NTP_TIMECONST;
 }
@@ -7080,7 +7197,9 @@ static COLD bool locale_discipline_ok(void)
                 bipolar nsec = 0;
 
                 sntp_split_offset(offset, address_of sec, address_of nsec);
-                locale_ntp_discipline_words(offset, sec, nsec, words);
+                locale_ntp_discipline_words(offset, sec, nsec,
+                                            locale_ntp_error_us(20000000),
+                                            words);
 
                 if (locale_ntp_wants_step(offset) != discipline_case[at].step)
                         return false;
@@ -7089,6 +7208,12 @@ static COLD bool locale_discipline_ok(void)
                 if (words[LOGGER_TIMEX_STATUS] != STA_PLL)
                         return false;
                 if (words[0] & ADJ_STATUS ? false : true)
+                        return false;
+                /* and it carries an error bound, or the kernel takes the
+                   synchronisation back at the next second */
+                if (!(words[0] & ADJ_MAXERROR) || !(words[0] & ADJ_ESTERROR) ||
+                    words[LOGGER_TIMEX_MAXERROR] != 10001 ||
+                    words[LOCALE_TIMEX_ESTERROR] != 10001)
                         return false;
                 if (discipline_case[at].step)
                 {
@@ -7117,7 +7242,11 @@ static COLD bool locale_discipline_ok(void)
                 if (!(words[0] & ADJ_NANO) || !(words[0] & ADJ_OFFSET))
                         return false;
         }
-        return true;
+        /* half of a 20 ms round trip is 10 ms; a negative or absurd delay
+           still gives a bound the kernel accepts */
+        return locale_ntp_error_us(0) == 1 && locale_ntp_error_us(-5) == 1 &&
+               locale_ntp_error_us((bipolar)60 * 1000000000) ==
+                   LOCALE_NTP_ERROR_MOST_US;
 }
 
 static const char locale_ntp_fallback[][24] = {
@@ -7130,7 +7259,7 @@ static const char locale_ntp_fallback[][24] = {
         "162.159.200.123",
 };
 
-static bipolar locale_ntp_apply_offset(bipolar offset_ns)
+static bipolar locale_ntp_apply_offset(bipolar offset_ns, bipolar delay_ns)
 {
         bipolar now;
         bipolar target = 0;
@@ -7147,7 +7276,8 @@ static bipolar locale_ntp_apply_offset(bipolar offset_ns)
                 return SNTP_MALFORMED;
 
         sntp_split_offset(offset_ns, address_of sec, address_of nsec);
-        locale_ntp_discipline_words(offset_ns, sec, nsec, words);
+        locale_ntp_discipline_words(offset_ns, sec, nsec,
+                                    locale_ntp_error_us(delay_ns), words);
         failed = system_call_1(syscall(adjtimex), (positive)words);
         if_common (failed >= 0)
                 return 0;
@@ -7168,25 +7298,27 @@ static bipolar locale_ntp_apply_offset(bipolar offset_ns)
         }
         if (failed < 0)
                 return failed;
-        locale_clock_mark_synced();
+        locale_clock_mark_synced(locale_ntp_error_us(delay_ns));
         return 0;
 }
 
 static bipolar locale_ntp_one(string_address server, bool filter, bool tight)
 {
         bipolar offset_ns = 0;
+        bipolar delay_ns = 0;
         bipolar failed;
 
         if (!server || !server[0] ||
             !radio_text_plain(server, string_length(server)))
                 return SNTP_NO_SERVER;
-        failed = sntp_query(server, filter, tight, address_of offset_ns);
+        failed = sntp_query(server, filter, tight, address_of offset_ns,
+                            address_of delay_ns);
         if (failed < 0)
                 return failed;
         locale_ntp_moved_ns = offset_ns;
         string_copy_bounded(locale_ntp_answered, server,
                             sizeof(locale_ntp_answered));
-        return locale_ntp_apply_offset(offset_ns);
+        return locale_ntp_apply_offset(offset_ns, delay_ns);
 }
 
 /*
@@ -7388,7 +7520,6 @@ static fn locale_restore(void)
 
         locale_ntp_next = 0;
         locale_ntp_retry = LOCALE_NTP_RETRY_LEAST;
-        locale_ntp_child = 0;
         if (locale_ntp_wanted())
                 locale_ntp_keep();
 }
@@ -7396,25 +7527,19 @@ static fn locale_restore(void)
 static fn locale_ntp_keep(void)
 {
         p64 now = system_clock_ns(HOST_CLOCK_BOOTTIME);
-        bipolar child;
+        bipolar ended = locale_child_poll(address_of locale_ntp_child);
 
-        if (locale_ntp_child > 0)
+        if (ended == LOCALE_CHILD_RUNNING)
+                return;
+        if (ended != LOCALE_CHILD_IDLE)
         {
-                positive status = 0;
-                bipolar reaped = system_wait4_retry(locale_ntp_child,
-                                                    address_of status,
-                                                    LOCALE_WAIT_NOHANG, null);
-
-                if (reaped == 0)
-                        return;
-                locale_ntp_child = 0;
-                if (locale_clock_synced())
+                if (!ended)
                 {
                         locale_ntp_retry = LOCALE_NTP_RETRY_LEAST;
                         locale_ntp_next =
                             now + (p64)LOCALE_NTP_AGAIN * 1000000000ull;
                 }
-                else if (((status >> 8) & 0xff) == LOCALE_NTP_EXIT_RATE)
+                else if (ended == LOCALE_NTP_EXIT_RATE)
                 {
                         locale_ntp_retry = LOCALE_NTP_RETRY_MOST;
                         locale_ntp_next =
@@ -7433,21 +7558,16 @@ static fn locale_ntp_keep(void)
         if (locale_ntp_next && now < locale_ntp_next)
                 return;
 
-        child = system_fork();
-        if (child < 0)
-                return;
-        if (!child)
+        if (!locale_child_fork(address_of locale_ntp_child))
         {
                 bipolar failed = locale_ntp_apply();
 
-                system_call_1(syscall(exit),
-                              failed >= 0
-                                  ? 0
-                                  : (failed == SNTP_RATE_LIMITED
-                                         ? LOCALE_NTP_EXIT_RATE
-                                         : 1));
+                locale_child_end(address_of locale_ntp_child,
+                                 failed >= 0 ? 0
+                                 : failed == SNTP_RATE_LIMITED
+                                     ? LOCALE_NTP_EXIT_RATE
+                                     : 1);
         }
-        locale_ntp_child = child;
 }
 
 //      Daylight saving moves the offset twice a year without anyone setting

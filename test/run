@@ -10098,6 +10098,22 @@ chmod +x /tmp/plain-script
 /tmp/plain-script alpha
 printf 'txet%s\n' $? | rev
 #
+#       The machine sets the clock by itself, and the kernel goes on calling
+#       it set. Every correction used to leave out the error bound, so the
+#       kernel took the synchronisation back a second later: moonwater ntp
+#       said waiting for ever and the machine asked the pool every few
+#       seconds. By hand, time sync answers 0 and the mark outlasts it.
+#       Both need the pool reachable from the box.
+#
+tries=0
+until moonwater ntp | grep -q synchronised || [ "$tries" -ge 60 ]; do sleep 1; tries=$((tries + 1)); done
+sleep 2
+printf 'ntp-own-%s\n' "$(moonwater ntp | grep -c synchronised)" | rev
+moonwater time sync > /tmp/time-sync 2>&1
+printf 'cnys%s\n' $? | rev
+sleep 3
+printf 'ntp-kept-%s\n' "$(moonwater ntp | grep -c synchronised)" | rev
+#
 #       Setting a zone must not move the clock. The first settimeofday that
 #       carries a zone makes Linux decide the hardware clock keeps local time
 #       and warp the system clock by the offset; moonwater spends that first
@@ -10160,6 +10176,9 @@ timeout 180 qemu-system-x86_64 -m 2G -smp 2 -cpu Nehalem \
 #       The register on a booted machine: present, saying what it was built
 #       saying, and actually stopping the applet it names.
 #
+says transcript 'the machine set the clock itself' '1-nwo-ptn'
+says transcript 'time sync answers'    '0sync'
+says transcript 'and the clock stays set' '1-tpek-ptn'
 says transcript 'setting a zone does not move the clock' '0warp'
 says transcript 'and the clock reads the zone it was set to' '0010+'
 says transcript 'and the zone reached the kernel and this system' '1applied'
