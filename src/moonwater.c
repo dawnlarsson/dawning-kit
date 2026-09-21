@@ -2134,7 +2134,11 @@ static fn host_machine_hold(positive address_to slot, bool lock)
 
         A reload that fails leaves the old functions in place and the sourced
         identity unchanged, so the next event tries again rather than running
-        on with a script it only half took.
+        on with a script it only half took. What it does not put back is the
+        overlay: host_machine keeps the kernel's answer, because that is the
+        answer the kernel routed this event by, and judging the event the
+        same way it was routed is what turns a function this process has not
+        got into one loud line instead of another silent drop.
 
         This re-runs the file's top-level lines, which is why a machine
         script keeps its work inside functions.
