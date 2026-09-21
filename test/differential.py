@@ -20880,6 +20880,10 @@ def harness_native_extract(argv):
     if any('digit_pairs' in l for b in bodies.values() for l in b):
         print(digit_pair_table())
 
+    if any('ten_powers' in l for b in bodies.values() for l in b):
+        print('const unsigned long ten_powers[] = {'
+              + ', '.join('%dul' % 10 ** k for k in range(20)) + '};')
+
 
     # The arm64 bodies are written over macros -- one wide loop shared by every
     # hunt that has one -- so the macros come across too, or what is lifted does

@@ -26858,7 +26858,30 @@ ASM_FUNC(positive_to_string)
     "strb w1, [x0]\n"
     ".Lpositive_into_padded_arm_fixed_done:\n   mov x0, x2\n"
     ASM_RET
-    ".Lpositive_into_padded_arm_general:\n   stp x29, x30, [sp,  #-64]!\n"
+    //       Any pad, a width of two to nine and a value that fits it: the
+    //       x86_64 block says why. The pad is two overlapping stores of the
+    //       pad byte times 0x0101010101010101.
+    ".Lpositive_into_padded_arm_general:\n   ands w4, w3, #255\n   b.eq .Lpositive_into_padded_arm_call\n"
+    "sub x5, x2, #2\n   cmp x5, #7\n   b.hi .Lpositive_into_padded_arm_call\n"
+    "adrp x6, ten_powers\n   add x6, x6, :lo12:ten_powers\n   ldr x6, [x6, x2, lsl #3]\n"
+    "cmp x1, x6\n   b.hs .Lpositive_into_padded_arm_call\n"
+    "mov x7, #0x0101010101010101\n   mul x7, x4, x7\n   add x8, x0, x2\n"
+    "cmp x2, #4\n   b.lo .Lpositive_into_padded_arm_lay2\n   cmp x2, #8\n   b.lo .Lpositive_into_padded_arm_lay4\n"
+    "str x7, [x0]\n   stur x7, [x8, #-8]\n   b .Lpositive_into_padded_arm_laid\n"
+    ".Lpositive_into_padded_arm_lay4:\n   str w7, [x0]\n   stur w7, [x8, #-4]\n   b .Lpositive_into_padded_arm_laid\n"
+    ".Lpositive_into_padded_arm_lay2:\n   strh w7, [x0]\n   sturh w7, [x8, #-2]\n"
+    ".Lpositive_into_padded_arm_laid:\n   adrp x4, digit_pairs\n   add x4, x4, :lo12:digit_pairs\n"
+    "mov w7, #0x851f\n   movk w7, #0x51eb, lsl #16\n   mov w9, #100\n"
+    "cmp w1, #100\n   b.lo .Lpositive_into_padded_arm_top\n"
+    ".Lpositive_into_padded_arm_pairs:\n   umull x10, w1, w7\n   lsr x10, x10, #37\n"
+    "msub w11, w10, w9, w1\n   ldrh w11, [x4, x11, lsl #1]\n   sub x8, x8, #2\n   strh w11, [x8]\n"
+    "mov w1, w10\n   cmp w1, #100\n   b.hs .Lpositive_into_padded_arm_pairs\n"
+    ".Lpositive_into_padded_arm_top:\n   cmp w1, #10\n   b.lo .Lpositive_into_padded_arm_one\n"
+    "ldrh w11, [x4, x1, lsl #1]\n   sturh w11, [x8, #-2]\n   mov x0, x2\n"
+    ASM_RET
+    ".Lpositive_into_padded_arm_one:\n   add w1, w1, #48\n   sturb w1, [x8, #-1]\n   mov x0, x2\n"
+    ASM_RET
+    ".Lpositive_into_padded_arm_call:\n   stp x29, x30, [sp,  #-64]!\n"
     "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
     "stp x21, x22, [sp, #32]\n"
     "mov x19, x0\n   mov x20, x2\n   and w21, w3, #255\n"
@@ -39776,7 +39799,28 @@ ASM_FUNC(positive_to_string)
     "bne a2, t0, .Lpositive_into_padded_rv_fixed_done\n   addi a1, a1, 48\n   sb a1, 0(a0)\n"
     ".Lpositive_into_padded_rv_fixed_done:\n   mv a0, a2\n"
     ASM_RET
-    ".Lpositive_into_padded_rv_general:\n   addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
+    //       Any pad, a width of two to nine and a value that fits it: the
+    //       x86_64 block says why. Byte stores throughout, as above.
+    ".Lpositive_into_padded_rv_general:\n   andi t0, a3, 255\n   beqz t0, .Lpositive_into_padded_rv_call\n"
+    "addi t1, a2, -2\n   li t2, 7\n   bgtu t1, t2, .Lpositive_into_padded_rv_call\n"
+    "lla t1, ten_powers\n   slli t2, a2, 3\n   add t1, t1, t2\n   ld t1, 0(t1)\n"
+    "bgeu a1, t1, .Lpositive_into_padded_rv_call\n"
+    "li t1, 0\n"
+    ".Lpositive_into_padded_rv_lay:\n   add t2, a0, t1\n   sb t0, 0(t2)\n   addi t1, t1, 1\n"
+    "bltu t1, a2, .Lpositive_into_padded_rv_lay\n"
+    "lla t0, digit_pairs\n   add t1, a0, a2\n   li t3, 1374389535\n   li t4, 100\n"
+    "bltu a1, t4, .Lpositive_into_padded_rv_top\n"
+    ".Lpositive_into_padded_rv_pairs:\n   mul t5, a1, t3\n   srli t5, t5, 37\n   mul t6, t5, t4\n"
+    "sub t6, a1, t6\n   slli a4, t6, 1\n   add a4, t0, a4\n   lbu a5, 0(a4)\n"
+    "lbu a6, 1(a4)\n   addi t1, t1, -2\n   sb a5, 0(t1)\n   sb a6, 1(t1)\n"
+    "mv a1, t5\n   bgeu a1, t4, .Lpositive_into_padded_rv_pairs\n"
+    ".Lpositive_into_padded_rv_top:\n   li t2, 10\n   bltu a1, t2, .Lpositive_into_padded_rv_one\n"
+    "slli a4, a1, 1\n   add a4, t0, a4\n   lbu a5, 0(a4)\n   lbu a6, 1(a4)\n"
+    "sb a5, -2(t1)\n   sb a6, -1(t1)\n   mv a0, a2\n"
+    ASM_RET
+    ".Lpositive_into_padded_rv_one:\n   addi a1, a1, 48\n   sb a1, -1(t1)\n   mv a0, a2\n"
+    ASM_RET
+    ".Lpositive_into_padded_rv_call:\n   addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
     "sd s1, 24(sp)\n   sd s2, 16(sp)\n   mv s0, a0\n   mv s1, a2\n"
     "andi s2, a3, 255\n   call positive_into\n   beqz s2, .Lpositive_into_padded_rv_done\n   bgeu a0, s1, .Lpositive_into_padded_rv_done\n"
     "sub t0, s1, a0\n   add t2, s0, t0\n   mv t1, a0\n"

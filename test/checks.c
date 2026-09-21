@@ -63250,6 +63250,27 @@ static int correctness(void)
                         if (got[i] != want[i]) { bad++; break; }
         }
 
+        // Any pad at every width the direct lane takes, on both sides of
+        // every power of ten and at random.
+        static const u8 pads[3] = {' ', '#', '0'};
+        for (u64 r = 0; r < 200000; r++) {
+                u64 width = 2 + r % 8, power = 1;
+                for (u64 k = 0; k < width; k++) power *= 10;
+                u64 value = r < 1000 ? power / (1 + r % 3) - 1 + r % 3 : next() % (power + power / 8);
+                u8 pad = pads[r % 3];
+                u64 off = r & 7;
+                for (u64 i = 0; i < sizeof(got); i++) got[i] = want[i] = 0x5a;
+                u8 digits[24];
+                u64 dl = reference_into(digits, value), fill = width > dl ? width - dl : 0;
+                for (u64 i = 0; i < fill; i++) want[16 + off + i] = pad;
+                for (u64 i = 0; i < dl; i++) want[16 + off + fill + i] = digits[i];
+                u64 length = positive_into_padded(got + 16 + off, value, width, pad);
+                checks++;
+                if (length != fill + dl) { bad++; continue; }
+                for (u64 i = 0; i < sizeof(got); i++)
+                        if (got[i] != want[i]) { bad++; break; }
+        }
+
         printf("arm64 contiguous fields: %lu checks | %lu failures\n", checks, bad);
         return bad != 0;
 }
@@ -63277,6 +63298,34 @@ static __attribute__((noinline, noclone)) u64 former_scaled(u8 *into, u64 value,
                 scale /= 10;
         }
         return length;
+}
+
+// The general path's shape the space-padded lane replaced: the digits at the
+// front, moved to the end, the front filled.
+static __attribute__((noinline, noclone)) u64 former_spaced(u8 *into, u64 value, u64 width)
+{
+        u64 length = reference_into(into, value);
+        if (length < width) {
+                u64 shift = width - length;
+                for (u64 i = length; i--;)
+                        into[shift + i] = into[i];
+                for (u64 i = 0; i < shift; i++)
+                        into[i] = ' ';
+                length = width;
+        }
+        return length;
+}
+
+static u64 run_spaced(int assembly)
+{
+        u64 start = ticks();
+        for (u64 r = 0; r < ROUNDS; r++) {
+                u64 value = values[r & (COUNT - 1)] % 1000000;
+                u64 length = assembly ? positive_into_padded(output, value, 6, ' ')
+                                      : former_spaced(output, value, 6);
+                sink += length + output[0] + output[5];
+        }
+        return ticks() - start;
 }
 
 static u64 run_once(u64 width, int assembly)
@@ -63325,6 +63374,16 @@ int main(void)
         for (u64 i = 0; i < COUNT; i++) values[i] = next();
         printf("arm64 native contiguous decimal, best of %d, %lu calls\n", TRIES, ROUNDS);
         row("width 2", 2); row("width 6", 6); row("width 9", 9);
+        {
+                u64 old = ~0ul, assembly = ~0ul;
+                for (u64 t = 0; t < TRIES; t++) {
+                        u64 o = run_spaced(0), a = run_spaced(1);
+                        if (o < old) old = o;
+                        if (a < assembly) assembly = a;
+                }
+                printf("  %-8s old %lu  assembly %lu  assembly/old %lu%%\n",
+                       "space 6", old, assembly, assembly * 100 / old);
+        }
         return bad;
 }
 #endif /* CHECK_native_fields */
