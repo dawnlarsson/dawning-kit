@@ -765,7 +765,7 @@ static bipolar file_exec_path_try(string_address address_to words);
         early and be the one place that says where a root is.
 */
 #include "terminfo.c"
-#include "../bowl/runtime.c"
+#include "../bowl.c"
 #include "process_tools.c"
 #include "monitor.c"
 #include "net.c"

@@ -22168,7 +22168,7 @@ def harness_floodlight(argv):
 
     #   Which applets can start a program, transitively, through any helper.
     graph = defaultdict(set)
-    for pattern in ('src/sh/*.c', 'src/core.c', 'src/bowl/runtime.c',
+    for pattern in ('src/sh/*.c', 'src/core.c', 'src/bowl.c',
                     'src/library.common.c'):
         for path in sorted(ROOT.glob(pattern)):
             for name, seen in bodies(path).items():
@@ -25174,7 +25174,7 @@ def harness_image_nodes(argv):
     build = (ROOT / 'src/build/build.c').read_text()
     spark = (ROOT / 'src/spark.c').read_text()
     flood = (ROOT / 'src/floodlight.c').read_text()
-    bowl = (ROOT / 'src/bowl/runtime.c').read_text()
+    bowl = (ROOT / 'src/bowl.c').read_text()
     window = (ROOT / 'src/canvas/window.c').read_text()
     host = (ROOT / 'src/sh/host.c').read_text()
 
@@ -25308,7 +25308,7 @@ def harness_image_nodes(argv):
     #   One place says where a bowl root lives. Anything else spelling it is
     #   the drift this whole harness exists to catch.
     for path in sorted(ROOT.glob('src/**/*.c')):
-        if path.name == 'runtime.c' and path.parent.name == 'bowl':
+        if path.name == 'bowl.c' and path.parent.name == 'src':
             continue
         source = re.sub(r'/\*.*?\*/', '', path.read_text(errors='replace'),
                         flags=re.S)
@@ -27143,7 +27143,7 @@ def harness_https_bench(argv):
 def harness_bowl_session(argv):
     """Bowl fills the session Weston and GTK expect, without replacing one already set."""
     root = HARNESS_ROOT
-    bowl = (root / "src/bowl/runtime.c").read_text()
+    bowl = (root / "src/bowl.c").read_text()
     start = bowl.index("static b32 bowl_env_named(")
     stop = bowl.index("/*\n        Room on the filesystem that holds a bowl.")
     #   The session reads HOME and XDG_RUNTIME_DIR through the one path walk
@@ -27490,7 +27490,7 @@ int main(void) {
 def harness_bowl_roots(argv):
     """Launchers name one bowl; a second distro does not silently take the name."""
     root = HARNESS_ROOT
-    bowl = (root / "src/bowl/runtime.c").read_text()
+    bowl = (root / "src/bowl.c").read_text()
     start = bowl.index("static bool bowl_name(")
     stop = bowl.index("static b32 bowl_usage(")
     source = r'''
