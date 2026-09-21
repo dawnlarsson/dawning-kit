@@ -1,3 +1,17 @@
+/*
+        The regular expression engine: a graph, built once and walked.
+
+        Expanded into text.c, and through it reached by grep, sed and awk,
+        which is why it is a file of its own rather than any one of their
+        lower halves. A pattern is compiled to nodes, then matched by a lazy
+        DFA over them with the literal and anchor hints below taken first,
+        so the common shapes never build a state at all.
+
+        The ceilings are fixed and stated at the top: a pattern that would
+        exceed one is refused rather than grown into, so no input decides
+        how much memory matching it costs.
+*/
+
 #define RX_NODE_MAX 8192
 #define RX_SET_MAX 64
 #define RX_HINT_MAX 40

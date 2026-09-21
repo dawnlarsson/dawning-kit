@@ -1,3 +1,17 @@
+/*
+        The tools that read a stream and write one: thirty-six of them, from
+        cat, head, tail, cut and tr through grep, sed, sort, uniq and wc to
+        the column and page formatters -- col, column, fmt, fold, nl, pr,
+        ptx, expand.
+
+        They share three things rather than a family resemblance. The span
+        engine below is what grep, sed and awk all match with -- regex_graph.c
+        is expanded into it. The ordering engine sort uses is the comparator
+        comm, join and ptx consume without cloning it. And every one of them
+        stops at the first refused write with the wording GNU uses, because
+        that is a property of the stream and not of the tool.
+*/
+
 #include "../compiler_memory.c"
 
 /* sort has its command entry point later in the file.  ptx, comm and join

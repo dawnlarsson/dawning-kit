@@ -1,3 +1,19 @@
+/*
+        The Moonwater kernel module: what it registers, and what it dispatches.
+
+        Three subsystems are expanded into this one translation unit and
+        this file is the only place that knows about all three at once.
+        spark.c is the binary format and the loader, spawn and reports that
+        serve it. moonwater.c is the bindings, the machine script and the
+        scanner. canvas/canvas.c is the compositor. Each keeps to itself;
+        the ioctl switch below is where they meet, because /dev/spark is one
+        device and a caller does not care which of them answers.
+
+        What is genuinely this file's: the mounts a Moonwater boot needs
+        before anything else can run, the miscdevice and its file
+        operations, and the init and exit the kernel calls.
+*/
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/namei.h>

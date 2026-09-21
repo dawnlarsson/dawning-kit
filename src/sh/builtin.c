@@ -1,3 +1,18 @@
+/*
+        The shell's own commands: the ones that have to run inside this
+        process because they change it.
+
+        cd and pwd move it, export and readonly and unset change what it
+        passes on, set and shopt change how it behaves, read and trap and
+        wait and jobs and fg and bg and kill reach into its own descriptors,
+        signals and children, and . and eval and exec are how it is told to
+        become something else. A tool in tools.inc could not do any of these
+        from a child, which is the whole of why they are here.
+
+        The variable store is here too, and the readonly rules over it,
+        because export and readonly are the commands that state them.
+*/
+
 #include "../compiler_memory.c"
 
 const positive page_size = 4096;

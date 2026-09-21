@@ -1,3 +1,17 @@
+/*
+        The tools that work on files, and on what a file system says about
+        them: fifty-nine of them, from ls, cp, mv, rm and mkdir through
+        chmod, chown, stat, find, du and df to the odds that are really
+        about the machine rather than its files -- date, uname, tty, nproc,
+        sleep, seq, yes, xargs.
+
+        What holds them together is that almost all of them either walk a
+        tree or ask the kernel one question about a path. The walkers share
+        parallel_tree; the askers share one stat and one diagnostic. Neither
+        is a dispatcher: tools.inc names the entry point of each, and the
+        shell and the multicall names reach them the same way.
+*/
+
 #include "../compiler_memory.c"
 
 #define UTILITY_ARENA_BYTES (192u << 20)
