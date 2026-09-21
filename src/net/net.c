@@ -3532,41 +3532,393 @@ static bool crypto_scalar_reduce_be(p8 address_to out, const p8 address_to bytes
         return true;
 }
 
+/*
+        k G for the base points, by a fixed comb. With w = 5 teeth d bits
+        apart (d = 52 for P-256, 77 for P-384), column j of the scalar is the
+        five bits j, d + j, 2d + j, 3d + j and 4d + j, and
+
+            k G = sum over columns j of 2^j T[column j],
+
+        T[c] being the sum of 2^(t d) G over the set bits t of c. So the
+        multiply is d doublings and d additions from one accumulator, where a
+        variable base needs 64n doublings and 16n additions besides building
+        its table: a key share is a third of the field operations.
+
+        The 31 nonzero entries are affine in Montgomery form, computed once
+        with exact integers (CHECK_net rebuilds every one from G through
+        crypto_point_scalar_private). Entry 0 is infinity. Each column reads
+        all 31 under masks, so the entry a secret column names leaves no
+        trace in which addresses were read.
+
+        The accumulator is homogeneous projective, (X : Y : Z) for (X/Z,
+        Y/Z), and it is doubled and added with the complete formulas of
+        Renes, Costello and Batina (eprint 2015/1060, algorithms 4 and 6 for
+        a = -3): the same operations for every pair of points, infinity and
+        equal points included, so there is no exceptional case to argue
+        away and nothing to select around.
+*/
+/* p256: w = 5, d = 52 */
+static const p64 crypto_p256_comb[31][2][4] = {
+    {{0x79e730d418a9143cull, 0x75ba95fc5fedb601ull, 0x79fb732b77622510ull, 0x18905f76a53755c6ull},
+     {0xddf25357ce95560aull, 0x8b4ab8e4ba19e45cull, 0xd2e88688dd21f325ull, 0x8571ff1825885d85ull}},
+    {{0x83f49167ceca9754ull, 0x426d2cf64b7939a0ull, 0x2555e355723fd0bfull, 0xa96e6d06c4f144e2ull},
+     {0x4768a8dd87880e61ull, 0x15543815e508e4d5ull, 0x09d7e772b1b65e15ull, 0x63439dd6ac302fa0ull}},
+    {{0xf2675562a0be5d0eull, 0x4b524d254d1bb068ull, 0xbc2c5ff2a9b75b8cull, 0x4f326643d9a6f548ull},
+     {0x50dd68441258835eull, 0x7d21beee676090e0ull, 0xb0b62c65f4a17b42ull, 0x60dfae28b3cec3b0ull}},
+    {{0x20d3c982cf7d62d2ull, 0x1f36e29d23ba8150ull, 0x48ae0bf092763f9eull, 0x7a527e6b1d3a7007ull},
+     {0xb4a89097581a85e3ull, 0x1f1a520fdc158be5ull, 0xf98db37d167d726eull, 0x8802786e1113e862ull}},
+    {{0x531e7b64b113f918ull, 0x26b5d70a920a681dull, 0x04e52f8f24c37044ull, 0xbc7c9542bb7c375bull},
+     {0xb63a044bf2e26375ull, 0xd842a342e922a3d0ull, 0x9eed2ecaa9292d57ull, 0xfe27d2c249ac7832ull}},
+    {{0xedbd7944f24aab7eull, 0x56e51d9ecd1a1921ull, 0x11c63188962dae55ull, 0x37090565326acd14ull},
+     {0xc436e587d71ed134ull, 0x3d96ac3aad89b461ull, 0xcdf570bcdcb718bbull, 0xaaa490e9dcfabde2ull}},
+    {{0xb0ab54010b639942ull, 0xa6e12f5719379664ull, 0xc535f8b41d040abcull, 0xef255c54a75eef24ull},
+     {0xb236f734aeceb0eaull, 0x38fcc8c19d879e2full, 0x674d8fdc180cacabull, 0x0a18bad4f624df06ull}},
+    {{0x488f1185ca8d9d1aull, 0xadf2c77dd987ded2ull, 0x5f3039f060c46124ull, 0xe5d70b7571e095f4ull},
+     {0x82d586506260e70full, 0x39d75ea7f750d105ull, 0x8cf3d0b175bac364ull, 0xf3a7564d21d01329ull}},
+    {{0x83fc809160530d0aull, 0x58c24f527bc23dc8ull, 0xecde2f1fa653af5aull, 0xb2e2a374b10e511eull},
+     {0xf0c54b329bebe1e4ull, 0x239c25dfade42270ull, 0xd866f55e9f22b433ull, 0x1e513ca2ed17efd3ull}},
+    {{0x66313dc85bc98e0dull, 0xb13fe4e69a256888ull, 0x74816589ecd6e280ull, 0xdee13cde5ba88474ull},
+     {0xae4e1872c53bc78dull, 0x9b79904a2f08a464ull, 0xef6e5ce29da51935ull, 0x9e58df82083c47eaull}},
+    {{0x4e066713f5a32632ull, 0x431f75d44b36f498ull, 0x40ae279f70bd5f07ull, 0x252cdb93239ec23dull},
+     {0xc18dddf87312a246ull, 0x5b77673c23a9e561ull, 0x020f09c31715fedeull, 0xabef6451a580cfc5ull}},
+    {{0x3c8bc3bff2a0d962ull, 0x59f856ee3405a8aaull, 0x2fb6590cb3dc5948ull, 0xc8aa740ced85740eull},
+     {0xf8081cfbe9aafe19ull, 0xf7d2e1f32534800dull, 0x355148c28d78d247ull, 0xaf0dc5a4d1557399ull}},
+    {{0x34dfbfc4c7f68782ull, 0x2c6a80d608ac2685ull, 0x5479e1bc08d0255bull, 0x42eb9de09110c616ull},
+     {0x97991dd810b4acbaull, 0xf36acc8f94d997c7ull, 0xd05ad78b69ddc036ull, 0x1ac7e528e68b4243ull}},
+    {{0xdd9f8a00e82c8e2aull, 0x104b85c621f80126ull, 0x1997228d5b17a522ull, 0x706e5ec3923d0bd0ull},
+     {0x00c6af271dc33622ull, 0xb3bc76c8271f09e1ull, 0xec1b7c0be36e325aull, 0x128200e268f12bfeull}},
+    {{0x8e86cb3da8636d07ull, 0xc79c42ac2be46da2ull, 0xed70e08aaa01e0e1ull, 0x773579fce3b69272ull},
+     {0xbc0fe5554d8464c3ull, 0x9e87a057cf54e071ull, 0xda655b0a3913b1d3ull, 0x052774d49a55dba4ull}},
+    {{0x75d9bc15adf7cccfull, 0x81a3e5d6dfa1e1b0ull, 0x8c39e444249bc17eull, 0xf37dccb28ea7fd43ull},
+     {0xda654873907fba12ull, 0x35daa6da4a372904ull, 0x0564cfc66283a6c5ull, 0xd09fa4f64a9395bfull}},
+    {{0xb1f5c026e37542caull, 0x0b860cf372e01034ull, 0x3a7c10e4025289f2ull, 0xd2197d5f92901032ull},
+     {0xfa06f835267ca2f6ull, 0x8fcb9a29bf6e43aaull, 0x465f6c117ed9f8e7ull, 0x8a50a5b3e6077aafull}},
+    {{0xad76c703d2b59e85ull, 0x0a2306459204c53full, 0x9bbc0bc44a9f1335ull, 0x71603515d0a967e9ull},
+     {0x8b6d6d6ea0205375ull, 0x6310418351ad76deull, 0x5abfbc21aabbd0acull, 0x61fb45c3c71f3060ull}},
+    {{0x579345df1d323961ull, 0x45b79ead94cd3bc4ull, 0x50b664be423668d2ull, 0x19dd5b7542bc26eaull},
+     {0xc7c1fbaa3677ae8full, 0x7b2e711a5d033158ull, 0x8aecb50a8942ac93ull, 0xe255438b8a16718cull}},
+    {{0x8025364233396533ull, 0x82cb33a72c5ad150ull, 0x7c147998070ca168ull, 0x077912536aac6636ull},
+     {0x160003ae7c78be24ull, 0xbba9fe68a30eeabfull, 0x16c31c403073f0edull, 0xd329cd28789caecaull}},
+    {{0x840dbcbf7972bcdfull, 0xb5c8444fbd11900cull, 0x78b2b29016520ceeull, 0xe19f13a3be88d914ull},
+     {0x052ddc8949d3c0dfull, 0xc9fc183ce0b4224bull, 0x2c8dd074cf31e0bbull, 0x872c7b95a26b1441ull}},
+    {{0xed93585d74c8a327ull, 0xf2fb7d0806be87caull, 0x707d83ca84e36244ull, 0x037f499d3efa6833ull},
+     {0xf3218d4299bf5ddeull, 0xbe0a81c069ff7ce3ull, 0x068fbbea9eb7d4c0ull, 0xf4ef6609e6938c78ull}},
+    {{0x202e5c5acb22715eull, 0x88e93d23288f8243ull, 0xdf1d1f52dc7eace6ull, 0xc6b38b3b373183f8ull},
+     {0x77798b7f3eac9c4bull, 0xa9d37dff6bfa9835ull, 0xaff4a447faac41c9ull, 0xf14fd13c0fcb6036ull}},
+    {{0xef5ee27d49ccc093ull, 0x7ff3263d40d359a3ull, 0x885d1942c6d6c0eaull, 0x925abba328c97feeull},
+     {0xd73834805d95f52dull, 0x6979981c4eb691dbull, 0x6544e8ae553a29c6ull, 0x28324ef85043559full}},
+    {{0xd6c8e4b7300c0e39ull, 0x37ad4a1a3e37f58aull, 0x763330f5e5e8cdfbull, 0x62bf8c2c870ea133ull},
+     {0x03fbc63a763ccac9ull, 0xc889d8a5fb1886c0ull, 0xf0486de5be49d9feull, 0xaf9a877862c23338ull}},
+    {{0x8a43a2a176aa81b3ull, 0x896021298a0cc3d2ull, 0x49d311e8821f6640ull, 0x8035608f5c734ae4ull},
+     {0xa7be0561349adc3bull, 0x328525b296a337b5ull, 0x575413c36bccf78aull, 0x6c7292ec4854960full}},
+    {{0x121e6a713c2943ffull, 0x0468565c6374c47eull, 0xd66fe9932826f138ull, 0x4e2cfaf17748e3acull},
+     {0xe9baaa2c4708a6c8ull, 0xa3845c8c66ffb5b4ull, 0xad3e293eb77c8facull, 0x00b5cfa9440a35e8ull}},
+    {{0x3f55f58c63e06277ull, 0x1a81de8a64ba6e8cull, 0x85cfdc74f4cc043bull, 0x7cbefb98048d26e0ull},
+     {0x5bde4b3c82aba891ull, 0x863d8f7586db6f46ull, 0xc7af5c1f845186c5ull, 0x41d7d404cb527cecull}},
+    {{0x3b44699483e1a246ull, 0x11c5ced4f6b819a2ull, 0xc79d4660aff79a46ull, 0x423bbdc15f22411aull},
+     {0x22652251a964039dull, 0x808d6753e738657bull, 0xc0ca19e34e909dc8ull, 0x0e036e4734ab0d07ull}},
+    {{0x233593e77a26f742ull, 0xddc1c79ffc0f14d9ull, 0xb33c89802d359358ull, 0x51df6155730aacfeull},
+     {0xa9a6066c0f2c0b8dull, 0xb92122272e706f80ull, 0x3994a53296a5efe9ull, 0xcf3d168b52316b12ull}},
+    {{0xbe47dd5027eafcc0ull, 0x23df1041ec7e66dbull, 0x18c977ff78a4ddddull, 0xb51565d79d2d152eull},
+     {0x24f6a6d578f4a4deull, 0xbbc15b207d86b2caull, 0xa064d39c1d3b43caull, 0x5524866752200839ull}},
+};
+static const p64 crypto_p256_b_mont[4] = {0xd89cdf6229c4bddfull, 0xacf005cd78843090ull, 0xe5a220abf7212ed6ull, 0xdc30061d04874834ull};
+/* p384: w = 5, d = 77 */
+static const p64 crypto_p384_comb[31][2][6] = {
+    {{0x3dd0756649c0b528ull, 0x20e378e2a0d6ce38ull, 0x879c3afc541b4d6eull, 0x6454868459a30effull, 0x812ff723614ede2bull, 0x4d3aadc2299e1513ull},
+     {0x23043dad4b03a4feull, 0xa1bfa8bf7bb4a9acull, 0x8bade7562e83b050ull, 0xc6c3521968f4ffd9ull, 0xdd8002263969a840ull, 0x2b78abc25a15c5e9ull}},
+    {{0x6bd2c54d4cb89afaull, 0xe78c8bfa36527751ull, 0x27f52654e3eee747ull, 0x56f205839598d907ull, 0x5f91c2d027cb3712ull, 0xc501819fa3e33c5bull},
+     {0x248490aa4eded738ull, 0xde7ac94427789065ull, 0x20138b3d74f7d38bull, 0xae791f602fb60214ull, 0x6b4fb300bd033d4eull, 0xc69c25d9bdfd1f17ull}},
+    {{0xeeacf664b8557d82ull, 0xa57429a94c77cc70ull, 0x59a603b7696b990aull, 0xb43391f64beac9a3ull, 0xd5c3a162c8d57758ull, 0x98017c1cf2f7c3b4ull},
+     {0xff2cd9a2468332cbull, 0xaedbd85892a2368dull, 0x03f49686d52ec2e3ull, 0x84d8de683ee6933bull, 0xac7ed137b7b6aca2ull, 0x5d2602277b48d6d2ull}},
+    {{0xd25f650804926a41ull, 0x7236b475514045daull, 0x0b36031108b9b08bull, 0x16477aff3fe92e91ull, 0x6e5f6cb103189ddcull, 0x81ff008ec698a38full},
+     {0x02a09218c93adb23ull, 0x71fcecd3445d8faeull, 0x55a15eac8fd6b76cull, 0x1e37ec3611ef96b4ull, 0xd1b3b3fc30e433b5ull, 0x4951873351d174c3ull}},
+    {{0x24e07819523a8bb4ull, 0x7b2772319833d8e5ull, 0x3c471ddcb04699b8ull, 0x33b27f71bd8508a4ull, 0x41731cca84e5dc2full, 0x46e02a9b0397e396ull},
+     {0x2e70a031cc9f27fcull, 0x542eb3d9a7c4152bull, 0xb966c93047867367ull, 0x4387e233c0166702ull, 0xd3e8b42352195b20ull, 0x12b79efe825865f7ull}},
+    {{0xf44626fa1f21ae46ull, 0x507a10427193c826ull, 0xc954dbd3332e4497ull, 0x0fc7e409011fe64eull, 0xbf09d38535201839ull, 0x2aca87f8e3f14d65ull},
+     {0x664824aafa84b3c2ull, 0x660357c6f4d30784ull, 0x46b5cab5760eb676ull, 0xa55d8983118a70adull, 0xec5b8d9eaa1d5a74ull, 0xae60a033d09ff302ull}},
+    {{0x17763bec03b8929dull, 0x20f9df436f4537d7ull, 0xb442a2783f50ef47ull, 0xf3450eda37bae3ecull, 0xb2c15f200fb1329cull, 0x0da364e545e635bbull},
+     {0x9d46f6eb475d7731ull, 0xa2fea526edaa9406ull, 0x486e559426571ef5ull, 0x6d401ce9d1b5b927ull, 0xf2b65ecd13da4190ull, 0xda91acf3974de435ull}},
+    {{0x406a7e2116960728ull, 0xd03923f85597d8c4ull, 0xd4402eff020748eeull, 0x7827442af39b58dbull, 0x77e3f2768d8cfb04ull, 0xf6eb49c8e45a978full},
+     {0x9db0829949247f6aull, 0xce71a74706669fe5ull, 0xe434ce47b82775f5ull, 0xe84995ef63910016ull, 0xa35e8b971e47792full, 0xc779cb3d7c6aaeb9ull}},
+    {{0x17bcf9791d424a0cull, 0x4b54b3ed8fefd7b7ull, 0x9f7741e71993315dull, 0x82289c8fa5fc44fdull, 0x8dd8bd79711c4b69ull, 0xe53aaa71722c2f98ull},
+     {0x83fca7a8fea26a59ull, 0xaefc892caa73159aull, 0xd5a3fb551633ce08ull, 0xf9db2796f51b137cull, 0xadac646ec3a15474ull, 0xc8f4bccf487214b2ull}},
+    {{0xf96de0a85cf00041ull, 0xe7d22cf3bf0a9b63ull, 0x004a9fd05db53399ull, 0xd6748c0f7b83975full, 0x7ed1adf83ac4997full, 0x0f0d6e5e845c29c7ull},
+     {0x25b54b834a4b2fa3ull, 0xc20dcf306611b046ull, 0x4aa75a3e1b5eef89ull, 0x34a9ccc268e9c563ull, 0xef515f4f75f4e0a7ull, 0x074a9631abfc4949ull}},
+    {{0x6a5c134e80e21ac0ull, 0x5b575f0f1d09e6cdull, 0x7e706cc39fad109aull, 0xf2d4b4d418a54de9ull, 0xaf89472f76d52417ull, 0xf853d14caa027ec1ull},
+     {0xd0238fec1a9cc3e3ull, 0xc96dce810f41b4ceull, 0xd8cf075406582da2ull, 0xd5144307c929e254ull, 0x0473761c6ad1a72full, 0x810efc024adcdbf8ull}},
+    {{0x2871e6af60d9f404ull, 0xa643672aa63075f5ull, 0x21cf2466979a48baull, 0xf55a914b6c74ec64ull, 0xe3fc17135b549c86ull, 0x0e0852964a82b64aull},
+     {0x3392d5a0e029432eull, 0x72f18333dd25ed6full, 0xa26000888f41a56eull, 0x3f52ed20c993579cull, 0x168e5da15a1059aaull, 0x0d85a6437ef52b1aull}},
+    {{0x64b9c787f0fdba0aull, 0x27889c73d2d72e13ull, 0x428d200d94c67aefull, 0x7124acca0d57dae2ull, 0xa5b0e6ef7c13e8e2ull, 0x21446337c2060717ull},
+     {0xc83b2175ae5b038full, 0x8c2456459271754bull, 0x27bbcb0b150ecf0bull, 0x819e31c701995fa7ull, 0xb55d0888e2ce0e64ull, 0xf6baffd5032d81bcull}},
+    {{0x12dee15308a0bb6eull, 0x7ef969fa420c3f7dull, 0xddab08ba9680a92aull, 0xe40bc1edfce0bdeaull, 0x29c72e956fac2134ull, 0x277c5495bb6c0418ull},
+     {0xaf288e3f6eb38e44ull, 0xd39db2da026e757aull, 0x69d4fd06047c2172ull, 0x73781beb5e66032cull, 0xfcfe4643651b635cull, 0x2848bc61a086fcb6ull}},
+    {{0xb04ace6c5dc9aef7ull, 0x80be1d0f3ee5cc6bull, 0xab9eddcc173feb36ull, 0x03e943c59e8c5575ull, 0x2f6360002199a881ull, 0x7683f4b291f8477eull},
+     {0xc64af2318a7a5570ull, 0xdf464e4e8d485378ull, 0x394b6eeca8ca5639ull, 0x44c7ab2dad695607ull, 0x39f1e0876a00750cull, 0x98debda976b8ff8full}},
+    {{0x6858b674844626a2ull, 0x610cd40f0cbba6a6ull, 0x324e674e29d9194dull, 0x2dc6fdf6dcb30a51ull, 0x3f3ecb77528aa549ull, 0x0721f8f923ffaa92ull},
+     {0xd8efcbd627a77538ull, 0xf4e642bfd6162c9cull, 0x04f2b0b74cf4a16full, 0xbc0bb49fbbf335fdull, 0xc6b6e5bd5a928c36ull, 0x981b01f4d893dd45ull}},
+    {{0x6fc651a5cc7288b7ull, 0x2231781f69470dcdull, 0x2aa15b2a92a93fdbull, 0x6eafb0268cdd7a14ull, 0x2af2a07585e28035ull, 0xe8c6303d29f2fbbcull},
+     {0x63a2bd809a4d68e5ull, 0x0f8cc5e681c70549ull, 0xe4b37730b6630ba8ull, 0x1717f787c506d3c3ull, 0xf3cfb275c90c4476ull, 0x897451d4aacf2b36ull}},
+    {{0x2606938f14f47a5aull, 0x059270a9cd29a96bull, 0xd57c69d69d42a8ffull, 0xf8bd35d927b148cdull, 0xbe327acd320ae33eull, 0x822559924240a328ull},
+     {0xac0caddb7a929bbcull, 0x7d07c83de7e596a4ull, 0x54c27dd7487ba67full, 0x65e205d84ebaa953ull, 0x5028c6739218b3dbull, 0x1438558f9616b4ceull}},
+    {{0x4e0fb44671f74c5eull, 0x5994b6919cd7c0f9ull, 0x724119e35924f26eull, 0x5e478acb5f65b033ull, 0x9279712187b8ad73ull, 0x48b4ba0999a9406cull},
+     {0x9e00e38fae43e531ull, 0x6353a1ae5eb84112ull, 0x15cbdb3e2f7f1b08ull, 0xf3c346af058474f8ull, 0x56d7372b172639b4ull, 0xb452981968ccbdd1ull}},
+    {{0x3aa00680cda4aa1cull, 0x236b1bd6cf590b9cull, 0xf097f0d924e8543full, 0xd270ecda4a82fabcull, 0xb474ed66981eebe1ull, 0x896654c1c87091ebull},
+     {0x06598a25347cccb3ull, 0x8a66764b1a39bd51ull, 0x5d39d7244521b103ull, 0x6e40cc84c241ae61ull, 0x684bd7bbc17b7e0cull, 0x0205d53d55c2f43aull}},
+    {{0x3b9fab5c82aa754full, 0xede2acbcb63f2789ull, 0xe70a749af2e1bf1eull, 0xbcdb8a8936bcbd2aull, 0x97f9788460f0cdd5ull, 0x1e5a7693545741cfull},
+     {0x7774b94a5c387ea3ull, 0xbfc98d0a10b11fc5ull, 0x95d72afa1cc36c54ull, 0xc79301f73526ba51ull, 0x003659c3e8280d62ull, 0x3b8cc4d27e94410eull}},
+    {{0x6731cde789b404bbull, 0xca01453e3d13be6full, 0x33f4fca55c45289aull, 0x32406a7ebc3eddefull, 0x9c62dad4df48c659ull, 0xe31057d9f77f6e46ull},
+     {0xd64754a3e842a7c4ull, 0x4030038faca384bbull, 0xbc06591e4c779c63ull, 0xf497cd7487333cd9ull, 0x214e23b2d99bcb32ull, 0x8c04d0dfc17e7b91ull}},
+    {{0x764bfc297ee98cd8ull, 0x83d6ff922b3dfe54ull, 0x73f8cdffb6a14d72ull, 0xf26db00a52e4b958ull, 0xd8e093961a855031ull, 0xec65e759920709f6ull},
+     {0xd8377f2c3c64b2e0ull, 0x8dc13be4247240f4ull, 0x5401171a8cbbbd67ull, 0x610ef2f53ab670ebull, 0x98b544ff3bfc675full, 0x548cfcc2d259ffa4ull}},
+    {{0x278dd1a38b800e7eull, 0x9bbfdc668dc767b0ull, 0xdaf9524297ea976aull, 0xe406a78db6e64692ull, 0x4b52bd3e83315a4eull, 0x3f9baa35b78f2013ull},
+     {0x7f2e5c4d03f9b999ull, 0x34c3d16e46693732ull, 0xd3acba57244e3140ull, 0x5a07c1a54bb75e8dull, 0x2a7e4a32832d8b8full, 0xf63b74bff3a2f27cull}},
+    {{0xa0b4d7b3fe28811cull, 0x5d05eccaef1a552full, 0x66fb43377f360449ull, 0xb210953e598aa6d4ull, 0x4be1df9bb6c1759aull, 0x16376676e5c4ec1aull},
+     {0x7ab4af2b807bfaa2ull, 0xa6c43ef769ea556aull, 0x928ebb6fac9f05fdull, 0x8d6f436a0b0151a4ull, 0xb8aeed95f4e3448aull, 0x9fcc0d549f7953a5ull}},
+    {{0xd1670e87a907c752ull, 0xf780541c239d26c1ull, 0x0be42d52ca8c9d97ull, 0x2f32f6882e806104ull, 0x39276b792be876dfull, 0x263b768a8c86a4cdull},
+     {0xb3ef317006de686dull, 0x5ecfee99a6b652f8ull, 0x506d7abbe4ee473eull, 0x2174c181cecaa329ull, 0x60520a237eb51ed2ull, 0xd66712e4b39d6ebfull}},
+    {{0xf88a910f6ae4e3ebull, 0x988f3bffa31342c4ull, 0x7baed96d79eeb886ull, 0xf3b6651159db12b9ull, 0x20314a0790638ffaull, 0x1c0ffe17c88ef37full},
+     {0xd852f9860b74180aull, 0x6d68989b9fbb4924ull, 0x6c7dd8c5c078fa8dull, 0x7bded43ce741e6a2ull, 0x78c2bb1a98b878a3ull, 0xad714af957eaf758ull}},
+    {{0x8088d680272e2db3ull, 0x8ff19a332900ffeeull, 0xbf32bffc3d3816bfull, 0xdae67e27133c5433ull, 0x9ae0cb219d09873eull, 0x33a716aa0f23cf9bull},
+     {0xfb304095aa4f004bull, 0x7223a55966a74777ull, 0x87d4255397ae25baull, 0x7548c9d393f48840ull, 0x1f09b4f42ea6c117ull, 0x2125c0e225e5a579ull}},
+    {{0x73f810552a219e96ull, 0x64c908d90f7ff162ull, 0xb064cf59d6ad4c6full, 0x3369dafb620664dbull, 0x726b5b472746205cull, 0x8cb469fe8318b089ull},
+     {0x8cd34046d11c3476ull, 0xcb2d1330fcfc4dd9ull, 0x9b047d4f30b696f8ull, 0x95c268c2d4c18696ull, 0x4daaba707945a339ull, 0xda75e6ebc93a144aull}},
+    {{0xe7958aa865c7af2eull, 0x9dcedd6271707194ull, 0x65d3ca5728c83ea1ull, 0x1741d2c1b90c08a1ull, 0x0b30c45f29f4efc3ull, 0xcc0efadbb3b6f4efull},
+     {0x4e933280bf377698ull, 0x7ae10eb1d02bbbd3ull, 0x55fc031936af2a83ull, 0xc7e995616f788466ull, 0x4cb4d959dc367d35ull, 0x887c09498fb9c9cfull}},
+    {{0x6102ffcde90d88a4ull, 0xfd7d8998f91aabf0ull, 0x1892ad594dcc3324ull, 0xe79856b96838bb98ull, 0x4c507c9318ff21f4ull, 0x02db41d83c088e65ull},
+     {0xd51364567a1a7b21ull, 0x2b4c8d12b838f844ull, 0x0389b4d2f9bfa274ull, 0x9f63c44798677986ull, 0xe0686040114b36f5ull, 0xe5acfc3ada4ac299ull}},
+};
+static const p64 crypto_p384_b_mont[6] = {0x081188719d412dccull, 0xf729add87a4c32ecull, 0x77f2209b1920022eull, 0xe3374bee94938ae2ull, 0xb62b21f41f022094ull, 0xcd08114b604fbff9ull};
+
+typedef struct
+{
+        p64 x[CRYPTO_FE_MAX];
+        p64 y[CRYPTO_FE_MAX];
+        p64 z[CRYPTO_FE_MAX];
+} crypto_projective;
+
+//      One block of temporaries, wiped once, as the Jacobian formulas do.
+typedef struct
+{
+        p64 t0[CRYPTO_FE_MAX], t1[CRYPTO_FE_MAX], t2[CRYPTO_FE_MAX];
+        p64 t3[CRYPTO_FE_MAX], t4[CRYPTO_FE_MAX];
+        p64 x3[CRYPTO_FE_MAX], y3[CRYPTO_FE_MAX], z3[CRYPTO_FE_MAX];
+} crypto_projective_work;
+
+/* r = 2 p; r may be p. */
+static fn crypto_projective_double(crypto_projective address_to r,
+                                   const crypto_projective address_to p,
+                                   const p64 address_to b,
+                                   const crypto_field address_to f)
+{
+        crypto_projective_work w;
+        positive bytes = f->n * sizeof(p64);
+
+        crypto_fe_sqr(w.t0, p->x, f);
+        crypto_fe_sqr(w.t1, p->y, f);
+        crypto_fe_sqr(w.t2, p->z, f);
+        crypto_fe_mul(w.t3, p->x, p->y, f);
+        crypto_fe_add(w.t3, w.t3, w.t3, f);
+        crypto_fe_mul(w.z3, p->x, p->z, f);
+        crypto_fe_add(w.z3, w.z3, w.z3, f);
+        crypto_fe_mul(w.y3, b, w.t2, f);
+        crypto_fe_sub(w.y3, w.y3, w.z3, f);
+        crypto_fe_add(w.x3, w.y3, w.y3, f);
+        crypto_fe_add(w.y3, w.x3, w.y3, f);
+        crypto_fe_sub(w.x3, w.t1, w.y3, f);
+        crypto_fe_add(w.y3, w.t1, w.y3, f);
+        crypto_fe_mul(w.y3, w.x3, w.y3, f);
+        crypto_fe_mul(w.x3, w.x3, w.t3, f);
+        crypto_fe_add(w.t3, w.t2, w.t2, f);
+        crypto_fe_add(w.t2, w.t2, w.t3, f);
+        crypto_fe_mul(w.z3, b, w.z3, f);
+        crypto_fe_sub(w.z3, w.z3, w.t2, f);
+        crypto_fe_sub(w.z3, w.z3, w.t0, f);
+        crypto_fe_add(w.t3, w.z3, w.z3, f);
+        crypto_fe_add(w.z3, w.z3, w.t3, f);
+        crypto_fe_add(w.t3, w.t0, w.t0, f);
+        crypto_fe_add(w.t0, w.t3, w.t0, f);
+        crypto_fe_sub(w.t0, w.t0, w.t2, f);
+        crypto_fe_mul(w.t0, w.t0, w.z3, f);
+        crypto_fe_add(w.y3, w.y3, w.t0, f);
+        crypto_fe_mul(w.t0, p->y, p->z, f);
+        crypto_fe_add(w.t0, w.t0, w.t0, f);
+        crypto_fe_mul(w.z3, w.t0, w.z3, f);
+        crypto_fe_sub(w.x3, w.x3, w.z3, f);
+        crypto_fe_mul(w.z3, w.t0, w.t1, f);
+        crypto_fe_add(w.z3, w.z3, w.z3, f);
+        crypto_fe_add(w.z3, w.z3, w.z3, f);
+
+        memory_copy(r->x, w.x3, bytes);
+        memory_copy(r->y, w.y3, bytes);
+        memory_copy(r->z, w.z3, bytes);
+        crypto_forget(address_of w, sizeof w);
+}
+
+/* r = p + q; r may be p or q. */
+static fn crypto_projective_add(crypto_projective address_to r,
+                                const crypto_projective address_to p,
+                                const crypto_projective address_to q,
+                                const p64 address_to b,
+                                const crypto_field address_to f)
+{
+        crypto_projective_work w;
+        positive bytes = f->n * sizeof(p64);
+
+        crypto_fe_mul(w.t0, p->x, q->x, f);
+        crypto_fe_mul(w.t1, p->y, q->y, f);
+        crypto_fe_mul(w.t2, p->z, q->z, f);
+        crypto_fe_add(w.t3, p->x, p->y, f);
+        crypto_fe_add(w.t4, q->x, q->y, f);
+        crypto_fe_mul(w.t3, w.t3, w.t4, f);
+        crypto_fe_add(w.t4, w.t0, w.t1, f);
+        crypto_fe_sub(w.t3, w.t3, w.t4, f);
+        crypto_fe_add(w.t4, p->y, p->z, f);
+        crypto_fe_add(w.x3, q->y, q->z, f);
+        crypto_fe_mul(w.t4, w.t4, w.x3, f);
+        crypto_fe_add(w.x3, w.t1, w.t2, f);
+        crypto_fe_sub(w.t4, w.t4, w.x3, f);
+        crypto_fe_add(w.x3, p->x, p->z, f);
+        crypto_fe_add(w.y3, q->x, q->z, f);
+        crypto_fe_mul(w.x3, w.x3, w.y3, f);
+        crypto_fe_add(w.y3, w.t0, w.t2, f);
+        crypto_fe_sub(w.y3, w.x3, w.y3, f);
+        crypto_fe_mul(w.z3, b, w.t2, f);
+        crypto_fe_sub(w.x3, w.y3, w.z3, f);
+        crypto_fe_add(w.z3, w.x3, w.x3, f);
+        crypto_fe_add(w.x3, w.x3, w.z3, f);
+        crypto_fe_sub(w.z3, w.t1, w.x3, f);
+        crypto_fe_add(w.x3, w.t1, w.x3, f);
+        crypto_fe_mul(w.y3, b, w.y3, f);
+        crypto_fe_add(w.t1, w.t2, w.t2, f);
+        crypto_fe_add(w.t2, w.t1, w.t2, f);
+        crypto_fe_sub(w.y3, w.y3, w.t2, f);
+        crypto_fe_sub(w.y3, w.y3, w.t0, f);
+        crypto_fe_add(w.t1, w.y3, w.y3, f);
+        crypto_fe_add(w.y3, w.t1, w.y3, f);
+        crypto_fe_add(w.t1, w.t0, w.t0, f);
+        crypto_fe_add(w.t0, w.t1, w.t0, f);
+        crypto_fe_sub(w.t0, w.t0, w.t2, f);
+        crypto_fe_mul(w.t1, w.t4, w.y3, f);
+        crypto_fe_mul(w.t2, w.t0, w.y3, f);
+        crypto_fe_mul(w.y3, w.x3, w.z3, f);
+        crypto_fe_add(w.y3, w.y3, w.t2, f);
+        crypto_fe_mul(w.x3, w.t3, w.x3, f);
+        crypto_fe_sub(w.x3, w.x3, w.t1, f);
+        crypto_fe_mul(w.z3, w.t4, w.z3, f);
+        crypto_fe_mul(w.t1, w.t3, w.t0, f);
+        crypto_fe_add(w.z3, w.z3, w.t1, f);
+
+        memory_copy(r->x, w.x3, bytes);
+        memory_copy(r->y, w.y3, bytes);
+        memory_copy(r->z, w.z3, bytes);
+        crypto_forget(address_of w, sizeof w);
+}
+
+#define CRYPTO_COMB_TEETH 5
+
+/* k G, k private and below the order, as plain affine x and y. False only
+   for the point at infinity, which k in [1, n) never gives. */
+static bool crypto_comb_base(p64 address_to x, p64 address_to y,
+                             const p64 address_to k,
+                             const crypto_field address_to f,
+                             const p64 address_to table,
+                             const p64 address_to b)
+{
+        positive n = f->n;
+        positive bits = n * 64;
+        positive d = (bits + CRYPTO_COMB_TEETH - 1) / CRYPTO_COMB_TEETH;
+        positive stride = 2 * n;
+        crypto_projective r;
+        crypto_projective chosen;
+        p64 zinv[CRYPTO_FE_MAX];
+        p64 unit[CRYPTO_FE_MAX];
+        p64 digit;
+        bool ok;
+
+        memory_fill(address_of r, 0, sizeof r);
+        memory_copy(r.y, f->one, n * sizeof(p64));
+        for (positive j = d; j--;)
+        {
+                if (j != d - 1)
+                        crypto_projective_double(address_of r, address_of r,
+                                                 b, f);
+                digit = 0;
+                for (positive t = 0; t < CRYPTO_COMB_TEETH; t++)
+                {
+                        positive at = t * d + j;
+
+                        if (at < bits)
+                                digit |= ((k[at / 64] >> (at % 64)) & 1) << t;
+                }
+
+                //      Infinity, then each entry kept under a mask that is
+                //      all ones for the one the column names.
+                memory_fill(address_of chosen, 0, sizeof chosen);
+                memory_copy(chosen.y, f->one, n * sizeof(p64));
+                for (p64 e = 1; e < (1u << CRYPTO_COMB_TEETH); e++)
+                {
+                        const p64 address_to entry = table + (e - 1) * stride;
+                        p64 mask = 0 - (((e ^ digit) - 1) >> 63);
+
+                        for (positive i = 0; i < n; i++)
+                        {
+                                chosen.x[i] = (chosen.x[i] & ~mask) |
+                                              (entry[i] & mask);
+                                chosen.y[i] = (chosen.y[i] & ~mask) |
+                                              (entry[n + i] & mask);
+                                chosen.z[i] = (chosen.z[i] & ~mask) |
+                                              (f->one[i] & mask);
+                        }
+                }
+                crypto_projective_add(address_of r, address_of r,
+                                      address_of chosen, b, f);
+        }
+
+        ok = !crypto_fe_is_zero(r.z, n);
+        if (ok)
+        {
+                crypto_fe_inv(zinv, r.z, f);
+                crypto_fe_mul(x, r.x, zinv, f);
+                crypto_fe_mul(y, r.y, zinv, f);
+                memory_fill(unit, 0, sizeof unit);
+                unit[0] = 1;
+                crypto_fe_mul(x, x, unit, f);
+                crypto_fe_mul(y, y, unit, f);
+        }
+
+        crypto_forget(address_of r, sizeof r);
+        crypto_forget(address_of chosen, sizeof chosen);
+        crypto_forget(zinv, sizeof zinv);
+        crypto_forget(address_of digit, sizeof digit);
+        return ok;
+}
+
 static bool crypto_ecdh_public(p8 address_to out, p8 address_to scalar,
                                const crypto_field address_to field,
                                const crypto_field address_to order,
-                               const p8 address_to gx, const p8 address_to gy)
+                               const p64 address_to table,
+                               const p64 address_to b)
 {
         p64 k[CRYPTO_FE_MAX];
-        p64 gx_f[CRYPTO_FE_MAX];
-        p64 gy_f[CRYPTO_FE_MAX];
-        crypto_point g;
-        crypto_point r;
+        p64 x[CRYPTO_FE_MAX];
+        p64 y[CRYPTO_FE_MAX];
         positive limbs = field->n;
         bool ok = false;
 
-        if (!crypto_scalar_from_int_be(k, scalar, limbs * 8, order->m, limbs))
+        if (!crypto_scalar_from_int_be(k, scalar, limbs * 8, order->m, limbs) ||
+            !crypto_comb_base(x, y, k, field, table, b))
                 goto done;
 
-        crypto_fe_load_be(gx_f, gx, limbs);
-        crypto_fe_load_be(gy_f, gy, limbs);
-        crypto_point_set_xy(address_of g, gx_f, gy_f, field);
-        crypto_point_scalar_private(address_of r, address_of g, k, null);
-        if (crypto_fe_is_zero(r.z, limbs))
-                goto done;
-
-        crypto_point_affine(address_of r);
         out[0] = 4;
-        crypto_fe_store_be(out + 1, r.x, limbs);
-        crypto_fe_store_be(out + 1 + limbs * 8, r.y, limbs);
+        crypto_fe_store_be(out + 1, x, limbs);
+        crypto_fe_store_be(out + 1 + limbs * 8, y, limbs);
         ok = true;
 
 done:
         crypto_forget(k, sizeof(k));
-        crypto_forget(gx_f, sizeof(gx_f));
-        crypto_forget(gy_f, sizeof(gy_f));
-        crypto_forget(address_of g, sizeof(g));
-        crypto_forget(address_of r, sizeof(r));
+        crypto_forget(x, sizeof(x));
+        crypto_forget(y, sizeof(y));
         return ok;
 }
 
@@ -3614,7 +3966,7 @@ static bool crypto_ecdh_p256_public(p8 address_to out, p8 address_to scalar)
 {
         return crypto_ecdh_public(out, scalar, address_of crypto_p256_field,
                                   address_of crypto_p256_order,
-                                  crypto_p256_gx_be, crypto_p256_gy_be);
+                                  crypto_p256_comb[0][0], crypto_p256_b_mont);
 }
 
 static bool crypto_ecdh_p256_shared(p8 address_to out, p8 address_to scalar,
@@ -3630,7 +3982,7 @@ static bool crypto_ecdh_p384_public(p8 address_to out, p8 address_to scalar)
 {
         return crypto_ecdh_public(out, scalar, address_of crypto_p384_field,
                                   address_of crypto_p384_order,
-                                  crypto_p384_gx_be, crypto_p384_gy_be);
+                                  crypto_p384_comb[0][0], crypto_p384_b_mont);
 }
 
 static bool crypto_ecdh_p384_shared(p8 address_to out, p8 address_to scalar,

@@ -48408,6 +48408,109 @@ static fn crypto_private_scalar_probe(
         crypto_forget(address_of second, sizeof second);
 }
 
+/* The comb against the window multiplier it replaced for key shares: every
+   table entry rebuilt from G, then public keys for edge scalars and a few
+   hundred drawn ones compared byte for byte. */
+static fn crypto_comb_probe(positive limbs, const crypto_field address_to field,
+                            const crypto_field address_to order,
+                            const p8 address_to gx, const p8 address_to gy,
+                            const p64 address_to table,
+                            bool (*public_key)(p8 address_to, p8 address_to),
+                            bool address_to entries, bool address_to keys)
+{
+        positive d = (limbs * 64 + CRYPTO_COMB_TEETH - 1) / CRYPTO_COMB_TEETH;
+        p64 x[CRYPTO_FE_MAX];
+        p64 y[CRYPTO_FE_MAX];
+        p64 k[CRYPTO_FE_MAX];
+        p64 unit[CRYPTO_FE_MAX];
+        p64 plain[CRYPTO_FE_MAX];
+        p64 random = 0x13198a2e03707344ull;
+        p8 scalar[48];
+        p8 got[97];
+        p8 want[97];
+        crypto_point base;
+        crypto_point result;
+        bool same = true;
+
+        memory_fill(x, 0, sizeof x);
+        memory_fill(y, 0, sizeof y);
+        memory_fill(unit, 0, sizeof unit);
+        unit[0] = 1;
+        crypto_fe_load_be(x, gx, limbs);
+        crypto_fe_load_be(y, gy, limbs);
+        crypto_point_set_xy(address_of base, x, y, field);
+
+        for (positive e = 1; e < (1u << CRYPTO_COMB_TEETH); e++)
+        {
+                const p64 address_to entry = table + (e - 1) * 2 * limbs;
+
+                memory_fill(k, 0, sizeof k);
+                for (positive t = 0; t < CRYPTO_COMB_TEETH; t++)
+                        if (e >> t & 1)
+                                k[t * d / 64] |= (p64)1 << (t * d % 64);
+                crypto_point_scalar_private(address_of result, address_of base,
+                                            k, null);
+                crypto_point_affine(address_of result);
+                crypto_fe_mul(plain, entry, unit, field);
+                same &= !memory_compare(plain, result.x, limbs * sizeof(p64));
+                crypto_fe_mul(plain, entry + limbs, unit, field);
+                same &= !memory_compare(plain, result.y, limbs * sizeof(p64));
+        }
+        address_to entries = same;
+
+        same = true;
+        for (positive round = 0; round < 300; round++)
+        {
+                memory_fill(k, 0, sizeof k);
+                if (round == 0)
+                        k[0] = 1;
+                else if (round == 1)
+                        k[0] = 2;
+                else if (round < 4)
+                {
+                        //      n - 1 and n - 2: every column's digit at its
+                        //      most, and the accumulator's last doubling
+                        //      right against the order.
+                        memory_copy(k, order->m, limbs * sizeof(p64));
+                        k[0] -= round - 1;
+                }
+                else if (round < 4 + CRYPTO_COMB_TEETH)
+                {
+                        //      One tooth's whole row set, then nothing else.
+                        positive t = round - 4;
+
+                        for (positive j = 0; j < d && t * d + j < limbs * 64 - 1; j++)
+                                k[(t * d + j) / 64] |= (p64)1 << ((t * d + j) % 64);
+                }
+                else
+                {
+                        for (positive i = 0; i < limbs; i++)
+                        {
+                                random ^= random << 13;
+                                random ^= random >> 7;
+                                random ^= random << 17;
+                                k[i] = random;
+                        }
+                        //      Below the order: the top bit off is enough
+                        //      for both.
+                        k[limbs - 1] &= ~((p64)1 << 63);
+                }
+                if (crypto_fe_is_zero(k, limbs))
+                        continue;
+                crypto_fe_store_be(scalar, k, limbs);
+                crypto_point_scalar_private(address_of result, address_of base,
+                                            k, null);
+                crypto_point_affine(address_of result);
+                want[0] = 4;
+                crypto_fe_store_be(want + 1, result.x, limbs);
+                crypto_fe_store_be(want + 1 + limbs * 8, result.y, limbs);
+                memory_fill(got, 0, sizeof got);
+                same &= public_key(got, scalar) &&
+                        !memory_compare(got, want, 1 + limbs * 16);
+        }
+        address_to keys = same;
+}
+
 /* AES-GCM from a raw key for the vectors below: prepare, seal or open, wipe. */
 static fn checks_aesgcm_encrypt(p8 address_to raw, p8 address_to iv,
                                 p8 address_to aad, positive aad_length,
@@ -49387,6 +49490,31 @@ static fn crypto_floor_aes(void)
                       differential384);
                 check("complementary P-384 scalars have one fixed operation schedule",
                       schedule384);
+                {
+                        bool entries = false;
+                        bool keys = false;
+
+                        crypto_comb_probe(4, address_of crypto_p256_field,
+                                          address_of crypto_p256_order,
+                                          crypto_p256_gx_be, crypto_p256_gy_be,
+                                          crypto_p256_comb[0][0],
+                                          crypto_ecdh_p256_public,
+                                          address_of entries, address_of keys);
+                        check("every P-256 comb entry is its multiple of G",
+                              entries);
+                        check("P-256 comb key shares match the window multiplier",
+                              keys);
+                        crypto_comb_probe(6, address_of crypto_p384_field,
+                                          address_of crypto_p384_order,
+                                          crypto_p384_gx_be, crypto_p384_gy_be,
+                                          crypto_p384_comb[0][0],
+                                          crypto_ecdh_p384_public,
+                                          address_of entries, address_of keys);
+                        check("every P-384 comb entry is its multiple of G",
+                              entries);
+                        check("P-384 comb key shares match the window multiplier",
+                              keys);
+                }
 
                 check("P-256 ECDH of 1 is the base point",
                       crypto_ecdh_p256_public(pub_two, one256) &&
