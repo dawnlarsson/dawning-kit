@@ -210,14 +210,7 @@ static bool stdbuf_bowl_root(string_address target, p8 address_to root)
             string_compare(root, (string_address)BOWL_EXPOSE_DIRECTORY))
                 return true;
 
-        bipolar handle = system_open_at(AT_FDCWD, target,
-                                        FILE_READ | O_CLOEXEC);
-
-        if (handle < 0)
-                return false;
-
-        bipolar got = system_read_retry((positive)handle, file_transfer, 256);
-        system_close(handle);
+        bipolar got = file_read_once_at(AT_FDCWD, target, file_transfer, 256);
 
         return got > 0 && stdbuf_bowl_root_from_text(
                               file_transfer, (positive)got, root) &&

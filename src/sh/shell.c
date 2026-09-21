@@ -1299,7 +1299,8 @@ DEAD_END fn shell_thread_instance_mode(bool preserve_ignored)
         if (floodlight_inplace_terminal)
                 floodlight_silent_stop();
 
-        string_format(log, "failed with error: %b\n", exec_result);
+        string_format(log, "failed with error: %s\n",
+                      file_reason(exec_result));
         log_flush();
 
         exit(126);
@@ -1656,7 +1657,8 @@ fn shell_execute_command()
 
                 if (waited < 0)
                 {
-                        string_format(log, "failed with error: %b\n", waited);
+                        string_format(log, "failed with error: %s\n",
+                                      file_reason(waited));
                         shell_status = 125;
                 }
                 else
@@ -1677,7 +1679,8 @@ fn shell_execute_command()
                 */
         }
         else
-                string_format(log, "failed with error: %b\n", child);
+                string_format(log, "failed with error: %s\n",
+                              file_reason(child));
 
         log_flush();
 }

@@ -1955,6 +1955,26 @@ static HOT bool file_store_slurp(string_address path,
 
 /* One bounded proc/sys-style record: open, one EINTR-safe read, terminate,
    close. Use file_store_slurp when a short read is not the complete record. */
+/* The front of a file and how much of it arrived, with the open and the
+   close and the refusal in one place. No terminator: a caller that wants
+   one asks file_slurp_once_at below, which is this and that. A file that
+   would not open answers with its own negative, which every caller here
+   already has to compare against the length it wanted. */
+static HOT bipolar file_read_once_at(bipolar directory, string_address path,
+                                     address_any into, positive bytes)
+{
+        bipolar handle = system_open_at(directory, path,
+                                        FILE_READ | O_CLOEXEC);
+
+        if (handle < 0)
+                return handle;
+
+        bipolar got = system_read_retry((positive)handle, into, bytes);
+
+        system_close(handle);
+        return got;
+}
+
 static HOT bipolar file_slurp_once_at(bipolar directory, string_address path,
                                       p8 address_to into,
                                       positive capacity)
@@ -1962,15 +1982,8 @@ static HOT bipolar file_slurp_once_at(bipolar directory, string_address path,
         if (!capacity)
                 return -1;
 
-        bipolar handle = system_open_at(directory, path,
-                                        FILE_READ | O_CLOEXEC);
+        bipolar got = file_read_once_at(directory, path, into, capacity - 1);
 
-        if (handle < 0)
-                return handle;
-
-        bipolar got = system_read_retry((positive)handle, into, capacity - 1);
-
-        system_close(handle);
         if (got >= 0)
                 into[got] = end;
         return got;

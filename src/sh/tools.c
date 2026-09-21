@@ -53,19 +53,12 @@ static const argument_option tools_no_options[] = {{null}};
 static p32 tools_hostid_value()
 {
         p32 identity;
-        bipolar handle = system_open_at(AT_FDCWD, "/etc/hostid",
-                                        FILE_READ | O_CLOEXEC);
+        bipolar got = file_read_once_at(AT_FDCWD, "/etc/hostid",
+                                        address_of identity,
+                                        sizeof(identity));
 
-        if (handle >= 0)
-        {
-                bipolar got = system_read_retry((positive)handle,
-                                                address_of identity,
-                                                sizeof(identity));
-                system_close(handle);
-
-                if (got == sizeof(identity))
-                        return identity;
-        }
+        if (got == (bipolar)sizeof(identity))
+                return identity;
 
         file_machine facts;
         if (!file_machine_read(address_of facts) ||

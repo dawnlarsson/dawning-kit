@@ -678,14 +678,8 @@ static bool bowl_split_guest_path(string_address path, p8 address_to root,
 static bool bowl_file_elf(string_address path)
 {
         p8 head[4];
-        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
-        bipolar got;
+        bipolar got = file_read_once_at(AT_FDCWD, path, head, 4);
 
-        if (handle < 0)
-                return false;
-
-        got = system_read_retry((positive)handle, head, 4);
-        system_close(handle);
         return got == 4 && head[0] == 0x7f && head[1] == 'E' &&
                head[2] == 'L' && head[3] == 'F';
 }
@@ -2195,14 +2189,8 @@ static b32 bowl_wait_applet(bipolar child, string_address what)
 static bool bowl_archive_known(string_address archive)
 {
         p8 head[512];
-        bipolar handle = system_open_at(AT_FDCWD, archive, FILE_READ | O_CLOEXEC);
-        bipolar got;
+        bipolar got = file_read_once_at(AT_FDCWD, archive, head, sizeof(head));
 
-        if (handle < 0)
-                return false;
-
-        got = system_read_retry((positive)handle, head, sizeof(head));
-        system_close(handle);
         if (got < 6)
                 return false;
 

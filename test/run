@@ -10252,7 +10252,7 @@ says transcript 'powered down'        'reboot: Power down'
 never transcript 'no panic'           'Kernel panic'
 never transcript 'no oops'            'Oops:'
 never transcript 'nothing refused'    'Permission denied'
-never transcript 'no missing command' 'failed with error: -2'
+never transcript 'no missing command' 'failed with error: No such file or directory'
 
 #
 #       And the other end of the same argument.
