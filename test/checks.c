@@ -16781,6 +16781,32 @@ fn check_into_padded()
                                                 check_into_padded_one(
                                                     into_exacts[e], widths[w],
                                                     pads[p], offset, guards[g]);
+
+        // Every width the any-pad lane takes, on both sides of every power
+        // of ten, so a value that just fits and one that just does not are
+        // both asked of each width with every pad.
+        for (positive w = 2; w <= 9; w++)
+                for (positive k = 0, power = 1; k < 12; k++, power *= 10)
+                        for (positive d = 0; d < 3; d++)
+                                for (positive p = 0;
+                                     p < sizeof(pads) / sizeof(pads[0]); p++)
+                                        check_into_padded_one(
+                                            power - 1 + d, w, pads[p],
+                                            (w + k + d) & 15,
+                                            guards[(w + k + d + p) % sizeof(guards)]);
+
+        for (positive r = 0; r < 20000; r++)
+        {
+                positive w = 2 + r % 8;
+                positive power = 1;
+
+                for (positive k = 0; k < w; k++)
+                        power *= 10;
+
+                check_into_padded_one(next() % power, w,
+                                      pads[1 + r % 3], r & 15,
+                                      guards[r % sizeof(guards)]);
+        }
 }
 
 fn check_into_pair()

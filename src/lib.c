@@ -15785,7 +15785,35 @@ ASM_FUNC(positive_to_string)
     "add $48, %esi\n   mov %sil, (%rdi)\n"
     ".Lpositive_into_padded_x86_fixed_done:\n   mov %rdx, %rax\n"
     ASM_RET
-    ".Lpositive_into_padded_x86_general:\n   push %rbx\n   push %r12\n   push %r13\n"
+    //
+    //       Any pad, a width of two to nine and a value that fits it: the
+    //       field is exactly the width, so the pad is laid over all of it
+    //       with two overlapping stores and the digits are written over its
+    //       end a pair at a time, most significant last. cat -n and uniq -c
+    //       pad with spaces, which used to take the call below, a scratch
+    //       copy and two byte loops per line: the number was four tenths of
+    //       cat -n.
+    //
+    ".Lpositive_into_padded_x86_general:\n   test %cl, %cl\n   jz .Lpositive_into_padded_x86_call\n"
+    "lea -2(%rdx), %rax\n   cmp $7, %rax\n   ja .Lpositive_into_padded_x86_call\n"
+    "lea ten_powers(%rip), %r8\n   cmp (%r8,%rdx,8), %rsi\n   jae .Lpositive_into_padded_x86_call\n"
+    "movzbl %cl, %eax\n   movabs $0x0101010101010101, %r9\n   imul %r9, %rax\n"
+    "cmp $4, %rdx\n   jb .Lpositive_into_padded_x86_lay2\n   cmp $8, %rdx\n   jb .Lpositive_into_padded_x86_lay4\n"
+    "mov %rax, (%rdi)\n   mov %rax, -8(%rdi,%rdx)\n   jmp .Lpositive_into_padded_x86_laid\n"
+    ".Lpositive_into_padded_x86_lay4:\n   mov %eax, (%rdi)\n   mov %eax, -4(%rdi,%rdx)\n"
+    "jmp .Lpositive_into_padded_x86_laid\n"
+    ".Lpositive_into_padded_x86_lay2:\n   mov %ax, (%rdi)\n   mov %ax, -2(%rdi,%rdx)\n"
+    ".Lpositive_into_padded_x86_laid:\n   lea digit_pairs(%rip), %r8\n   lea (%rdi,%rdx), %r9\n"
+    "mov %esi, %eax\n   cmp $100, %eax\n   jb .Lpositive_into_padded_x86_top\n"
+    ".Lpositive_into_padded_x86_pairs:\n   imul $1374389535, %rax, %r11\n   shr $37, %r11\n"
+    "imul $100, %r11d, %ecx\n   sub %ecx, %eax\n   movzwl (%r8,%rax,2), %eax\n   sub $2, %r9\n"
+    "mov %ax, (%r9)\n   mov %r11d, %eax\n   cmp $100, %eax\n   jae .Lpositive_into_padded_x86_pairs\n"
+    ".Lpositive_into_padded_x86_top:\n   cmp $10, %eax\n   jb .Lpositive_into_padded_x86_one\n"
+    "movzwl (%r8,%rax,2), %eax\n   mov %ax, -2(%r9)\n   mov %rdx, %rax\n"
+    ASM_RET
+    ".Lpositive_into_padded_x86_one:\n   add $48, %eax\n   mov %al, -1(%r9)\n   mov %rdx, %rax\n"
+    ASM_RET
+    ".Lpositive_into_padded_x86_call:\n   push %rbx\n   push %r12\n   push %r13\n"
     "mov %rdi, %rbx\n   mov %rdx, %r12\n   mov %cl, %r13b\n   call positive_into\n"
     "test %r13b, %r13b\n   jz .Lpositive_into_padded_x86_done\n   cmp %rax, %r12\n   jbe .Lpositive_into_padded_x86_done\n"
     "mov %r12, %r9\n   sub %rax, %r9\n   lea (%rbx,%r9), %r10\n   mov %rax, %r8\n"
