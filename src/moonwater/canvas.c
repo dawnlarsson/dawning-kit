@@ -468,6 +468,7 @@ static void canvas_flush_wake(void);
 static _Bool canvas_flush_running(void);
 static void output_free(struct output *output);
 static void desktop_redraw(void);
+static void desktop_recompose(void);
 static void desktop_repaint(void);
 static void cursor_plane_recover(void);
 static void desktop_watch(void);
@@ -2602,7 +2603,7 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
                 }
         }
 
-        desktop_redraw();
+        desktop_recompose();
 
         rt_mutex_unlock(&desktop.lock);
 
@@ -2724,7 +2725,7 @@ static void window_release(struct file *file)
                 pane_focus(pane_topmost(NULL, false, INT_MAX));
 
         if (!list_empty(&desktop.outputs))
-                desktop_redraw();
+                desktop_recompose();
 
         rt_mutex_unlock(&desktop.lock);
 
@@ -6838,7 +6839,20 @@ static void cursor_plane_recover(void)
                 cursor_plane_recovery = true;
 }
 
-static void desktop_redraw(void)
+/*
+        Every output drawn again, and nothing asked of the modes.
+
+        What a window opening, closing or changing focus needs: the pixels,
+        handed to the flusher like any other frame. desktop_redraw below also
+        commits every modeset, which is what a probe, a resume or a first
+        start needs and nothing else does -- and the commit is an atomic one
+        that waits out the flush already in flight and then a vblank of its
+        own, under desktop.lock. On virtio-gpu that was 20 to 47 ms per call,
+        with every committing program and the canvas thread queued behind it:
+        opening the first terminal held that terminal inside its create ioctl
+        for 46 ms, and its first frame waited 20 ms more for the focus.
+*/
+static void desktop_recompose(void)
 {
         u64 started = ktime_get_ns();
         struct output *output;
@@ -6848,7 +6862,11 @@ static void desktop_redraw(void)
 
         canvas_composes++;
         canvas_compose_ns += ktime_get_ns() - started;
+}
 
+static void desktop_redraw(void)
+{
+        desktop_recompose();
         desktop_commit();
 }
 
@@ -6959,7 +6977,7 @@ static void desktop_repaint(void)
         {
                 desktop.damage_count = 0;
                 desktop.damage_all = false;
-                desktop_redraw();
+                desktop_recompose();
                 return;
         }
 
@@ -9697,7 +9715,7 @@ static int canvas_loop(void *unused)
                         if (commit)
                                 changed |= pane_focus_commit();
                         if (changed)
-                                desktop_redraw();
+                                desktop_recompose();
                         rt_mutex_unlock(&desktop.lock);
                 }
 
