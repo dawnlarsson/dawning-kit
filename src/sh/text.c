@@ -23443,7 +23443,12 @@ static fn sort_items_load_range(positive from, positive to, b32 stage,
                 // the record sixteen ahead and the bytes eight ahead are
                 // asked for now.
                 if (at + 16 < to)
+                {
                         __builtin_prefetch(sort_lines + sort_items[at + 16].line);
+
+                        if (sort_spans)
+                                __builtin_prefetch(sort_spans + sort_items[at + 16].line);
+                }
 
                 if (at + 8 < to)
                         __builtin_prefetch(sort_text + sort_lines[sort_items[at + 8].line].at +
@@ -23565,7 +23570,12 @@ static fn sort_items_insert(positive from, positive to, b32 stage, positive dept
         if (plain)
         {
                 for (positive at = from; at < to; at++)
+                {
                         __builtin_prefetch(sort_lines + sort_items[at].line);
+
+                        if (sort_spans)
+                                __builtin_prefetch(sort_spans + sort_items[at].line);
+                }
 
                 for (positive at = from; at < to; at++)
                         __builtin_prefetch(sort_text + sort_lines[sort_items[at].line].at + skip);
