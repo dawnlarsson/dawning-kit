@@ -6736,8 +6736,14 @@ static void desktop_attach_buffers(void)
         The answer used to be thrown away. A commit is the only thing that puts
         a mode on a screen, and one that refuses says so in the one place that
         could have noticed.
+
+        known is a card committed a moment ago whose answer was known_set; it
+        is not committed a second time. canvas_start commits a new card on its
+        own to learn whether the mode sets, and committing it again straight
+        after meant a second atomic commit queued behind the first one's
+        vblank before the first picture was flushed.
 */
-static _Bool desktop_commit(void)
+static _Bool desktop_commit_known(struct canvas *known, int known_set)
 {
         struct canvas *committed = NULL;
         struct drm_rect cursor;
@@ -6756,7 +6762,9 @@ static _Bool desktop_commit(void)
                         continue;
 
                 committed = output->canvas;
-                set = drm_client_modeset_commit(&committed->client);
+                set = committed == known
+                          ? known_set
+                          : drm_client_modeset_commit(&committed->client);
                 if (!set)
                 {
                         struct output *grown;
@@ -6798,6 +6806,11 @@ static _Bool desktop_commit(void)
                                   output_touched(output, &cursor, 1));
 
         return complete;
+}
+
+static _Bool desktop_commit(void)
+{
+        return desktop_commit_known(NULL, 0);
 }
 
 // A failed cursor-plane disable may leave the old image live over the
@@ -7113,9 +7126,11 @@ static int canvas_start(struct canvas *canvas)
                 Falling back on that threw away every mode this ever chose and
                 quietly took the probe's, which is the opposite of the point.
         */
+        int ret;
+
         for (unsigned int attempt = 0; ; attempt++)
         {
-                int ret = canvas_build(canvas, !attempt &&
+                ret = canvas_build(canvas, !attempt &&
                     IS_ENABLED(CONFIG_MOONWATER_CANVAS_LARGEST_MODE));
 
                 if (ret)
@@ -7161,7 +7176,10 @@ static int canvas_start(struct canvas *canvas)
         // the terminal below, which is userspace and may never arrive.
         console_start();
 
-        desktop_redraw();
+        // The redraw, less the commit this card has just had: the picture
+        // goes to the flusher and the answer above is what is reported.
+        desktop_recompose();
+        desktop_commit_known(canvas, ret);
 
         {
                 struct output *output;
@@ -8220,6 +8238,21 @@ static int canvas_claim(const char *path, unsigned int minor,
                 it could never get.
         */
         filp_close(filp, NULL);
+
+        /*
+                And gone, not only closed. On a kernel thread -- the boot probe
+                runs on a workqueue -- the last fput is not done here but put
+                on the delayed list for a worker a jiffy later, and until it
+                runs this file is still the device's master. The hotplug that
+                registering fires reaches the first commit well before that,
+                so every boot's first picture was refused EBUSY, the desktop
+                went suspended, and it took a resume -- a second whole redraw
+                and modeset, 20 ms on virtio-gpu -- before anything was on the
+                screen. From a program's ioctl the fput runs as the call
+                returns instead, which the resume still covers.
+        */
+        if (current->flags & PF_KTHREAD)
+                flush_delayed_fput();
 
         if (!canvas)
                 return -EBUSY;
