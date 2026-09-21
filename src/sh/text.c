@@ -14115,6 +14115,23 @@ static b32 text_tr()
 
         b32 last_written = -1;
 
+        /*
+                One byte squeezed and nothing else, which is what tr -s ' '
+                and tr -s '\n' are: the bytes between its runs are found and
+                moved whole, and each run is one byte. The walk below looks
+                at every byte and branches on each one, and against a space
+                every few letters it ran at six cycles a byte, twice GNU's.
+        */
+        positive squeeze_count = 0;
+        p8 squeeze_only = 0;
+
+        for (positive i = 0; squeeze && !remove && !second && i < 256; i++)
+                if (squeezed[i])
+                {
+                        squeeze_count++;
+                        squeeze_only = (p8)i;
+                }
+
         while (text_fill())
         {
                 p8 address_to at = text_input.buffer + text_input.position;
@@ -14130,7 +14147,35 @@ static b32 text_tr()
 
                 positive kept = 0;
 
-                if (!remove && !second)
+                if (squeeze_count == 1)
+                {
+                        for (positive c = 0; c < left;)
+                        {
+                                p8 address_to hit = memory_first_of(at + c, squeeze_only, left - c);
+                                positive stop = hit ? (positive)(hit - at) : left;
+
+                                if (stop > c)
+                                {
+                                        if (kept != c)
+                                                memory_copy(at + kept, at + c, stop - c);
+
+                                        kept += stop - c;
+                                        last_written = at[kept - 1];
+                                        c = stop;
+                                }
+
+                                if (!hit)
+                                        break;
+
+                                if (last_written != (b32)squeeze_only)
+                                        at[kept++] = squeeze_only;
+
+                                last_written = squeeze_only;
+                                c++;
+                                c += memory_span_byte(at + c, squeeze_only, left - c);
+                        }
+                }
+                else if (!remove && !second)
                 {
                         // With no translation, a squeezed run is the input
                         // byte itself. Skip the run with the bounded hardware
