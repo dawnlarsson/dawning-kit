@@ -6779,24 +6779,48 @@ static bool locale_zone_resolve(string_address name, p8 address_to into,
         return true;
 }
 
+/*
+        Every name the table holds, as the list a person greps: the country
+        codes wrapped on a few lines, then one zone a line with what it is
+        called. Any tzdata link also works ("Asia/Calcutta", "US/Eastern"),
+        and is stored as the zone it points to.
+*/
 static b32 locale_zone_list(void)
 {
         bool code = false;
-        bool was = true;
+        positive column = 0;
         string_address name;
+        string_address spoken;
 
-        string_format(log, "  codes  ");
+        string_format(log, "  codes");
+        column = 7;
         for (positive at = 0; (name = clock_zone_known(at, address_of code));
              at++)
         {
-                if (was && !code)
-                        string_format(log, "\n  zones  ");
-                else if (at)
-                        string_format(log, " ");
-                string_format(log, "%s", name);
-                was = code;
+                if (code)
+                {
+                        if (column + 3 > 78)
+                        {
+                                string_format(log, "\n       ");
+                                column = 7;
+                        }
+                        string_format(log, " %s", name);
+                        column += 3;
+                        continue;
+                }
+                if (column)
+                {
+                        string_format(log, "\n  zones  " TERM_DIM
+                                           "tzdata " CLOCK_ZONE_TZDATA
+                                           "; any tzdata link works too"
+                                           TERM_RESET "\n");
+                        column = 0;
+                }
+                spoken = clock_zone_spoken(name);
+                string_format(log, "    %s  " TERM_DIM "%s" TERM_RESET "\n",
+                              name, spoken ? spoken : (string_address) "");
         }
-        string_format(log, "\n  offsets  +1  -5  +5:30  UTC+2"
+        string_format(log, "  offsets  +1  -5  +5:30  UTC+2"
                            TERM_DIM "   +1 is an hour ahead of UTC,"
                            " with no daylight saving" TERM_RESET "\n");
         log_flush();

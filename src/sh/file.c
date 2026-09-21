@@ -30063,10 +30063,14 @@ static bool touch_stamp(string_address text, b64 now, b64 address_to out)
                 return false;
 
         b64 days = clock_days_from_civil(year, field[2], field[3]);
+        b64 civil = days * 86400 + field[4] * 3600 + field[5] * 60;
 
-        address_to out = clock_local_to_utc(days * 86400 + field[4] * 3600 +
-                                            field[5] * 60) +
-                         stamp_second;
+        /* A wall-clock time the spring change skips names no instant, and
+           GNU's round trip through mktime refuses it the same way. */
+        if (!clock_local_exists(civil))
+                return false;
+
+        address_to out = clock_local_to_utc(civil) + stamp_second;
 
         return true;
 }

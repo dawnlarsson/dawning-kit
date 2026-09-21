@@ -80,7 +80,10 @@ is how RFC 5905's clock filter refuses a one-sided queue spike; `moonwater ntp
 filter off` falls back to a single sample. The kernel adds that offset to
 the current time; a kiss-o-death or a server whose root delay or dispersion
 is worse than a second is dropped. There is no
-zoneinfo file; a name such as `Europe/Stockholm` is mapped to a POSIX TZ string.
+zoneinfo directory: every tzdata zone and link (420 zones from tzdata 2026c,
+`src/build/zones.py` regenerates them) maps to the POSIX rule its TZif footer
+carries, which is right from the zone's last change on and does not replay older
+history. `moonwater timezone list` prints them.
 Canvas layouts other than US are the compositor's table, switched live.
 Steam Deck radios (RTL8822CE, MT7921) also need the matching linux-firmware files
 under `/lib/firmware`; the drivers are in the image, the blobs are not.
