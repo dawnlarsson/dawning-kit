@@ -60333,13 +60333,16 @@ static void check_pane_layout(void) {
 }
 
 /*
-   Focus policy lives in the kernel-facing pane file and cannot be executed by
-   this DRM-free pixel harness. Pin the security boundary in the source that
-   ships: create publishes a pane without focusing it, and every client-pane
-   selection goes through the geometry-aware eligibility helper.
+   Focus policy lives in the kernel-facing pane section of canvas.c and cannot
+   be executed by this DRM-free pixel harness. Pin the security boundary in the
+   source that ships: create publishes a pane without focusing it, and every
+   client-pane selection goes through the geometry-aware eligibility helper.
+
+   Each anchor below is unique in canvas.c and they appear in this order, so
+   reading the whole unit finds the same spans reading pane.c alone once did.
 */
 static void check_pane_focus_policy(void) {
-    FILE *source=fopen("src/canvas/pane.c","rb");check(source!=NULL);
+    FILE *source=fopen("src/canvas/canvas.c","rb");check(source!=NULL);
     assert(!fseek(source,0,SEEK_END));long size=ftell(source);assert(size>0);
     rewind(source);char *text=malloc((size_t)size+1);assert(text);
     assert(fread(text,1,(size_t)size,source)==(size_t)size);text[size]=0;

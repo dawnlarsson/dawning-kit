@@ -16536,6 +16536,22 @@ import types
 import unittest
 from unittest.mock import patch
 
+def canvas_part(canvas, name):
+    """One named section of src/canvas/canvas.c, the way it used to be a file.
+
+    The eleven files canvas.c expanded are folded into it, each behind a
+    banner whose first line is "<name>: <what it is>". The anchors the
+    harnesses cut with were written when each was a file of its own, and are
+    only unique inside one, so a cut has to be shown one section rather than
+    the whole unit -- otherwise an anchor that also appears in canvas.c's own
+    body silently cuts from there instead.
+    """
+    mark = '\n        %s: ' % name
+    start = canvas.index('*/\n', canvas.index(mark)) + 3
+    following = canvas.find('/*      ------', start)
+    return canvas[start:following if following >= 0 else len(canvas)]
+
+
 HARNESS_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -16789,14 +16805,14 @@ def harness_core_state(argv):
     # The bind subsystem and the machine script moved out of core.c into
     # moonwater.c; core.c includes it. The slices below follow them.
     moonwater = (root / "src/moonwater.c").read_text()
-    pane = (root / "src/canvas/pane.c").read_text()
     canvas = (root / "src/canvas/canvas.c").read_text()
-    compose = (root / "src/canvas/compose.c").read_text()
-    console = (root / "src/canvas/console.c").read_text()
-    drag = (root / "src/canvas/drag.c").read_text()
-    output = (root / "src/canvas/output.c").read_text()
-    pointer = (root / "src/canvas/pointer.c").read_text()
-    keys = (root / "src/canvas/keys.c").read_text()
+    pane = canvas_part(canvas, "pane")
+    compose = canvas_part(canvas, "compose")
+    console = canvas_part(canvas, "console")
+    drag = canvas_part(canvas, "drag")
+    output = canvas_part(canvas, "output")
+    pointer = canvas_part(canvas, "pointer")
+    keys = canvas_part(canvas, "keys")
     spark = (root / "src/spark.c").read_text()
     # The machine script this build bakes into the module. The scanner that
     # decides which rows the machine process owns is compiled here for real,
@@ -16811,8 +16827,8 @@ def harness_core_state(argv):
 
 
     def canvas_sources(work, arch):
-        paint = (root / "src/canvas/paint.c").read_text()
-        text = (root / "src/canvas/text.c").read_text()
+        paint = canvas_part(canvas, "paint")
+        text = canvas_part(canvas, "text")
         window = (root / "src/canvas/window.c").read_text()
         cells = section(window, "// The colour an index names", "#define WINDOW_CELL_BOLD")
         cells += section(canvas, "#define target_mark(pixels)",
@@ -21597,16 +21613,16 @@ static void drm_client_release(struct drm_client_dev *c) {
 '''
 
     bodies = "".join(function(file, name) for file, name in [
-        ("src/canvas/plane.c", "plane_drop"),
-        ("src/canvas/plane.c", "plane_lost"),
-        ("src/canvas/plane.c", "plane_claim"),
-        ("src/canvas/output.c", "output_free"),
-        ("src/canvas/compose.c", "output_flush_done"),
-        ("src/canvas/output.c", "output_drop"),
-        ("src/canvas/output.c", "cursor_plane_recover"),
-        ("src/canvas/output.c", "canvas_release"),
-        ("src/canvas/client.c", "canvas_claimed_forget"),
-        ("src/canvas/client.c", "client_unregister"),
+        ("src/canvas/canvas.c", "plane_drop"),
+        ("src/canvas/canvas.c", "plane_lost"),
+        ("src/canvas/canvas.c", "plane_claim"),
+        ("src/canvas/canvas.c", "output_free"),
+        ("src/canvas/canvas.c", "output_flush_done"),
+        ("src/canvas/canvas.c", "output_drop"),
+        ("src/canvas/canvas.c", "cursor_plane_recover"),
+        ("src/canvas/canvas.c", "canvas_release"),
+        ("src/canvas/canvas.c", "canvas_claimed_forget"),
+        ("src/canvas/canvas.c", "client_unregister"),
     ])
 
     runner = r'''
@@ -21870,7 +21886,7 @@ int main(void) {
 
 
 def harness_canvas_view(argv):
-    """The scrollback view arithmetic in src/canvas/pane.c, as properties.
+    """The scrollback view arithmetic in canvas.c's pane section, as properties.
 
     The wheel, the scrollbar and the snap-to-end all move one number: which
     line of the ring is at the top of the window. Everything drawn is measured
@@ -21884,11 +21900,12 @@ def harness_canvas_view(argv):
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
 
-    pane = (args.source_root / "src/canvas/pane.c").read_text()
+    pane = canvas_part((args.source_root / "src/canvas/canvas.c").read_text(),
+                       "pane")
     first = "// One line of the ring"
     following = "/*\n        A window, of pixels or of cells."
     if first not in pane or following not in pane:
-        raise ValueError("pane.c no longer carries the view section markers")
+        raise ValueError("canvas.c's pane section no longer carries the view markers")
     section = pane[pane.index(first):pane.index(following)]
 
     prefix = r'''
