@@ -34,8 +34,12 @@ static const p8 bowl_usage_text[] = bowl_label
 
 #define BOWL_NATIVE_SHELL "/shell"
 /* Where bowl roots live, said once. Everything else that needs to know --
-   including the shell's own path handling -- spells it from here. */
+   including the shell's own path handling -- spells it from here. A check
+   build points it at a scratch directory so landing can be tested on real
+   files without owning /bowls. */
+#ifndef BOWL_ROOT_DIRECTORY
 #define BOWL_ROOT_DIRECTORY "/bowls"
+#endif
 #define BOWL_ROOT_PREFIX BOWL_ROOT_DIRECTORY "/"
 #define BOWL_EXPOSE_DIRECTORY BOWL_ROOT_PREFIX "bin"
 #define BOWL_DEFAULT_PATH "/bin:/usr/bin:" BOWL_EXPOSE_DIRECTORY ":/"
@@ -1876,6 +1880,56 @@ static bool bowl_has(string_address root, string_address path)
         return true;
 }
 
+/*
+        bowl_has for a directory one level inside a named root -- Arch's
+        root.x86_64, before flattening hoists it -- which is not itself
+        /bowls/NAME and so is refused by bowl_has. The same protection holds:
+        the child is opened relative to the root without following a link, so
+        a member that is a symlink cannot move the question out of the bowl,
+        and the marker resolves with the child as its own /.
+*/
+static bool bowl_has_below(string_address root, string_address child,
+                           string_address path)
+{
+        struct
+        {
+                p64 flags;
+                p64 mode;
+                p64 resolve;
+        } how = {
+            O_PATH | O_CLOEXEC,
+            0,
+            BOWL_RESOLVE_IN_ROOT | BOWL_RESOLVE_NO_MAGICLINKS,
+        };
+        bipolar root_handle;
+        bipolar child_handle;
+        bipolar found;
+
+        if (!bowl_named_root(root) || !bowl_name(child, true) ||
+            bowl_path_steps(path))
+                return false;
+
+        root_handle = bowl_open_directory(root, false, null);
+        if (root_handle < 0)
+                return false;
+        child_handle = system_open_at(root_handle, child,
+                                      O_PATH | O_DIRECTORY | O_NOFOLLOW |
+                                              O_CLOEXEC);
+        system_close(root_handle);
+        if (child_handle < 0)
+                return false;
+
+        found = system_call_4(syscall(openat2), (positive)child_handle,
+                              (positive)path, (positive)address_of how,
+                              sizeof(how));
+        system_close(child_handle);
+        if (found < 0)
+                return false;
+
+        system_close(found);
+        return true;
+}
+
 static bool bowl_root_busy(string_address root)
 {
         file_walk walk;
@@ -2232,7 +2286,6 @@ static bipolar bowl_prefix_find(string_address root, string_address marker,
 {
         file_walk walk;
         struct linux_dirent64 address_to entry;
-        p8 from[BOWL_PATH_LIMIT];
         p8 name[258];
         bipolar found = 0;
 
@@ -2244,10 +2297,12 @@ static bipolar bowl_prefix_find(string_address root, string_address marker,
                 if (file_is_dot(entry->d_name))
                         continue;
 
+                //      A child is not /bowls/NAME, which bowl_has insists on,
+                //      so it is asked with bowl_has_below: the check that
+                //      refused it here is what broke every Arch landing.
                 name[0] = '/';
                 string_copy_max_end(name + 1, entry->d_name, sizeof(name) - 2);
-                if (bowl_root_path(from, sizeof(from), root, name) &&
-                    bowl_has(from, marker) && !found++)
+                if (bowl_has_below(root, entry->d_name, marker) && !found++)
                         memory_copy(rel, name, sizeof(name));
         }
 

@@ -52131,6 +52131,10 @@ b32 main(void)
 #endif /* CHECK_waterlink */
 
 #ifdef CHECK_bowl
+//      Bowl's roots, for this check only, somewhere a user may write, so
+//      landing is tested on real directories; every spelling below is built
+//      from it, as bowl.c's own are.
+#define BOWL_ROOT_DIRECTORY "/tmp/moonwater-bowl-check"
 #include "../src/lib.util.c"
 #include "../src/moonwater/spark.c"
 #include "../src/sh/shell.c"
@@ -52144,10 +52148,10 @@ static fn names(void)
 {
         static const struct { string_address name; bool valid; } roots[] = {
             {null, false}, {"", false}, {"/", false}, {"/bowl", false},
-            {"/bowls", false}, {"/bowls/", false}, {"/bowls/a", true},
-            {"/bowls/bin", false}, {"/bowls/a.b_-", true}, {"/bowls/.", false},
-            {"/bowls/..", false}, {"/bowls/a/b", false}, {"/bowls/a+", false},
-            {"/bowls/a ", false}, {"/bowls/a\xff", false}};
+            {BOWL_ROOT_DIRECTORY, false}, {BOWL_ROOT_PREFIX, false}, {BOWL_ROOT_PREFIX "a", true},
+            {BOWL_ROOT_PREFIX "bin", false}, {BOWL_ROOT_PREFIX "a.b_-", true}, {BOWL_ROOT_PREFIX ".", false},
+            {BOWL_ROOT_PREFIX "..", false}, {BOWL_ROOT_PREFIX "a/b", false}, {BOWL_ROOT_PREFIX "a+", false},
+            {BOWL_ROOT_PREFIX "a ", false}, {BOWL_ROOT_PREFIX "a\xff", false}};
 
         for (positive at = 0; at < array_count(roots); at++)
                 check("Bowl root prefixes and reserved names",
@@ -52168,10 +52172,10 @@ static fn names(void)
 static fn launchers(void)
 {
         static string_address encoded[] = {
-            "@/bowls/debian/usr/bin/jq", "@/bowls/arch/bin/sh", "@/bowls/./bin/sh",
-            "@/bowls/../bin/sh", "@/bowls/bin/echo", "@/bowls/a/", "@/bowls/a",
-            "@/bowls/", "@/bowls", "@/", "@", "", "!/bowls/a/bin/sh"};
-        static string_address roots[] = {"/bowls/debian", "/bowls/arch"};
+            "@" BOWL_ROOT_PREFIX "debian/usr/bin/jq", "@" BOWL_ROOT_PREFIX "arch/bin/sh", "@" BOWL_ROOT_PREFIX "./bin/sh",
+            "@" BOWL_ROOT_PREFIX "../bin/sh", "@" BOWL_ROOT_PREFIX "bin/echo", "@" BOWL_ROOT_PREFIX "a/", "@" BOWL_ROOT_PREFIX "a",
+            "@" BOWL_ROOT_PREFIX, "@" BOWL_ROOT_DIRECTORY, "@/", "@", "", "!" BOWL_ROOT_PREFIX "a/bin/sh"};
+        static string_address roots[] = {BOWL_ROOT_PREFIX "debian", BOWL_ROOT_PREFIX "arch"};
         static string_address programs[] = {"/usr/bin/jq", "/bin/sh"};
 
         for (positive item = 0; item < array_count(encoded); item++)
@@ -52523,6 +52527,89 @@ static fn archive_policy(void)
         tar_extract_special = before;
 }
 
+/*
+        Landing a bootstrap whose tree sits one directory down -- Arch's
+        root.x86_64 -- on real directories under the scratch root above.
+
+        The hardening that made bowl_has resolve inside /bowls/NAME also
+        refused every child of one, so flattening never found Arch's tree and
+        every Arch setup said "archive is not a bowl bootstrap". Every check in
+        this section was pure, which is how it got through. The two refusals
+        after the landing are that hardening's own point and must survive the
+        fix: a child that is a link out of the bowl, and a marker that is one.
+*/
+static fn landing_make(string_address root, string_address rest)
+{
+        p8 path[256];
+
+        string_copy_bounded(path, root, sizeof path);
+        string_append_bounded(path, rest, sizeof path);
+        system_make_directory_at(AT_FDCWD, path, 0755);
+}
+
+static fn landing(void)
+{
+        p8 nested[128];
+        p8 escape[128];
+        p8 pointed[128];
+        p8 path[256];
+        p8 rel[258];
+        p8 digits[24];
+        positive pid = (positive)system_call_1(syscall(getpid), 0);
+        bipolar made;
+
+        digits[positive_into(digits, pid)] = end;
+        system_make_directory_at(AT_FDCWD, BOWL_ROOT_DIRECTORY, 0755);
+        string_copy_bounded(nested, BOWL_ROOT_PREFIX "nested", sizeof nested);
+        string_append_bounded(nested, digits, sizeof nested);
+        string_copy_bounded(escape, BOWL_ROOT_PREFIX "escape", sizeof escape);
+        string_append_bounded(escape, digits, sizeof escape);
+        string_copy_bounded(pointed, BOWL_ROOT_PREFIX "pointed", sizeof pointed);
+        string_append_bounded(pointed, digits, sizeof pointed);
+
+        landing_make(nested, "");
+        landing_make(nested, "/root.x86_64");
+        landing_make(nested, "/root.x86_64/usr");
+        landing_make(nested, "/root.x86_64/usr/bin");
+        string_copy_bounded(path, nested, sizeof path);
+        string_append_bounded(path, "/root.x86_64/usr/bin/pacman", sizeof path);
+        made = system_open_at_mode(AT_FDCWD, path,
+                                   O_CREAT | O_WRONLY | O_CLOEXEC, 0755);
+        if (made >= 0)
+                system_close(made);
+
+        check("Bowl finds a bootstrap one directory down",
+              bowl_prefix_find(nested, "/usr/bin/pacman", rel) == 1 &&
+                  string_equals(rel, "/root.x86_64"));
+        check("and flattening it leaves the marker in the bowl's root",
+              bowl_flatten(nested, "/usr/bin/pacman") == 0 &&
+                  bowl_has(nested, "/usr/bin/pacman"));
+
+        //      A child that is a link to the host's / would find the host's
+        //      /bin/sh; it must not count as the bootstrap.
+        landing_make(escape, "");
+        string_copy_bounded(path, escape, sizeof path);
+        string_append_bounded(path, "/root.x86_64", sizeof path);
+        system_symbolic_link_at("/", AT_FDCWD, path);
+        check("Bowl does not follow a child that links out of the bowl",
+              bowl_prefix_find(escape, "/bin/sh", rel) == 0);
+
+        //      A marker that is an absolute link resolves inside the child,
+        //      where it names itself, so it is not there.
+        landing_make(pointed, "");
+        landing_make(pointed, "/root.x86_64");
+        landing_make(pointed, "/root.x86_64/bin");
+        string_copy_bounded(path, pointed, sizeof path);
+        string_append_bounded(path, "/root.x86_64/bin/sh", sizeof path);
+        system_symbolic_link_at("/bin/sh", AT_FDCWD, path);
+        check("Bowl does not take a marker that links out of the child",
+              bowl_prefix_find(pointed, "/bin/sh", rel) == 0);
+
+        bowl_forget_path(nested);
+        bowl_forget_path(escape);
+        bowl_forget_path(pointed);
+}
+
 b32 main(void)
 {
         names();
@@ -52531,6 +52618,7 @@ b32 main(void)
         kernel_settings();
         room();
         archive_policy();
+        landing();
         return test_report(null);
 }
 #endif /* CHECK_bowl */
