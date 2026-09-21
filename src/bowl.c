@@ -3559,7 +3559,11 @@ static b32 bowl_extract_oci(string_address archive, string_address root)
         if (!failed)
                 failed = bowl_extract(archive, layout);
         if (failed)
+        {
+                // Beside the root, where a reset of the root does not reach.
+                bowl_forget_path(layout);
                 return failed;
+        }
 
         /*
                 The archive is in the layout now, blob for blob, and every
