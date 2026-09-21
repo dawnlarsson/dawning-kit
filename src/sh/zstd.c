@@ -362,6 +362,7 @@ static bool zstd_seq_build(zstd_fse address_to table, const bipolar address_to n
         positive const mask = size - 1;
         positive const step = (size >> 1) + (size >> 3) + 3;
         p16 next[64];
+        p64 template[64];
         p8 symbol[ZSTD_FSE_MAX];
         p8 spread[ZSTD_FSE_MAX + 8];
         positive total = 0;
@@ -399,31 +400,17 @@ static bool zstd_seq_build(zstd_fse address_to table, const bipolar address_to n
         }
         else if (!zstd_fse_spread(symbol, norm, max_sym, log))
                 return zstd_fail("zstd FSE table did not fill");
-        for (positive u = 0; u < size; u++)
+        //      Each symbol's baseline and extra bits in a cell template, and the
+        //      cells from the spread in lib.c.
+        for (positive s = 0; s <= max_sym; s++)
         {
-                p8 const sym = symbol[u];
-                p16 const n = next[sym]++;
-                p8 const bits = (p8)(log - zstd_highbit32(n));
+                p32 const base = kind == 1 ? (s < 2 ? (p32)s : ((p32)1 << s) - 3)
+                               : kind == 0 ? zstd_ll_base[s] : zstd_ml_base[s];
+                p8 const extra = kind == 1 ? (p8)s : kind == 0 ? zstd_ll_extra[s] : zstd_ml_extra[s];
 
-                table->cell[u].bits = bits;
-                table->cell[u].next = (p16)((n << bits) - size);
-                if (kind == 1)
-                {
-                        table->cell[u].extra = sym;
-                        table->cell[u].base =
-                            (p32)(sym < 2 ? (positive)sym : ((positive)1 << sym) - 3);
-                }
-                else if (kind == 0)
-                {
-                        table->cell[u].extra = zstd_ll_extra[sym];
-                        table->cell[u].base = zstd_ll_base[sym];
-                }
-                else
-                {
-                        table->cell[u].extra = zstd_ml_extra[sym];
-                        table->cell[u].base = zstd_ml_base[sym];
-                }
+                template[s] = (p64)base << 32 | (p64)extra << 16;
         }
+        zstd_fse_cells(table->cell, symbol, size, log, next, template);
         table->log = log;
         table->rle = 0;
         table->valid = true;

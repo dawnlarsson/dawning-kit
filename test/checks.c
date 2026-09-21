@@ -77221,6 +77221,48 @@ static fn floor_huffman_codes(void)
         check("huffman_codes gives deflate's canonical codes, reversed", same);
 }
 
+/* zstd_fse_cells against a cell at a time over random spreads of random
+   counts at every table size a sequence table has. */
+static fn floor_zstd_fse_cells(void)
+{
+        p8 symbol[512];
+        p16 next[64], model_next[64];
+        p64 template[64], got[512], want[512];
+        p32 random = 0x27d4eb2fu;
+        bool same = true;
+
+        for (positive trial = 0; trial < 20000; trial++)
+        {
+#define FLOOR_RANDOM() (random ^= random << 13, random ^= random >> 17, random ^= random << 5, random)
+                positive log = 5 + FLOOR_RANDOM() % 5, size = (positive)1 << log;
+                positive symbols = 1 + FLOOR_RANDOM() % 53;
+
+                memory_fill(next, 0, sizeof(next));
+                for (positive u = 0; u < size; u++)
+                {
+                        symbol[u] = (p8)(FLOOR_RANDOM() % symbols);
+                        next[symbol[u]]++;
+                }
+                for (positive s = 0; s < 64; s++)
+                        template[s] = (p64)FLOOR_RANDOM() << 32 | (p64)(FLOOR_RANDOM() & 255) << 16;
+                memory_copy(model_next, next, sizeof(next));
+                for (positive u = 0; u < size; u++)
+                {
+                        p16 n = model_next[symbol[u]]++;
+                        positive bits = log - (63 - bits_leading_zeros(n));
+
+                        want[u] = template[symbol[u]] | (p64)bits << 24 |
+                                  (p16)(((positive)n << bits) - size);
+                }
+                zstd_fse_cells(got, symbol, size, log, next, template);
+                if (memory_compare(got, want, size * sizeof(p64)) ||
+                    memory_compare(next, model_next, sizeof(next)))
+                        same = false;
+#undef FLOOR_RANDOM
+        }
+        check("zstd sequence table cells match a cell at a time", same);
+}
+
 #ifdef CHECK_compression_floor
 b32 main(void)
 {
@@ -77235,6 +77277,7 @@ b32 main(void)
         floor_huffman_lengths();
         floor_zstd_huffman_cells();
         floor_huffman_codes();
+        floor_zstd_fse_cells();
         return test_report(null);
 }
 #endif

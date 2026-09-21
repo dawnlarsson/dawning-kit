@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        342 routines (329 public, 13 local), 341 of them on all three and 1 local to one.
+        343 routines (330 public, 13 local), 342 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -407,6 +407,7 @@
           zstd_bits_get                  public  yes     yes     yes
           zstd_bits_open                 public  yes     yes     yes
           zstd_bits_reload               public  yes     yes     yes
+          zstd_fse_cells                 public  yes     yes     yes
           zstd_huffman_4x                public  yes     yes     yes
           zstd_huffman_cells             public  yes     yes     yes
           zstd_huffman_stream            public  yes     yes     yes
@@ -13214,6 +13215,41 @@ __asm__(
     "popq %rbx\n"
     ASM_RET
     ASM_END(zstd_huffman_cells)
+    /* zstd_fse_cells(cells, symbol, size, log, next, template): the eight
+       byte cells of a sequence decoding table of size = 1 << log, cell u
+       for symbol[u]: n = next[symbol]++ (never 0), bits = log - the top
+       bit of n, and the cell template[symbol] | bits << 24 | the low 16
+       bits of (n << bits) - size. */
+    ASM_FUNC(zstd_fse_cells)
+    "pushq %rbx\n"
+    "pushq %r12\n"
+    "movl %ecx, %r12d\n"
+    "xorl %eax, %eax\n"
+    "testq %rdx, %rdx\n"
+    "jz .Lfse_cells_x64_done\n"
+    ".Lfse_cells_x64_cell:\n"
+    "movzbl (%rsi,%rax), %r10d\n"
+    "movzwl (%r8,%r10,2), %r11d\n"
+    "leal 1(%r11), %ebx\n"
+    "movw %bx, (%r8,%r10,2)\n"
+    "bsrl %r11d, %ebx\n"
+    "movl %r12d, %ecx\n"
+    "subl %ebx, %ecx\n"
+    "shll %cl, %r11d\n"
+    "subl %edx, %r11d\n"
+    "movzwl %r11w, %r11d\n"
+    "shll $24, %ecx\n"
+    "orl %ecx, %r11d\n"
+    "orq (%r9,%r10,8), %r11\n"
+    "movq %r11, (%rdi,%rax,8)\n"
+    "incq %rax\n"
+    "cmpq %rdx, %rax\n"
+    "jb .Lfse_cells_x64_cell\n"
+    ".Lfse_cells_x64_done:\n"
+    "popq %r12\n"
+    "popq %rbx\n"
+    ASM_RET
+    ASM_END(zstd_fse_cells)
 
     /* Range decoder (24-byte state): range:u32, code:u32, next, limit.
        mode and aligned probability arrays follow lzma_range_encode. The
@@ -25789,6 +25825,31 @@ __asm__(
     ".Lzhc_arm64_done:\n"
     ASM_RET
     ASM_END(zstd_huffman_cells)
+    /* See the x86_64 zstd_fse_cells contract. */
+    ASM_FUNC(zstd_fse_cells)
+    "mov x6, #0\n"
+    "cbz x2, .Lfse_cells_arm64_done\n"
+    ".Lfse_cells_arm64_cell:\n"
+    "ldrb w7, [x1, x6]\n"
+    "ldrh w10, [x4, x7, lsl #1]\n"
+    "add w11, w10, #1\n"
+    "strh w11, [x4, x7, lsl #1]\n"
+    "clz w12, w10\n"
+    "add w12, w12, w3\n"
+    "sub w12, w12, #31\n"
+    "lsl w10, w10, w12\n"
+    "sub w10, w10, w2\n"
+    "and w10, w10, #0xffff\n"
+    "orr w10, w10, w12, lsl #24\n"
+    "ldr x13, [x5, x7, lsl #3]\n"
+    "orr x10, x10, x13\n"
+    "str x10, [x0, x6, lsl #3]\n"
+    "add x6, x6, #1\n"
+    "cmp x6, x2\n"
+    "b.lo .Lfse_cells_arm64_cell\n"
+    ".Lfse_cells_arm64_done:\n"
+    ASM_RET
+    ASM_END(zstd_fse_cells)
 
     /* See the x86_64 bounded range decoder contract. */
     /* See the x86_64 LZMA span contract. */
@@ -39228,6 +39289,45 @@ __asm__(
     ".Lzhc_rv_done:\n"
     ASM_RET
     ASM_END(zstd_huffman_cells)
+    /* See the x86_64 zstd_fse_cells contract. */
+    ASM_FUNC(zstd_fse_cells)
+    "li t0, 0\n"
+    "beqz a2, .Lfse_cells_rv_done\n"
+    ".Lfse_cells_rv_cell:\n"
+    "add t1, a1, t0\n"
+    "lbu t1, 0(t1)\n"
+    "slli t2, t1, 1\n"
+    "add t2, a4, t2\n"
+    "lhu t3, 0(t2)\n"
+    "addi t4, t3, 1\n"
+    "sh t4, 0(t2)\n"
+    "li t4, 0\n"
+    "srli t5, t3, 1\n"
+    ".Lfse_cells_rv_top:\n"
+    "beqz t5, .Lfse_cells_rv_topped\n"
+    "addi t4, t4, 1\n"
+    "srli t5, t5, 1\n"
+    "j .Lfse_cells_rv_top\n"
+    ".Lfse_cells_rv_topped:\n"
+    "sub t4, a3, t4\n"
+    "sll t3, t3, t4\n"
+    "sub t3, t3, a2\n"
+    "slli t3, t3, 48\n"
+    "srli t3, t3, 48\n"
+    "slli t4, t4, 24\n"
+    "or t3, t3, t4\n"
+    "slli t2, t1, 3\n"
+    "add t2, a5, t2\n"
+    "ld t2, 0(t2)\n"
+    "or t3, t3, t2\n"
+    "slli t2, t0, 3\n"
+    "add t2, a0, t2\n"
+    "sd t3, 0(t2)\n"
+    "addi t0, t0, 1\n"
+    "bltu t0, a2, .Lfse_cells_rv_cell\n"
+    ".Lfse_cells_rv_done:\n"
+    ASM_RET
+    ASM_END(zstd_fse_cells)
 
     /* See the x86_64 bounded range decoder contract. */
     /* See the x86_64 LZMA span contract. */
@@ -46327,6 +46427,9 @@ READS(1) WRITES(3) fn huffman_codes(const p8 address_to length, positive n, p32 
 /* The zstd literal decoder's eleven-bit table from checked weights. */
 WRITES(1) fn zstd_huffman_cells(address_any cells, const p8 address_to weight, positive count,
                                 positive max_bits, p32 address_to first);
+/* A zstd sequence decoding table's cells from its spread symbols. */
+WRITES(1) fn zstd_fse_cells(address_any cells, const p8 address_to symbol, positive size,
+                            positive log, p16 address_to next, const p64 address_to template);
 READS_WRITES(1) fn lzma_range_shift(address_any state);
 READS_WRITES(1) READS_WRITES(2) bipolar lzma_range_decode(address_any state, address_any probs,
                                              positive mode);
