@@ -769,11 +769,50 @@ static fn text_record_preserve(p8 address_to address_to previous,
         }
 }
 
-static bool text_line_view(p8 address_to address_to line,
-                           positive address_to length,
-                           p8 address_to address_to previous,
-                           positive previous_length,
-                           p8 address_to previous_storage)
+static bool text_line_view_refill(p8 address_to address_to line,
+                                  positive address_to length,
+                                  p8 address_to address_to previous,
+                                  positive previous_length,
+                                  p8 address_to previous_storage);
+
+/*
+        A line that is whole in the reader is the common answer and needs
+        only its end found, so that part is taken where the caller is; the
+        refill and the line that runs past the read are the call. As one
+        function it was never inlined, and every line paid a call and read
+        its answer back through memory.
+*/
+static inline INLINE bool text_line_view(p8 address_to address_to line,
+                                         positive address_to length,
+                                         p8 address_to address_to previous,
+                                         positive previous_length,
+                                         p8 address_to previous_storage)
+{
+        if (text_input.position < text_input.filled)
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                p8 address_to found = memory_first_of(
+                    at, text_delimiter, text_input.filled - text_input.position);
+
+                if (found)
+                {
+                        address_to line = at;
+                        address_to length = (positive)(found - at);
+                        text_input.position += address_to length + 1;
+                        text_line_ended = true;
+                        return true;
+                }
+        }
+
+        return text_line_view_refill(line, length, previous, previous_length,
+                                     previous_storage);
+}
+
+static bool text_line_view_refill(p8 address_to address_to line,
+                                  positive address_to length,
+                                  p8 address_to address_to previous,
+                                  positive previous_length,
+                                  p8 address_to previous_storage)
 {
         if (text_input.position >= text_input.filled)
                 text_record_preserve(previous, previous_length + 1,
