@@ -5960,12 +5960,35 @@ typedef struct
         positive square;
 } factor_modulus;
 
-static positive factor_add_mod(positive left, positive right,
-                               positive modulus)
+/*
+        Which way a reduction goes is a coin toss for residues, so each of
+        these selects rather than branches: a mispredicted branch in every
+        add and every multiply was most of what factoring a twelve digit
+        number cost.
+*/
+static inline INLINE positive factor_add_mod(positive left, positive right,
+                                             positive modulus)
 {
-        return left >= modulus - right
-                   ? left - (modulus - right)
-                   : left + right;
+        positive sum = left + right;
+        positive over = left - (modulus - right);
+
+        return left >= modulus - right ? over : sum;
+}
+
+static inline INLINE positive factor_multiply(factor_modulus address_to context,
+                                              positive left, positive right)
+{
+        p128 product = (p128)left * right;
+        positive correction = (positive)product * context->inverse;
+        p128 adjusted = (p128)correction * context->modulus;
+        p128 reduced = product + adjusted;
+        positive answer = (positive)(reduced >> positive_bits);
+        positive less = answer - context->modulus;
+
+        /* The mathematical sum can carry out of the 128-bit object.  In
+           that case its high word is R+answer and the mandatory subtraction
+           of modulus is represented by the same native wrap. */
+        return (reduced < product) | (answer >= context->modulus) ? less : answer;
 }
 
 static fn factor_modulus_begin(factor_modulus address_to context,
@@ -5980,34 +6003,17 @@ static fn factor_modulus_begin(factor_modulus address_to context,
         context->modulus = modulus;
         context->inverse = (positive)0 - inverse;
 
-        positive one = 1;
-        for (positive at = 0; at < positive_bits; at++)
-                one = factor_add_mod(one, one, modulus);
+        /* R mod n is (R - n) mod n, one native remainder. */
+        positive one = ((positive)0 - modulus) % modulus;
         context->one = one;
 
-        positive square = one;
-        for (positive at = 0; at < positive_bits; at++)
-                square = factor_add_mod(square, square, modulus);
+        /* R squared from 2R in six Montgomery squarings, each of which
+           takes 2^(64+j) to 2^(64+2j); the doubling it replaces took a
+           hundred and twenty eight turns of a mispredicted add. */
+        positive square = factor_add_mod(one, one, modulus);
+        for (positive at = 0; at < 6; at++)
+                square = factor_multiply(context, square, square);
         context->square = square;
-}
-
-static positive factor_multiply(factor_modulus address_to context,
-                                positive left, positive right)
-{
-        p128 product = (p128)left * right;
-        positive correction = (positive)product * context->inverse;
-        p128 adjusted = (p128)correction * context->modulus;
-        p128 reduced = product + adjusted;
-        positive answer = (positive)(reduced >> positive_bits);
-
-        /* The mathematical sum can carry out of the 128-bit object.  In
-           that case its high word is R+answer and the mandatory subtraction
-           of modulus is represented by the same native wrap. */
-        if (reduced < product)
-                return answer - context->modulus;
-
-        return answer >= context->modulus
-                   ? answer - context->modulus : answer;
 }
 
 static positive factor_into_montgomery(factor_modulus address_to context,
