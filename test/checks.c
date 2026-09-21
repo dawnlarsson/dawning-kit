@@ -75681,9 +75681,17 @@ static fn floor_checksums(void)
         const positive sizes[] = {0,1,2,3,4,5,6,7,8,9,15,16,17,31,32,33,63,64,
                                   65,127,128,129,255,256,257,1023,1024,1025,1039,1040,1055,1056,1087,1088,1089,4095,4096};
         p8 pclmul = cpu_has_pclmul;
-        for (positive path = 0; path < (pclmul ? 2 : 1); path++)
+#if X64
+        p8 vpclmul = cpu_has_vpclmul;
+#endif
+        //      Path 0 is the table walk, 1 the xmm fold and 2 the zmm fold
+        //      where the processor has one.
+        for (positive path = 0; path < (pclmul ? 3 : 1); path++)
         {
         cpu_has_pclmul = path ? pclmul : 0;
+#if X64
+        cpu_has_vpclmul = path == 2 ? vpclmul : 0;
+#endif
         for (positive k = 0; k < array_count(sizes); k++)
                 for (positive edge = 0; edge < 2; edge++)
                         for (positive seed = 0; seed < 3; seed++)
@@ -75707,6 +75715,9 @@ static fn floor_checksums(void)
                         }
         }
         cpu_has_pclmul = pclmul;
+#if X64
+        cpu_has_vpclmul = vpclmul;
+#endif
         memory_free(p, 3 * 4096);
 }
 
