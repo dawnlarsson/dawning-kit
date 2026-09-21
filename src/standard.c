@@ -76,17 +76,7 @@
         } while (0)
 
 #ifndef STANDARD_SKIP_ERROR
-/* ---- error.c ---- */
-/*
-        Experimental C standard library
-
-        errno, the message table, and the POSIX names that set them
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- error.c: errno, the message table, and the POSIX names that set them ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_ERROR
 #define STANDARD_MODERN_C_STANDARD_ERROR
@@ -1407,18 +1397,7 @@ ERROR_ENTRY(sync, b32, (void),
 #endif // STANDARD_SKIP_ERROR
 
 #ifndef STANDARD_SKIP_LOCK
-/* ---- lock.c ---- */
-/*
-        Experimental C standard library
-
-        lock: one word, one compare-and-swap, and a futex only when somebody
-        is actually waiting
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- lock.c: lock: one word, one compare-and-swap, and a futex only when somebody is actually waiting ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_LOCK
 #define STANDARD_MODERN_C_STANDARD_LOCK
@@ -1731,17 +1710,7 @@ static b32 lock_state(lock address_to it)
 #endif // STANDARD_SKIP_LOCK
 
 #ifndef STANDARD_SKIP_NUMBERS
-/* ---- numbers.c ---- */
-/*
-        Experimental C standard library
-
-        numbers: text into a number, and the decimal one correctly rounded
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- numbers.c: numbers: text into a number, and the decimal one correctly rounded ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_NUMBERS
 #define STANDARD_MODERN_C_STANDARD_NUMBERS
@@ -4830,18 +4799,7 @@ static decimal atof(string_address input)
 #endif // STANDARD_SKIP_NUMBERS
 
 #ifndef STANDARD_SKIP_STDLIB
-/* ---- stdlib.c ---- */
-/*
-        Experimental C standard library
-
-        stdlib: leaving, the environment, sorting, searching, division that
-        keeps its remainder, and a generator
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- stdlib.c: stdlib: leaving, the environment, sorting, searching, division that keeps its remainder, and a generator ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_STDLIB
 #define STANDARD_MODERN_C_STANDARD_STDLIB
@@ -6498,17 +6456,7 @@ b32 system(string_address command)
 #endif // STANDARD_SKIP_STDLIB
 
 #ifndef STANDARD_SKIP_CLOCK
-/* ---- clock.c ---- */
-/*
-        Experimental C standard library
-
-        <time.h>: a clock read from the kernel, and a calendar with no tables
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- clock.c: <time.h>: a clock read from the kernel, and a calendar with no tables ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_CLOCK
 #define STANDARD_MODERN_C_STANDARD_CLOCK
@@ -9305,16 +9253,7 @@ tm address_to localtime(const time_t address_to stamp)
 #ifndef STANDARD_SKIP_MATH
 /* ---- math.c ---- */
 
-/*
-        Experimental C standard library
-
-        The rest of <math.h>: the transcendentals, and the exact ones
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- The rest of <math.h>: the transcendentals, and the exact ones ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_MATH
 #define STANDARD_MODERN_C_STANDARD_MATH
@@ -12306,17 +12245,7 @@ static decimal modf(decimal, decimal address_to)
 #endif // STANDARD_SKIP_MATH
 
 #ifndef STANDARD_SKIP_SIGNAL
-/* ---- signal.c ---- */
-/*
-        Experimental C standard library
-
-        <signal.h>: dispositions, masks, and the half of setjmp that was missing
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- signal.c: <signal.h>: dispositions, masks, and the half of setjmp that was missing ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_SIGNAL
 #define STANDARD_MODERN_C_STANDARD_SIGNAL
@@ -13189,17 +13118,7 @@ extern fn siglongjmp(jump_state state, b32 value) DEAD_END;
 */
 
 #ifndef STANDARD_SKIP_STREAM
-/* ---- stream.c ---- */
-/*
-        Experimental C standard library
-
-        <stdio.h>'s FILE: a descriptor, a buffer, a position and a few flags
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- stream.c: <stdio.h>'s FILE: a descriptor, a buffer, a position and a few flags ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_STREAM
 #define STANDARD_MODERN_C_STANDARD_STREAM
@@ -15210,17 +15129,7 @@ b32 fputs(string_address text, stream address_to handle)
 #endif // STANDARD_SKIP_STREAM
 
 #ifndef STANDARD_SKIP_FORMAT
-/* ---- format.c ---- */
-/*
-        Experimental C standard library
-
-        printf: a format string, its arguments, and the bytes they mean
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- format.c: printf: a format string, its arguments, and the bytes they mean ---- */
 
 #ifndef STANDARD_MODERN_C_FORMAT
 #define STANDARD_MODERN_C_FORMAT
@@ -18099,17 +18008,7 @@ static fn perror(string_address prefix)
 #endif // STANDARD_SKIP_FORMAT
 
 #ifndef STANDARD_SKIP_SCAN
-/* ---- scan.c ---- */
-/*
-        Experimental C standard library
-
-        scanf: a format string, an input, and the values it takes out of it
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- scan.c: scanf: a format string, an input, and the values it takes out of it ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_SCAN
 #define STANDARD_MODERN_C_STANDARD_SCAN
@@ -20040,19 +19939,7 @@ var_list_entry(scanf, b32, (string_address format, ...), format,
 #endif // STANDARD_SKIP_SCAN
 
 #ifndef STANDARD_SKIP_SPOOL
-/* ---- spool.c ---- */
-/*
-        Experimental C standard library
-
-        spool: the rest of <stdio.h> -- a stream with something behind it the
-        stream family does not own. A child process, a temporary name, a
-        buffer of bytes, or a file that is about to stop existing.
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- spool.c: spool: the rest of <stdio.h> -- a stream with something behind it the stream family does not own. A child process, a temporary name, a buffer of bytes, or a file that is about to stop existing. ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_SPOOL
 #define STANDARD_MODERN_C_STANDARD_SPOOL
@@ -21178,18 +21065,7 @@ static PURE b32 fileno_unlocked(stream address_to handle)
 #endif // STANDARD_SKIP_SPOOL
 
 #ifndef STANDARD_SKIP_PROCESS
-/* ---- process.c ---- */
-/*
-        Experimental C standard library
-
-        directories, the exec family, sleeping, and the small POSIX names
-        that sit beside them
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- process.c: directories, the exec family, sleeping, and the small POSIX names that sit beside them ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_PROCESS
 #define STANDARD_MODERN_C_STANDARD_PROCESS

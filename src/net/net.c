@@ -12,21 +12,17 @@
         neighbours. wait.c stays beside this because src/sh/tools.c expands
         it too, and expands it first; anchors.inc stays beside it because it
         is a table.
-*/
-
-#ifndef STANDARD_MODERN_C_NET
-#define STANDARD_MODERN_C_NET
-
-/*
-        Experimental C standard library
-
-        rtnetlink: a link brought up, an address given, a route added
 
         Dawn Larsson - Apache-2.0 license
         github.com/dawnlarsson/dawning-kit
 
         www.dawning.dev
 */
+
+#ifndef STANDARD_MODERN_C_NET
+#define STANDARD_MODERN_C_NET
+
+/* ---- netlink: rtnetlink: a link brought up, an address given, a route added ---- */
 
 #ifndef STANDARD_MODERN_C_NET_NETLINK
 #define STANDARD_MODERN_C_NET_NETLINK
@@ -1033,16 +1029,7 @@ static bipolar netlink_dump(b32 handle, p16 type, positive body, p8 family,
 }
 
 #endif // STANDARD_MODERN_C_NET_NETLINK
-/*
-        Experimental C standard library
-
-        A resolver: a name, and the address behind it
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- dns: A resolver: a name, and the address behind it ---- */
 
 #ifndef STANDARD_MODERN_C_NET_DNS
 #define STANDARD_MODERN_C_NET_DNS
@@ -1709,16 +1696,7 @@ static COLD bipolar dns_resolve_any(string_address path, string_address name,
 }
 
 #endif // STANDARD_MODERN_C_NET_DNS
-/*
-        Experimental C standard library
-
-        http: a URL, and the bytes behind it
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- http: http: a URL, and the bytes behind it ---- */
 
 #ifndef STANDARD_MODERN_C_NET_HTTP
 #define STANDARD_MODERN_C_NET_HTTP
@@ -8092,16 +8070,7 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
 }
 
 #endif // STANDARD_MODERN_C_NET_HTTP
-/*
-        Experimental C standard library
-
-        dhcp: an address obtained rather than typed
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- dhcp: dhcp: an address obtained rather than typed ---- */
 
 #ifndef STANDARD_MODERN_C_NET_DHCP
 #define STANDARD_MODERN_C_NET_DHCP

@@ -30,6 +30,11 @@
         shell does: use the disk's data with this build, update the disk to
         this build first, or leave the disk alone. `moonwater use`, `update`
         and `live` answer the same question from any shell.
+
+        Dawn Larsson - Apache-2.0 license
+        github.com/dawnlarsson/dawning-kit
+
+        www.dawning.dev
 */
 
 #define host_label TERM_BOLD "[Moonwater]" TERM_RESET " "
@@ -3279,16 +3284,7 @@ static b32 host_canvas(string_address address_to arguments, positive count)
 
 /* ---- nl80211: how the wifi above talks to the kernel. ---- */
 
-/*
-        Experimental C standard library
-
-        nl80211: join a station, leave it
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- nl80211: join a station, leave it ---- */
 
 #ifndef STANDARD_MODERN_C_NET_NL80211
 #define STANDARD_MODERN_C_NET_NL80211

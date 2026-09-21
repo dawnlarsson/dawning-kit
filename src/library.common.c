@@ -8,6 +8,11 @@
         files from growing private micro-libraries while still letting the
         compiler erase every unused or constant branch from the amalgamated
         build.
+
+        Dawn Larsson - Apache-2.0 license
+        github.com/dawnlarsson/dawning-kit
+
+        www.dawning.dev
 */
 #ifndef STANDARD_MODERN_C_LIBRARY_COMMON
 #define STANDARD_MODERN_C_LIBRARY_COMMON
@@ -3527,17 +3532,7 @@ static inline fn digest_close(digest_state address_to digest, p8 address_to out)
         grow an undefined jump to memory_take.
 */
 #if defined(LIBRARY_COMMON_ALLOCATOR) && !defined(STANDARD_SKIP_ALLOCATOR)
-/* ---- allocator.c ---- */
-/*
-        Experimental C standard library
-
-        The allocator: malloc, free, calloc, realloc, and the aligned pair
-
-        Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
-
-        www.dawning.dev
-*/
+/* ---- allocator.c: The allocator: malloc, free, calloc, realloc, and the aligned pair ---- */
 
 #ifndef STANDARD_MODERN_C_STANDARD_ALLOCATOR
 #define STANDARD_MODERN_C_STANDARD_ALLOCATOR
