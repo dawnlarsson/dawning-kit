@@ -4061,18 +4061,31 @@ typedef struct
            once read, answers every later read. */
         bool closed;
         positive post_handshake_used;
-        p8 post_handshake[TLS_HS_MAX];
         /* Socket bytes. Records not yet opened lie in
            [receive_start, receive_end); application data is decrypted where
            it lies, and plain_at and plain_used name the part of the last
            opened record not yet handed out. Opened plaintext stays until a
-           later receive overwrites it or tls_forget erases the connection. */
+           later receive overwrites it or tls_forget erases the connection,
+           which is why receive_high keeps the furthest any read has filled:
+           nothing past it was ever written, so nothing past it is wiped. */
         positive receive_start;
         positive receive_end;
+        positive receive_high;
         positive plain_at;
         positive plain_used;
+        /* The two buffers stay last and are neither zeroed on the way in nor
+           wiped past what was used on the way out: they are 272 KiB of a
+           connection that fetches a few kilobytes, and filling them whole
+           twice was a page fault a page and a byte-at-a-time store each.
+           post_handshake holds only its first post_handshake_used bytes; the
+           append wipes what it consumes. */
+        p8 post_handshake[TLS_HS_MAX];
         p8 receive[TLS_RECEIVE_ROOM];
 } tls_conn;
+
+/* The part of a connection zeroed when it opens: everything before the
+   buffers. */
+#define TLS_CONN_HEAD __builtin_offsetof(tls_conn, post_handshake)
 
 /* RFC 8446 requires each AEAD key to stay within its usage bound.  This
    client intentionally does not implement KeyUpdate, so end the connection
@@ -4082,7 +4095,12 @@ typedef struct
 
 static fn tls_forget(tls_conn address_to tls)
 {
-        crypto_forget(tls, sizeof(*tls));
+        positive held = min(tls->post_handshake_used, (positive)TLS_HS_MAX);
+        positive filled = min(tls->receive_high, (positive)TLS_RECEIVE_ROOM);
+
+        crypto_forget(tls->post_handshake, held);
+        crypto_forget(tls->receive, filled);
+        crypto_forget(tls, TLS_CONN_HEAD);
         tls->handle = -1;
 }
 
@@ -4334,6 +4352,8 @@ static bool tls_receive(tls_conn address_to tls,
         if (got <= 0 || (positive)got > room)
                 return false;
         tls->receive_end += (positive)got;
+        if (tls->receive_high < tls->receive_end)
+                tls->receive_high = tls->receive_end;
         return true;
 }
 
@@ -6460,7 +6480,7 @@ static COLD bipolar tls_connect(tls_conn address_to tls, bipolar handle,
         bipolar status;
         network_deadline deadline;
 
-        memory_fill(tls, 0, sizeof(*tls));
+        memory_fill(tls, 0, TLS_CONN_HEAD);
         tls->handle = handle;
         tls->host = host;
         tls->check_cert = check_cert;
@@ -7223,7 +7243,8 @@ static fn http_link_close(http_link address_to link)
 static bipolar http_link_open(http_link address_to link, p32 ip, p16 port,
                               string_address host, bool tls, bool check_cert)
 {
-        memory_fill(link, 0, sizeof(*link));
+        //      The session's buffers are tls_connect's to leave alone.
+        memory_fill(link, 0, __builtin_offsetof(http_link, session));
         link->handle = http_stream_open(ip, port);
         if (link->handle < 0)
                 return link->handle;

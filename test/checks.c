@@ -47363,16 +47363,42 @@ static fn tls_sensitive_state_erasure(void)
                 p8 address_to bytes = (p8 address_to)address_of connection;
                 bool erased = true;
 
+                //      Every byte up to the end of the receive buffer; past
+                //      it is the struct's padding out to the GCM keys'
+                //      alignment, which nothing writes.
                 memory_fill(address_of connection, 0xa5, sizeof connection);
                 connection.handle = 42;
                 tls_forget(address_of connection);
                 for (positive at = sizeof connection.handle;
-                     at < sizeof connection; at++)
+                     at < __builtin_offsetof(tls_conn, receive) +
+                              sizeof connection.receive;
+                     at++)
                         erased &= bytes[at] == 0;
                 check("TLS connection teardown invalidates its handle",
                       connection.handle == -1);
                 check("TLS connection teardown erases retained secrets",
                       erased);
+
+                //      Past the high-water marks nothing was ever written,
+                //      so teardown leaves it: the buffers are most of the
+                //      connection and a fetch uses a few kilobytes of them.
+                memory_fill(address_of connection, 0xa5, sizeof connection);
+                connection.post_handshake_used = 100;
+                connection.receive_high = 3000;
+                tls_forget(address_of connection);
+                erased = true;
+                for (positive at = sizeof connection.handle; at < TLS_CONN_HEAD;
+                     at++)
+                        erased &= bytes[at] == 0;
+                for (positive at = 0; at < 100; at++)
+                        erased &= connection.post_handshake[at] == 0;
+                for (positive at = 0; at < 3000; at++)
+                        erased &= connection.receive[at] == 0;
+                check("TLS teardown erases up to what the connection filled",
+                      erased);
+                check("TLS teardown leaves what the connection never filled",
+                      connection.post_handshake[100] == 0xa5 &&
+                          connection.receive[3000] == 0xa5);
         }
 
         {
@@ -47444,7 +47470,9 @@ static fn tls_sensitive_state_erasure(void)
                 link.tls = true;
                 http_link_close(address_of link);
                 for (positive at = sizeof link.session.handle;
-                     at < sizeof link.session; at++)
+                     at < __builtin_offsetof(tls_conn, receive) +
+                              sizeof link.session.receive;
+                     at++)
                         erased &= bytes[at] == 0;
                 check("HTTP close clears its TLS mode", !link.tls);
                 check("HTTP close erases the TLS session", erased &&
