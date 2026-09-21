@@ -107,6 +107,11 @@ static p8 zstd_in_buf[ZSTD_IN];
 static byte_input zstd_src = {.buf = zstd_in_buf, .room = ZSTD_IN};
 static p8 address_to zstd_window;
 static positive zstd_window_cap;
+/* The mapping behind the window when it is a ring: ring_size bytes of one
+   memfd mapped twice, back to back, at zstd_ring. Null when the window is a
+   plain mapping twice the window's size. */
+static p8 address_to zstd_ring;
+static positive zstd_ring_size;
 static positive zstd_window_size;
 static positive zstd_pos;
 static positive zstd_keep;
@@ -944,8 +949,20 @@ static bool zstd_window_room(positive need)
 
         if (zstd_pos > zstd_keep)
         {
-                memory_copy(zstd_window, zstd_window + zstd_pos - zstd_keep,
-                            zstd_keep);
+                //      A ring slides by moving where the window starts: the
+                //      bytes it keeps are already the ones behind the new
+                //      start, and a start past the first copy is the same
+                //      memory one ring earlier.
+                if (zstd_ring)
+                {
+                        zstd_window += zstd_pos - zstd_keep;
+                        if (zstd_window >= zstd_ring + zstd_ring_size)
+                                zstd_window -= zstd_ring_size;
+                }
+                else
+                        memory_copy(zstd_window,
+                                    zstd_window + zstd_pos - zstd_keep,
+                                    zstd_keep);
                 zstd_pos = zstd_keep;
         }
 
@@ -1263,9 +1280,133 @@ static bool zstd_sequences(p8 address_to src, positive src_len, p8 address_to li
    zero and zstd_sequences_run refuses any offset past what this frame has
    written, so a larger mapping only means the slide in zstd_room happens
    later. */
+#define ZSTD_MAP_FIXED 0x10
+#define ZSTD_MEMFD_CLOEXEC 1u
+#define ZSTD_MADV_HUGEPAGE 14
+#define ZSTD_RING_ALIGN ((positive)2 << 20)
+/* Below this the plain mapping's doubling is a few megabytes, and a ring
+   would round up to whole huge pages. */
+#define ZSTD_RING_LEAST ((positive)8 << 20)
+
+/* size bytes of one memfd mapped twice back to back, so that any span of up
+   to size bytes starting in the first copy reads and writes as one run. The
+   window slides through it by moving its start, where a plain mapping had
+   to be twice the window and copy the whole window down each time it
+   filled: a 128 MiB window touched 256 MiB and copied 128 MiB per 128 MiB
+   decoded. Null when the kernel refuses any step, and the caller falls back
+   to the plain mapping. */
+static p8 address_to zstd_ring_map(positive size)
+{
+        bipolar handle;
+        bipolar at;
+        p8 address_to ring = null;
+
+        handle = system_call_2(syscall(memfd_create),
+                               (positive)(address_any) "zstd window",
+                               ZSTD_MEMFD_CLOEXEC);
+        if (handle < 0)
+                return null;
+        if (system_call_2(syscall(ftruncate), (positive)handle, size) < 0)
+                goto done;
+        at = system_call_6(syscall(mmap), 0, 2 * size + ZSTD_RING_ALIGN,
+                           FILE_PROTECT_NONE,
+                           FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS,
+                           (positive)-1, 0);
+        if (at < 0 && at > -4096)
+                goto done;
+        {
+                bipolar aligned = (at + (bipolar)ZSTD_RING_ALIGN - 1) &
+                                  ~(bipolar)(ZSTD_RING_ALIGN - 1);
+
+                if (aligned > at)
+                        system_call_2(syscall(munmap), (positive)at,
+                                      (positive)(aligned - at));
+                if (aligned + (bipolar)(2 * size) < at + (bipolar)(2 * size + ZSTD_RING_ALIGN))
+                        system_call_2(syscall(munmap),
+                                      (positive)(aligned + (bipolar)(2 * size)),
+                                      (positive)(at + (bipolar)ZSTD_RING_ALIGN - aligned));
+                at = aligned;
+        }
+        if (system_call_6(syscall(mmap), (positive)at, size,
+                          FILE_PROTECT_READ | FILE_PROTECT_WRITE,
+                          FILE_MAP_SHARED | ZSTD_MAP_FIXED,
+                          (positive)handle, 0) != at ||
+            system_call_6(syscall(mmap), (positive)at + size, size,
+                          FILE_PROTECT_READ | FILE_PROTECT_WRITE,
+                          FILE_MAP_SHARED | ZSTD_MAP_FIXED,
+                          (positive)handle, 0) != at + (bipolar)size)
+        {
+                system_call_2(syscall(munmap), (positive)at, 2 * size);
+                goto done;
+        }
+        system_call_3(syscall(madvise), (positive)at, 2 * size, ZSTD_MADV_HUGEPAGE);
+        ring = (p8 address_to)at;
+done:
+        system_call_1(syscall(close), (positive)handle);
+        return ring;
+}
+
+/* Whether a memfd can be given huge pages, from the kernel's own switch.
+   The ring only pays with them: on ordinary pages each of its two mappings
+   faults every page on its own, 66 thousand faults for a 128 MiB window,
+   and the ring decoded Arch's bootstrap 4 percent slower than the plain
+   mapping; with them it faulted 469 times to the plain mapping's thousand
+   on anonymous huge pages, and decoded 9 percent faster in half the
+   memory. Asked once a process. */
+static bool zstd_ring_huge(void)
+{
+        static p8 known;
+        p8 text[64];
+        bipolar handle;
+        bipolar got;
+
+        if (known)
+                return known == 1;
+        known = 2;
+        handle = system_open_at(AT_FDCWD,
+                                "/sys/kernel/mm/transparent_hugepage/shmem_enabled",
+                                FILE_READ);
+        if (handle < 0)
+                return false;
+        got = system_call_3(syscall(read), (positive)handle, (positive)text,
+                            sizeof text - 1);
+        system_close(handle);
+        if (got <= 0)
+                return false;
+        text[got] = 0;
+        //      The mode in force is the bracketed word: never and deny keep
+        //      a memfd on small pages whatever it asks.
+        for (bipolar at = 0; at < got; at++)
+                if (text[at] == '[')
+                {
+                        if (!string_compare_max((string_address)text + at,
+                                                "[never]", 7) ||
+                            !string_compare_max((string_address)text + at,
+                                                "[deny]", 6))
+                                return false;
+                        known = 1;
+                        return true;
+                }
+        return false;
+}
+
+static fn zstd_window_free(void)
+{
+        if (zstd_ring)
+                system_call_2(syscall(munmap), (positive)zstd_ring,
+                              2 * zstd_ring_size);
+        else if (zstd_window)
+                memory_free(zstd_window, zstd_window_cap);
+        zstd_ring = null;
+        zstd_ring_size = 0;
+        zstd_window = null;
+        zstd_window_cap = 0;
+}
+
 static bool zstd_window_open(positive window)
 {
         positive cap;
+        positive ring;
 
         zstd_window_size = window;
         zstd_keep = window;
@@ -1273,14 +1414,27 @@ static bool zstd_window_open(positive window)
         if (!window)
                 return true;
 
-        cap = window * 2 + ZSTD_BLOCK_MAX + 64;
-        if (zstd_window && zstd_window_cap >= cap)
-                return true;
-        if (zstd_window)
+        ring = (window + ZSTD_BLOCK_MAX + 64 + ZSTD_RING_ALIGN - 1) &
+               ~(ZSTD_RING_ALIGN - 1);
+        if (zstd_ring && zstd_ring_size >= ring)
         {
-                memory_free(zstd_window, zstd_window_cap);
-                zstd_window = null;
-                zstd_window_cap = 0;
+                zstd_window = zstd_ring;
+                return true;
+        }
+        cap = window * 2 + ZSTD_BLOCK_MAX + 64;
+        if (!zstd_ring && zstd_window && zstd_window_cap >= cap)
+                return true;
+        zstd_window_free();
+
+        zstd_ring = window >= ZSTD_RING_LEAST && zstd_ring_huge()
+                            ? zstd_ring_map(ring)
+                            : null;
+        if (zstd_ring)
+        {
+                zstd_ring_size = ring;
+                zstd_window = zstd_ring;
+                zstd_window_cap = ring;
+                return true;
         }
 
         zstd_window = (p8 address_to)memory(cap);
@@ -1295,12 +1449,7 @@ static bool zstd_window_open(positive window)
 
 static fn zstd_window_close(void)
 {
-        if (zstd_window)
-        {
-                memory_free(zstd_window, zstd_window_cap);
-                zstd_window = null;
-                zstd_window_cap = 0;
-        }
+        zstd_window_free();
 }
 
 static bool zstd_frame(void)
