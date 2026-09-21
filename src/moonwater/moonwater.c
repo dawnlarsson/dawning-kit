@@ -596,6 +596,8 @@ struct bind_spawn {
 
 struct bind_handle {
         struct input_handle handle;
+        struct work_struct open;
+        int opened;
         unsigned int mods;
 };
 
@@ -1369,6 +1371,25 @@ static void bind_event(struct input_handle *handle, unsigned int type,
         bind_queue(row);
 }
 
+/*
+        Opened from a worker, not from connect.
+
+        A connect runs inside the probe of the device being registered, with
+        the input core's mutex held, and a USB HID device's first open sleeps
+        fifty milliseconds in usbhid_open. This handler takes anything with a
+        key, which includes a mouse's buttons, so opening here put that sleep
+        in front of the next device on the hub: under QEMU the keyboard
+        enumerated fifty milliseconds after the tablet for no reason but this.
+        A device that will not open is left registered and deaf, as a refused
+        connect left it unbound; either way no binding hears it.
+*/
+static void bind_open(struct work_struct *work)
+{
+        struct bind_handle *bind = container_of(work, struct bind_handle, open);
+
+        bind->opened = input_open_device(&bind->handle);
+}
+
 static int bind_connect(struct input_handler *handler, struct input_dev *dev,
                         const struct input_device_id *id)
 {
@@ -1381,18 +1402,16 @@ static int bind_connect(struct input_handler *handler, struct input_dev *dev,
         bind->handle.dev = dev;
         bind->handle.handler = handler;
         bind->handle.name = "moonwater-bind";
+        bind->opened = -EINPROGRESS;
+        INIT_WORK(&bind->open, bind_open);
         ret = input_register_handle(&bind->handle);
         if (ret)
-                goto free;
-        ret = input_open_device(&bind->handle);
-        if (ret)
-                goto unregister;
+        {
+                kfree(bind);
+                return ret;
+        }
+        schedule_work(&bind->open);
         return 0;
-unregister:
-        input_unregister_handle(&bind->handle);
-free:
-        kfree(bind);
-        return ret;
 }
 
 static void bind_disconnect(struct input_handle *handle)
@@ -1400,9 +1419,11 @@ static void bind_disconnect(struct input_handle *handle)
         struct bind_handle *bind = container_of(handle, struct bind_handle, handle);
         unsigned int i;
 
+        cancel_work_sync(&bind->open);
         for (i = 0; i < ARRAY_SIZE(bind_mod_code); i++)
                 bind_mods(bind, bind_mod_code[i], 0);
-        input_close_device(handle);
+        if (!bind->opened)
+                input_close_device(handle);
         input_unregister_handle(handle);
         kfree(bind);
 }

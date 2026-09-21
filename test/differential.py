@@ -17530,6 +17530,8 @@ static void desktop_set_awake(_Bool awake) { assert(desktop.lock);desktop.awake=
    object and bind_connect/bind_disconnect live outside the slices above. */
 static struct { int registered; } bind_handler;
 static int input_register_handler(void *handler) { (void)handler; return 0; }
+/* bind_open, the worker bind_connect queues, sits inside the slice above. */
+#define input_open_device(handle) ((void)(handle), 0)
 #define register_keyboard_notifier(nb) ((void)(nb),0)
 #define register_pm_notifier(nb) ((void)(nb),0)
 #define ATOMIC_INIT(value) (value)

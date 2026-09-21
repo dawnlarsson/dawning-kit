@@ -9177,9 +9177,15 @@ static void pointer_reopen(struct work_struct *work)
 
         if (!ret)
         {
-                pr_info("[moonwater canvas] " "input: %s opened on try %u\n", pointer_device_name(&pointer->handle), pointer->tries + 1);
+                if (pointer->tries)
+                        pr_info("[moonwater canvas] " "input: %s opened on try %u\n", pointer_device_name(&pointer->handle), pointer->tries + 1);
+                else
+                        pr_info("[moonwater canvas] " "input: %s\n", pointer_device_name(&pointer->handle));
                 return;
         }
+
+        if (!pointer->tries)
+                pr_info("[moonwater canvas] " "input: %s would not open (%d), trying again\n", pointer_device_name(&pointer->handle), ret);
 
         if (++pointer->tries < POINTER_OPEN_TRIES)
                 schedule_delayed_work(&pointer->reopen, HZ);
@@ -9215,15 +9221,21 @@ static COLD int pointer_connect(struct input_handler *handler,
         list_add_tail(&pointer->link, &pointer_handles);
         spin_unlock_irqrestore(&desktop.input_lock, flags);
 
-        pointer->opened = input_open_device(&pointer->handle);
+        /*
+                Opened from a worker, not here.
 
-        if (pointer->opened)
-        {
-                pr_info("[moonwater canvas] " "input: %s would not open (%d), trying again\n", pointer_device_name(&pointer->handle), pointer->opened);
-                schedule_delayed_work(&pointer->reopen, HZ);
-        }
-        else
-                pr_info("[moonwater canvas] " "input: %s\n", pointer_device_name(&pointer->handle));
+                A connect runs inside the bus probe that registered the
+                device, with the input core's mutex held, and opening a USB
+                HID device sleeps fifty milliseconds in usbhid_open before it
+                returns. Done here, that sleep sat in front of every device
+                after this one on the same hub -- a mouse enumerated first
+                held the keyboard back by it, and a keyboard with a media-key
+                interface paid it twice -- and in front of every other input
+                device registering anywhere. Nothing is lost by the worker: a
+                device delivers nothing until it is open either way.
+        */
+        pointer->opened = -EINPROGRESS;
+        schedule_delayed_work(&pointer->reopen, 0);
 
         return 0;
 }
