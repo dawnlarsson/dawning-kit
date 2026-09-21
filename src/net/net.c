@@ -2016,16 +2016,17 @@ static bool crypto_same(const p8 address_to left, const p8 address_to right,
         return !diff;
 }
 
-/* Unlike memory_fill, these stores cannot be discarded after the final use. */
+/* Unlike memory_fill alone, these stores cannot be discarded after the final
+   use: the empty asm takes the address and clobbers memory, so the compiler
+   has to assume something reads the zeros, and an optimizer that drops a
+   dead fill cannot drop this one. That is explicit_bzero's shape. A byte
+   at a time through a volatile pointer bought the same guarantee at one
+   store a byte, which was a quarter of every point double and eight percent
+   of a whole connection in wiping the connection itself. */
 static fn crypto_forget(address_any secret, positive length)
 {
-        volatile p8 address_to at = secret;
-
-        while (length)
-        {
-                *at++ = 0;
-                length--;
-        }
+        memory_fill(secret, 0, length);
+        __asm__ __volatile__("" : : "r"(secret) : "memory");
 }
 
 static fn crypto_aes128_expand(p8 address_to key, p8 address_to round)
