@@ -2516,7 +2516,6 @@ static positive zstd_pack_literals(zstd_encoder address_to e,
         positive head = 0;
         positive size;
         positive at;
-        positive start = 0;
         positive header_n;
         p64 new_bits = 0;
         p64 old_bits = 0;
@@ -2603,15 +2602,7 @@ static positive zstd_pack_literals(zstd_encoder address_to e,
         {
                 if (!head)
                         return 0;
-                for (positive w = 1; w <= max_bits; w++)
-                        for (at = 0; at <= max_sym; at++)
-                                if (weight[at] == w)
-                                {
-                                        table_new[at] =
-                                            (p32)((length_new[at] << 16) |
-                                                  (start >> (w - 1)));
-                                        start += (positive)1 << (w - 1);
-                                }
+                zstd_huffman_codes(table_new, weight, max_sym + 1, max_bits);
                 size = head;
                 address_to fresh = true;
         }

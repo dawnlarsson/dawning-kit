@@ -77793,6 +77793,50 @@ static fn floor_zstd_fse_cells(void)
         check("zstd sequence table cells match a cell at a time", same);
 }
 
+/* zstd_huffman_codes against zstd's order: weight by weight from the
+   lightest, symbols in order within a weight, over lengths huffman_lengths
+   makes at eleven bits. */
+static fn floor_zstd_huffman_codes(void)
+{
+        static p32 freq[256];
+        p8 length[256], weight[256];
+        p32 got[256], want[256];
+        p32 random = 0x94d049bbu;
+        bool same = true;
+
+        for (positive trial = 0; trial < 20000; trial++)
+        {
+#define FLOOR_RANDOM() (random ^= random << 13, random ^= random >> 17, random ^= random << 5, random)
+                positive count = 2 + FLOOR_RANDOM() % 255, max_bits = 0, start = 0;
+
+                for (positive i = 0; i < count; i++)
+                        freq[i] = FLOOR_RANDOM() % 3 ? FLOOR_RANDOM() % (1 + FLOOR_RANDOM() % 4000) : 0;
+                freq[0] |= 1;
+                freq[count - 1] |= 1;
+                if (!huffman_lengths(freq, count, length, 11))
+                        continue;
+                for (positive i = 0; i < count; i++)
+                        if (length[i] > max_bits)
+                                max_bits = length[i];
+                for (positive i = 0; i < count; i++)
+                        weight[i] = length[i] ? (p8)(max_bits + 1 - length[i]) : 0;
+                memory_fill(want, 0x5a, sizeof(want));
+                memory_fill(got, 0x5a, sizeof(got));
+                for (positive w = 1; w <= max_bits; w++)
+                        for (positive i = 0; i < count; i++)
+                                if (weight[i] == w)
+                                {
+                                        want[i] = (p32)(length[i] << 16 | start >> (w - 1));
+                                        start += (positive)1 << (w - 1);
+                                }
+                zstd_huffman_codes(got, weight, count, max_bits);
+                if (memory_compare(got, want, sizeof(got)))
+                        same = false;
+#undef FLOOR_RANDOM
+        }
+        check("zstd Huffman codes in zstd's order", same);
+}
+
 #ifdef CHECK_compression_floor
 b32 main(void)
 {
@@ -77808,6 +77852,7 @@ b32 main(void)
         floor_zstd_huffman_cells();
         floor_huffman_codes();
         floor_zstd_fse_cells();
+        floor_zstd_huffman_codes();
         return test_report(null);
 }
 #endif

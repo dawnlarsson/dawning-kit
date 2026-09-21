@@ -618,6 +618,8 @@ cover('worth_it', 'mode', 'lzma_range_encode lzma_range_decode',
 cover('folds_already', 'n', 'huffman_encode_back',
       'literal stream lengths are runtime block slices; empty input already '
       'takes the exact terminal-byte path')
+cover('nothing_to_fold', None, 'zstd_huffman_codes',
+      'the weights come from each literal block')
 cover('nothing_to_fold', None, 'zstd_fse_cells',
       'the table size and counts come from each block')
 cover('nothing_to_fold', None, 'huffman_codes',
