@@ -13232,21 +13232,106 @@ static const argument_option cut_options[] = {
 static p32 cut_offsets[CUT_OFFSETS];
 static p32 cut_fields[CUT_FIELDS];
 
+/*
+        One range of fields, first to last, over a whole read: the delimiters
+        before a line's end only move two marks, where the first field starts
+        and where the last one stops, and the line's end writes the run
+        between them straight into the output. The output is never longer
+        than what it is cut from, so the read's length is reserved once.
+*/
+static positive cut_lines_range(p8 address_to base, positive left, p8 delimiter,
+                                bool only_delimited)
+{
+        positive first = text_list_single_first;
+        positive last = text_list_single_last == TEXT_UNSET ? positive_max
+                                                            : text_list_single_last;
+        p8 address_to out = text_reserve(left);
+
+        if (!out)
+                return 0;
+
+        positive made = 0;
+        positive line_start = 0;
+        positive scan = 0;
+        positive seen = 0;
+        positive from = 0;
+        positive to = positive_max;
+        p8 newline = text_delimiter;
+
+        for (;;)
+        {
+                positive count = memory_offsets_of_either(
+                    cut_offsets, base + scan, left - scan, delimiter, newline, CUT_OFFSETS);
+
+                for (positive i = 0; i < count; i++)
+                {
+                        positive at = scan + cut_offsets[i];
+
+                        if (base[at] != newline)
+                        {
+                                seen++;
+                                from = seen + 1 == first ? at + 1 : from;
+                                to = seen == last ? at : to;
+                                continue;
+                        }
+
+                        positive start = first == 1 ? line_start : seen + 1 >= first ? from : at;
+                        positive stop = to < at ? to : at;
+
+                        if (!seen)
+                        {
+                                start = line_start;
+                                stop = only_delimited ? line_start : at;
+                        }
+
+                        start = start < stop ? start : stop;
+
+                        /*
+                                A field is short, and a copy that picks its
+                                width from the length guesses wrong a line at
+                                a time: two sixteen-byte moves cover it with
+                                no choice to make, where the read and the
+                                reservation both have the room, and whatever
+                                lands past the field is written over next.
+                        */
+                        if (stop - start <= 32 && start + 32 <= left && made + 32 <= left)
+                        {
+                                __builtin_memcpy(out + made, base + start, 16);
+                                __builtin_memcpy(out + made + 16, base + start + 16, 16);
+                        }
+                        else
+                                memory_copy_apart(out + made, base + start, stop - start);
+
+                        made += stop - start;
+                        out[made] = newline;
+                        made += !(only_delimited && !seen);
+                        line_start = at + 1;
+                        seen = 0;
+                        to = positive_max;
+                }
+
+                if (count < CUT_OFFSETS)
+                        break;
+
+                scan += cut_offsets[count - 1] + 1;
+        }
+
+        text_out_used -= left - made;
+        return line_start;
+}
+
 static positive cut_lines(p8 address_to base, positive left, p8 delimiter,
                           bool complement, bool only_delimited)
 {
         positive line_start = 0;
         positive fields = 0;
         positive scan = 0;
-        bool extra = false;
-        // One range of fields, first to last, is kept by position alone; the
-        // delimiters past the last are only counted as being there.
-        bool single = text_list_single && !complement;
-        positive first = text_list_single_first;
-        positive last = text_list_single_last;
-        positive wanted = !single ? positive_max
-                          : last == TEXT_UNSET ? first - 1
-                                               : last;
+
+        _Static_assert(TEXT_READ_MAX <= TEXT_OUT_MAX,
+                       "a read's cut must fit one reservation");
+
+        if (text_list_single && !complement)
+                return cut_lines_range(base, left, delimiter, only_delimited);
 
         for (;;)
         {
@@ -13260,15 +13345,6 @@ static positive cut_lines(p8 address_to base, positive left, p8 delimiter,
 
                         if (base[ending] != text_delimiter)
                         {
-                                // One range of fields needs only the
-                                // delimiters up to its last, and then only
-                                // to know there were more.
-                                if (fields == wanted)
-                                {
-                                        extra = true;
-                                        continue;
-                                }
-
                                 if (fields == CUT_FIELDS)
                                         return line_start;
 
@@ -13279,33 +13355,10 @@ static positive cut_lines(p8 address_to base, positive left, p8 delimiter,
                         p8 address_to line = base + line_start;
                         positive line_length = ending - line_start;
 
-                        if (!fields && !extra)
+                        if (!fields)
                         {
                                 if (!only_delimited)
                                         text_put(line, line_length + 1);
-                        }
-                        else if (wanted != positive_max)
-                        {
-                                /*
-                                        Fields first to last are one run of
-                                        the line, delimiters and all: from
-                                        past the delimiter before the first
-                                        to the one after the last, or the
-                                        line's end. A line with fewer fields
-                                        writes only its end.
-                                */
-                                positive from = first == 1 ? line_start
-                                                : fields >= first - 1 ? cut_fields[first - 2] + 1
-                                                                      : ending;
-                                positive to = last != TEXT_UNSET && fields >= last
-                                                  ? cut_fields[last - 1]
-                                                  : ending;
-
-                                if (from > to)
-                                        from = to;
-
-                                text_put(base + from, to - from);
-                                text_put_character(text_delimiter);
                         }
                         else
                         {
@@ -13369,7 +13422,6 @@ static positive cut_lines(p8 address_to base, positive left, p8 delimiter,
 
                         line_start = ending + 1;
                         fields = 0;
-                        extra = false;
                 }
 
                 if (count < CUT_OFFSETS)
