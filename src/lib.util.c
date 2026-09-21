@@ -15414,9 +15414,57 @@ static bool stdlib_buffers_are_ours(void)
         allocation and a copy of its whole environment at startup, in order to
         publish a pointer that reading alone never needed. The moment anything
         does take that copy, that call publishes the copy over this one.
+
+        The third act is the bss, and it is there because of what a kernel
+        with transparent huge pages left at "always" does to a region this
+        shape. The shell's bss is twenty seven megabytes of fixed per-tool
+        arenas with each tool's scalars sitting between them, and a tool
+        reaches its own handful of scalars and nothing else: wc -l on a small
+        file touches thirteen four kilobyte pages spread across the whole
+        span, fifty two kilobytes in all. A kernel in "always" mode answers
+        each of those thirteen faults with a two megabyte page, so fifty two
+        kilobytes of use costs six megabytes of zeroed memory -- and zeroing
+        it is more than half of what the process spends: 441 microseconds per
+        run against 261 with this call in, measured on a 9950X with the
+        arenas otherwise untouched.
+
+        MADV_NOHUGEPAGE says only that this one region wants ordinary pages.
+        Every mmap the process makes afterwards -- the allocator's chunks,
+        the movable storage behind memory_reserve, a sort spill -- is a
+        separate region and keeps its huge pages, which is where the tools
+        that genuinely stream megabytes get their win: sort and zstd measure
+        one to three percent faster with this, not slower, because their
+        thirty two megabytes of huge pages were never in the bss to begin
+        with. Turning huge pages off process-wide instead costs sort forty
+        four percent, which is the experiment that says the region and not
+        the process is the right thing to name.
+
+        On a kernel built the way this tree builds one it changes nothing:
+        kernel/profile/latency asks for TRANSPARENT_HUGEPAGE_MADVISE, where
+        an anonymous region already gets ordinary pages unless it asks
+        otherwise, and the call is one syscall that measures inside its own
+        noise. The failure is ignored for the same reason: a kernel without
+        the option returns EINVAL and the program wanted ordinary pages
+        anyway.
 */
+#define FILE_ADVISE_NO_HUGE_PAGE 15
+
+/* Both are the link script's, and spark.ld is the only script this tree
+   links with. KERNEL_MODE is not linked by it at all -- a module's
+   __bss_start is the whole kernel's -- so the call is spelled out of that
+   build rather than left to the shim above it never being called. */
+#if defined(LINUX) && !defined(KERNEL_MODE)
+extern p8 __bss_start[];
+extern p8 __bss_end[];
+#endif
+
 fn stdlib_program_starting(void)
 {
+#if defined(LINUX) && !defined(KERNEL_MODE)
+        system_call_3(syscall(madvise), (positive)(address_any)__bss_start,
+                      (positive)(__bss_end - __bss_start),
+                      FILE_ADVISE_NO_HUGE_PAGE);
+#endif
 #ifdef LINUX
         stdlib_process_at_start = program_initial_identity();
 #else
