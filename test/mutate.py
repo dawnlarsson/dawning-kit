@@ -19,18 +19,18 @@ never by a line number, because these files move under it. A survivor that
 has been looked at and dismissed goes in the ledger with the reason, and the
 next run separates ones already judged from ones nobody has seen.
 
-    python3 test/mutate.d/mutate.py --list            what would be tried
-    python3 test/mutate.d/mutate.py --calibrate       the known bugs, caught
-    python3 test/mutate.d/mutate.py                   the whole run
-    python3 test/mutate.d/mutate.py --target text     one target only
+    python3 test/mutate.py --list            what would be tried
+    python3 test/mutate.py --calibrate       the known bugs, caught
+    python3 test/mutate.py                   the whole run
+    python3 test/mutate.py --target text     one target only
 
 Run it where the suite runs.
 """
 import argparse, concurrent.futures, hashlib, json, os, re, shutil
 import subprocess, sys, tempfile
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-LEDGER = os.path.join(ROOT, 'test', 'mutate.d', 'ledger.json')
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LEDGER = os.path.join(ROOT, 'test', 'mutate.ledger.json')
 
 #
 #       What is mutated, and the lane that would have to notice.
