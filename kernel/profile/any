@@ -1,5 +1,19 @@
 #> program_flags -static -s -flto -nostdlib -nostartfiles -ffreestanding -fno-builtin
-#> program_flags -ffunction-sections -fdata-sections
+#
+# -fdata-sections but not -ffunction-sections. Small writable globals need
+# their own sections for spark.ld to place them: riscv64 otherwise drops
+# .sdata wherever the linker likes, which is outside every region the loader
+# maps, and the script says so where it matches them. Code needs no such
+# thing. The x86_64 profile asks for -falign-functions=1, and a section per
+# function takes that back: every .text.* carries the target's sixteen byte
+# function alignment and the linker pads between them. Measured on the x64
+# spark image, one section per function cost 20,480 bytes of text for no
+# other effect, since -fwhole-program already removes what --gc-sections
+# would have. The hot and cold grouping the script relies on survives: the
+# compiler emits .text.hot and .text.unlikely for the HOT and COLD routines
+# whether or not every other function gets a section of its own.
+#
+#> program_flags -fdata-sections
 #> program_flags -Qn -Wl,--build-id=none -Wl,--gc-sections -Wl,--strip-all -Wl,--strip-debug -Wl,-x -Wl,-s
 #> program_flags -O2 -fwhole-program -fipa-pta -Wl,-nmagic -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-stack-protector
 
