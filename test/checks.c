@@ -50942,7 +50942,9 @@ b32 main(void)
 
 #ifdef CHECK_waterlink
 #include "../src/lib.util.c"
+#include "../src/net/net.c"
 #include "../src/waterlink/link.c"
+#include "../src/waterlink/seal.c"
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
@@ -51300,8 +51302,157 @@ static fn saturation(void)
         check("and refused everything past it", one.refused == 8);
 }
 
+/*
+        The seal against net.c's general AES-128-GCM over the same header,
+        nonce and box. They share the two assembly primitives and nothing
+        else -- not the counter layout, not the tag's mask, not the lengths
+        block -- and the framing is the part written here, so the framing is
+        what this compares.
+*/
+static crypto_aesgcm_key sealing;
+
+static fn datagram_make(p8 address_to datagram, p64 counter, p8 fill)
+{
+        struct waterlink_datagram head;
+        positive used;
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+        post_one(7, WATERLINK_FRAME_DURABLE, 0, fill, 0);
+        post_one(8, WATERLINK_FRAME_REPLACEABLE, 0, (p8)(fill + 1), 0);
+
+        head.kind = WATERLINK_KIND_CARRY;
+        head.receiver = 0x01020304;
+        head.counter = counter;
+        memory_copy(datagram, address_of head, 16);
+
+        used = waterlink_fill(address_of one, datagram + 16, 0,
+                              address_of alone);
+        waterlink_seal(address_of sealing, datagram, used);
+}
+
+static fn sealed(void)
+{
+        p8 raw[WATERLINK_AEAD_BYTES];
+        p8 datagram[WATERLINK_DATAGRAM];
+        p8 plain[WATERLINK_PAYLOAD];
+        p8 reference[WATERLINK_PAYLOAD];
+        p8 tag[16];
+        p8 iv[12];
+        positive used;
+        bool alone = false;
+        bool agreed;
+
+        for (positive i = 0; i < sizeof raw; i++)
+                raw[i] = (p8)(0x5a ^ (i * 29));
+        crypto_aesgcm_prepare(address_of sealing, raw);
+
+        //      The plaintext as it went in, taken before sealing so the
+        //      reference encrypts the same padded box.
+        waterlink_link_reset(address_of one);
+        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'q', 0);
+        post_one(8, WATERLINK_FRAME_REPLACEABLE, 0, 'r', 0);
+        memory_zero(plain, sizeof plain);
+        used = waterlink_fill(address_of one, plain, 0, address_of alone);
+
+        datagram_make(datagram, 0x1122334455667788ull, 'q');
+
+        memory_copy(reference, plain, sizeof reference);
+        memory_zero(iv, 4);
+        for (positive i = 0; i < 8; i++)
+                iv[4 + i] = (p8)(0x1122334455667788ull >> (8 * i));
+        crypto_aesgcm_seal(address_of sealing, iv, datagram, 16, reference,
+                           WATERLINK_PAYLOAD, tag);
+
+        agreed = !memory_compare(datagram + 16, reference, WATERLINK_PAYLOAD);
+        check("the box is net.c's AES-GCM ciphertext", agreed);
+        check("the tag is net.c's AES-GCM tag",
+              !memory_compare(datagram + 16 + WATERLINK_PAYLOAD, tag, 16));
+        check("the header stays in the clear",
+              ((struct waterlink_datagram address_to)datagram)->counter ==
+                      0x1122334455667788ull);
+
+        check("a sealed datagram opens",
+              waterlink_open(address_of sealing, datagram));
+        check("and gives back the frames that went in",
+              !memory_compare(datagram + 16, plain, WATERLINK_PAYLOAD));
+
+        //      One flipped bit anywhere -- header, box, tag -- and it does
+        //      not open. The header is the case that matters most: it is not
+        //      encrypted, so only the tag stands between an attacker and a
+        //      rewritten counter.
+        {
+                static const positive where[] = {
+                        0, 8, 15, 16, 16 + 24, 16 + WATERLINK_PAYLOAD - 1,
+                        16 + WATERLINK_PAYLOAD, WATERLINK_DATAGRAM - 1};
+                positive refused = 0;
+                bool wiped = true;
+
+                for (positive at = 0; at < sizeof where / sizeof where[0];
+                     at++)
+                {
+                        datagram_make(datagram, 42, 'q');
+                        datagram[where[at]] ^= 0x10;
+                        if (!waterlink_open(address_of sealing, datagram))
+                        {
+                                refused++;
+                                for (positive i = 0; i < WATERLINK_PAYLOAD; i++)
+                                        if (datagram[16 + i])
+                                                wiped = false;
+                        }
+                }
+
+                check("a flipped bit anywhere stops it opening",
+                      refused == sizeof where / sizeof where[0]);
+                check("and a refused box is wiped, not left decrypted", wiped);
+        }
+
+        //      A datagram sealed under another counter is a different
+        //      datagram: moving a header onto someone else's box fails.
+        {
+                p8 other[WATERLINK_DATAGRAM];
+
+                datagram_make(datagram, 100, 'q');
+                datagram_make(other, 101, 'q');
+                memory_copy(other, datagram, 16);
+                check("a header moved onto another box does not open",
+                      !waterlink_open(address_of sealing, other));
+        }
+}
+
+//      The whole path with no network: post, fill, seal, open, replay,
+//      deliver. This is the datapath the shim will drive, minus the socket.
+static fn whole_path(void)
+{
+        p8 datagram[WATERLINK_DATAGRAM];
+        struct waterlink_replay window;
+        struct waterlink_datagram head;
+
+        memory_zero(address_of window, sizeof window);
+
+        datagram_make(datagram, 9, 'w');
+        check("the datagram opens", waterlink_open(address_of sealing, datagram));
+
+        memory_copy(address_of head, datagram, 16);
+        check("its counter is new", waterlink_replay_new(address_of window,
+                                                         head.counter));
+
+        waterlink_link_reset(address_of one);
+        heard = 0;
+        check("its padded box delivers",
+              waterlink_deliver(address_of one, datagram + 16,
+                                WATERLINK_PAYLOAD, hear, null));
+        check("both frames arrived, and the padding was not one", heard == 2);
+        check("in order", heard_first[0] == 'w' && heard_first[1] == 'x');
+
+        check("the same datagram again is a replay",
+              !waterlink_replay_new(address_of window, head.counter));
+}
+
 b32 main(void)
 {
+        sealed();
+        whole_path();
         refusals();
         supersession();
         durable_is_a_wall();

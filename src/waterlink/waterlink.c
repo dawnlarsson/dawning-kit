@@ -208,9 +208,25 @@ _Static_assert(sizeof(struct waterlink_frame) == 24,
 #define WATERLINK_CHANNEL_FILES 4u
 #define WATERLINK_CHANNEL_OPEN 16u // the first an application may take
 
-#define WATERLINK_KEY_BYTES 32 // X25519, and the AEAD key
-#define WATERLINK_TAG_BYTES 16 // AES-GCM
+/*      AES-128-GCM, and not 256: it is the key size lib.c carries in assembly
+        on all three machines, with a bitsliced floor that a kernel build
+        keeps. With no cipher agility the choice is made once, and it is made
+        for the one that is fast everywhere this link runs. */
+#define WATERLINK_KEY_BYTES 32  // X25519
+#define WATERLINK_AEAD_BYTES 16 // AES-128
+#define WATERLINK_TAG_BYTES 16
 #define WATERLINK_NAME_MAX 32
+
+/*      The datagram is whole AES blocks, and that is chosen, not found: the
+        cleartext header is one block and is exactly GCM's associated data,
+        the box is seventy three, and the tag is one. So sealing a datagram is
+        one counter-mode call over header-and-box and one GHASH call over all
+        seventy five, the lengths block borrowing the tag's slot -- no partial
+        block anywhere, and no tail for any of the assembly under it. */
+_Static_assert(WATERLINK_DATAGRAM % 16 == 0 && WATERLINK_PAYLOAD % 16 == 0,
+               "a waterlink datagram must be whole AES blocks");
+_Static_assert(WATERLINK_DATAGRAM == 16 + WATERLINK_PAYLOAD + WATERLINK_TAG_BYTES,
+               "header, box and tag must be the whole datagram");
 
 /*      A peer, as this machine keeps it -- the far side never sees this
         record. An address is a cache and not an identity: a machine that

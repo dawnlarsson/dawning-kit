@@ -497,6 +497,15 @@ bool waterlink_deliver(struct waterlink_link address_to link,
                 p32 key_at;
 
                 memory_copy(address_of head, bytes + at, 24);
+
+                //      A sealed box is padded with zeros to the full payload,
+                //      and no real frame has zero flags -- every one is
+                //      replaceable or durable -- so a zero header is where the
+                //      frames stop. The padding is inside the tag, so this is
+                //      the sender's statement and not a guess about it.
+                if (!head.flags && !head.key && !head.length)
+                        return true;
+
                 at += 24;
 
                 if (head.reserved)
