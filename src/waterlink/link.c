@@ -547,42 +547,65 @@ bool waterlink_deliver(struct waterlink_link address_to link,
         the tag has verified -- a counter taken from an unauthenticated header
         would let anyone at all slide the window forward and lock the session
         out of its own traffic.
+
+        The window does not move. A counter owns the bit at counter modulo the
+        window width, forever, and advancing the top only clears the bits the
+        top has just passed over. The first way I wrote this shifted the whole
+        bitmap instead, which cost the same thirty two words whether the
+        counter advanced by one or by a thousand, and cost them on every
+        datagram that arrives in order -- which is nearly all of them.
+
+        Clearing is the part that is wrong quietly. A bit is not free when the
+        top moves past it: it still holds the answer for a counter exactly one
+        window older, and that counter is outside the window now but its bit
+        is in the way of the one arriving. So every slot between the old top
+        and the new is cleared, in whole words where a word is crossed and by
+        mask where it is not. Skip that and a session that runs long enough
+        starts refusing its own traffic as a replay, once per window, forever.
 */
+#define WATERLINK_REPLAY_WORDS (WATERLINK_REPLAY_WINDOW / 64)
+
+_Static_assert((WATERLINK_REPLAY_WINDOW & (WATERLINK_REPLAY_WINDOW - 1)) == 0,
+               "the replay window is a ring and its width must be a power of two");
+
 bool waterlink_replay_new(struct waterlink_replay address_to window, p64 counter)
 {
-        positive words = WATERLINK_REPLAY_WINDOW / 64;
         p64 behind;
+        positive slot;
 
         if (counter > window->top)
         {
                 p64 step = counter - window->top;
+                p64 at = window->top + 1;
 
                 if (step >= WATERLINK_REPLAY_WINDOW)
                         memory_zero(window->seen, sizeof(window->seen));
                 else
-                {
-                        p64 whole = step / 64;
-                        p64 part = step % 64;
-
-                        for (positive i = words; i-- > 0;)
+                        while (at <= counter)
                         {
-                                p64 high = i >= whole
-                                                   ? window->seen[i - whole]
-                                                   : 0;
-                                p64 low = part && i > whole
-                                                  ? window->seen[i - whole - 1]
-                                                  : 0;
+                                positive low;
+                                positive high;
+                                p64 span = counter - at;
+                                p64 mask;
 
-                                window->seen[i] = part
-                                                          ? (high << part) |
-                                                                    (low >>
-                                                                     (64 - part))
-                                                          : high;
+                                slot = (positive)(at &
+                                                  (WATERLINK_REPLAY_WINDOW - 1));
+                                low = slot & 63;
+                                high = span >= (p64)(63 - low) ? 63
+                                                               : low +
+                                                                         (positive)span;
+
+                                mask = high == 63 ? ~0ull
+                                                  : (1ull << (high + 1)) - 1;
+                                mask &= ~((1ull << low) - 1);
+                                window->seen[slot >> 6] &= ~mask;
+
+                                at += high - low + 1;
                         }
-                }
 
                 window->top = counter;
-                window->seen[0] |= 1;
+                slot = (positive)(counter & (WATERLINK_REPLAY_WINDOW - 1));
+                window->seen[slot >> 6] |= 1ull << (slot & 63);
                 return true;
         }
 
@@ -590,10 +613,11 @@ bool waterlink_replay_new(struct waterlink_replay address_to window, p64 counter
         if (behind >= WATERLINK_REPLAY_WINDOW)
                 return false;
 
-        if (window->seen[behind / 64] & (1ull << (behind % 64)))
+        slot = (positive)(counter & (WATERLINK_REPLAY_WINDOW - 1));
+        if (window->seen[slot >> 6] & (1ull << (slot & 63)))
                 return false;
 
-        window->seen[behind / 64] |= 1ull << (behind % 64);
+        window->seen[slot >> 6] |= 1ull << (slot & 63);
         return true;
 }
 

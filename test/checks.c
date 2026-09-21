@@ -51248,6 +51248,36 @@ static fn replay(void)
               !waterlink_replay_new(address_of window,
                                     WATERLINK_REPLAY_WINDOW * 4 -
                                             WATERLINK_REPLAY_WINDOW));
+
+        //      The bit a counter owns is owned again exactly one window
+        //      later. If advancing the top does not clear what it passes
+        //      over, the older counter's mark is still standing in the way
+        //      and the newer one is refused as a replay -- a session that
+        //      runs long enough then rejects its own traffic, once per
+        //      window, forever. This is that arrival, from both sides.
+        memory_zero(address_of window, sizeof window);
+        check("a counter arrives", waterlink_replay_new(address_of window, 1));
+        check("the counter one window later is new, not a replay",
+              waterlink_replay_new(address_of window,
+                                   1 + WATERLINK_REPLAY_WINDOW));
+        check("and neither is the one after that",
+              waterlink_replay_new(address_of window,
+                                   2 + WATERLINK_REPLAY_WINDOW));
+
+        //      The same collision, reached one counter at a time rather than
+        //      in one jump, which is the path a real session takes.
+        memory_zero(address_of window, sizeof window);
+        for (p64 step = 1; step <= WATERLINK_REPLAY_WINDOW; step++)
+                if (!waterlink_replay_new(address_of window, step))
+                {
+                        check("a counter walked to in order is new", false);
+                        break;
+                }
+        check("walking one window in order refused nothing",
+              window.top == WATERLINK_REPLAY_WINDOW);
+        check("and the next counter after a full window is still new",
+              waterlink_replay_new(address_of window,
+                                   WATERLINK_REPLAY_WINDOW + 1));
 }
 
 static fn saturation(void)
