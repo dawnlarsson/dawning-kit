@@ -26983,6 +26983,11 @@ def harness_https_bench(argv):
 
     def respond(raw):
         raw.settimeout(60)
+        #   The head and the body go out in separate writes, and with Nagle
+        #   on the body waits for the client to acknowledge the head, which
+        #   a client delays 40 ms: every small-file wall time was that
+        #   timer, for curl as much as for wget.
+        raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         tls = context.wrap_socket(raw, server_side=True)
         head = b''
         while b'\r\n\r\n' not in head and len(head) < 16384:
