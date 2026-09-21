@@ -9646,6 +9646,76 @@ machine_run_failed=$(printf '%s\n' "$machine_run_body" |
 same 'a machine that could not start is not a machine init has retired' \
         '0:3' "$machine_run_fails:$machine_run_failed"
 
+#       An edited script has to reach the process that runs it.
+#
+#       host_machine_refresh re-asked the kernel for the overlay on every
+#       event but nothing ever re-sourced, so once anything published an
+#       edited /root/main.moonwater.sh -- moonwater status does, on its way
+#       to printing the script's own lines -- the kernel routed by the new
+#       text while the process still held the old functions. bind_queue does
+#       not also run the image line for a row the script owns, so the event
+#       ran nowhere at all. The loop has to notice and re-source, and it has
+#       to do it before the event is named, because naming it is what decides
+#       whether the script owns it.
+machine_run_body=$(awk '/^static b32 host_machine_run\(void\)$/,/^}$/' \
+        src/moonwater.c)
+machine_reload_line=$(printf '%s\n' "$machine_run_body" |
+        grep -n 'host_machine_reload(slot);' | head -1 | cut -d: -f1)
+machine_named_line=$(printf '%s\n' "$machine_run_body" |
+        grep -n 'pair = moonwater_paired(control.event);' | head -1 | cut -d: -f1)
+machine_stale=$(printf '%s\n' "$machine_run_body" | grep -c 'host_machine_refresh')
+if [ -n "$machine_reload_line" ] && [ -n "$machine_named_line" ] &&
+        [ "$machine_reload_line" -lt "$machine_named_line" ]; then
+        machine_reload_first=yes
+else
+        machine_reload_first=no
+fi
+same 'an edited script is taken up before the event it changed is named' \
+        'yes:0' "$machine_reload_first:$machine_stale"
+
+#       Re-sourcing has to be allowed to replace the bodies it locked. The
+#       lock is what stops anything the script starts from redefining the
+#       machine's bindings, and a definition that reaches a locked slot is
+#       refused and the source carries on past it -- so a reload that kept
+#       the lock would take the new file and keep every old function.
+machine_reload_body=$(awk '/^static fn host_machine_reload\(positive address_to slot\)$/,/^}$/' \
+        src/moonwater.c)
+machine_gives=$(printf '%s\n' "$machine_reload_body" |
+        grep -n 'host_machine_hold(slot, false);' | head -1 | cut -d: -f1)
+machine_sources=$(printf '%s\n' "$machine_reload_body" |
+        grep -n 'host_machine_source()' | head -1 | cut -d: -f1)
+machine_takes=$(printf '%s\n' "$machine_reload_body" |
+        grep -n 'host_machine_hold(slot, true);' | head -1 | cut -d: -f1)
+if [ -n "$machine_gives" ] && [ -n "$machine_sources" ] && [ -n "$machine_takes" ] &&
+        [ "$machine_gives" -lt "$machine_sources" ] &&
+        [ "$machine_sources" -lt "$machine_takes" ]; then
+        machine_reload_holds=yes
+else
+        machine_reload_holds=no
+fi
+#       And what was sourced is recorded where the sourcing happens, because
+#       that is the only thing the next event can compare the kernel against.
+machine_sourced=$(grep -c 'host_machine_sourced_overlay = host_machine.overlay;' \
+        src/moonwater.c)
+same 'a reload gives the lock back, re-sources, and takes it again' \
+        'yes:1' "$machine_reload_holds:$machine_sourced"
+
+#       An owned event this process cannot run is a key that does nothing:
+#       the kernel handed the press to the machine instead of the bound image
+#       line precisely because the script owns that row, so there is no
+#       second copy behind the call. It should be unreachable now, which is
+#       the reason to say it out loud rather than return into silence.
+machine_emit_body=$(awk '/^static fn host_machine_emit\(positive event_slot, unsigned int event,$/,/^}$/' \
+        src/moonwater.c)
+#       The recover call below is not one of these: recover is not a bind
+#       row, nothing was routed away from an image line for it, and a script
+#       with no recover handler is the ordinary case.
+machine_missed=$(printf '%s\n' "$machine_emit_body" | grep -c 'host_machine_missed(name);')
+machine_plain=$(printf '%s\n' "$machine_emit_body" |
+        grep -c 'else if (!host_machine_try(name, name, extra))')
+same 'an owned event with no function to run says so' '2:1' \
+        "$machine_missed:$machine_plain"
+
 #       A machine that named its own failure has not settled. Running for a
 #       while is what tells a transient apart -- a death by signal, a /shell
 #       that could not exec -- and the verdict wait alone puts fifteen

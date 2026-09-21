@@ -6778,6 +6778,30 @@ bool exec_function_readonly_set(string_address name)
         return true;
 }
 
+/*
+        Giving a locked function back, so a reload can redefine it.
+
+        The lock exists so that nothing a machine script starts can redefine
+        the functions that script named -- a definition that reaches a locked
+        slot is refused with "readonly function" and the source carries on
+        past it. That refusal is the right answer to a later command and the
+        wrong one to the machine process reloading its own edited script,
+        which would otherwise source the new file and keep every old body.
+        So the owner of the lock can hand it back; nothing else can, because
+        nothing else is given this name.
+*/
+bool exec_function_readonly_clear(string_address name)
+{
+        positive2 named = string_hash_33_length(name);
+        positive slot = exec_function_slot(name, named);
+
+        if (slot == positive_max)
+                return false;
+
+        exec_functions[slot].readonly = false;
+        return true;
+}
+
 bool exec_function_readonly_hashed(string_address name, positive2 named)
 {
         positive slot = exec_function_slot(name, named);

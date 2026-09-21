@@ -1617,6 +1617,7 @@ extern positive shell_argc;
 
 COLD fn shell_dot(writer write, string_address input);
 bool exec_function_readonly_set(string_address name);
+bool exec_function_readonly_clear(string_address name);
 positive shell_function_slot(string_address name);
 b32 shell_call_slot(positive slot, string_address name,
                     string_address address_to arguments, positive count);
@@ -1626,6 +1627,23 @@ bool env_assign(const_string name, const_string value);
 static struct machine_script host_machine;
 static p8 host_machine_text[MOONWATER_SCRIPT_BYTES];
 static p8 host_machine_fresh;
+/*
+        What this process sourced, as against what the kernel now holds.
+
+        host_machine is the kernel's answer, re-asked on every event. The
+        functions this process can actually run are the ones it sourced, and
+        the two stop agreeing the moment anything else publishes an edited
+        /root/main.moonwater.sh -- moonwater status does, on its way to
+        printing the script's own lines. The kernel then routes an event by
+        the new text while this process still holds the old functions, and
+        bind_queue, having handed the press to the machine, does not also run
+        the image line. That is an event nobody runs.
+
+        Keeping what was sourced is what lets the loop notice and re-source.
+*/
+static unsigned int host_machine_sourced_length;
+static unsigned int host_machine_sourced_origin;
+static struct moonwater_overlay host_machine_sourced_overlay;
 //      This process owns the machine attach, from the moment it does.
 static bool host_machine_self;
 //      moonwater_end has run; it runs once however the machine stops.
@@ -1847,7 +1865,15 @@ static bool host_machine_try(string_address rest, string_address first,
         return true;
 }
 
-static fn host_machine_lock_fns(void)
+static fn host_machine_lock_one(string_address name, bool lock)
+{
+        if (lock)
+                exec_function_readonly_set(name);
+        else
+                exec_function_readonly_clear(name);
+}
+
+static fn host_machine_lock_fns(bool lock)
 {
         p8 fn[HOST_MACHINE_FN];
         unsigned int event, i;
@@ -1856,31 +1882,68 @@ static fn host_machine_lock_fns(void)
         {
                 host_machine_bind_fn(fn, sizeof(fn),
                                      (string_address)spark_bind_event_name[event]);
-                exec_function_readonly_set(fn);
+                host_machine_lock_one(fn, lock);
         }
         for (i = 0; i < MOONWATER_PAIRS; i++)
         {
                 host_machine_bind_fn(fn, sizeof(fn),
                                      (string_address)moonwater_pairs[i].name);
-                exec_function_readonly_set(fn);
+                host_machine_lock_one(fn, lock);
         }
         host_machine_bind_fn(fn, sizeof(fn), "recover");
-        exec_function_readonly_set(fn);
+        host_machine_lock_one(fn, lock);
 }
 
-static fn host_machine_refresh(void)
+/*
+        Asking the kernel what it holds now, and saying whether that is still
+        the script this process is running.
+
+        The answer is the overlay, the length and where the text came from --
+        everything the kernel already puts in the reply, so noticing costs
+        the GET that was happening anyway and nothing more. An edit that adds
+        or removes a function moves the overlay, and one that changes a body
+        almost always moves the length; what escapes is an edit that keeps
+        the byte count, every line number and the same set of functions, and
+        that leaves a stale body rather than an event nobody runs.
+*/
+static bool host_machine_changed(void)
 {
         struct machine_script held = host_machine;
 
         memory_zero(address_of host_machine, sizeof(host_machine));
-        if (host_machine_script(MOONWATER_SCRIPT_GET) < 0)
+        if (host_machine_script(MOONWATER_SCRIPT_GET) < 0) {
                 host_machine = held;
-        else
-                host_machine_fresh = 1;
+                return false;
+        }
+        host_machine_fresh = 1;
+        return host_machine.length != host_machine_sourced_length ||
+               host_machine.origin != host_machine_sourced_origin ||
+               memory_compare(address_of host_machine.overlay,
+                              address_of host_machine_sourced_overlay,
+                              sizeof(host_machine_sourced_overlay));
 }
 
 static fn host_machine_hook(positive slot, unsigned int which,
                             string_address first, string_address second);
+
+/*
+        An event the script owns and this process could not run.
+
+        The kernel hands a press to the machine instead of the bound image
+        line precisely because the script owns that row, so there is no
+        second copy waiting behind this call: a miss here is a key that does
+        nothing. It should be unreachable now that the loop re-sources an
+        edited script before naming the event, and that is the reason to say
+        it out loud -- the next way this breaks will be silent otherwise.
+*/
+static fn host_machine_missed(string_address name)
+{
+        string_address line[] = { "machine script owns ", name,
+                                  " but this process has no function for it; "
+                                  "the event ran nowhere", null };
+
+        host_kmsg(line);
+}
 
 static fn host_machine_emit(positive event_slot, unsigned int event,
                             string_address name, string_address extra)
@@ -1898,12 +1961,13 @@ static fn host_machine_emit(positive event_slot, unsigned int event,
                                               sizeof(rest));
                         string_append_bounded(rest, "_", sizeof(rest));
                         string_append_bounded(rest, extra, sizeof(rest));
-                        if (!host_machine_try(rest, extra, null))
-                                host_machine_try((string_address)pair->name, extra,
-                                                 null);
+                        if (!host_machine_try(rest, extra, null) &&
+                            !host_machine_try((string_address)pair->name, extra,
+                                              null))
+                                host_machine_missed(name);
                 }
-                else
-                        host_machine_try(name, name, extra);
+                else if (!host_machine_try(name, name, extra))
+                        host_machine_missed(name);
         }
         else if (string_equals(name, "recover"))
                 host_machine_try("recover", name, extra);
@@ -2028,7 +2092,63 @@ static b32 host_machine_source(void)
         shell_dot(log, HOST_MACHINE_RUNTIME);
         shell_argv = saved_argv;
         shell_argc = saved_argc;
+
+        //      From here the functions in this process are this text's.
+        host_machine_sourced_length = host_machine.length;
+        host_machine_sourced_origin = host_machine.origin;
+        host_machine_sourced_overlay = host_machine.overlay;
         return 0;
+}
+
+/*
+        Holding the script's functions, and letting go.
+
+        Locking them is what stops anything the script starts from redefining
+        the machine's own bindings. Letting go is for one caller: this
+        process reloading its own script, which has to be allowed to replace
+        the bodies it locked, and takes the lock straight back.
+*/
+static fn host_machine_hold(positive address_to slot, bool lock)
+{
+        unsigned int i;
+
+        for (i = 0; i < MOONWATER_HOOKS; i++) {
+                host_machine_lock_one((string_address)moonwater_hook[i].name,
+                                      lock);
+                if (lock)
+                        slot[i] = shell_function_slot(
+                            (string_address)moonwater_hook[i].name);
+        }
+        host_machine_lock_fns(lock);
+}
+
+/*
+        Taking up an edited script without restarting.
+
+        Re-sourcing is the whole of it: the kernel already holds the new
+        text, host_machine_source writes it out and dots it, and the
+        definitions in it replace the ones this process is holding -- which
+        is why the lock comes off first and goes straight back on. The hook
+        slots are re-taken because a redefinition can land in a different
+        one, and calling the old index would run the old body or nothing.
+
+        A reload that fails leaves the old functions in place and the sourced
+        identity unchanged, so the next event tries again rather than running
+        on with a script it only half took.
+
+        This re-runs the file's top-level lines, which is why a machine
+        script keeps its work inside functions.
+*/
+static fn host_machine_reload(positive address_to slot)
+{
+        host_machine_hold(slot, false);
+        if (host_machine_source() < 0) {
+                string_address line[] = { "machine script reload refused; "
+                                          "keeping the running one", null };
+
+                host_kmsg(line);
+        }
+        host_machine_hold(slot, true);
 }
 
 static fn host_machine_hook(positive slot, unsigned int which,
@@ -2119,11 +2239,7 @@ static b32 host_machine_run(void)
                 radio_restore();
         locale_restore();
 
-        for (i = 0; i < MOONWATER_HOOKS; i++) {
-                exec_function_readonly_set((string_address)moonwater_hook[i].name);
-                slot[i] = shell_function_slot((string_address)moonwater_hook[i].name);
-        }
-        host_machine_lock_fns();
+        host_machine_hold(slot, true);
 
         host_machine_hook(slot[0], 0, (string_address)verdict, null);
         if (host_read_text(HOST_MACHINE_DIRTY, dirty, sizeof(dirty)) >= 0) {
@@ -2158,7 +2274,11 @@ static b32 host_machine_run(void)
                         break;
                 }
 
-                host_machine_refresh();
+                //      Before the event is named, because naming it is how
+                //      the new overlay decides whether the script owns it,
+                //      and the functions have to be the new ones by then.
+                if (host_machine_changed())
+                        host_machine_reload(slot);
                 pair = moonwater_paired(control.event);
                 if (pair) {
                         name = (string_address)pair->name;

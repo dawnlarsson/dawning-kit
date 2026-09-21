@@ -16,6 +16,12 @@
 # owns that event; *) does not. Events this file does not name still
 # use `moonwater bind`.
 #
+# An edit takes effect on the next event: the running machine notices the
+# file changed and sources it again, in place, without restarting. That
+# re-runs whatever sits at the top level of this file, so keep the work
+# inside functions -- a `weston &` written at the top level starts a second
+# one on every edit.
+#
 # The builtin init always forgets userspace. A kiosk is this file:
 # wipe, then one already-installed command. /bowls stays. A machine
 # that should keep /home omits moonwater_init, and bind init runs.
