@@ -11,7 +11,7 @@
 
         Every digest is the library's: md5_blocks through blake2b_blocks in
         lib.c, streamed by digest_open, digest_write and digest_close in
-        library.common.c. A file is read into the shared transfer block and
+        lib.util.c. A file is read into the shared transfer block and
         its whole blocks are hashed where they lie.
 
         These used to drive the kernel's AF_ALG hash sockets and carried no

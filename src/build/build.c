@@ -34,7 +34,7 @@
 
 #define STANDARD_APPLETS
 #define STANDARD_KEEP_SPOOL
-#include "../compiler_memory.c"
+#include "../lib.util.c"
 #include "../spark.c"
 #include "../sh/shell.c"
 

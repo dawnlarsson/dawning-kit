@@ -13,7 +13,7 @@
         because export and readonly are the commands that state them.
 */
 
-#include "../compiler_memory.c"
+#include "../lib.util.c"
 
 const positive page_size = 4096;
 

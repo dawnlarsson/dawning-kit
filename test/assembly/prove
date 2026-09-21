@@ -31,7 +31,7 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/prove.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT INT TERM
 
 # Deliberately compile the pure library. Compiler-owned call-site
-# specializations live in compiler_memory.c and are not instructions emitted
+# specializations live in lib.util.c and are not instructions emitted
 # by either library snapshot.
 echo '#include "lib.c"' > "$work/tu.c"
 

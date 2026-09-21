@@ -1,5 +1,5 @@
 /*
-        Compile-time targeting probe for compiler_memory.c.
+        Compile-time targeting probe for lib.util.c.
 
         A translation unit sets LIBRARY_SIZE_MAX (and the family INLINE
         knobs) before the include. This file is two literal copies: 16 and
@@ -15,7 +15,7 @@
                 test/library_inline_probe.c -I.
 */
 
-#include "src/compiler_memory.c"
+#include "src/lib.util.c"
 
 __attribute__((noinline, noclone))
 void probe_copy_16(void *d, void *s)

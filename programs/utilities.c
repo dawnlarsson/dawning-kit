@@ -1,5 +1,5 @@
 #define STANDARD_APPLETS
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #define SHELL_UTILITY_PROGRAM
 #include "../src/sh/shell.c"

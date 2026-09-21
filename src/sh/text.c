@@ -12,7 +12,7 @@
         that is a property of the stream and not of the tool.
 */
 
-#include "../compiler_memory.c"
+#include "../lib.util.c"
 
 /* sort has its command entry point later in the file.  ptx, comm and join
    consume its same byte comparator without moving or cloning the ordering

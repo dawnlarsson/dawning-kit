@@ -97,7 +97,7 @@ static bipolar system_read_retry(positive fd,void *p,positive n) { return read((
 static bipolar system_write_all(positive fd,void *p,positive n) { return write((int)fd,p,n); }
 
 '''
-common=Path('src/library.common.c').read_text()
+common=Path('src/lib.util.c').read_text()
 def lift(start, end):
     a=common.index(start); b=common.index(end, a)
     return common[a:b]+'\n'
@@ -109,7 +109,7 @@ for name in ('gzip_len_extra','gzip_len_base','gzip_dist_extra','gzip_dist_base'
  head+=re.search(r'static const p(?:8|16) '+name+r'\[.*?};',gz,re.S).group(0)+'\n'
 head+=re.search(r'static bipolar gzip_code_space\(.*?\n}\n',gz,re.S).group(0)
 a=gz.index('#define GZIP_CELL_LITERAL');b=gz.index('/* End of the span kernel contract. */',a);head+=gz[a:b]+'\n'
-# xz.c verifies SHA-256 checks through library.common.c's digest, whose cores
+# xz.c verifies SHA-256 checks through lib.util.c's digest, whose cores
 # the floor does not lift; no floor check decodes a SHA-256 stream, so these
 # stand-ins only let xz.c compile and abort if one is ever reached.
 head+='''#define DIGEST_SHA256 3

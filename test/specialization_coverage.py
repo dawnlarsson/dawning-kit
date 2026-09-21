@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Audit known-argument specialization coverage for lib.c's inventory.
 
-src/compiler_memory.c replaces calls whose decisive argument the compiler
+src/lib.util.c replaces calls whose decisive argument the compiler
 already knows with the narrower operation that argument permits. Forty-eight
 routines have that today. This file classifies the complete inventory so that
 the question is asked once per routine and not once per reader.
@@ -10,7 +10,7 @@ A row says which parameter a call site might hand the compiler as a literal,
 and what that literal is worth:
 
 ``specialized`` already ships a known-argument path. The row must name the
-static inline that expands it, that name must be in src/compiler_memory.c, and
+static inline that expands it, that name must be in src/lib.util.c, and
 the routine must be exercised by literal in the exact section of test/checks.c -- a specializer
 without a written-out-by-literal test is a specializer nothing reaches.
 
@@ -56,7 +56,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / 'assembly'))
 import manifest
 
 ROOT = manifest.ROOT
-COMPILER_MEMORY = ROOT / 'src/compiler_memory.c'
+COMPILER_MEMORY = ROOT / 'src/lib.util.c'
 
 #       Where a declaration may live. lib.c holds most of them; the
 #       platform includes hold the rest, and a parameter named in a row has to
@@ -699,7 +699,15 @@ def validate():
     inventory = manifest.reconcile(ROWS, errors)
 
     declarations = load_declarations()
-    specializers = COMPILER_MEMORY.read_text(encoding='utf-8', errors='replace')
+    #   The umbrella layer of lib.util.c and nothing else. The floor above
+    #   it and the standard families below are in the same file now, and
+    #   standard spells exit, sleep and the lock pair as function-like
+    #   macros of its own -- names lib.c also has, which would read as
+    #   unlabelled specializers here.
+    whole = COMPILER_MEMORY.read_text(encoding='utf-8', errors='replace')
+    specializers = ''.join(
+        part.split('#endif // LIB_SKIP_UMBRELLA')[0]
+        for part in whole.split('#ifndef LIB_SKIP_UMBRELLA')[1:])
     cache = {}
 
     # A public routine spelled as a function-like macro in the compiler
@@ -778,7 +786,7 @@ def validate():
         elif row.category == 'specialized' and \
                 not manifest.token_present(specializers, row.expansion):
             errors.append('%s: specializer %s is absent from '
-                          'src/compiler_memory.c' % (row.routine, row.expansion))
+                          'src/lib.util.c' % (row.routine, row.expansion))
 
         if row.category == 'specialized' and not row.evidence:
             errors.append('%s: a shipped specializer needs correctness '

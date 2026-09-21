@@ -16455,7 +16455,7 @@ def ul_check_lscpu_summary(farm):
         names = ("ul_lscpu_set_count", "ul_lscpu_keep", "ul_lscpu_number", "ul_cpu_has", "ul_cpu_list_write",
                  "ul_cpu_mask_write", "ul_lscpu_set_write", "ul_lscpu_set_text", "ul_lscpu_summary_add",
                  "ul_lscpu_cache_size", "ul_lscpu_cache_summary", "ul_lscpu_summary")
-        common = (root / "src" / "library.common.c").read_text()
+        common = (root / "src" / "lib.util.c").read_text()
         arena_macro = ul_c_span(common, r"^#define array_arena_reserve\(", r"^#define byte_store_reserve\(")
         file_source = (root / "src" / "sh" / "file.c").read_text()
         shared_storage = ul_c_typedefs(common, "byte_store", "memory_arena")
@@ -22156,9 +22156,9 @@ def harness_floodlight(argv):
     IDENTIFIER = re.compile(r'^[A-Za-z_]\w*$')
     check = Checks()
 
-    def bodies(path):
+    def bodies(text):
         """Top-level function bodies, and every name inside each."""
-        tokens, _ = lex(path.read_text(encoding='utf-8', errors='replace'))
+        tokens, _ = lex(text)
         found, depth, header, name, seen = defaultdict(set), 0, [], None, set()
         for token in tokens:
             value = token.value
@@ -22186,12 +22186,25 @@ def harness_floodlight(argv):
                 seen.add(value)
         return found
 
+    def graph_source(path):
+        """What of a file is this graph's business.
+
+        lib.util.c is three layers in one file and only the floor and the
+        umbrella under it belong here, which is the scope this had when the
+        floor was its own file. The standard families below carry libc's own
+        names -- system() among them -- and an applet with a struct field
+        called system is not an applet that can start a program."""
+        text = path.read_text(encoding='utf-8', errors='replace')
+        if path.name == 'lib.util.c':
+            text = text[:text.index('#ifndef STANDARD_MODERN_C_STANDARD\n')]
+        return text
+
     #   Which applets can start a program, transitively, through any helper.
     graph = defaultdict(set)
     for pattern in ('src/sh/*.c', 'src/core.c', 'src/bowl.c',
-                    'src/library.common.c'):
+                    'src/lib.util.c'):
         for path in sorted(ROOT.glob(pattern)):
-            for name, seen in bodies(path).items():
+            for name, seen in bodies(graph_source(path)).items():
                 graph[name] |= seen
 
     reaches, edge = {'system_execute'}, {'system_execute'}
@@ -25147,7 +25160,7 @@ def harness_riscv_builtins(argv):
                    for condition, in_else in stack)
 
     # A macro that is true only on an x86_64 or arm64 branch is a guard of its
-    # own: compiler_memory.c's KNOWN_BOUND_WORDS is 1 under X64 || ARM64 and 0
+    # own: lib.util.c's KNOWN_BOUND_WORDS is 1 under X64 || ARM64 and 0
     # otherwise, and the word helpers below it sit under that name.
     derived = set()
     for path in files:
@@ -27244,7 +27257,7 @@ static bipolar bowl_dev_link(string_address target, string_address name) {
 #define BOWL_MAKE_NONE 0
 #define BOWL_MAKE_LEAF 1
 #define BOWL_MAKE_CHAIN 2
-/*  The strictness tiers as library.common.c spells them, so this window
+/*  The strictness tiers as lib.util.c spells them, so this window
     reads the same answer the build would give it. */
 #define STRICT_REFERENCE 0
 #define STRICT_SAFE 1

@@ -3539,7 +3539,7 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
         teaching this file about on-disk signatures.
 */
 
-#include "../compiler_memory.c"
+#include "../lib.util.c"
 
 #define STORAGE_BIND_CHANGEABLE (MS_RDONLY | MS_NOSUID | \
                                  MS_NODEV | MS_NOEXEC | \

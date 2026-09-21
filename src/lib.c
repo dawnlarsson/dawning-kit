@@ -42893,7 +42893,7 @@ PURE READS(1, 2) positive memory_hash_33(address_any block, positive size);
    adds 128 to the counter and compresses with no final flag, the last adds
    tail and compresses with f0; the counter is written back. The streaming
    digests over these are digest_open, digest_write and digest_close in
-   library.common.c. */
+   lib.util.c. */
 READS(2) fn md5_blocks(p32 address_to state, const p8 address_to data, positive blocks);
 READS(2) fn sha1_blocks(p32 address_to state, const p8 address_to data, positive blocks);
 READS(2) fn sha256_blocks(p32 address_to state, const p8 address_to data, positive blocks);
@@ -47250,7 +47250,7 @@ bipolar thread_wake(b32 address_to word, b32 count);
 /*
         WHAT A SECOND THREAD MAY TOUCH
 
-        The shared-state audit of lib.c, library.common.c and standard.c
+        The shared-state audit of lib.c, lib.util.c and standard.c
         made when threads arrived (2026-09-14). Utilities never start threads
         themselves; they hand jobs to the pool, and a job runs on a worker.
 
@@ -52299,11 +52299,11 @@ fn memory_release(address_any address_to held, positive address_to have,
         below are that file's constants and it asserts they still agree.
 */
 //      Emitted only when the umbrella is what is being built, because that is
-//      exactly when library.common.c's allocator comes with it. The routines
+//      exactly when lib.util.c's allocator comes with it. The routines
 //      below jump to that file's C for anything a shelf cannot answer, and a
 //      configuration that includes lib.c on its own -- the standalone
 //      printf check is one -- has no such C to jump to and fails at the link
-//      with an undefined allocator_take_slow. compiler_memory.c defines this
+//      with an undefined allocator_take_slow. lib.util.c defines this
 //      before it includes lib.c, so the test is answerable here.
 #if !defined(KERNEL_MODE) && defined(STANDARD_MODERN_C_COMPILER_MEMORY) && \
         defined(LIBRARY_THREAD_RUNTIME)
@@ -52912,7 +52912,7 @@ bool string_to_decimal_short(string_address input,
 //      Ten to the nought through ten to the twenty second, as the bits of
 //      the doubles, which every body below carries beside itself; and after
 //      them, at 184, two to the fifty third as an integer, which is the bound
-//      compiler_memory.c's placed copy compares against when it has no
+//      lib.util.c's placed copy compares against when it has no
 //      register to spare for it.
 #define DECIMAL_SHORT_POWERS                                                  \
     ".quad 0x3ff0000000000000, 0x4024000000000000, 0x4059000000000000\n"     \
@@ -53678,7 +53678,7 @@ float fmaxf(float first, float second);
         same point, and there is one place to look for the list.
 
         strdup and strndup allocate, so they need the allocator in
-        library.common.c
+        lib.util.c
         under them, which the umbrella includes.
 */
 char address_to strdup(const char address_to source);

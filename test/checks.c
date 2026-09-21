@@ -242,7 +242,7 @@ static fn test_cases_walk(test_case address_to walk)
         makes it a test of the declarations rather than of the routines.
 
         It is compiled twice from two files that share nothing but this one.
-        CHECK_declare includes src/compiler_memory.c and gets every name
+        CHECK_declare includes src/lib.util.c and gets every name
         below from the declarations in src/lib.c and the ASM_ALIAS
         symbols beside them.
         CHECK_declare_reference includes the host's <string.h>, <ctype.h>,
@@ -2810,7 +2810,7 @@ static fd_word fd_case(fd_word index, fd_spec *spec)
 }
 
 /*
-        The one glibc bug the reference is corrected for, which src/standard.c
+        The one glibc bug the reference is corrected for, which src/lib.util.c
         names beside format_run. When %g with the # flag first settles on
         the fixed shape with no places left after the point, and rounding then
         carries into a new power of ten, glibc switches to the exponent shape
@@ -6747,7 +6747,7 @@ static void ns_run(ns_u64 first, ns_u64 count, ns_u64 verbose, int chosen)
 #else /* the sections */
 
 #ifdef CHECK_standard
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 // Reduces compiler noise for tests
 #if defined(__clang__)
@@ -10861,7 +10861,7 @@ b32 main()
 #endif /* CHECK_standard */
 
 #ifdef CHECK_verify
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         Differential test for the assembly in lib.c.
@@ -21271,7 +21271,7 @@ b32 main()
 #endif /* CHECK_verify */
 
 #ifdef CHECK_exact
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_sizes
 #include "checks.c"
 #undef SHARED_sizes
@@ -21466,7 +21466,7 @@ b32 main(void)
 #endif /* CHECK_exact */
 
 #ifdef CHECK_exact_set
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 /*
         Every set that is known where the call is written.
 
@@ -21819,7 +21819,7 @@ b32 main(void)
 #endif /* CHECK_exact_set */
 
 #ifdef CHECK_needle
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 /*
         Every needle length that is known where the call is written.
 
@@ -22371,7 +22371,7 @@ b32 main(void)
 #endif /* CHECK_needle */
 
 #ifdef CHECK_bounded
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 /*
         Every bound that is known where the call is written.
 
@@ -22948,7 +22948,7 @@ b32 main(void)
 #endif /* CHECK_bounded */
 
 #ifdef CHECK_exact_scan
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_sizes
 #include "checks.c"
 #undef SHARED_sizes
@@ -23443,7 +23443,7 @@ b32 main(void)
 #endif /* CHECK_exact_scan */
 
 #ifdef CHECK_exact_prefix
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 /*
         Literal common-prefix lengths against a byte model, with the spans at
         both edges of a mapped page.  The adjacent pages are absent, so even
@@ -23559,7 +23559,7 @@ b32 main(void)
 #endif /* CHECK_exact_prefix */
 
 #ifdef CHECK_exact_ascii_case
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 /*
         Every literal size admitted by the folded ASCII comparison.
 
@@ -23686,7 +23686,7 @@ b32 main(void)
 #endif /* CHECK_exact_ascii_case */
 
 #ifdef CHECK_hash_length
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 /*
         The fused NUL-name pass at every alignment and a protected page edge.
 
@@ -23764,7 +23764,7 @@ b32 main(void)
 #endif /* CHECK_hash_length */
 
 #ifdef CHECK_exact_base
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 /*
         Every base that is known where the call is written.
 
@@ -24022,7 +24022,7 @@ b32 main(void)
 #endif /* CHECK_exact_base */
 
 #ifdef CHECK_single
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 /*
         Every value that is known where the call is written.
 
@@ -24211,7 +24211,7 @@ b32 main(void)
 #endif /* CHECK_single */
 
 #ifdef CHECK_exact_family
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 /*
         Every byte, every stop position and every source length that is known
         where the call is written.
@@ -24458,7 +24458,7 @@ b32 main(void)
 #endif /* CHECK_exact_family */
 
 #ifdef CHECK_declare
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         The standard names, called by their standard names.
@@ -24608,7 +24608,7 @@ int main(void)
         The fold is header-only and compiles as ordinary C, so this runs on
         the host like any other lane rather than needing a kernel.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 typedef unsigned long __kernel_size_t;
 #include "../kernel/patch/fold-x86.h"
@@ -24731,7 +24731,7 @@ b32 main(void)
         One file, built twice.
 
         Built the ordinary way it is the freestanding test: it includes
-        compiler_memory.c and calls the allocator in library.common.c,
+        lib.util.c and calls the allocator in lib.util.c,
         and it runs on x86_64, arm64 and riscv64. Built with
         ALLOCATOR_REFERENCE defined it links glibc instead and the same lines
         run through glibc's malloc.
@@ -24781,7 +24781,7 @@ typedef void fn;
 
 #else
 
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #endif
 
@@ -25490,7 +25490,7 @@ b32 main(void)
 #endif /* CHECK_allocator */
 
 #ifdef CHECK_reserve
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
@@ -25673,7 +25673,7 @@ b32 main(void)
 #endif /* CHECK_reserve */
 
 #ifdef CHECK_utf8
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
@@ -25891,7 +25891,7 @@ b32 main()
 #endif /* CHECK_utf8 */
 
 #ifdef CHECK_hex
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
@@ -26275,7 +26275,7 @@ b32 main(void)
 #endif /* CHECK_hex */
 
 #ifdef CHECK_codec
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
@@ -26470,7 +26470,7 @@ b32 main(void)
 #endif /* CHECK_codec */
 
 #ifdef CHECK_fixed
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
@@ -26668,7 +26668,7 @@ b32 main(void)
 #endif /* CHECK_fixed */
 
 #ifdef CHECK_table
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 static p8 table_output[16384];
 static positive table_used, table_calls;
@@ -28287,7 +28287,7 @@ b32 main(void)
 #endif /* CHECK_table */
 
 #ifdef CHECK_error
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         errno, strerror and the POSIX wrappers, against glibc.
@@ -29897,7 +29897,7 @@ int main(void)
 #endif /* CHECK_error_reference */
 
 #ifdef CHECK_strings
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /* String and jump cases share strings_cases.inc with the system-libc
    reference. The umbrella supplies the actual text and allocator families. */
@@ -30072,7 +30072,7 @@ int main(void)
 
         www.dawning.dev
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         Half of this family cannot be checked from inside the process it is
@@ -31051,7 +31051,7 @@ b32 main(void)
 
         www.dawning.dev
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         Nothing here can be answered from inside the process asking it.
@@ -32015,7 +32015,7 @@ static int number_widest_limbs;
 #define NUMBERS_BIG_WATCH(limbs)                                              \
         (number_widest_limbs = (limbs) > number_widest_limbs ? (limbs)        \
                                                              : number_widest_limbs)
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         The number conversions: text into an integer, and text into a float
@@ -33341,7 +33341,7 @@ number_case(small_integers)
         path's bits and end pointer with errno untouched, and a decline must
         leave the end pointer and the answer where they were. It is called by
         its own name, which on x86_64 is not what strtod reaches first --
-        compiler_memory.c places an integer-only front half there -- so the
+        lib.util.c places an integer-only front half there -- so the
         routine is exercised on its own on all three machines. It must also
         take a real share of the stream, or agreeing proves nothing.
 */
@@ -33549,7 +33549,7 @@ b32 main(void)
             number_differential FIRST COUNT          one hash line a block
             number_differential FIRST COUNT BLOCK    every case of BLOCK
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NS_STRTOD strtod
 #define NS_STRTOF strtof
@@ -33622,7 +33622,7 @@ int main(int words, char **word)
 #endif /* CHECK_number_differential_reference */
 
 #ifdef CHECK_clock
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         <time.h> against the answers glibc gives.
@@ -35192,7 +35192,7 @@ b32 main(void)
 #endif /* CHECK_clock */
 
 #ifdef CHECK_math
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         The rest of <math.h>, checked without a reference library under it.
@@ -36482,7 +36482,7 @@ b32 main()
 /*
         One file, built twice, the way CHECK_allocator is.
 
-        Built the ordinary way it includes compiler_memory.c and runs
+        Built the ordinary way it includes lib.util.c and runs
         standard.c's fmod and remainder on x86_64, arm64 and riscv64. Built
         with MODULO_REFERENCE defined it links glibc's libm instead, and
         test/run's math lane builds it with -fno-builtin and calls through a
@@ -36535,7 +36535,7 @@ typedef void fn;
 
 #else
 
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #endif
 
@@ -36965,7 +36965,7 @@ typedef void fn;
 
 #else
 
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define environment_set(name, value, overwrite)                               \
         setenv((string_address)(name), (string_address)(value), (overwrite))
@@ -37400,7 +37400,7 @@ b32 main(void)
 #ifdef CHECK_format
 #ifdef FORMAT_STANDALONE
 /*
-        printf on lib.c and library.common.c alone, with none of the
+        printf on lib.c and lib.util.c alone, with none of the
         families it normally sits among. They live in one file now, so the
         way to ask for one of them is to skip the rest by name. Not by
         claiming their include guards: format.c carries its own minimal FILE
@@ -37425,11 +37425,10 @@ b32 main(void)
 #define STANDARD_SKIP_SCAN
 #define STANDARD_SKIP_SPOOL
 #define STANDARD_SKIP_PROCESS
-#include "../src/lib.c"
-#include "../src/library.common.c"
-#include "../src/standard.c"
+#define LIB_SKIP_UMBRELLA
+#include "../src/lib.util.c"
 #else
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #endif
 /*
         Experimental C standard library
@@ -38855,7 +38854,7 @@ static fn lexical_fields(void)
             //      billion and not at eighteen quintillion. Both are past
             //      what any consumer accepts and every one of them tests the
             //      overflow bit; the record is this width so that it lands in
-            //      registers rather than on the stack. See library.common.c.
+            //      registers rather than on the stack. See lib.util.c.
             {"4294967295",4294967295u,0,1,0,0},
             {"4294967296.4294967297",0,1,2,0,3},
             {"*.00000000000000000000000003",0,3,2,1,0}
@@ -38873,7 +38872,7 @@ static fn lexical_fields(void)
 }
 
 /*
-        The estimate tables in src/standard.c, multiplied back out.
+        The estimate tables in src/lib.util.c, multiplied back out.
 
         Each entry for 5^(27j) has to be the top 128 bits of that power with
         the exponent that puts them back, and each entry c for 5^-(27j) with
@@ -39066,7 +39065,7 @@ b32 main(void)
         descriptor one, rather than through the stdio family whose formatter
         is the thing being measured.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 static void fd_text(const char *text)
 {
@@ -39129,7 +39128,7 @@ int main(int argc, char **argv)
 #endif /* CHECK_format_differential_reference */
 
 #ifdef CHECK_scan
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 /*
         Experimental C standard library
 
@@ -40324,7 +40323,7 @@ b32 main(void)
         report on it: a stream that flushed at the wrong moment would move the
         evidence rather than show it.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define trace_number(label, value)                                    \
         string_format(log, "%s %b\n", (string_address)(label),        \
@@ -40708,7 +40707,7 @@ int main(int argc, char **argv)
         written with the raw retrying primitive, which is outside everything
         under test.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 static fn standard_trace_writer(address_any data, positive length)
 {
@@ -40782,7 +40781,7 @@ int main(void)
 
         www.dawning.dev
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 static fn body_pause_now(void)
 {
@@ -40862,7 +40861,7 @@ int main(void)
         FILE buffer at the moment of a fork is a trace that gets printed
         twice.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define trace_number(label, value)                             \
         string_format(log, "%s %b\n", (string_address)(label), \
@@ -41017,7 +41016,7 @@ int main(void)
 #endif /* CHECK_spool_reference */
 
 #ifdef CHECK_process
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         Directories, the exec family, sleeping, and the small POSIX names
@@ -42143,14 +42142,14 @@ b32 main(void)
 #endif /* CHECK_process */
 
 #ifdef CHECK_signal
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         <signal.h>, and the half of setjmp that was missing, on three machines.
 
         src/standard/signal.c is included directly when the umbrella has not
         already pulled it in, so this test builds and runs before the merge
-        that adds that line to src/compiler_memory.c and stays correct after
+        that adds that line to src/lib.util.c and stays correct after
         it: the file guards itself, and the guard is what this asks about.
 
         Every case is in the table CHECK_signal shares with
@@ -42180,7 +42179,7 @@ b32 main(void)
           down and siglongjmp is what puts it back.
 */
 #ifndef STANDARD_MODERN_C_STANDARD_SIGNAL
-#include "../src/standard.c"
+#include "../src/lib.util.c"
 #endif
 
 #define SHARED_counted
@@ -42609,11 +42608,11 @@ int main(void)
         The pool. parallel_for runs every index once at every width;
         parallel_ordered's bytes do not move with the width; stops, a refusing
         sink, nesting, the beside job and a forked child behave as the sheet
-        in library.common.c says.
+        in lib.util.c says.
 
         The timing is BENCH_lock's: sh test/run bench lock.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #if defined(KERNEL_MODE) || defined(STANDARD_NO_PLATFORM)
 #error "the lock is a Linux userspace primitive"
@@ -44734,7 +44733,7 @@ b32 main(void)
 #endif /* CHECK_lock */
 
 #ifdef CHECK_socket
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 /*
         Byte order, and the socket calls that need it.
 
@@ -45072,7 +45071,7 @@ b32 main(void)
 #endif /* CHECK_socket */
 
 #ifdef CHECK_net
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/net/net.c"
 /*
         The netlink wire, and the messages built on it.
@@ -50935,7 +50934,7 @@ b32 main(void)
 #endif /* CHECK_net */
 
 #ifdef CHECK_bowl
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
 
@@ -51340,7 +51339,7 @@ b32 main(void)
 #endif /* CHECK_bowl */
 
 #ifdef CHECK_tar
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #define TAR_PARSE_ONLY
 #include "../src/sh/tar.c"
@@ -51924,7 +51923,7 @@ b32 main(void)
 #endif /* CHECK_tar */
 
 #ifdef CHECK_zstd
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #define ZSTD_CORE_ONLY
 #include "../src/sh/zstd.c"
@@ -52617,7 +52616,7 @@ b32 main(void)
 #endif /* CHECK_zstd */
 
 #ifdef CHECK_gzip
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #define GZIP_CORE_ONLY
 #include "../src/sh/gzip.c"
@@ -52776,7 +52775,7 @@ b32 main(void)
 #endif /* CHECK_gzip */
 
 #ifdef CHECK_xz
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #define XZ_CORE_ONLY
 #include "../src/sh/xz.c"
@@ -53417,7 +53416,7 @@ b32 main(void)
 #endif /* CHECK_xz */
 
 #ifdef CHECK_reuse_shell
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
 #define SHARED_counted
@@ -54226,7 +54225,7 @@ b32 main(void)
 #endif /* CHECK_reuse_shell */
 
 #ifdef CHECK_path_stage
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #define SHARED_counted
 #include "checks.c"
@@ -54637,7 +54636,7 @@ b32 main(void)
 #ifdef CHECK_audit_builtin_regressions
 /* Pure-state regressions for the verified enable/formatter/signal repairs.
    No machine-control builtin or utility is invoked. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
 #define SHARED_counted
@@ -54760,7 +54759,7 @@ b32 main(void)
 #endif /* CHECK_audit_builtin_regressions */
 
 #ifdef CHECK_slurp
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         file_slurp's contract at the syscall boundary.
@@ -55156,7 +55155,7 @@ b32 main(void)
 #endif /* CHECK_slurp */
 
 #ifdef CHECK_wait_retry
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         The wait4 retry leaf at the syscall boundary.
@@ -55489,7 +55488,7 @@ b32 main(void)
 #endif /* CHECK_wait_retry */
 
 #ifdef CHECK_writer_buffer
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /* The shared buffered-writer policy, including both exact-capacity modes. */
 
@@ -55734,7 +55733,7 @@ b32 main(void)
 #endif /* CHECK_writer_buffer */
 
 #ifdef CHECK_storage_io
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
@@ -57206,7 +57205,7 @@ b32 main(void)
 #endif /* CHECK_storage_io */
 
 #ifdef CHECK_storage_format
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
 
@@ -57991,7 +57990,7 @@ b32 main(void)
 #endif /* CHECK_storage_format */
 
 #ifdef CHECK_machine
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #define MOONWATER_SCAN
 #include "../src/sh/shell.c"
@@ -58386,7 +58385,7 @@ b32 main(void)
 #endif /* CHECK_machine */
 
 #ifdef CHECK_probe
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 
 /*
@@ -58655,7 +58654,7 @@ b32 main()
 #endif /* CHECK_probe */
 
 #ifdef CHECK_checksum_crc
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
 #define SHARED_counted
@@ -59312,7 +59311,7 @@ b32 main(void)
         body pays its table preparation as the applet did. `none` exits
         after the block is filled, for the fixed cost.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -59815,7 +59814,7 @@ b32 main(void)
         cost. `table` prints unicode_width_tab's lines for lib.c, laid out
         from the references.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -60087,7 +60086,7 @@ b32 main(void)
 #endif /* BENCH_unicode_width */
 
 #ifdef CHECK_spark_entry
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #if X64
 #define SPARK_TEST_TEXT_(value) #value
@@ -62628,7 +62627,7 @@ int main(void)
 #ifdef CHECK_lexer_spans
 /* Counted lexer views borrow input; parser text must survive its reuse.
    Build with `build freestanding` or the shell lane's freestanding-checks runner. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
 #define SHARED_counted
@@ -62754,7 +62753,7 @@ b32 main(void)
 #ifdef CHECK_regex
 /* Built by the regex lane. Compare complete-literal shortcuts with their original
    VM fallback, using the real shared library and injected resource budgets. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
 
@@ -62903,7 +62902,7 @@ b32 main(void)
         useful for instruction-shape comparison, but is labelled as emulated
         by the dispatcher and must not be quoted as an architectural floor.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -63321,7 +63320,7 @@ b32 main(void)
 #endif /* BENCH_floor */
 
 #ifdef BENCH_baseline
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 /*
         The assembly against the C byte loop it replaced.
@@ -63444,7 +63443,7 @@ b32 main()
         A native run reports hardware ticks.  A qemu run reports emulator
         work: useful as a regression ratio, never as a hardware-floor claim.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define VALUE_COUNT 64
@@ -63624,7 +63623,7 @@ b32 main()
         Native runs are hardware ticks. Qemu runs are emulator work and only
         useful as regression ratios, never as hardware-floor measurements.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define VALUE_COUNT 64
@@ -63747,7 +63746,7 @@ b32 main()
 
 #ifdef BENCH_hex
 /* Bulk hex output: the former checksum loop versus the shared ASM encoder. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -63825,7 +63824,7 @@ b32 main(void)
 #ifdef BENCH_escape
 /* Shared escaping versus the former writer loops. Native timings only measure
    hardware; QEMU remains useful for checking equal bytes. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -63989,7 +63988,7 @@ b32 main(void)
 /* Body-to-body timing, separate from the shell's streaming benchmark. The C
    references retain the folded engine's runtime-width bit loops. QEMU runs
    establish correctness only; their ticks are not hardware measurements. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NO_INLINE __attribute__((noinline, noclone))
 static p8 input[5120], encoded[8192], decoded[5120], values[256];
@@ -64117,7 +64116,7 @@ b32 main(void)
 #endif /* BENCH_codec */
 
 #ifdef BENCH_fixed
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 static p8 records[65536];
 static volatile positive observed;
@@ -64194,7 +64193,7 @@ b32 main(void)
 
         A native run is hardware time. A qemu run is emulator work only.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define VALUE_COUNT 64
@@ -64340,7 +64339,7 @@ b32 main()
         Native runs are hardware ticks. Qemu runs are emulator work and only
         useful as regression ratios, never as hardware-floor measurements.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define SUBJECTS 64
@@ -64696,7 +64695,7 @@ b32 main()
 
         Native results are hardware time. Qemu results are emulator work only.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define VALUE_COUNT 64
@@ -64860,7 +64859,7 @@ b32 main()
 
         Native runs are hardware ticks. Qemu ratios are emulator work only.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define VALUE_COUNT 64
@@ -65081,7 +65080,7 @@ b32 main()
 
 #ifdef BENCH_human_nearest
 /* dd's nearest human formatter: exact former C body against the ASM leaf. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define ROUNDS (1u << 18)
@@ -65277,7 +65276,7 @@ b32 main()
 
 #ifdef BENCH_hash_33
 /* DJB2 byte hash: dependent scalar loop against four-byte assembly. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -65491,7 +65490,7 @@ b32 main(void)
 
 #ifdef BENCH_span_byte
 /* Bounded equal-byte prefix: scalar caller loop against library assembly. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -65619,7 +65618,7 @@ b32 main(void)
         loop and 1 for the new, runs one loop and
         nothing else, for an instruction count taken from outside.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -65985,7 +65984,7 @@ b32 main(void)
 
 #ifdef BENCH_fill_u32
 /* 32-bit span fill: the shared Canvas/window primitive against its two floors. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -66158,7 +66157,7 @@ b32 main(void)
 
 #ifdef BENCH_fill_u64
 /* Naturally aligned 64-bit pattern fill against scalar and bulk-store floors. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -66330,7 +66329,7 @@ b32 main(void)
 
 #ifdef BENCH_paths
 /* Former path C bodies against the shared three-architecture ASM paths. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define TRIES 5
@@ -66536,7 +66535,7 @@ b32 main()
 
 #ifdef BENCH_reverse
 /* memory_reverse and the rev fold against the literal C shapes they replace. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define TRIES 7
@@ -66763,7 +66762,7 @@ b32 main()
         cost visible instead of letting a long padding loop hide it. Native
         runs are hardware ticks; qemu ratios are emulator work only.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define TRIES 7
@@ -66939,7 +66938,7 @@ b32 main()
 
 #ifdef BENCH_writer_text
 /* Buffered output policy: former C against the shared assembly core. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -67336,7 +67335,7 @@ b32 main(void)
 
 #ifdef BENCH_text_hot
 /* Hot text-loop folds against the literal scalar loops they replace. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -67634,7 +67633,7 @@ b32 main(void)
 /* Literal-size equal-span walk against the out-of-line hardware routine.
    Mismatch positions are exhaustively guarded by the exact_prefix section of test/checks.c;
    this harness intentionally measures the maximum-traffic shape. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define SUBJECTS 64
@@ -67730,7 +67729,7 @@ b32 main(void)
 
 #ifdef BENCH_translate
 /* In-place byte-table translation: former scalar C against library assembly. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -67886,7 +67885,7 @@ b32 main(void)
 /* In-place byte deletion by table: tr's former scalar loop against library
    assembly. Each round restores the block first, because a deletion shrinks
    it; that copy is timed on its own and taken out of both sides. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -68104,7 +68103,7 @@ b32 main(void)
 
 #ifdef BENCH_ascii_case
 /* ASCII-folded bounded comparison: scalar reference against library assembly. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -68326,7 +68325,7 @@ b32 main(void)
 
 #ifdef BENCH_ascii_case_fold
 /* Literal-size ASCII-folded compare against the out-of-line floor routine. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define INLINE_ALWAYS __attribute__((always_inline))
@@ -68425,7 +68424,7 @@ b32 main(void)
 
 #ifdef BENCH_line_break
 /* Canvas line breaking: the former byte walk against shared bounded hunts. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -68613,7 +68612,7 @@ b32 main(void)
 #ifdef BENCH_bounded_fold
 /*
         Literal-bound string operations at the production shapes which can
-        actually reach compiler_memory.c's bounded specializers.
+        actually reach lib.util.c's bounded specializers.
 
         HTTP compares seven and eight bytes, resolv.conf compares eleven, and
         interface names are copied through a fifteen-byte bound.  Each row
@@ -68622,7 +68621,7 @@ b32 main(void)
         source rotates through short, full, equal, early-different and
         late-different cases so no row measures one friendly exit alone.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define SUBJECTS 64
@@ -68727,7 +68726,7 @@ b32 main(void)
 
 #ifdef BENCH_ascii_convert
 /* ASCII case conversion: inlined former loops against reusable assembly. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -69033,7 +69032,7 @@ b32 main(void)
 
 #ifdef BENCH_ascii_search
 /* Fixed ASCII-insensitive search against the literal C loop it replaces. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -69186,7 +69185,7 @@ b32 main(void)
         Grep's repeated literal hunt: preparing the rare byte once versus
         asking memory_search to choose its anchors again after every match.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -69362,7 +69361,7 @@ b32 main(void)
         driver in test/run says.  Output is consumed through sink and every shape is checked
         against a deliberately obvious record-by-record reference first.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -69693,7 +69692,7 @@ b32 main(void)
 
 #ifdef BENCH_last_of
 /* Bounded reverse byte search: scalar reference against library assembly. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -69859,7 +69858,7 @@ b32 main(void)
 
 #ifdef BENCH_words
 /* Stateful ASCII word counting: scalar reference against library assembly. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -70053,7 +70052,7 @@ b32 main(void)
 
 #ifdef BENCH_clock
 /* Calendar text traffic and directive-parser costs. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -70275,7 +70274,7 @@ b32 main(void)
 
 #ifdef BENCH_scan_literal
 /* sscanf literal matching against its control and semantic traffic floors. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -70384,7 +70383,7 @@ b32 main(void)
 
 #ifdef BENCH_random
 /* random() draw cost against call/control and additive-ring floors. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -70514,7 +70513,7 @@ b32 main(void)
         bit is set; the ECDSA rows verify real signatures, RFC 6979's P-256
         "sample" and a P-384 one made once with openssl.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/net/net.c"
 #define SHARED_bench_measure
 #include "checks.c"
@@ -70841,7 +70840,7 @@ b32 main(void)
    second labels on: what the pair times is the shelf pop and the shelf push
    in lib.c, with refill, mapping and every tag those two do not own
    staying in the C that their miss paths jump to. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -71006,7 +71005,7 @@ b32 main(void)
    floors pay the same call: two plain stores are the traffic floor, and the
    inline compare-and-swap and exchange standard.c used to be are the
    before. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -71154,7 +71153,7 @@ b32 main(void)
    is the number of threads. Every width must reach the same sum, which is
    checked, because a benchmark that is fast and wrong measured nothing.
    Scaling is only meaningful natively, on cores nothing else is using. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -71263,7 +71262,7 @@ b32 main(void)
    and the passes. light: 4096 jobs hashing 256 KiB each and handing
    back eight bytes, written to /dev/null. Each prints wall, user and system
    milliseconds, best wall of three, at the affinity width. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define ORDERED_HEAVY_JOBS 23
 #define ORDERED_HEAVY_BYTES (25u << 20)
@@ -71489,7 +71488,7 @@ b32 main(void)
    directory that holds it and writes each directory's total after its
    subtree, from leave. Compare the numbers with GNU find and du on the same
    cores. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 typedef struct bench_tree_node
 {
@@ -71740,7 +71739,7 @@ b32 main(void)
 /* Run a fresh process per sample: ru_maxrss is a lifetime high-water mark.
    Usage: reserve [MiB, 1..128] [sparse]. Only growth is timed; allocation and
    initial touching precede it. Virtual capacity is not counted as RSS. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 b32 main(void)
 {
@@ -71782,7 +71781,7 @@ b32 main(void)
 /* Real production reader, real warm memfd reads. Only reads are timed;
    file creation, initial touching, formatting and validation are outside.
    Usage: storage-read [bytes 1..65536] [iterations 1..1000000]. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
 
@@ -71822,7 +71821,7 @@ b32 main(void)
 
 #ifdef BENCH_compare_max
 /* Dynamic-bound string_compare_max against semantic and traffic floors. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -72028,7 +72027,7 @@ b32 main(void)
 
 #ifdef BENCH_string_copy
 /* string_copy over caller-shaped sizes, against semantic and traffic proxies. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define COPY_BENCH_ROOM ((1u << 20) + 64)
 #define COPY_BENCH_BYTES (1u << 26)
@@ -72202,7 +72201,7 @@ b32 main(void)
 
 #ifdef BENCH_stream_get
 /* Buffered stream_get_byte hits against ABI and state-machine floors. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -72375,7 +72374,7 @@ b32 main(void)
 
 #ifdef BENCH_stream_write
 /* Resident buffered writes against their unavoidable copy/state floor. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -72572,7 +72571,7 @@ b32 main(void)
         overhead rather than useful output.  The ordinary mixed-format row
         keeps the optimization honest against the short widths programs use.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #define FORMAT_BOUNDS_TRIALS 9
 #define FORMAT_BOUNDS_NORMAL_ROUNDS (1u << 17)
@@ -72707,7 +72706,7 @@ b32 main(void)
 
 #ifdef BENCH_startup
 /* Runtime startup components: CPU selection, identity, and stack publication. */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
@@ -72856,7 +72855,7 @@ b32 main(void)
 #endif /* BENCH_startup */
 
 #ifdef BENCH_exec
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 
 // Times fork + exec + wait for a target, repeatedly. The fork and wait cost is
@@ -73312,7 +73311,7 @@ b32 main()
         both paths, so the paired gap is the launch cost. Kernel-side Spark
         counters are reported over the device-spawn rounds as a second clock.
 */
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 
 #define CLOCK_MONOTONIC 1
@@ -73486,7 +73485,7 @@ b32 main(void)
 #endif /* BENCH_network_spawn */
 
 #ifdef BENCH_shell_document
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
 
@@ -73538,7 +73537,7 @@ b32 main()
 #endif /* BENCH_shell_document */
 
 #ifdef BENCH_tiny
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 // The smallest thing that can be exec'd: does nothing, exits immediately.
 // Whatever time it takes to run this is almost entirely the cost of loading it.
@@ -73580,7 +73579,7 @@ __asm__(
 #endif /* BENCH_startup_empty */
 
 #ifdef BENCH_one
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 
 #ifndef LENGTH
 #define LENGTH 4
@@ -73629,7 +73628,7 @@ b32 main()
 }
 #endif /* BENCH_one */
 #if defined(CHECK_compression_floor) || defined(BENCH_compression_floor)
-#include "../src/compiler_memory.c"
+#include "../src/lib.util.c"
 #include "../src/spark.c"
 #define GZIP_CORE_ONLY
 #include "../src/sh/gzip.c"

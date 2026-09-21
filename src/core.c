@@ -97,7 +97,7 @@
 #endif
 
 #define STANDARD_MODERN_C_KERNEL
-#include "compiler_memory.c"
+#include "lib.util.c"
 #include "spark.c"
 #include "moonwater.c"
 

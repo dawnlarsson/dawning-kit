@@ -12,7 +12,7 @@
         shell and the multicall names reach them the same way.
 */
 
-#include "../compiler_memory.c"
+#include "../lib.util.c"
 
 #define UTILITY_ARENA_BYTES (192u << 20)
 static memory_arena utility_arena = {.room = UTILITY_ARENA_BYTES};

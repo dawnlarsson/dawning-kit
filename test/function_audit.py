@@ -34,7 +34,7 @@ Definition = namedtuple('Definition', 'path line name kind')
 # body-generating macro a visible inventory event rather than a parser guess.
 GENERATORS = {
     ('src/core.c', 'REPORT_CANVAS'): ('{}',),
-    ('src/compiler_memory.c', 'SEARCH_KNOWN'): ('{}',),
+    ('src/lib.util.c', 'SEARCH_KNOWN'): ('{}',),
     ('src/sh/awk.c', 'AWK_BINARY_LEVEL'): ('{}',),
     ('src/sh/awk.c', 'AWK_EVALUATOR'): ('{}',),
     ('src/sh/awk.c', 'AWK_TRIG_KERNEL'): ('{}',),
@@ -49,21 +49,21 @@ GENERATORS = {
     ('src/sh/builtin.c', 'TEST_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/storage.c', 'STORAGE_TABLE_RELEASE'): ('{}',),
     ('src/sh/tools.c', 'PS_TAKE'): ('{}',),
-    ('src/standard.c', 'PROCESS_EXECL'): ('{}',),
-    ('src/standard.c', 'ERROR_OPEN'): ('{}',),
-    ('src/standard.c', 'ERROR_ENTRY'): ('{}',),
-    ('src/standard.c', 'ERROR_ID'): ('{}',),
-    ('src/standard.c', 'var_list_entry'): ('{}',),
-    ('src/standard.c', 'var_list_entry'): ('{}',),
-    ('src/standard.c', 'var_list_entry'): ('{}',),
-    ('src/standard.c', 'MATH_CLASSIFIER'):
+    ('src/lib.util.c', 'PROCESS_EXECL'): ('{}',),
+    ('src/lib.util.c', 'ERROR_OPEN'): ('{}',),
+    ('src/lib.util.c', 'ERROR_ENTRY'): ('{}',),
+    ('src/lib.util.c', 'ERROR_ID'): ('{}',),
+    ('src/lib.util.c', 'var_list_entry'): ('{}',),
+    ('src/lib.util.c', 'var_list_entry'): ('{}',),
+    ('src/lib.util.c', 'var_list_entry'): ('{}',),
+    ('src/lib.util.c', 'MATH_CLASSIFIER'):
         ('{}_magnitude_bits', '{}_is_nan', '{}_is_infinite', '{}_is_finite',
          '{}_is_normal', '{}_sign_bit', '{}_class'),
-    ('src/standard.c', 'NUMBERS_EXACT'): ('{}',),
-    ('src/standard.c', 'NUMBERS_TO'): ('{}',),
-    ('src/standard.c', 'SIGNAL_SET_CHANGE'): ('{}',),
-    ('src/standard.c', 'SPOOL_PIPELINE_SLOT'): ('{}',),
-    ('src/standard.c', 'STDLIB_DIVIDE'): ('{}',),
+    ('src/lib.util.c', 'NUMBERS_EXACT'): ('{}',),
+    ('src/lib.util.c', 'NUMBERS_TO'): ('{}',),
+    ('src/lib.util.c', 'SIGNAL_SET_CHANGE'): ('{}',),
+    ('src/lib.util.c', 'SPOOL_PIPELINE_SLOT'): ('{}',),
+    ('src/lib.util.c', 'STDLIB_DIVIDE'): ('{}',),
 }
 
 

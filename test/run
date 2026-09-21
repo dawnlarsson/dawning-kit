@@ -1363,14 +1363,14 @@ x86_kernel_vector_audit()
         printf '%s\n' '#define X86_FEATURE_ERMS 0' \
                 > "$work/x86-kernel-include/asm/cpufeatures.h"
 
-        # library.common.c is included through this umbrella by the real
+        # lib.util.c is included through this umbrella by the real
         # module.  Compiling lib.c alone cannot catch a userspace-only
         # inline body which escaped its KERNEL_MODE boundary.
         if ! "$x86_kernel_compiler" -std=gnu11 -O2 -mno-sse -mno-sse2 \
                 -mno-mmx -msoft-float -ffreestanding -fno-builtin -nostdlib \
                 -I"$work/x86-kernel-include" \
                 -DSTANDARD_MODERN_C_KERNEL '-DEXPORT_SYMBOL(name)=' \
-                -c src/compiler_memory.c -o "$work/x86-kernel-common.o" \
+                -c src/lib.util.c -o "$work/x86-kernel-common.o" \
                 2> "$work/x86-kernel-common.err"
         then
                 note "the x86 KERNEL_MODE common umbrella did not compile:"
@@ -1470,14 +1470,14 @@ arm64_kernel_vector_audit()
                 return 2
         }
 
-        # The module includes library.common.c through compiler_memory.c, not
+        # The module includes lib.util.c through lib.util.c, not
         # lib.c directly.  Keep that full preprocessor boundary buildable
         # before inspecting the assembly-only library beneath it.
         if ! "$arm64_kernel_compiler" $arm64_kernel_target -std=gnu11 -O2 \
                 -march=armv8-a -mgeneral-regs-only -mno-outline-atomics \
                 -ffreestanding -fno-builtin \
                 -nostdlib -DSTANDARD_MODERN_C_KERNEL '-DEXPORT_SYMBOL(name)=' \
-                -c src/compiler_memory.c -o "$work/arm64-kernel-common.o" \
+                -c src/lib.util.c -o "$work/arm64-kernel-common.o" \
                 2> "$work/arm64-kernel-common.err"
         then
                 note "the ARM64 KERNEL_MODE common umbrella did not compile:"
@@ -2779,7 +2779,7 @@ counted "$stream_outcome"
 #           sh test/run allocator
 #
 #       The allocator section of test/checks.c runs on each architecture
-#       against the allocator in src/standard.c with no C library under it,
+#       against the allocator in src/lib.util.c with no C library under it,
 #       and is built once more against glibc. Everything the test prints
 #       before its "shared-end" line is a statement about behaviour rather
 #       than about addresses, so those bytes have to be identical in all
@@ -3805,7 +3805,7 @@ need_policy_farm()
 
         if [ ! -x "$work/policy-utilities" ]; then
                 cat > "$work/policy-utilities.c" <<POLICY_UTILITIES
-#include "$root/src/compiler_memory.c"
+#include "$root/src/lib.util.c"
 #include "$root/src/spark.c"
 #define SHELL_UTILITY_PROGRAM
 #include "$root/src/sh/shell.c"
@@ -5568,7 +5568,7 @@ section_total=0
 
 #       The emulator, with a page of memory where the window would be.
 cat > "$work/harness.c" <<'HARNESS'
-#include "src/compiler_memory.c"
+#include "src/lib.util.c"
 #include "src/spark.c"
 #include "src/canvas/window.c"
 #include "src/sh/term.c"
@@ -7292,7 +7292,7 @@ section_total=0
 : "${test_case_width:=26}"
 
 cat > "$work/harness.c" <<'HARNESS'
-#include "src/compiler_memory.c"
+#include "src/lib.util.c"
 #include "src/spark.c"
 #include "src/canvas/window.c"
 #include "src/sh/pty.c"
