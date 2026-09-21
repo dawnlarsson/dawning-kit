@@ -140,7 +140,7 @@ cover('direct_benchmark', 'test/checks.c#BENCH_lock', 'lock_take lock_release lo
       'thread alive (the atomic path), against two stores and the inline C '
       'compare-and-swap pair they replaced; lock_try shares the take body. '
       'CHECK_lock proves exclusion and sleeping across eight threads on three '
-      'machines, and test/hardware_floor.c has the same two rows',
+      'machines, and the BENCH_hardware_floor section has the same two rows',
       anchors={'lock_try': 'lock_take'})
 
 cover('correctness_only', 'test/checks.c#CHECK_lock', '''
@@ -396,9 +396,9 @@ md5_blocks sha1_blocks sha256_blocks sha512_blocks blake2b_blocks cpu_hash_detec
       'blocks under every feature-byte subset the machine has, protected-page '
       'tails, blake2b counter carries, and streaming known answers; the lazy '
       'detector runs on the first dispatching call; timed against the same '
-      'rounds compiled from C in test/hardware_floor.c, which test/run bench '
+      'rounds compiled from C in the BENCH_hardware_floor section, which test/run bench '
       'does not dispatch')
-cover('correctness_only', 'test/hardware_floor.c', 'sha256_compress',
+cover('correctness_only', 'test/checks.c#BENCH_hardware_floor', 'sha256_compress',
       'one 64-byte compression; timed in the hardware-floor harness, not the '
       'test/run bench catalogue')
 cover('correctness_only', 'test/checks.c#CHECK_net', '''
@@ -406,7 +406,7 @@ p256_multiply p256_square p256_add p256_subtract
 p384_multiply p384_square p384_add p384_subtract
 ''', 'differential against the C Montgomery arithmetic on all three floors, '
       'edges and aliasing included; timed against the same arithmetic '
-      'compiled from C in test/hardware_floor.c, which test/run bench does '
+      'compiled from C in the BENCH_hardware_floor section, which test/run bench does '
       'not dispatch')
 cover('direct_benchmark', 'test/checks.c#BENCH_montgomery', 'montgomery_multiply',
       'multiply and square at 4, 6, 32 and 64 limbs against the C Montgomery '
@@ -415,7 +415,7 @@ cover('direct_benchmark', 'test/checks.c#BENCH_montgomery', 'montgomery_multiply
 cover('correctness_only', 'test/checks.c#CHECK_net', 'ghash_blocks ghash_key ghash_integer aes128_ctr_blocks',
       'bit-serial differential over every body each machine has (feature '
       'bytes toggled); ghash_blocks timed against the carry-less multiply '
-      'compiled from C in test/hardware_floor.c, which test/run bench does '
+      'compiled from C in the BENCH_hardware_floor section, which test/run bench does '
       'not dispatch; ghash_key runs once a traffic key')
 
 cover('correctness_only', 'test/checks.c#CHECK_zstd', '''
