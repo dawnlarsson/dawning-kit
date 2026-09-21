@@ -1130,34 +1130,36 @@ static fn awk_split_pieces(string_address text, positive length, string_address 
                 return;
         }
 
-        if (separator_length == 1 && !as_pattern && !paragraph)
-        {
-                positive start = 0;
-                p8 address_to cut;
-
-                while ((cut = (p8 address_to)memory_first_of(text + start, separator[0],
-                                                             length - start)))
-                {
-                        awk_piece_add(start, (positive)(cut - text) - start);
-                        start = (positive)(cut - text) + 1;
-                }
-
-                awk_piece_add(start, length - start);
-                return;
-        }
-
-        // The same cut with a newline for a second stop byte, which is one
-        // more than a single hunt takes.
+        //      A one-byte separator is a list of offsets, and lib.c writes
+        //      the whole list in one pass: a hunt per field paid a call and
+        //      its setup for every field, which on short fields -- a passwd
+        //      line, a CSV row -- was most of the split. Paragraph mode stops
+        //      at a newline as well, which is the second byte; otherwise the
+        //      separator is both.
         if (separator_length == 1 && !as_pattern)
         {
+                p32 cuts[256];
                 positive start = 0;
+                positive from = 0;
+                p8 also = paragraph ? (p8)'\n' : separator[0];
 
-                for (positive at = 0; at < length; at++)
-                        if (text[at] == separator[0] || text[at] == '\n')
+                for (;;)
+                {
+                        positive found = memory_offsets_of_either(
+                                cuts, text + from, length - from, separator[0],
+                                also, array_count(cuts));
+
+                        for (positive i = 0; i < found; i++)
                         {
-                                awk_piece_add(start, at - start);
-                                start = at + 1;
+                                positive cut = from + cuts[i];
+
+                                awk_piece_add(start, cut - start);
+                                start = cut + 1;
                         }
+                        if (found < array_count(cuts))
+                                break;
+                        from += cuts[found - 1] + 1;
+                }
 
                 awk_piece_add(start, length - start);
                 return;
