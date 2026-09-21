@@ -12207,6 +12207,57 @@ fn check_offsets_range()
                                                         same("memory_offsets_between/outside", "count", have, count);
                                                 }
                                         }
+                // And by table: none, one byte, cat -v's, and half at random.
+                static b8 sets[4][256];
+                for (positive i = 0; i < 256; i++)
+                {
+                        sets[0][i] = 0;
+                        sets[1][i] = i == '\n';
+                        sets[2][i] = i < 9 || (i > 10 && i < 32) || i > 126;
+                        seed ^= seed << 13;
+                        seed ^= seed >> 7;
+                        seed ^= seed << 17;
+                        sets[3][i] = (b8)(seed & 1);
+                }
+                for (positive t = 0; t < 4; t++)
+                        for (positive s = 0; s < array_count(sizes); s++)
+                                for (positive residue = 0; residue < 64; residue += 21)
+                                {
+                                        positive size = sizes[s];
+                                        const p8 address_to at = bytes + residue;
+                                        positive count = 0;
+
+                                        for (positive i = 0; i < size; i++)
+                                                if (sets[t][at[i]])
+                                                        want[count++] = (p32)i;
+
+                                        static const positive limits[] = {1, 7, 64, 65, 5000};
+                                        for (positive l = 0; l < array_count(limits); l++)
+                                        {
+                                                positive limit = limits[l], have = 0, from = 0;
+                                                bool ok = true;
+
+                                                for (;;)
+                                                {
+                                                        positive answer = (memory_offsets_in_set)(
+                                                            got, at + from, size - from, sets[t], limit);
+                                                        if (answer > limit)
+                                                        {
+                                                                ok = false;
+                                                                break;
+                                                        }
+                                                        for (positive i = 0; i < answer; i++)
+                                                                if (have + i >= count || got[i] + from != want[have + i])
+                                                                        ok = false;
+                                                        have += answer;
+                                                        if (answer < limit || !ok)
+                                                                break;
+                                                        from += got[answer - 1] + 1;
+                                                }
+                                                same("memory_offsets_in_set", "offsets", ok, 1);
+                                                same("memory_offsets_in_set", "count", have, count);
+                                        }
+                                }
         }
 #if X64
         cpu_has_avx512 = avx512;
@@ -62575,6 +62626,7 @@ typedef unsigned int u32;
 u64 memory_offsets_of_either(u32 *, const void *, u64, u8, u8, u64);
 u64 memory_offsets_between(u32 *, const void *, u64, u8, u8, u64);
 u64 memory_offsets_outside(u32 *, const void *, u64, u8, u8, u64);
+u64 memory_offsets_in_set(u32 *, const void *, u64, const u8 *, u64);
 
 #define READ (1u << 16)
 
@@ -62714,11 +62766,67 @@ static void ranges(void)
                best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
 }
 
+static void sets(void)
+{
+        static u8 table[256];
+        u64 best_former = ~0ul, best_body = ~0ul, a = 0, b = 0;
+
+        for (u64 t = 0; t < 3; t++) {
+                for (u64 i = 0; i < 256; i++)
+                        table[i] = t == 0 ? i == '\n' : t == 1 ? (i < 9 || (i > 10 && i < 32) || i > 126)
+                                                        : (u8)(next() & 1);
+                for (u64 size = 0; size <= 200; size++) {
+                        u64 count = 0, answer;
+
+                        for (u64 i = 0; i < size; i++)
+                                if (table[bytes[i]])
+                                        want[count++] = (u32)i;
+                        answer = memory_offsets_in_set(got, bytes, size, table, 100000);
+                        checks++;
+                        if (answer != count) {
+                                if (bad++ < 8)
+                                        printf("  FAIL set %lu size %lu\n", t, size);
+                                continue;
+                        }
+                        for (u64 i = 0; i < count; i++)
+                                if (got[i] != want[i]) {
+                                        bad++;
+                                        break;
+                                }
+                }
+        }
+        for (u64 i = 0; i < 256; i++)
+                table[i] = i < 9 || (i > 10 && i < 32) || i > 126;
+        for (u64 trial = 0; trial < 9; trial++) {
+                u64 start = ticks();
+                for (int r = 0; r < 64; r++) {
+                        u64 count = 0;
+                        for (u64 i = 0; i < READ; i++)
+                                if (table[bytes[i]])
+                                        want[count++] = (u32)i;
+                        a = count;
+                }
+                u64 took = ticks() - start;
+                best_former = took < best_former ? took : best_former;
+                start = ticks();
+                for (int r = 0; r < 64; r++)
+                        b = memory_offsets_in_set(got, bytes, READ, table, READ);
+                took = ticks() - start;
+                best_body = took < best_body ? took : best_body;
+        }
+        checks++;
+        if (a != b)
+                bad++;
+        printf("  in a table set, 64 reads of 64 KB: former C %lu ticks, assembly %lu, asm/C %lu%%\n",
+               best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+}
+
 int main(void)
 {
         matrix();
         timing();
         ranges();
+        sets();
         printf("arm64 memory_offsets_of_either: %lu checks | %lu failures\n", checks, bad);
         return bad ? 1 : 0;
 }
@@ -69868,6 +69976,52 @@ NOT_INLINED static positive former_outside(p32 address_to positions,
         return count;
 }
 
+static b8 special_set[256];
+
+NOT_INLINED static positive former_in_set(p32 address_to positions,
+                                          const p8 address_to block, positive size)
+{
+        positive count = 0;
+
+        for (positive at = 0; at < size; at++)
+                if (special_set[block[at]])
+                        positions[count++] = (p32)at;
+
+        return count;
+}
+
+static bool set_row(positive length)
+{
+        positive rounds = TARGET_BYTES / length;
+        positive ratios[TRIES];
+
+        for (positive i = 0; i < 256; i++)
+                special_set[i] = i < 9 || (i > 10 && i < 32) || i > 126 || i == ',';
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 start = get_cpu_time();
+                for (positive round = 0; round < rounds; round++)
+                        sink += former_count = former_in_set(former_offsets, source_block, length);
+                p64 former = get_cpu_time() - start;
+                start = get_cpu_time();
+                for (positive round = 0; round < rounds; round++)
+                        sink += assembly_count = memory_offsets_in_set(assembly_offsets, source_block,
+                                                                       length, special_set, MAXIMUM);
+                p64 assembly = get_cpu_time() - start;
+
+                if (former_count != assembly_count ||
+                    memory_compare(former_offsets, assembly_offsets, former_count * sizeof(p32)))
+                        return false;
+
+                ratios[trial] = (positive)(assembly * 10000 / (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  in a table set, %p bytes  median asm/C %p.%p%%\n", length,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+        return true;
+}
+
 static bool range_row(positive length)
 {
         positive rounds = TARGET_BYTES / length;
@@ -69941,7 +70095,7 @@ b32 main(void)
         string_format(log, "memory_offsets_of_either, paired median of %p\n", (positive)TRIES);
 
         for (positive at = 0; at < sizeof(sizes) / sizeof(sizes[0]); at++)
-                if (!row(sizes[at]) || !range_row(sizes[at]))
+                if (!row(sizes[at]) || !range_row(sizes[at]) || !set_row(sizes[at]))
                 {
                         string_format(log, "memory_offsets_of_either result mismatch\n");
                         log_flush();

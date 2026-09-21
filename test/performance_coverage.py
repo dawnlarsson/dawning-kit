@@ -233,6 +233,8 @@ cover('direct_benchmark', 'test/checks.c#BENCH_offsets', 'memory_offsets_of_eith
       'paired byte-loop/assembly timing over delimiter and line-end offsets of comma rows')
 cover('direct_benchmark', 'test/checks.c#BENCH_offsets', 'memory_offsets_outside',
       'byte-loop/assembly timing over the offsets of every byte outside printable ASCII')
+cover('direct_benchmark', 'test/checks.c#BENCH_offsets', 'memory_offsets_in_set',
+      'byte-loop/assembly timing over the offsets of the bytes a table marks')
 cover('benchmark_context', 'test/checks.c#BENCH_offsets', 'memory_offsets_between',
       'the inside half of the same body, entered with the complement off',
       anchors={'memory_offsets_between': 'memory_offsets_outside'})

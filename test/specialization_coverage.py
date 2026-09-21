@@ -253,6 +253,9 @@ cover('specialized', 'size', 'memory_count',
 cover('folds_already', 'size', 'memory_delete_bytes',
       'tr hands it the length of the read it just made; no reachable call site '
       'passes a literal size, and the table is built from the command line')
+cover('folds_already', 'size', 'memory_offsets_in_set',
+      'cat hands it what is left of a read; no reachable call site passes a '
+      'literal size')
 cover('folds_already', 'size', 'memory_offsets_between',
       'wc and the layout tools hand it what is left of a read; no reachable '
       'call site passes a literal size')

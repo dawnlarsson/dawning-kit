@@ -3460,18 +3460,73 @@ static positive cat_line_number;
 static bool cat_blank_before;
 static bool cat_at_line_start;
 
-/* Identity bytes for SHOW/TABS/line-state combinations. TAB and LF may
-   join ordinary spans whenever no selected operation observes them. */
-static const b8 cat_literal_span[8][256] = {
-    {[0 ... 255] = 1},
-    {[0 ... 9] = 1, [11 ... 255] = 1},
-    {[0 ... 8] = 1, [10 ... 255] = 1},
-    {[0 ... 8] = 1, [11 ... 255] = 1},
-    {[32 ... 126] = 1, ['\t'] = 1, ['\n'] = 1},
-    {[32 ... 126] = 1, ['\t'] = 1},
-    {[32 ... 126] = 1, ['\n'] = 1},
-    {[32 ... 126] = 1},
+/*
+        The bytes cat has to decide something about, found for a whole read
+        at a time: with -v everything that is not printable, otherwise the
+        newline and, under -T, the tab. Every byte between two of them is
+        copied as it is. Offsets are relative to the scan's base, and
+        scanned is how far the scan has got.
+*/
+#define CAT_SPECIALS 4096
+
+static p32 cat_specials[CAT_SPECIALS];
+
+// Where the scan of the current read stands, kept in the walk's own frame
+// so that the bytes it writes are never taken to be this.
+typedef struct
+{
+        positive count;
+        positive index;
+        p8 address_to base;
+        p8 address_to scanned;
+        const b8 address_to set;
+} cat_scan;
+
+/*
+        The bytes cat decides about, by what was asked: -v, -T, and whether
+        any of -n, -b, -s or -E asks about a newline. Every other byte is
+        copied as it is.
+*/
+static const b8 cat_special_set[8][256] = {
+    {['\n'] = 0},
+    {['\n'] = 1},
+    {['\t'] = 1},
+    {['\t'] = 1, ['\n'] = 1},
+    {[0 ... 8] = 1, [11 ... 31] = 1, [127 ... 255] = 1},
+    {[0 ... 8] = 1, ['\n'] = 1, [11 ... 31] = 1, [127 ... 255] = 1},
+    {[0 ... 9] = 1, [11 ... 31] = 1, [127 ... 255] = 1},
+    {[0 ... 31] = 1, [127 ... 255] = 1},
 };
+
+static inline INLINE p8 address_to cat_special_next(cat_scan address_to scan, p8 address_to at,
+                                                         p8 address_to stop)
+{
+        for (;;)
+        {
+                while (scan->index < scan->count)
+                {
+                        p8 address_to special = scan->base + cat_specials[scan->index];
+
+                        if (special >= at)
+                                return special;
+
+                        scan->index++;
+                }
+
+                if (scan->scanned >= stop)
+                        return stop;
+
+                p8 address_to from = at > scan->scanned ? at : scan->scanned;
+                positive size = (positive)(stop - from);
+                scan->count = memory_offsets_in_set(cat_specials, from, size, scan->set,
+                                                    CAT_SPECIALS);
+                scan->index = 0;
+                scan->base = from;
+                scan->scanned = scan->count < CAT_SPECIALS
+                                      ? stop
+                                      : from + cat_specials[scan->count - 1] + 1;
+        }
+}
 
 static fn cat_number()
 {
@@ -3494,7 +3549,7 @@ static fn cat_number()
 // then the same rule again. Tab and newline are touched separately by -T.
 static fn cat_walked()
 {
-        const b8 address_to block_literal = cat_literal_span[
+        const b8 address_to set = cat_special_set[
             ((cat_flags & CAT_SHOW) ? 4 : 0) | ((cat_flags & CAT_TABS) ? 2 : 0) |
             ((cat_flags & (CAT_NUMBER | CAT_NUMBER_FULL | CAT_SQUEEZE | CAT_ENDS)) != 0)];
 
@@ -3515,6 +3570,7 @@ static fn cat_walked()
                 p8 address_to limit = field + room;
                 bool line_start = cat_at_line_start, blank_before = cat_blank_before;
                 positive number = cat_line_number;
+                cat_scan scan = {.scanned = at, .set = set};
                 while (at < stop && (positive)(limit - into) >= positive_char_max + 6)
                 {
                         p8 value = *at;
@@ -3535,10 +3591,11 @@ static fn cat_walked()
                                 }
                                 line_start = false;
                         }
-                        if (block_literal[value])
+                        p8 address_to special = cat_special_next(address_of scan, at, stop);
+
+                        if (special > at)
                         {
-                                positive run = string_span_max(at,
-                                    min((positive)(stop - at), (positive)(limit - into)), block_literal);
+                                positive run = min((positive)(special - at), (positive)(limit - into));
                                 memory_copy_apart(into, at, run);
                                 into += run;
                                 at += run;
