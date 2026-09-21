@@ -12,10 +12,7 @@
 #ifndef STANDARD_MODERN_C_SHELL_NET
 #define STANDARD_MODERN_C_SHELL_NET
 
-#include "../net/netlink.c"
-#include "../net/dns.c"
-#include "../net/http.c"
-#include "../net/dhcp.c"
+#include "../net/net.c"
 
 #define NET_STATE_DIR "/run/moonwater"
 #define NET_WAKE_PATH NET_STATE_DIR "/net.wake"

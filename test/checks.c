@@ -45073,10 +45073,7 @@ b32 main(void)
 
 #ifdef CHECK_net
 #include "../src/compiler_memory.c"
-#include "../src/net/netlink.c"
-#include "../src/net/dns.c"
-#include "../src/net/http.c"
-#include "../src/net/dhcp.c"
+#include "../src/net/net.c"
 /*
         The netlink wire, and the messages built on it.
 
@@ -70515,9 +70512,7 @@ b32 main(void)
         "sample" and a P-384 one made once with openssl.
 */
 #include "../src/compiler_memory.c"
-#include "../src/net/netlink.c"
-#include "../src/net/dns.c"
-#include "../src/net/http.c"
+#include "../src/net/net.c"
 #define SHARED_bench_measure
 #include "checks.c"
 #undef SHARED_bench_measure
