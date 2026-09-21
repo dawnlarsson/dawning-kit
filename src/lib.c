@@ -23610,6 +23610,10 @@ __asm__(
     ASM_RET
     ASM_END(memory_squeeze_bytes)
 
+    // The three offsets routines below keep their sixteen-byte turns out of a
+    // KERNEL_MODE build, as memory_span_byte above does: a kernel object may
+    // hold no vector instruction, and the byte-at-a-time loop under each
+    // already answers any length and any limit on its own.
     // memory_offsets_of_either: sixteen bytes a turn, both questions folded
     // to a nibble a byte with shrn and one bit of each nibble kept, then the
     // hits read off lowest first; the tail and a count near the limit go a
@@ -23618,6 +23622,7 @@ __asm__(
     ASM_FUNC(memory_offsets_of_either)
     "and w3, w3, #255\n   and w4, w4, #255\n   mov x6, xzr\n   mov x7, xzr\n"
     "cbz x5, .Lmemory_offsets_arm64_done\n"
+#ifndef KERNEL_MODE
     "dup v1.16b, w3\n   dup v2.16b, w4\n   mov x13, #0x8888888888888888\n"
     ".Lmemory_offsets_arm64_wide:\n"
     "sub x8, x2, x7\n   cmp x8, #16\n   b.lo .Lmemory_offsets_arm64_one\n"
@@ -23629,6 +23634,7 @@ __asm__(
     "str w10, [x0, x6, lsl #2]\n   add x6, x6, #1\n   sub x11, x9, #1\n   and x9, x9, x11\n"
     "cbnz x9, .Lmemory_offsets_arm64_bits\n"
     ".Lmemory_offsets_arm64_next:\n   add x7, x7, #16\n   b .Lmemory_offsets_arm64_wide\n"
+#endif
     ".Lmemory_offsets_arm64_one:\n"
     "cmp x7, x2\n   b.hs .Lmemory_offsets_arm64_done\n   cmp x6, x5\n   b.hs .Lmemory_offsets_arm64_done\n"
     "ldrb w9, [x1, x7]\n   str w7, [x0, x6, lsl #2]\n"
@@ -23650,6 +23656,7 @@ __asm__(
     ".Lmemory_offsets_range_arm64:\n"
     "and w3, w3, #255\n   and w4, w4, #255\n   sub w4, w4, w3\n   and w4, w4, #255\n"
     "mov x6, xzr\n   mov x7, xzr\n   cbz x5, .Lmemory_offsets_range_arm64_done\n"
+#ifndef KERNEL_MODE
     "dup v1.16b, w3\n   dup v2.16b, w4\n   mov x13, #0x8888888888888888\n"
     ".Lmemory_offsets_range_arm64_wide:\n"
     "sub x8, x2, x7\n   cmp x8, #16\n   b.lo .Lmemory_offsets_range_arm64_one\n"
@@ -23662,6 +23669,7 @@ __asm__(
     "str w10, [x0, x6, lsl #2]\n   add x6, x6, #1\n   sub x11, x9, #1\n   and x9, x9, x11\n"
     "cbnz x9, .Lmemory_offsets_range_arm64_bits\n"
     ".Lmemory_offsets_range_arm64_next:\n   add x7, x7, #16\n   b .Lmemory_offsets_range_arm64_wide\n"
+#endif
     ".Lmemory_offsets_range_arm64_one:\n"
     "cmp x7, x2\n   b.hs .Lmemory_offsets_range_arm64_done\n   cmp x6, x5\n   b.hs .Lmemory_offsets_range_arm64_done\n"
     "ldrb w9, [x1, x7]\n   str w7, [x0, x6, lsl #2]\n   sub w9, w9, w3\n   and w9, w9, #255\n"
@@ -23678,6 +23686,7 @@ __asm__(
     // carries the full contract.
     ASM_FUNC(memory_offsets_in_set)
     "mov x6, xzr\n   mov x7, xzr\n   cbz x4, .Lmemory_offsets_set_arm64_done\n"
+#ifndef KERNEL_MODE
     "ld1 {v16.16b-v19.16b}, [x3], #64\n   ld1 {v20.16b-v23.16b}, [x3], #64\n"
     "ld1 {v24.16b-v27.16b}, [x3], #64\n   ld1 {v28.16b-v31.16b}, [x3]\n   sub x3, x3, #192\n"
     "movi v5.16b, #64\n   mov x13, #0x8888888888888888\n"
@@ -23694,6 +23703,7 @@ __asm__(
     "str w10, [x0, x6, lsl #2]\n   add x6, x6, #1\n   sub x11, x9, #1\n   and x9, x9, x11\n"
     "cbnz x9, .Lmemory_offsets_set_arm64_bits\n"
     ".Lmemory_offsets_set_arm64_next:\n   add x7, x7, #16\n   b .Lmemory_offsets_set_arm64_wide\n"
+#endif
     ".Lmemory_offsets_set_arm64_one:\n"
     "cmp x7, x2\n   b.hs .Lmemory_offsets_set_arm64_done\n   cmp x6, x4\n   b.hs .Lmemory_offsets_set_arm64_done\n"
     "ldrb w9, [x1, x7]\n   str w7, [x0, x6, lsl #2]\n   ldrb w9, [x3, x9]\n   cmp w9, #0\n"
