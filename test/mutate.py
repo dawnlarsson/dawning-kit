@@ -20,13 +20,13 @@ has been looked at and dismissed goes in the ledger with the reason, and the
 next run separates ones already judged from ones nobody has seen.
 
     python3 test/mutate.py --list            what would be tried
-    python3 test/mutate.py --calibrate       the known bugs, caught
     python3 test/mutate.py                   the whole run
     python3 test/mutate.py --target text     one target only
+    python3 test/mutate.py --operator relation  one operator only
 
 Run it where the suite runs.
 """
-import argparse, concurrent.futures, hashlib, json, os, re, shutil
+import argparse, bisect, concurrent.futures, hashlib, json, os, re, shutil
 import subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -80,16 +80,38 @@ def routine_at(marks, pos):
 def in_data(line):
     return '.ascii' in line or '.asciz' in line or '.string' in line
 
+def commented(text):
+    """Whether an offset is inside a comment, asked once per file.
+
+    Each operator below had its own guess at this and each guess was a
+    startswith on the line, which cannot see a /* */ that opened on an
+    earlier one. src/lib.c begins with pages of them, so every number in
+    the prose -- the licence, the AVX-512, the count of routines -- became
+    a mutation nothing can ever catch. The docstring at the top says what
+    that does to a run: they land in survived and the list drowns.
+    """
+    spans = [(m.start(), m.end())
+             for m in re.finditer(r'/\*.*?\*/|//[^\n]*', text, re.S)]
+    starts = [a for a, _ in spans]
+    ends = [b for _, b in spans]
+
+    def inside(at):
+        which = bisect.bisect_right(starts, at) - 1
+        return which >= 0 and at < ends[which]
+
+    return inside
+
 def numbers(text, path):
     """Every numeric literal worth changing, with where it is."""
     out = []
     marks = routines_of(text, path)
+    inside = commented(text)
     lines = text.split('\n')
     offset = 0
     for line in lines:
         base, offset = offset, offset + len(line) + 1
         s = line.strip()
-        if in_data(line) or s.startswith('//') or s.startswith('#include'):
+        if in_data(line) or s.startswith('#include'):
             continue
         # a number after $ or # is an immediate; a bare one is an offset or a
         # count. A digit inside a register name is neither, and the lookbehind
@@ -108,6 +130,8 @@ def numbers(text, path):
                 continue
             span = (base + m.start(2 if m.group(2) else 3),
                     base + m.end(2 if m.group(2) else 3))
+            if inside(span[0]):
+                continue
             out.append((span, raw, value, routine_at(marks, base)))
     return out
 
@@ -133,11 +157,12 @@ FLIPS = [('jne', 'je'), ('je', 'jne'), ('jae', 'jb'), ('jb', 'jae'),
 def branches(text, path):
     """Flip the sense of a branch: the other half of an off by one."""
     marks = routines_of(text, path)
+    inside = commented(text)
     for was, now in FLIPS:
         for m in re.finditer(r'(?<![\w.])' + re.escape(was) + r'(?=\s)', text):
             line_start = text.rfind('\n', 0, m.start()) + 1
             line = text[line_start:text.find('\n', m.start())]
-            if in_data(line) or line.strip().startswith('//'):
+            if in_data(line) or inside(m.start()):
                 continue
             yield {'operator': 'branch', 'routine': routine_at(marks, m.start()),
                    'was': was, 'now': now, 'at': m.start(), 'end': m.end()}
@@ -150,12 +175,10 @@ def relations(text, path):
     if path.endswith('lib.c'):
         return
     marks = routines_of(text, path)
+    inside = commented(text)
     for was, now in RELATIONS:
         for m in re.finditer(r'(?<![<>=!])' + re.escape(was) + r'(?![<>=])', text):
-            line_start = text.rfind('\n', 0, m.start()) + 1
-            end = text.find('\n', m.start())
-            line = text[line_start:end if end > 0 else len(text)]
-            if line.strip().startswith('//') or line.strip().startswith('*'):
+            if inside(m.start()):
                 continue
             yield {'operator': 'relation', 'routine': routine_at(marks, m.start()),
                    'was': was, 'now': now, 'at': m.start(), 'end': m.end()}
