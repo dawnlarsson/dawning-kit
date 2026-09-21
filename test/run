@@ -9646,6 +9646,17 @@ machine_run_failed=$(printf '%s\n' "$machine_run_body" |
 same 'a machine that could not start is not a machine init has retired' \
         '0:3' "$machine_run_fails:$machine_run_failed"
 
+#       A machine that named its own failure has not settled. Running for a
+#       while is what tells a transient apart -- a death by signal, a /shell
+#       that could not exec -- and the verdict wait alone puts fifteen
+#       seconds in front of the two ways a failure happens late, so letting
+#       that clear the count is a script nobody can source restarting for the
+#       rest of the boot.
+init_settle=$(grep -c 'if (code != HOST_MACHINE_FAILED &&' src/sh/system.c)
+init_retires=$(grep -c 'if (code == 0 || code == 1)' src/sh/system.c)
+same 'a named machine failure never clears the retirement count' '1:1' \
+        "$init_settle:$init_retires"
+
 hook_return=$(grep -c 'return build_run("sh", "-c", value, null);' \
         src/build/build.c)
 hook_gates=$(grep -E -c 'if \(build_shell_key\("(pre|post)"\)\)' \

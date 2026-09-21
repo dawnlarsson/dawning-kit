@@ -291,8 +291,21 @@ static DEAD_END b32 system_init()
                                         continue;
                                 }
 
-                                if (clock_monotonic_nanoseconds() - machine_started >=
-                                    MACHINE_SETTLED_NS)
+                                //      Having run for a while is what tells a
+                                //      transient apart from a machine that was
+                                //      never going to work -- for a death by
+                                //      signal, or a /shell that could not exec.
+                                //      HOST_MACHINE_FAILED is neither: the
+                                //      process got as far as its own code and
+                                //      said it could not start or could not keep
+                                //      going, and the verdict wait alone puts
+                                //      fifteen seconds in front of the two ways
+                                //      that happens late. Letting that clear the
+                                //      count is a script nobody can source
+                                //      restarting for the rest of the boot.
+                                if (code != HOST_MACHINE_FAILED &&
+                                    clock_monotonic_nanoseconds() - machine_started >=
+                                        MACHINE_SETTLED_NS)
                                         machine_failures = 0;
                                 else
                                         machine_failures++;
