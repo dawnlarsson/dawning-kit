@@ -12483,6 +12483,19 @@ static bool fold_option_seen(p8 letter, string_address value)
         return true;
 }
 
+/*
+        Bytes that are one column each and nothing more, by -b and by locale:
+        a run of them is taken up to the width at once. A tab, a backspace and
+        a return move the column otherwise unless every byte is a column, and
+        in UTF-8 a byte past ASCII begins a character that is decoded whole.
+*/
+static const b8 fold_span_bytes[256] = {[0 ... 255] = 1};
+static const b8 fold_span_bytes_ascii[256] = {[0 ... 127] = 1};
+static const b8 fold_span_columns[256] = {[0 ... 7] = 1, [10 ... 12] = 1,
+                                          [14 ... 255] = 1};
+static const b8 fold_span_columns_ascii[256] = {[0 ... 7] = 1, [10 ... 12] = 1,
+                                                [14 ... 127] = 1};
+
 static b32 text_fold()
 {
         file_taking taking = {
@@ -12520,6 +12533,8 @@ static b32 text_fold()
                 return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'w'), "invalid number of columns"));
 
         b32 inputs = text_input_count();
+        const b8 address_to plain = bytes ? (utf8 ? fold_span_bytes_ascii : fold_span_bytes)
+                                          : (utf8 ? fold_span_columns_ascii : fold_span_columns);
 
         for (b32 i = 0; i < inputs; i++)
         {
@@ -12542,6 +12557,42 @@ static b32 text_fold()
                                 // mean what it looks like on a terminal.
                                 while (at < text_line_length)
                                 {
+                                        /*
+                                                A run of bytes a column each,
+                                                as far as the width allows, is
+                                                taken at once; -s then needs
+                                                only its last blank. Asked a
+                                                byte at a time, fold spent
+                                                eight cycles a byte.
+                                        */
+                                        positive room = column < width ? width - column : 0;
+                                        positive bound = min(room, text_line_length - at);
+                                        positive run = bound ? string_span_max(text_line + at,
+                                                                               bound, plain)
+                                                             : 0;
+
+                                        if (run)
+                                        {
+                                                if (spaces)
+                                                {
+                                                        p8 address_to space = memory_last_of(
+                                                            text_line + at, ' ', run);
+                                                        p8 address_to tab = bytes
+                                                                                ? memory_last_of(text_line + at, '\t', run)
+                                                                                : null;
+
+                                                        if (tab > space)
+                                                                space = tab;
+
+                                                        if (space)
+                                                                gap = (positive)(space - text_line) + 1;
+                                                }
+
+                                                column += run;
+                                                at += run;
+                                                continue;
+                                        }
+
                                         p8 character = text_line[at];
                                         positive size = 1;
                                         positive after = column + 1;
