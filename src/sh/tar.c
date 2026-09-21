@@ -1743,9 +1743,16 @@ static bipolar tar_fill(bipolar handle)
 {
         bipolar got;
 
+        //      memory_copy and not memory_copy_apart: this slides the rest
+        //      of the record down over itself, and the two halves overlap
+        //      whenever less than half of it has been consumed -- which is
+        //      the ordinary case, 512 bytes taken out of 65,536. Under
+        //      sixteen bytes the inline copy loads before it stores and
+        //      either name would do; a run this long is the assembly memcpy,
+        //      which is promised two regions that do not touch.
         if (tar_at && tar_at < tar_have)
-                memory_copy_apart(tar_record, tar_record + tar_at,
-                                  tar_have - tar_at);
+                memory_copy(tar_record, tar_record + tar_at,
+                            tar_have - tar_at);
 
         tar_have -= tar_at;
         tar_at = 0;
