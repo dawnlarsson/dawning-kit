@@ -12054,15 +12054,16 @@ fn check_offsets_of_either()
         p8 address_to bytes = pages + 4096;
         p64 seed = 0x243f6a8885a308d3ull;
 #if X64
-        p8 avx512 = cpu_has_avx512;
-        positive tiers = 2;
+        p8 avx512 = cpu_has_avx512, vbmi2 = cpu_has_avx512_vbmi2;
+        positive tiers = 3;
 #else
         positive tiers = 1;
 #endif
         for (positive tier = 0; tier < tiers; tier++)
         {
 #if X64
-                cpu_has_avx512 = tier == 0 ? avx512 : 0;
+                cpu_has_avx512 = tier < 2 ? avx512 : 0;
+                cpu_has_avx512_vbmi2 = tier == 1 ? 1 : vbmi2;
 #endif
                 same("memory_offsets_of_either", "no room",
                      (memory_offsets_of_either)(got, bytes, 16, 'a', 'b', 0), 0);
@@ -12127,6 +12128,7 @@ fn check_offsets_of_either()
         }
 #if X64
         cpu_has_avx512 = avx512;
+        cpu_has_avx512_vbmi2 = vbmi2;
 #endif
         memory_free(pages, 3 * 4096);
 }
@@ -12145,8 +12147,8 @@ fn check_offsets_range()
         static p8 bytes[4096 + 64];
         p64 seed = 0x13198a2e03707344ull;
 #if X64
-        p8 avx512 = cpu_has_avx512;
-        positive tiers = 2;
+        p8 avx512 = cpu_has_avx512, vbmi2 = cpu_has_avx512_vbmi2;
+        positive tiers = 3;
 #else
         positive tiers = 1;
 #endif
@@ -12160,7 +12162,8 @@ fn check_offsets_range()
         for (positive tier = 0; tier < tiers; tier++)
         {
 #if X64
-                cpu_has_avx512 = tier == 0 ? avx512 : 0;
+                cpu_has_avx512 = tier < 2 ? avx512 : 0;
+                cpu_has_avx512_vbmi2 = tier == 1 ? 1 : vbmi2;
 #endif
                 for (positive r = 0; r < array_count(ranges); r++)
                         for (positive outside = 0; outside < 2; outside++)
@@ -12207,6 +12210,7 @@ fn check_offsets_range()
         }
 #if X64
         cpu_has_avx512 = avx512;
+        cpu_has_avx512_vbmi2 = vbmi2;
 #endif
 }
 
