@@ -3180,6 +3180,8 @@ python3 test/differential.py --harness native_extract "$lib" memory_squeeze_byte
         > "$work/squeeze.h" || exit 1
 python3 test/differential.py --harness native_extract "$lib" memory_offsets_of_either memory_offsets_between memory_offsets_outside memory_offsets_in_set \
         > "$work/offsets.h" || exit 1
+python3 test/differential.py --harness native_extract "$lib" string_hash_33_length \
+        > "$work/hash.h" || exit 1
 
 #       And one for the wide hunts, holding those eight and nothing else, so
 #       it never pulls in string_find and the routines that follow from it.
@@ -3241,7 +3243,7 @@ python3 test/differential.py --harness native_extract "$lib" memory_growth memor
         > "$work/reserve.h" || exit 1
 
 status=0
-for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets series wide bases base_field human human_nearest fields input_bases network reserve; do
+for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets hash series wide bases base_field human human_nearest fields input_bases network reserve; do
         cc -O2 -w -I"$work" "-DCHECK_native_$case" test/checks.c -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done

@@ -10833,21 +10833,42 @@ __asm__(
        them together keeps the bytes in one hardware-floor pass: hash in rax,
        length in rdx, which is the two-word aggregate return ABI. */
     ASM_FUNC(string_hash_33_length)
-    "mov $5381, %eax\n   xor %edx, %edx\n"
-    ".Lstring_hash_length_x64_align:\n   test $7, %dil\n"
-    "jz .Lstring_hash_length_x64_word_init\n"
-    ".Lstring_hash_length_x64_one:\n"
-    "movzbl (%rdi), %ecx\n   test %cl, %cl\n"
-    "jz .Lstring_hash_length_x64_done\n   imul $33, %rax, %rax\n"
-    "add %rcx, %rax\n   inc %rdx\n   inc %rdi\n"
-    "jmp .Lstring_hash_length_x64_align\n"
-    ".Lstring_hash_length_x64_word_init:\n"
-    "movabs $0x0101010101010101, %rsi\n"
-    "movabs $0x8080808080808080, %r8\n"
+    //
+    //       Most names are shorter than a word, and many were written a byte
+    //       at a time just before this is asked -- the shell copies a name
+    //       out of a word before it looks it up -- so the first eight bytes
+    //       are read a byte at a time, eight straight steps with no count to
+    //       keep: a word load over bytes still being
+    //       stored cannot be forwarded and waits for all of them. Each byte
+    //       takes the product of the old hash apart, h + c beside h << 5, so
+    //       the chain a byte adds is a shift and an add and not a three cycle
+    //       multiply. Past eight bytes a word at a time wherever eight can be
+    //       read without leaving the page, and the word that holds the
+    //       terminator is finished from its register.
+    //
+    "mov $5381, %eax\n"
+    "movzbl 0(%rdi), %ecx\n   mov $0, %edx\n   test %ecx, %ecx\n   jz .Lstring_hash_length_x64_done\n"
+    "lea (%rax,%rcx), %r10\n   shl $5, %rax\n   add %r10, %rax\n"
+    "movzbl 1(%rdi), %ecx\n   mov $1, %edx\n   test %ecx, %ecx\n   jz .Lstring_hash_length_x64_done\n"
+    "lea (%rax,%rcx), %r10\n   shl $5, %rax\n   add %r10, %rax\n"
+    "movzbl 2(%rdi), %ecx\n   mov $2, %edx\n   test %ecx, %ecx\n   jz .Lstring_hash_length_x64_done\n"
+    "lea (%rax,%rcx), %r10\n   shl $5, %rax\n   add %r10, %rax\n"
+    "movzbl 3(%rdi), %ecx\n   mov $3, %edx\n   test %ecx, %ecx\n   jz .Lstring_hash_length_x64_done\n"
+    "lea (%rax,%rcx), %r10\n   shl $5, %rax\n   add %r10, %rax\n"
+    "movzbl 4(%rdi), %ecx\n   mov $4, %edx\n   test %ecx, %ecx\n   jz .Lstring_hash_length_x64_done\n"
+    "lea (%rax,%rcx), %r10\n   shl $5, %rax\n   add %r10, %rax\n"
+    "movzbl 5(%rdi), %ecx\n   mov $5, %edx\n   test %ecx, %ecx\n   jz .Lstring_hash_length_x64_done\n"
+    "lea (%rax,%rcx), %r10\n   shl $5, %rax\n   add %r10, %rax\n"
+    "movzbl 6(%rdi), %ecx\n   mov $6, %edx\n   test %ecx, %ecx\n   jz .Lstring_hash_length_x64_done\n"
+    "lea (%rax,%rcx), %r10\n   shl $5, %rax\n   add %r10, %rax\n"
+    "movzbl 7(%rdi), %ecx\n   mov $7, %edx\n   test %ecx, %ecx\n   jz .Lstring_hash_length_x64_done\n"
+    "lea (%rax,%rcx), %r10\n   shl $5, %rax\n   add %r10, %rax\n"
+    "mov $8, %edx\n   add $8, %rdi\n"
+    "movabs $0x0101010101010101, %rsi\n   movabs $0x8080808080808080, %r8\n"
     ".balign 16\n.Lstring_hash_length_x64_word:\n"
-    "mov (%rdi), %r9\n   mov %r9, %r10\n   sub %rsi, %r10\n"
-    "not %r9\n   and %r9, %r10\n   test %r8, %r10\n"
-    "jnz .Lstring_hash_length_x64_one\n"
+    "mov %edi, %ecx\n   and $4095, %ecx\n   cmp $4088, %ecx\n   ja .Lstring_hash_length_x64_one\n"
+    "mov (%rdi), %r9\n   mov %r9, %r10\n   sub %rsi, %r10\n   mov %r9, %r11\n   not %r11\n"
+    "and %r11, %r10\n   and %r8, %r10\n   jnz .Lstring_hash_length_x64_tail\n"
     "imul $1185921, %rax, %rax\n"
     "movzbl 0(%rdi), %r10d\n   movzbl 1(%rdi), %r11d\n"
     "movzbl 2(%rdi), %ecx\n   movzbl 3(%rdi), %r9d\n"
@@ -10862,8 +10883,22 @@ __asm__(
     "add %rcx, %rax\n   add %r9, %rax\n   add $8, %rdx\n"
     "add $8, %rdi\n"
     "jmp .Lstring_hash_length_x64_word\n"
+    // The lowest flagged byte is the terminator; the ones before it are
+    // the name's last bytes, lowest first.
+    ".Lstring_hash_length_x64_tail:\n"
+    "bsf %r10, %rcx\n   shr $3, %ecx\n   add %rcx, %rdx\n   test %ecx, %ecx\n"
+    "jz .Lstring_hash_length_x64_done\n"
+    ".Lstring_hash_length_x64_tail_byte:\n"
+    "movzbl %r9b, %r11d\n   lea (%rax,%r11), %r10\n   shl $5, %rax\n   add %r10, %rax\n"
+    "shr $8, %r9\n   dec %ecx\n   jnz .Lstring_hash_length_x64_tail_byte\n"
     ".Lstring_hash_length_x64_done:\n"
     ASM_RET
+    // In the last seven bytes of a page a byte at a time, until the next
+    // page's first byte or the terminator.
+    ".Lstring_hash_length_x64_one:\n"
+    "movzbl (%rdi), %ecx\n   test %ecx, %ecx\n   jz .Lstring_hash_length_x64_done\n"
+    "lea (%rax,%rcx), %r10\n   shl $5, %rax\n   add %r10, %rax\n   inc %rdi\n   inc %rdx\n"
+    "jmp .Lstring_hash_length_x64_word\n"
     ASM_END(string_hash_33_length)
 
     // Bounded UTF-8 character traversal shared by lengths, slices and
@@ -24098,34 +24133,63 @@ __asm__(
 
     // See the x86_64 body for the shared one-pass contract.
     ASM_FUNC(string_hash_33_length)
-    "mov x2, #5381\n   mov x1, #0\n"
-    ".Lstring_hash_length_arm64_align:\n   tst x0, #7\n"
-    "b.eq .Lstring_hash_length_arm64_word_init\n"
-    ".Lstring_hash_length_arm64_one:\n"
-    "ldrb w3, [x0]\n   cbz w3, .Lstring_hash_length_arm64_done\n"
-    "add x2, x2, x2, lsl #5\n   add x2, x2, x3\n"
-    "add x1, x1, #1\n   add x0, x0, #1\n"
-    "b .Lstring_hash_length_arm64_align\n"
-    ".Lstring_hash_length_arm64_word_init:\n"
+    //
+    //       As the x86_64 body: the first eight bytes a byte at a time, as
+    //       eight straight steps with no count to keep, then
+    //       words where eight can be read inside the page, the word's four
+    //       byte products summed beside the hash so its chain is one multiply
+    //       and one add, and the word holding the terminator finished from
+    //       its register.
+    //
+    "mov x2, #5381\n   mov x9, x0\n"
+    "ldrb w3, [x0], #1\n   cbz w3, .Lstring_hash_length_arm64_short\n"
+    "add x10, x2, x2, lsl #5\n   add x2, x10, x3\n"
+    "ldrb w3, [x0], #1\n   cbz w3, .Lstring_hash_length_arm64_short\n"
+    "add x10, x2, x2, lsl #5\n   add x2, x10, x3\n"
+    "ldrb w3, [x0], #1\n   cbz w3, .Lstring_hash_length_arm64_short\n"
+    "add x10, x2, x2, lsl #5\n   add x2, x10, x3\n"
+    "ldrb w3, [x0], #1\n   cbz w3, .Lstring_hash_length_arm64_short\n"
+    "add x10, x2, x2, lsl #5\n   add x2, x10, x3\n"
+    "ldrb w3, [x0], #1\n   cbz w3, .Lstring_hash_length_arm64_short\n"
+    "add x10, x2, x2, lsl #5\n   add x2, x10, x3\n"
+    "ldrb w3, [x0], #1\n   cbz w3, .Lstring_hash_length_arm64_short\n"
+    "add x10, x2, x2, lsl #5\n   add x2, x10, x3\n"
+    "ldrb w3, [x0], #1\n   cbz w3, .Lstring_hash_length_arm64_short\n"
+    "add x10, x2, x2, lsl #5\n   add x2, x10, x3\n"
+    "ldrb w3, [x0], #1\n   cbz w3, .Lstring_hash_length_arm64_short\n"
+    "add x10, x2, x2, lsl #5\n   add x2, x10, x3\n"
+    "mov x1, #8\n"
     "mov x4, #0x0101010101010101\n   mov x5, #0x8080808080808080\n"
     "movz x6, #0x1881\n   movk x6, #0x12, lsl #16\n"
-    "mov x7, #35937\n   mov x8, #1089\n   mov x9, #33\n"
+    "mov x7, #35937\n   mov x8, #1089\n"
     ".balign 16\n.Lstring_hash_length_arm64_word:\n"
+    "and x10, x0, #4095\n   cmp x10, #4088\n   b.hi .Lstring_hash_length_arm64_one\n"
     "ldr x3, [x0]\n   sub x10, x3, x4\n   bic x10, x10, x3\n"
-    "tst x10, x5\n   b.ne .Lstring_hash_length_arm64_one\n"
-    "ldrb w10, [x0]\n   ldrb w11, [x0, #1]\n"
-    "ldrb w13, [x0, #2]\n   ldrb w14, [x0, #3]\n"
-    "mul x2, x2, x6\n   madd x2, x10, x7, x2\n"
-    "madd x2, x11, x8, x2\n   madd x2, x13, x9, x2\n"
-    "add x2, x2, x14\n"
-    "ldrb w10, [x0, #4]\n   ldrb w11, [x0, #5]\n"
-    "ldrb w13, [x0, #6]\n   ldrb w14, [x0, #7]\n"
-    "mul x2, x2, x6\n   madd x2, x10, x7, x2\n"
-    "madd x2, x11, x8, x2\n   madd x2, x13, x9, x2\n"
-    "add x2, x2, x14\n   add x1, x1, #8\n   add x0, x0, #8\n"
+    "ands x10, x10, x5\n   b.ne .Lstring_hash_length_arm64_tail\n"
+    "ldrb w11, [x0]\n   ldrb w12, [x0, #1]\n   ldrb w13, [x0, #2]\n   ldrb w14, [x0, #3]\n"
+    "mul x11, x11, x7\n   madd x11, x12, x8, x11\n   add x13, x13, x13, lsl #5\n"
+    "add x11, x11, x13\n   add x11, x11, x14\n   madd x2, x2, x6, x11\n"
+    "ldrb w11, [x0, #4]\n   ldrb w12, [x0, #5]\n   ldrb w13, [x0, #6]\n   ldrb w14, [x0, #7]\n"
+    "mul x11, x11, x7\n   madd x11, x12, x8, x11\n   add x13, x13, x13, lsl #5\n"
+    "add x11, x11, x13\n   add x11, x11, x14\n   madd x2, x2, x6, x11\n"
+    "add x1, x1, #8\n   add x0, x0, #8\n"
     "b .Lstring_hash_length_arm64_word\n"
+    ".Lstring_hash_length_arm64_tail:\n"
+    "rbit x10, x10\n   clz x10, x10\n   lsr x10, x10, #3\n   add x1, x1, x10\n"
+    "cbz x10, .Lstring_hash_length_arm64_done\n"
+    ".Lstring_hash_length_arm64_tail_byte:\n"
+    "and x11, x3, #255\n   add x12, x2, x11\n   add x2, x12, x2, lsl #5\n"
+    "lsr x3, x3, #8\n   subs x10, x10, #1\n   b.ne .Lstring_hash_length_arm64_tail_byte\n"
     ".Lstring_hash_length_arm64_done:\n   mov x0, x2\n"
     ASM_RET
+    // Ended inside the first eight: the length is where the pointer got to,
+    // less the terminator it stepped over.
+    ".Lstring_hash_length_arm64_short:\n   sub x1, x0, x9\n   sub x1, x1, #1\n   mov x0, x2\n"
+    ASM_RET
+    ".Lstring_hash_length_arm64_one:\n"
+    "ldrb w3, [x0]\n   cbz w3, .Lstring_hash_length_arm64_done\n"
+    "add x10, x2, x3\n   add x2, x10, x2, lsl #5\n   add x1, x1, #1\n   add x0, x0, #1\n"
+    "b .Lstring_hash_length_arm64_word\n"
     ASM_END(string_hash_33_length)
 
     // memory_utf8_span: the x86_64 body carries the shared contract.

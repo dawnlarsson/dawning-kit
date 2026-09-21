@@ -24141,6 +24141,33 @@ b32 main(void)
                 }
         }
 
+        // Every start within a word, bytes from the whole range, and bytes
+        // after the terminator that are not zero, so a word holding the end
+        // of a name holds something after it too.
+        p8 address_to middle = room + 1024;
+
+        for (positive offset = 0; offset < 16; offset++)
+                for (positive length = 0; length <= 40; length++)
+                {
+                        p8 address_to text = middle + offset;
+                        positive2 got;
+
+                        for (positive at = 0; at < length + 16; at++)
+                                text[at] = (p8)((at * 97 + offset * 13 + length) % 255 + 1);
+                        text[length] = 0;
+
+                        got = string_hash_33_length((string_address)text);
+                        checks += 2;
+
+                        if (got.x != model_hash(text, length) || got.y != length)
+                        {
+                                failures++;
+                                if (failures < 20)
+                                        string_format(log, "FAIL offset %p length %p\n",
+                                                      offset, length);
+                        }
+                }
+
         return test_report((string_address) "hash+length page edge: ");
 }
 #endif /* CHECK_hash_length */
@@ -62831,6 +62858,107 @@ int main(void)
         return bad ? 1 : 0;
 }
 #endif /* CHECK_native_offsets */
+
+#ifdef CHECK_native_hash
+/* ARM64 string_hash_33_length lifted verbatim from lib.c and run on the
+   host: every length to 300 at every start in a word, bytes after the
+   terminator that are not zero, the last bytes of a page; then the call at
+   the lengths names are against a C loop, per call, dependent. */
+#include "hash.h"
+
+#define NATIVE_SEED 0x9e3779b97f4a7c15ull
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
+
+typedef struct { u64 x, y; } pair;
+pair string_hash_33_length(const char *);
+void *mmap(void *, u64, int, int, int, long);
+int mprotect(void *, u64, int);
+
+static u64 checks, bad;
+
+static u64 model(const u8 *text, u64 length)
+{
+        u64 hash = 5381;
+
+        for (u64 i = 0; i < length; i++)
+                hash = hash * 33 + text[i];
+        return hash;
+}
+
+__attribute__((noinline)) static pair former(const char *text)
+{
+        pair answer = {5381, 0};
+
+        while (text[answer.y])
+                answer.x = answer.x * 33 + (u8)text[answer.y++];
+        return answer;
+}
+
+int main(void)
+{
+        static u8 room[1024];
+        u8 *pages = mmap(0, 32768, 3, 0x1002, -1, 0);
+
+        for (u64 offset = 0; offset < 16; offset++)
+                for (u64 length = 0; length <= 300; length++) {
+                        u8 *text = room + 64 + offset;
+
+                        for (u64 i = 0; i < length + 16; i++)
+                                text[i] = (u8)(next() % 255 + 1);
+                        text[length] = 0;
+                        pair got = string_hash_33_length((const char *)text);
+                        checks++;
+                        if (got.x != model(text, length) || got.y != length) {
+                                if (bad++ < 8)
+                                        printf("  FAIL offset %lu length %lu\n", offset, length);
+                        }
+                }
+        if (pages != (u8 *)-1) {
+                u8 *edge = pages + 16384;
+                mprotect(edge, 16384, 0);
+                for (u64 length = 0; length <= 100; length++) {
+                        u8 *text = edge - length - 1;
+                        for (u64 i = 0; i < length; i++)
+                                text[i] = (u8)(i % 250 + 1);
+                        text[length] = 0;
+                        pair got = string_hash_33_length((const char *)text);
+                        checks++;
+                        if (got.x != model(text, length) || got.y != length)
+                                bad++;
+                }
+        }
+
+        static const u64 lengths[] = {1, 3, 5, 7, 9, 12, 16, 24, 32, 64};
+        for (u64 l = 0; l < sizeof(lengths) / sizeof(lengths[0]); l++) {
+                u64 length = lengths[l], best_former = ~0ul, best_body = ~0ul;
+                char *text = (char *)room + 128 + (l % 5);
+                volatile u64 zero = 0;
+                u64 k = 0;
+
+                for (u64 i = 0; i < length; i++)
+                        text[i] = (char)('a' + i % 26);
+                text[length] = 0;
+                for (int t = 0; t < 7; t++) {
+                        u64 start = ticks();
+                        for (int r = 0; r < 100000; r++)
+                                k = former(text + (k & zero)).x;
+                        u64 took = ticks() - start;
+                        best_former = took < best_former ? took : best_former;
+                        start = ticks();
+                        for (int r = 0; r < 100000; r++)
+                                k = string_hash_33_length(text + (k & zero)).x;
+                        took = ticks() - start;
+                        best_body = took < best_body ? took : best_body;
+                }
+                printf("  length %2lu: former C %lu ticks, assembly %lu, asm/C %lu%%\n", length,
+                       best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+        }
+        printf("arm64 string_hash_33_length: %lu checks | %lu failures\n", checks, bad);
+        return bad ? 1 : 0;
+}
+#endif /* CHECK_native_hash */
 
 #ifdef CHECK_native_series
 /* Exact production ARM64 decimal-record loop, checked against libc output. */
