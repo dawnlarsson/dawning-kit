@@ -16540,15 +16540,15 @@ def canvas_part(canvas, name):
     """One named section of src/canvas/canvas.c, the way it used to be a file.
 
     The eleven files canvas.c expanded are folded into it, each behind a
-    banner whose first line is "<name>: <what it is>". The anchors the
+    one-line banner, "/* ---- <name>: <what it is> ---- */". The anchors the
     harnesses cut with were written when each was a file of its own, and are
     only unique inside one, so a cut has to be shown one section rather than
     the whole unit -- otherwise an anchor that also appears in canvas.c's own
     body silently cuts from there instead.
     """
-    mark = '\n        %s: ' % name
-    start = canvas.index('*/\n', canvas.index(mark)) + 3
-    following = canvas.find('/*      ------', start)
+    mark = '/* ---- %s: ' % name
+    start = canvas.index('\n', canvas.index(mark)) + 1
+    following = canvas.find('/* ---- ', start)
     return canvas[start:following if following >= 0 else len(canvas)]
 
 

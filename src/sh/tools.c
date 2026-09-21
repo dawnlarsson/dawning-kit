@@ -14009,9 +14009,7 @@ static b32 tools_dmesg_main()
 #endif
 }
 
-/*      ----------------------------------------------------------------
-        util-linux: the tools that ship beside coreutils, not inside it.
-        ---------------------------------------------------------------- */
+/* ---- util-linux: the tools that ship beside coreutils, not inside it. ---- */
 
 /*
         Small util-linux process and I/O policy programs.

@@ -14,9 +14,7 @@
         section, and mount reaches past their presentation entirely.
 */
 
-/*      ----------------------------------------------------------------
-        Block identity probing, shared by blkid, findfs and mount.
-        ---------------------------------------------------------------- */
+/* ---- Block identity probing, shared by blkid, findfs and mount. ---- */
 
 /*
         Block identity probing shared by blkid, findfs and mount.
@@ -2002,9 +2000,7 @@ b32 storage_findfs_run(positive argc, string_address address_to argv,
         return string_report(output, 0, "%s\n", path);
 }
 
-/*      ----------------------------------------------------------------
-        The read-only half: mountinfo and fstab, parsed once for everyone.
-        ---------------------------------------------------------------- */
+/* ---- The read-only half: mountinfo and fstab, parsed once for everyone. ---- */
 
 /*
         The read-only half of the common Linux storage interface.
@@ -3526,9 +3522,7 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
         return mounted ? 0 : 32;
 }
 
-/*      ----------------------------------------------------------------
-        The mount and umount interface over that one parsed view.
-        ---------------------------------------------------------------- */
+/* ---- The mount and umount interface over that one parsed view. ---- */
 
 /*
         The common Linux mount interface.
@@ -5024,9 +5018,7 @@ failed_early:
         return 1;
 }
 
-/*      ----------------------------------------------------------------
-        The other direction: the tables and filesystems an install writes.
-        ---------------------------------------------------------------- */
+/* ---- The other direction: the tables and filesystems an install writes. ---- */
 
 /*
         New partition tables and filesystems, for a disk Moonwater installs to.

@@ -3267,9 +3267,7 @@ static b32 host_canvas(string_address address_to arguments, positive count)
         return host_usage();
 }
 
-/*      ----------------------------------------------------------------
-        radio: wifi and bluetooth, and the nl80211 they ask the kernel through.
-        ---------------------------------------------------------------- */
+/* ---- radio: wifi and bluetooth, and the nl80211 they ask the kernel through. ---- */
 
 /*
         Wireless and bluetooth, as moonwater verbs.
@@ -3279,9 +3277,7 @@ static b32 host_canvas(string_address address_to arguments, positive count)
         and says which link to prefer when both have carrier.
 */
 
-/*      ----------------------------------------------------------------
-        nl80211: how the wifi above talks to the kernel.
-        ---------------------------------------------------------------- */
+/* ---- nl80211: how the wifi above talks to the kernel. ---- */
 
 /*
         Experimental C standard library
@@ -5379,9 +5375,7 @@ static b32 host_radio(string_address address_to arguments, positive count)
         return host_usage();
 }
 
-/*      ----------------------------------------------------------------
-        locale: the timezone and the clock, and the SNTP that sets it.
-        ---------------------------------------------------------------- */
+/* ---- locale: the timezone and the clock, and the SNTP that sets it. ---- */
 
 /*
         Timezone, NTP and keyboard layout, as moonwater verbs.
@@ -5425,9 +5419,7 @@ static b32 host_radio(string_address address_to arguments, positive count)
         demonstrate which mode a bit meant.
 */
 
-/*      ----------------------------------------------------------------
-        SNTP: how the clock above is asked what the time is.
-        ---------------------------------------------------------------- */
+/* ---- SNTP: how the clock above is asked what the time is. ---- */
 
 /*
         Experimental C standard library

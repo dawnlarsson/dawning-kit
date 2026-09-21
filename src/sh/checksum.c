@@ -1359,9 +1359,7 @@ static b32 checksum_main()
         return text_done(checksum_generate(algorithm, taking.first, tagged, false));
 }
 
-/*      ----------------------------------------------------------------
-        POSIX cksum, which is a CRC and a policy rather than a digest.
-        ---------------------------------------------------------------- */
+/* ---- POSIX cksum, which is a CRC and a policy rather than a digest. ---- */
 
 /*
         POSIX cksum.

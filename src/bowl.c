@@ -1838,9 +1838,7 @@ static b32 bowl_launch(string_address root, string_address program,
 }
 
 
-/*      ----------------------------------------------------------------
-        Landing a bootstrap at /bowls/NAME: extract, flatten, configure.
-        ---------------------------------------------------------------- */
+/* ---- Landing a bootstrap at /bowls/NAME: extract, flatten, configure. ---- */
 
 /*
         Land a bootstrap at /bowls/NAME.
@@ -2672,9 +2670,7 @@ static b32 bowl_land(string_address archive, string_address root,
         return bowl_configure(root);
 }
 
-/*      ----------------------------------------------------------------
-        The built-in first boots, one pipeline per named distribution.
-        ---------------------------------------------------------------- */
+/* ---- The built-in first boots, one pipeline per named distribution. ---- */
 
 /*
         Built-in first boots.

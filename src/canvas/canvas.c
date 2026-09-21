@@ -717,9 +717,7 @@ static PURE u32 canvas_plane_pick_format(struct drm_plane *plane, u32 first, u32
         return DRM_FORMAT_INVALID;
 }
 
-/*      ----------------------------------------------------------------
-        paint: pixels, the ink table, the bitmaps and the blits
-        ---------------------------------------------------------------- */
+/* ---- paint: pixels, the ink table, the bitmaps and the blits ---- */
 
 /*
         Canvas -- paint
@@ -975,9 +973,7 @@ static CONST int round_inset(int row, int height, int radius)
         return radius - (int)int_sqrt((unsigned long)(radius * radius - dy * dy));
 }
 
-/*      ----------------------------------------------------------------
-        text: the font, and where one line of it ends
-        ---------------------------------------------------------------- */
+/* ---- text: the font, and where one line of it ends ---- */
 
 /*
         Canvas -- text
@@ -1173,9 +1169,7 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
         canvas_text_ns += ktime_get_ns() - started;
 }
 
-/*      ----------------------------------------------------------------
-        pane: a pane, the size a window of cells is given, and the grid
-        ---------------------------------------------------------------- */
+/* ---- pane: a pane, the size a window of cells is given, and the grid ---- */
 
 /*
         Canvas -- windows
@@ -2990,9 +2984,7 @@ static void desktop_frame_pass(void)
 }
 
 #include "../sh/term.c"
-/*      ----------------------------------------------------------------
-        console: the kernel log window
-        ---------------------------------------------------------------- */
+/* ---- console: the kernel log window ---- */
 
 /*
         The screen the machine always has.
@@ -3225,9 +3217,7 @@ static void console_stop(void)
         rt_mutex_unlock(&desktop.lock);
 }
 
-/*      ----------------------------------------------------------------
-        compose: composing a window of cells into the shapes that are drawn
-        ---------------------------------------------------------------- */
+/* ---- compose: composing a window of cells into the shapes that are drawn ---- */
 
 /*
         Canvas -- compose
@@ -4794,9 +4784,7 @@ static void compose_output(struct output *output)
         output_flush_queue(output, NULL);
 }
 
-/*      ----------------------------------------------------------------
-        plane: the cursor plane
-        ---------------------------------------------------------------- */
+/* ---- plane: the cursor plane ---- */
 
 /*
         Canvas -- the cursor
@@ -5236,9 +5224,7 @@ static void cursor_move(int new_x, int new_y)
         cursor_move_core(new_x, new_y, false);
 }
 
-/*      ----------------------------------------------------------------
-        drag: moving and sizing a window, and filling the screen with it
-        ---------------------------------------------------------------- */
+/* ---- drag: moving and sizing a window, and filling the screen with it ---- */
 
 /*
         Canvas -- moving and resizing
@@ -5955,9 +5941,7 @@ static void wheel_deliver(void)
         }
 }
 
-/*      ----------------------------------------------------------------
-        output: outputs, what the hardware offers and what is taken from it
-        ---------------------------------------------------------------- */
+/* ---- output: outputs, what the hardware offers and what is taken from it ---- */
 
 /*
         Canvas -- outputs
@@ -7210,9 +7194,7 @@ static COLD void canvas_release(struct canvas *canvas)
                 desktop_redraw();
 }
 
-/*      ----------------------------------------------------------------
-        keys: the keyboard
-        ---------------------------------------------------------------- */
+/* ---- keys: the keyboard ---- */
 
 /*
         Canvas -- keys
@@ -7816,9 +7798,7 @@ static void keys_deliver(void)
         wake_up_interruptible(&pane->wait);
 }
 
-/*      ----------------------------------------------------------------
-        client: a client, and what it is allowed to ask for
-        ---------------------------------------------------------------- */
+/* ---- client: a client, and what it is allowed to ask for ---- */
 
 /*
         Canvas -- attaching to DRM
@@ -8621,9 +8601,7 @@ static void canvas_state(struct canvas_control *answer)
         rt_mutex_unlock(&desktop.lock);
 }
 
-/*      ----------------------------------------------------------------
-        pointer: the pointer
-        ---------------------------------------------------------------- */
+/* ---- pointer: the pointer ---- */
 
 /*
         Canvas -- input
