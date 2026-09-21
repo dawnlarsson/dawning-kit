@@ -87,6 +87,9 @@
 #define HOST_POLL_NS ((p64)100000000)
 #define HOST_VERDICT_WAIT_NS ((p64)15000000000)
 #define HOST_LOOKING_NS ((p64)700000000)
+/*      How often a terminal looks for boot's verdict. It is one failed open,
+        and the first prompt waits on it. */
+#define HOST_VERDICT_POLL_NS ((p64)5000000)
 #define HOST_MEDIUM_FLOOR_NS ((p64)5000000000)
 
 #define HOST_CLOCK_REALTIME 0
@@ -1113,13 +1116,22 @@ static b32 host_boot(void)
         for (;;)
         {
                 p64 uptime = system_clock_ns(HOST_CLOCK_BOOTTIME);
+                p64 wait = HOST_POLL_NS;
 
                 host_census_take(address_of census);
                 if (census.count || uptime >= HOST_SETTLE_MOST_NS ||
                     (uptime >= HOST_SETTLE_FLOOR_NS && !host_storage_arriving()))
                         break;
 
-                host_pause(HOST_POLL_NS);
+                /*      To the floor itself, not the next tenth of a second
+                        past it: the first terminal's prompt is waiting on
+                        this, and a live boot with nothing arriving answers
+                        the moment the floor is reached. */
+                if (uptime < HOST_SETTLE_FLOOR_NS &&
+                    HOST_SETTLE_FLOOR_NS - uptime < wait)
+                        wait = HOST_SETTLE_FLOOR_NS - uptime;
+
+                host_pause(wait);
         }
 
         if (!census.count)
@@ -1274,7 +1286,7 @@ fn host_terminal_opening(void)
                         said = true;
                 }
 
-                host_pause(HOST_POLL_NS / 2);
+                host_pause(HOST_VERDICT_POLL_NS);
         }
 
         if (host_starts(verdict, "ask ") &&
