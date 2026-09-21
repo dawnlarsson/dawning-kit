@@ -6,10 +6,12 @@
 # maps, and the script says so where it matches them. Code needs no such
 # thing. The x86_64 profile asks for -falign-functions=1, and a section per
 # function takes that back: every .text.* carries the target's sixteen byte
-# function alignment and the linker pads between them. Measured on the x64
-# spark image, one section per function cost 20,480 bytes of text for no
-# other effect, since -fwhole-program already removes what --gc-sections
-# would have. The hot and cold grouping the script relies on survives: the
+# function alignment and the linker pads between them. Measured on the shell,
+# one section per function cost 20,480 bytes of text on x86_64 and 21,056 on
+# arm64 for no other effect, since -fwhole-program already removes what
+# --gc-sections would have. riscv64 is the exception -- it saves 18,048 bytes
+# there, because that target relaxes calls at link time -- and profile/arch/
+# riscv asks for the flag back on its own account. The hot and cold grouping the script relies on survives: the
 # compiler emits .text.hot and .text.unlikely for the HOT and COLD routines
 # whether or not every other function gets a section of its own.
 #

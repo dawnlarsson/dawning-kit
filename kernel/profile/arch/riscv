@@ -8,6 +8,17 @@
 #> virt qemu-system-riscv64
 
 #
+#       A section per function, which profile/any deliberately does not ask
+#       for. On x86_64 and arm64 a section per function only makes the linker
+#       pad each one back up to the target's function alignment: 20,480 and
+#       21,056 bytes of text for nothing. Here it goes the other way by
+#       18,048 bytes, because riscv64 relaxes calls at link time and the
+#       relaxation is what pays for the boundaries. Measured on the shell,
+#       built at this profile's floor with gcc 15.1.
+#
+#> program_flags -ffunction-sections
+
+#
 #       Unlike arch/arm, which targets a Raspberry Pi and needs profile/arm_virt
 #       bolted on before it can be watched booting, this profile is the generic
 #       RISC-V platform: SBI firmware, a device tree, PLIC and CLINT. That is
