@@ -81,7 +81,7 @@ typedef struct
         p16 cell[ZSTD_HUF_MAX];
 } zstd_huff;
 
-/* 48 bytes. Layout is the library.c floor ABI: bits, consumed, ptr,
+/* 48 bytes. Layout is the lib.c floor ABI: bits, consumed, ptr,
    start, limit, last. Huffman, sequences, and FSE unpack share it. */
 typedef struct
 {

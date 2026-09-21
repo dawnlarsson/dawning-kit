@@ -19,7 +19,7 @@ from collections import Counter
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-LIBRARY = ROOT / 'src/library.c'
+LIBRARY = ROOT / 'src/lib.c'
 INVENTORY_TOOL = pathlib.Path(__file__).resolve().parent / 'inventory.py'
 
 

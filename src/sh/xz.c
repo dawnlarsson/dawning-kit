@@ -148,7 +148,7 @@ static positive xz_dict_from_prop(p8 prop)
 #define XZ_COPY_SLACK 32
 #define XZ_SPAN (1u << 20)
 
-/* Span ABI, documented above lzma_decode_span in src/library.c. */
+/* Span ABI, documented above lzma_decode_span in src/lib.c. */
 typedef struct
 {
         p32 range, code;

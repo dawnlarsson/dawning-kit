@@ -16744,13 +16744,13 @@ CANVAS_ROUTINES = ("canvas_rect_fill", "canvas_row_blit", "canvas_glyph",
 
 
 def canvas_assembly(library, arch):
-    """The Canvas pixel loops for one machine, as a .S lifted out of library.c.
+    """The Canvas pixel loops for one machine, as a .S lifted out of lib.c.
 
-    library.c assembles them only into a kernel build with Canvas, so no
+    lib.c assembles them only into a kernel build with Canvas, so no
     user-space build of it carries them. A body is the lines between ASM_FUNC(name) and
     ASM_END(name) in the machine's block: C string literals, ASM_RET and
     comments. The strings are decoded rather than transcribed, so what the
-    check runs is the text library.c holds, and anything else in a body stops
+    check runs is the text lib.c holds, and anything else in a body stops
     the lift instead of being guessed at.
 
     Each body is emitted after .balign 16, which need not be where the kernel
@@ -16759,7 +16759,7 @@ def canvas_assembly(library, arch):
     block = {"x86_64": "X64", "amd64": "X64", "aarch64": "ARM64",
              "arm64": "ARM64", "riscv64": "RISCV64"}.get(arch)
     if block is None:
-        sys.exit("canvas assembly: library.c has no block for %s" % arch)
+        sys.exit("canvas assembly: lib.c has no block for %s" % arch)
     lines = Path(library).read_text().split("\n")
     owner, current = [], None
     for line in lines:
@@ -16785,7 +16785,7 @@ def canvas_assembly(library, arch):
             while line[at:].strip():
                 found = piece.match(line, at)
                 if not found:
-                    sys.exit("canvas assembly: library.c:%d is not a string, "
+                    sys.exit("canvas assembly: lib.c:%d is not a string, "
                              "ASM_RET or a comment: %s" % (number + 1, line.strip()))
                 token = found.group(1)
                 if token == "ASM_RET":
@@ -16862,10 +16862,10 @@ def harness_core_state(argv):
         geometry += "#undef compose_cells\n"
         geometry += section(drag, "static void bar_move", "/*\n        Filling the screen")
         (work / "canvas-pane.inc").write_text(geometry)
-        # The renderer's own assembly bodies. library.c assembles them only into
+        # The renderer's own assembly bodies. lib.c assembles them only into
         # a kernel build with Canvas, so they are lifted out of it rather than linked.
         target = work / "canvas.S"
-        target.write_text(canvas_assembly(root / "src/library.c", arch))
+        target.write_text(canvas_assembly(root / "src/lib.c", arch))
         return ["-DCHECK_canvas_cells", str(root / "test/checks.c"), str(target)]
 
 
@@ -16940,7 +16940,7 @@ static void check(int okay, const char *name) {
     if (!okay && ++failures <= 12) fprintf(stderr, "FAIL %s\n", name);
 }
 '''
-    # spark.c's settings sum calls library.c's hash_crc32, which this program
+    # spark.c's settings sum calls lib.c's hash_crc32, which this program
     # does not link: a reference CRC-32 in its place, held below to the
     # published check value and to the slot sums checks.c holds the real
     # routine to, so the two cannot drift apart unseen.
@@ -19962,7 +19962,7 @@ ASM_END(probe)
         raise AssertionError(message + detail)
 
 
-    def fresh(directory, name='library.c', source=BASE):
+    def fresh(directory, name='lib.c', source=BASE):
         path = directory / name
         path.write_text(source, encoding='utf-8')
         result = invoke(path, '--target', 'direct')
@@ -20612,7 +20612,7 @@ def harness_edit_driver(argv):
 
 
 def harness_native_extract(argv):
-    """Lift an arm64 routine out of library.c so it can be run here.
+    """Lift an arm64 routine out of lib.c so it can be run here.
 
         python3 test/differential.py --harness native_extract <lib.c> <routine> [more...]
 
@@ -20700,7 +20700,7 @@ def harness_native_extract(argv):
                      % (begin_tag, end_tag, lib))
 
         # The marker encloses a complete __asm__ object.  Decode its C string
-        # tokens instead of interpreting formatting in library.c; adjacent string
+        # tokens instead of interpreting formatting in lib.c; adjacent string
         # literals and any number of .byte rows consequently have the same result.
         source = '\n'.join(lines[begins[0] + 1:ends[0]])
         tokens = re.findall(r'"(?:\\.|[^"\\])*"', source)
@@ -20711,7 +20711,7 @@ def harness_native_extract(argv):
         if not assembly:
             sys.exit('extract: empty %s object between native markers' % name)
 
-        # library.c keeps the payload literal only once and lets these two macros
+        # lib.c keeps the payload literal only once and lets these two macros
         # give normal builds their target object spelling.  Expand that wrapper to
         # its canonical ELF form here, then pass it through the same explicit
         # ELF-to-Mach conversion below.  An older fully literal marked object is
@@ -25064,7 +25064,7 @@ int main(void)
         check(ran.returncode == 0 and ran.stdout.strip().endswith('0'),
               'plain() accepts exactly the safe bytes: ' + ran.stdout.strip().replace(chr(10), '; '))
 
-    #   Threads are not a spawn. The thread runtime in library.c starts a
+    #   Threads are not a spawn. The thread runtime in lib.c starts a
     #   thread with clone, stacks it with mmap and mprotect, blocks its
     #   signals, parks it on a futex word and sizes the pool from
     #   sched_getaffinity; a confined applet (awk, script, setarch) runs the

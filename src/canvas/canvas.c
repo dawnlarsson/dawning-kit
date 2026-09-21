@@ -8,13 +8,13 @@
 
         Two files are not here. window.c is the page a program shares with
         this and the whole interface it needs -- see there first. One run of
-        pixels and one glyph are library.c assembly under KERNEL_MODE, per
+        pixels and one glyph are lib.c assembly under KERNEL_MODE, per
         architecture, and everything Canvas draws goes through them.
 
         The rest is the sections below, in dependency order: paint, text,
         pane, console, compose, plane, drag, output, keys, client, pointer.
         Included by core.c, which is where the headers are, and before
-        library.c, which redefines bool and defines "end" as a macro.
+        lib.c, which redefines bool and defines "end" as a macro.
 
         There is one desktop across every card, and one cursor on it. Windows
         and the cursor are in desktop coordinates; an output is a rectangle of
@@ -505,7 +505,7 @@ static u64 canvas_flush_ns;
 static u64 canvas_text_ns;
 
 /*
-        The loops every pixel goes through, all assembly in library.c: the
+        The loops every pixel goes through, all assembly in lib.c: the
         reusable 32-bit span, and under KERNEL_MODE the strided rectangles,
         alpha blits and bitmap expansion. They are assembly because a full
         compose is four megabytes of stores and the kernel is built with no
@@ -7599,7 +7599,7 @@ static void keyboard_event(struct input_handle *handle, unsigned int code, int v
         {
                 if (value)
                 {
-                        // library.c has an address-first atomic_inc of its
+                        // lib.c has an address-first atomic_inc of its
                         // own, so use the kernel spelling that cannot collide.
                         atomic_fetch_add(1, &desktop.focus_steps);
                         atomic_set(&desktop.focus_cycling, 1);

@@ -468,7 +468,7 @@ static inline int window_key(struct window *window, struct window_key *key)
 #endif
 
 /*
-        A shell image already carries library.c's hardware-floor syscall
+        A shell image already carries lib.c's hardware-floor syscall
         entry on every supported architecture. Use it directly instead of
         emitting a second syscall body in every program that includes this
         client. window.c remains genuinely standalone: without the library's

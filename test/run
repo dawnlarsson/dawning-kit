@@ -67,7 +67,7 @@ describe()
 {
         case $1 in
         standard) echo "the standard library, and that it still builds with no platform under it" ;;
-        verify)   echo "the assembly in library.c against the C it replaced, on three machines" ;;
+        verify)   echo "the assembly in lib.c against the C it replaced, on three machines" ;;
         exact)    echo "every size that is known where the call is written, and both tiers" ;;
         known)    echo "the rest of what folds when the call site knows it" ;;
         declare)  echo "the standard names, declared, compiled twice and diffed" ;;
@@ -231,10 +231,10 @@ never()
         fi
 }
 
-#       The link a spark program gets, which is what library.c ships inside.
+#       The link a spark program gets, which is what lib.c ships inside.
 #       Without the script the placement is the toolchain's default, and
 #       riscv64 does not survive that. -flto is not here on purpose: the
-#       assembly in library.c calls C functions by name and the link time
+#       assembly in lib.c calls C functions by name and the link time
 #       optimiser cannot see a call written inside a string, so it drops the
 #       callee and the link fails.
 freestanding()
@@ -958,7 +958,7 @@ riscv_alignment_audit()
                 -fno-stack-protector -fno-builtin -w \
                 -march=rv64imafd_zicsr_zicntr -mabi=lp64d \
                 -DSTANDARD_NO_PLATFORM -T src/build/spark.ld -Wl,-e,string_length \
-                -Wl,--build-id=none -o "$alignment_image" src/library.c \
+                -Wl,--build-id=none -o "$alignment_image" src/lib.c \
                 2> "$alignment_error"
         then
                 note "the linked RISC-V alignment image did not build:"
@@ -1364,7 +1364,7 @@ x86_kernel_vector_audit()
                 > "$work/x86-kernel-include/asm/cpufeatures.h"
 
         # library.common.c is included through this umbrella by the real
-        # module.  Compiling library.c alone cannot catch a userspace-only
+        # module.  Compiling lib.c alone cannot catch a userspace-only
         # inline body which escaped its KERNEL_MODE boundary.
         if ! "$x86_kernel_compiler" -std=gnu11 -O2 -mno-sse -mno-sse2 \
                 -mno-mmx -msoft-float -ffreestanding -fno-builtin -nostdlib \
@@ -1382,7 +1382,7 @@ x86_kernel_vector_audit()
                 -mno-mmx -msoft-float -ffreestanding -fno-builtin -nostdlib \
                 -I"$work/x86-kernel-include" \
                 -DSTANDARD_MODERN_C_KERNEL '-DEXPORT_SYMBOL(name)=' \
-                -DCONFIG_MOONWATER_CANVAS -c src/library.c -o "$work/x86-kernel.o" \
+                -DCONFIG_MOONWATER_CANVAS -c src/lib.c -o "$work/x86-kernel.o" \
                 2> "$work/x86-kernel.err"
         then
                 note "the standalone x86 KERNEL_MODE library did not compile:"
@@ -1412,7 +1412,7 @@ x86_kernel_vector_audit()
 
 #       AArch64 makes NEON mandatory for userspace, not freely usable by the
 #       kernel: code that touches the FP/SIMD register file must bracket it
-#       with the kernel's state-management API. library.c does not do that.
+#       with the kernel's state-management API. lib.c does not do that.
 #
 #       Every routine now selects a GP-register-only body in KERNEL_MODE.
 #       Compile the real kernel preprocessor path, without an architecture
@@ -1471,7 +1471,7 @@ arm64_kernel_vector_audit()
         }
 
         # The module includes library.common.c through compiler_memory.c, not
-        # library.c directly.  Keep that full preprocessor boundary buildable
+        # lib.c directly.  Keep that full preprocessor boundary buildable
         # before inspecting the assembly-only library beneath it.
         if ! "$arm64_kernel_compiler" $arm64_kernel_target -std=gnu11 -O2 \
                 -march=armv8-a -mgeneral-regs-only -mno-outline-atomics \
@@ -1489,7 +1489,7 @@ arm64_kernel_vector_audit()
                 -march=armv8-a -mgeneral-regs-only -mno-outline-atomics \
                 -ffreestanding -fno-builtin \
                 -nostdlib -DSTANDARD_MODERN_C_KERNEL '-DEXPORT_SYMBOL(name)=' \
-                -DCONFIG_MOONWATER_CANVAS -c src/library.c -o "$work/arm64-kernel.o" \
+                -DCONFIG_MOONWATER_CANVAS -c src/lib.c -o "$work/arm64-kernel.o" \
                 2> "$work/arm64-kernel.err"
         then
                 note "the standalone ARM64 KERNEL_MODE library did not compile:"
@@ -1674,7 +1674,7 @@ hardening_entries()
 
         if ! $compiler -c -O2 -DSTANDARD_NO_PLATFORM -ffreestanding \
                 -fno-builtin -w "$hardening_flag" \
-                -o "$work/hardening.o" src/library.c \
+                -o "$work/hardening.o" src/lib.c \
                 2> "$work/hardening.err"
         then
                 if grep -Eiq 'unknown argument|unrecognized .*option|unsupported .*option|not supported' \
@@ -1749,12 +1749,12 @@ lane_standard()
         #       platform layer is what talks to a kernel; this is the half
         #       that does not, compiled on its own.
         if $compiler -c -O2 -DSTANDARD_NO_PLATFORM -ffreestanding -fno-builtin \
-                -w -o "$work/no_platform.o" src/library.c 2> "$work/no_platform.err"
+                -w -o "$work/no_platform.o" src/lib.c 2> "$work/no_platform.err"
         then
                 tally no-platform 1 1
         else
                 tally no-platform 0 1
-                note "library.c does not compile without a platform:"
+                note "lib.c does not compile without a platform:"
                 sed 's/^/    /' "$work/no_platform.err" | head -10
                 failed=$((failed + 1))
         fi
@@ -1767,7 +1767,7 @@ lane_standard()
         #       without the thunk; nothing today does, and this is what says so
         #       the next time somebody copies a line out of the kernel tree.
         if bare=$(grep -n -E '"[^"]*\b(RET|ENDBR64|ENDBR32|CALL)\b' \
-                src/library.c)
+                src/lib.c)
         then
                 tally bare-mnemonic 0 1
                 note "a mnemonic inside a string where the macro was meant:"
@@ -1827,13 +1827,13 @@ lane_standard()
         #       inactive branches too, so moving a body behind an #if cannot
         #       make the check disappear.
         if command -v python3 > /dev/null 2>&1; then
-                if python3 test/assembly/inventory.py --check --target all src/library.c \
+                if python3 test/assembly/inventory.py --check --target all src/lib.c \
                         > /dev/null 2> "$work/asm-only.err"
                 then
                         tally asm-only 1 1
                 else
                         tally asm-only 0 1
-                        note "library.c is not assembly-only at full parity:"
+                        note "lib.c is not assembly-only at full parity:"
                         sed 's/^/    /' "$work/asm-only.err" | head -10
                         failed=$((failed + 1))
                 fi
@@ -1859,7 +1859,7 @@ lane_standard()
         [ "$failed" = 0 ]
 }
 
-#       library.c writes its routines three times and only one of them can be
+#       lib.c writes its routines three times and only one of them can be
 #       run on the machine it was written on. qemu runs the other two, so a
 #       routine that is only right here fails here rather than on a board.
 target_tools()
@@ -3124,7 +3124,7 @@ lane_writer()
 #       architecture from here. arm64 is not foreign. This is an arm64
 #       machine, and AAPCS64 passes arguments in x0-x7 and returns in x0 on
 #       Darwin exactly as it does on Linux; none of the string or memory
-#       routines make a system call, so a body copied out of library.c
+#       routines make a system call, so a body copied out of lib.c
 #       between its label and its ret runs here unchanged. Darwin needs a
 #       leading underscore on the symbol and has no .type or .size, so only
 #       the three prologue lines differ from ASM_FUNC.
@@ -3134,7 +3134,7 @@ lane_writer()
 #
 native_lifted()
 (
-lib=${1:-src/library.c}
+lib=${1:-src/lib.c}
 
 [ -f "$lib" ] || { echo "run: no such library: $lib" >&2; exit 1; }
 
@@ -3221,7 +3221,7 @@ python3 test/differential.py --harness native_extract "$lib" \
         string_digits_base_max \
         > "$work/input_bases.h" || exit 1
 
-#       Unaligned wire fields, with the socket calls in library.c. Lift the
+#       Unaligned wire fields, with the socket calls in lib.c. Lift the
 #       exact AArch64 bodies and cross every byte residue natively; the other
 #       two architectures are exercised by socket.c.
 python3 test/differential.py --harness native_extract "$lib" \
@@ -3260,9 +3260,9 @@ lane_native()
                 exit 2
         fi
 
-        note "lifted out of src/library.c"
+        note "lifted out of src/lib.c"
 
-        native_lifted src/library.c > "$work/native.out" 2>&1
+        native_lifted src/lib.c > "$work/native.out" 2>&1
         answered=$?
 
         sed 's/^/  /' "$work/native.out"
@@ -9812,18 +9812,18 @@ group compact
 
 if command -v python3 > /dev/null 2>&1; then
         mkdir -p "$work/inventory-tree/platform"
-        cp src/library.c "$work/inventory-tree/library.c"
+        cp src/lib.c "$work/inventory-tree/lib.c"
         cp src/platform/*.inc "$work/inventory-tree/platform/"
-        python3 test/assembly/inventory.py "$work/inventory-tree/library.c" \
+        python3 test/assembly/inventory.py "$work/inventory-tree/lib.c" \
                 > /dev/null 2>&1
 
-        if cmp -s src/library.c "$work/inventory-tree/library.c"; then
+        if cmp -s src/lib.c "$work/inventory-tree/lib.c"; then
                 won
         else
-                lost 'inventory current' 'src/library.c differs from its generator'
+                lost 'inventory current' 'src/lib.c differs from its generator'
         fi
 
-        if python3 test/assembly/inventory.py --check --target all src/library.c \
+        if python3 test/assembly/inventory.py --check --target all src/lib.c \
                 > /dev/null 2> "$work/inventory-all.err"; then
                 won
         else
@@ -12886,7 +12886,7 @@ counted
 #
 #       The C benchmarks are sections of test/checks.c named BENCH_<name>,
 #       built by the same freestanding link the C checks get and for the same
-#       reason: the thing being measured is library.c's own assembly, and a
+#       reason: the thing being measured is lib.c's own assembly, and a
 #       libc in the link would supply the very functions in question. That
 #       link is spelled out again below rather than reused from freestanding()
 #       above, because it is the contract the published numbers were taken
@@ -12907,7 +12907,7 @@ bench_about()
         bench_section=
         case $1 in
         floor)   bench_section=BENCH_floor
-                 bench_line="every routine in library.c, against the speed of the machine" ;;
+                 bench_line="every routine in lib.c, against the speed of the machine" ;;
         baseline) bench_section=BENCH_baseline
                  bench_line="the assembly against the C byte loop it replaced" ;;
         numbers) bench_section=BENCH_numbers

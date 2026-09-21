@@ -134,7 +134,7 @@ static fn wait_for_settling(bipolar service)
         {
                 positive status = 0;
 
-                //      library.c's retry: an interruption here is not an
+                //      lib.c's retry: an interruption here is not an
                 //      answer about the service, and asking again is the
                 //      whole of what this loop used to do about one.
                 if (system_wait4_retry(service, address_of status,
@@ -230,7 +230,7 @@ static DEAD_END b32 system_init()
 
                 // -1 reaps any child, not just the shell: as PID 1 every
                 // orphan on the system is eventually ours to collect, and
-                // library.c's retry absorbs the interruptions.
+                // lib.c's retry absorbs the interruptions.
                 bipolar reaped = system_wait4_retry(-1, address_of status, 0,
                                                     null);
 

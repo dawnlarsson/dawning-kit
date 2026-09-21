@@ -24,7 +24,7 @@
 #       use ./build directly if you would rather not go through this file.
 #
 #       Why this file still exists, and why it still has shell in it below:
-#       src/library.c is assembly wearing ELF clothes. ASM_FUNC emits .type
+#       src/lib.c is assembly wearing ELF clothes. ASM_FUNC emits .type
 #       and .size and names symbols without a leading underscore, so the stack
 #       does not assemble under Mach-O and the tool cannot be built on a Mac
 #       at all. Everything a Mac actually does here -- drive a build on another

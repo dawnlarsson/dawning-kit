@@ -4,15 +4,15 @@
             Linux (spark-free, two binaries):
                 cc -O2 -fno-builtin -DUSE_LIBC test/libc_audit.c -o /tmp/audit.libc
                 cc -O2 -ffreestanding -fno-builtin -fno-stack-protector \
-                    -c -x c -o /tmp/libmw.o -I. src/library.c
-                printf '%s\n' '#include "src/library.c"' > /tmp/mw.c
+                    -c -x c -o /tmp/libmw.o -I. src/lib.c
+                printf '%s\n' '#include "src/lib.c"' > /tmp/mw.c
                 cc -O2 -ffreestanding -fno-builtin -fno-stack-protector \
                     -c /tmp/mw.c -o /tmp/libmw.o -I.
                 cc -O2 -fno-builtin -DUSE_OURS test/libc_audit.c /tmp/libmw.o \
                     -o /tmp/audit.ours
 
             Darwin (lifted ARM64 bodies):
-                python3 test/differential.py --harness native_extract src/library.c \
+                python3 test/differential.py --harness native_extract src/lib.c \
                     ... > /tmp/lifted.h
                 cc -O2 -fno-builtin -DUSE_LIBC test/libc_audit.c -o /tmp/audit.libc
                 cc -O2 -fno-builtin -DUSE_LIFTED -I/tmp test/libc_audit.c \

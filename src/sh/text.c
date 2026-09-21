@@ -468,7 +468,7 @@ static b32 text_done_closing(b32 code, bipolar output)
 /*
         openat by hand, because file_new does not pass a mode.
 
-        library.c's file_new puts the path and the flags where openat wants
+        lib.c's file_new puts the path and the flags where openat wants
         them and leaves the fourth register alone, so a file created through
         it gets whatever happened to be in r10 for its permissions -- measured
         here as ---------x on a file tee had just made. Every open below goes

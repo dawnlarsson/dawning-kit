@@ -5719,7 +5719,7 @@ static PURE COLD bipolar sntp_pick(sntp_sample address_to row, positive count)
         SO_TIMESTAMPNS makes the kernel record the arrival in the softirq
         that takes the packet off the device and hand it over as a control
         message. Reading it needs recvmsg rather than recvfrom, and the
-        socket calls in library.c are recvfrom, so the trap is made here
+        socket calls in lib.c are recvfrom, so the trap is made here
         the way this file already traps for clock_gettime.
 
         msghdr is seven pointer-width words -- the name and its length,

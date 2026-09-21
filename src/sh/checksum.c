@@ -10,7 +10,7 @@
         this shell sums a file should find all of it here.
 
         Every digest is the library's: md5_blocks through blake2b_blocks in
-        library.c, streamed by digest_open, digest_write and digest_close in
+        lib.c, streamed by digest_open, digest_write and digest_close in
         library.common.c. A file is read into the shared transfer block and
         its whole blocks are hashed where they lie.
 
@@ -1366,7 +1366,7 @@ static b32 checksum_main()
 
         The CRC is deliberately separate from the digest engine the named
         sums share: a four-byte serial checksum wants its own folds, not a
-        block core's buffering. hash_crc32_msb in library.c is all of it --
+        block core's buffering. hash_crc32_msb in lib.c is all of it --
         a braided table floor and PCLMULQDQ, VPCLMULQDQ or PMULL folds, over
         tables the assembler built -- so nothing is prepared at run time and
         no processor is asked here. This file keeps the POSIX policy: the

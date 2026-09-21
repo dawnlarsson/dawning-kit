@@ -73,7 +73,7 @@
 #include <asm/vector.h>
 #endif
 
-// The graphics headers must precede library.c: it defines "end" as a macro
+// The graphics headers must precede lib.c: it defines "end" as a macro
 // and asm/io.h, reached through drm_client.h, uses that word as a variable.
 #ifdef CONFIG_MOONWATER_CANVAS
 #include <drm/drm_client.h>

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit performance-evidence coverage for library.c's assembly inventory.
+"""Audit performance-evidence coverage for lib.c's assembly inventory.
 
 This is a coverage manifest, not a result database. ``direct_benchmark`` means
 that a shipped harness times the named routine as the subject of a row. It does
@@ -120,7 +120,7 @@ signal_jump_mark signal_jump_to_mark
 cover('correctness_only', 'test/checks.c#CHECK_canvas_cells', '''
 canvas_cell canvas_cell2 canvas_glyph canvas_glyph2 canvas_rect_fill
 canvas_row_blit
-''', 'the kernel-only Canvas pixel loops, lifted out of library.c and linked '
+''', 'the kernel-only Canvas pixel loops, lifted out of lib.c and linked '
      'into the canvas cells check, which compares what the compositor draws '
      'with them against a per-pixel reference; canvas_cell and canvas_cell2 '
      'are also driven directly over 36 colour pairs and 256 bit patterns. '
@@ -264,9 +264,9 @@ cover('benchmark_context', 'test/checks.c#BENCH_span_byte', 'memory_span_byte_wi
 # trapping, moving ABI arguments, reading the architectural counter, or doing a
 # byte swap has no direct timing row here. Do not turn this category into a
 # "hardware floor" assertion without measured evidence.
-cover('static_leaf', 'src/library.c', '_start exit sleep',
+cover('static_leaf', 'src/lib.c', '_start exit sleep',
       'startup or direct Linux syscall ABI body; statically reviewed only')
-cover('static_leaf', 'src/library.c', '''
+cover('static_leaf', 'src/lib.c', '''
 byte_is_alnum byte_is_alpha byte_is_digit byte_is_hexadecimal
 byte_is_lower byte_is_space byte_is_upper absolute_whole absolute_wide
 absolute square_root bits_counted bits_first_set bits_first_set_wide
@@ -286,13 +286,13 @@ string_to_number_unsigned string_to_whole string_to_whole_wide
      'the hardware already has; each measured against what gcc emits from '
      'the obvious C, on each architecture')
 
-cover('static_leaf', 'src/library.c', '''
+cover('static_leaf', 'src/lib.c', '''
 bytes_reverse_16 bytes_reverse_32 network_load_16 network_load_32
 network_store_16 network_store_32 socket_accept socket_bind socket_close
 socket_connect socket_listen socket_name socket_new socket_option_get
 socket_option_set socket_receive socket_send socket_shutdown
 ''', 'straight-line byte-order or socket syscall ABI body; statically reviewed only')
-cover('static_leaf', 'src/library.c', '''
+cover('static_leaf', 'src/lib.c', '''
 get_cpu_time signal_return_trampoline system_call system_call_1 system_call_2 system_call_3
 system_call_4 system_call_5 system_call_6
 memory_sum_bytes memory_checksum_bsd16

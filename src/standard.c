@@ -24,7 +24,7 @@
 
         None of it is in a kernel build. Every family below carries the same
         guard it carried as its own file, and a kernel reaches none of them:
-        what the kernel uses is already assembly in library.c.
+        what the kernel uses is already assembly in lib.c.
 
         It is included where src/standard/ was included -- after the
         constant-size specializers in compiler_memory.c, not beside
@@ -42,7 +42,7 @@
         skipped and having been included are different questions.
 
         Two of the original fifteen are not here. declare.c held prototypes
-        and nothing else and they are in library.c beside the assembly they
+        and nothing else and they are in lib.c beside the assembly they
         name. text.c held eight bodies and they are on the floor, on all
         three machines.
 */
@@ -83,7 +83,7 @@
 
 /*
         Guarded out of the kernel build and out of a no-platform build. core.c
-        includes this umbrella and library.c sets KERNEL_MODE from __MODULE__,
+        includes this umbrella and lib.c sets KERNEL_MODE from __MODULE__,
         so without this the module would pull in a second struct stat, a second
         open and a second errno beside the ones <linux/...> already declares.
         The three families that shipped without this guard were each correct in
@@ -94,7 +94,7 @@
 /*
         Two error contracts, and why this file holds the seam between them.
 
-        Every routine in library.c that traps into the kernel returns what the
+        Every routine in lib.c that traps into the kernel returns what the
         kernel returned. A missing file is -2, an interrupted read is -4, and
         the caller sees the number the kernel produced at the instruction that
         produced it. That is the better contract and it is not close: there is
@@ -127,7 +127,7 @@
         legacy name in terms of the *at call is therefore not a portability
         nicety, it is the only way the name exists on two of the three
         machines this must run on. rename is renameat2 rather than renameat
-        for the reason library.c's syscall table already records: riscv64 never had
+        for the reason lib.c's syscall table already records: riscv64 never had
         renameat.
 */
 
@@ -135,7 +135,7 @@
         The numbers, which are the same on all three machines.
 
         Checked rather than assumed, because this tree has a scar from that
-        exact assumption -- library.c's syscall table once carried a riscv64 table with four
+        exact assumption -- lib.c's syscall table once carried a riscv64 table with four
         wrong entries in it. The check was
 
             echo '#include <asm/errno.h>' | $CC -E -dM -x c - | grep '^#define E'
@@ -589,7 +589,7 @@
         arm64, tp on riscv64. Linux does not set any of the three for a static
         binary; glibc's static startup mmaps a TLS block and installs it in
         __libc_setup_tls before main. This library's _start does no such thing
-        and cannot be asked to, since it is assembly in library.c that every
+        and cannot be asked to, since it is assembly in lib.c that every
         program shares.
 
         So the storage is a plain object in .bss, which for a single-threaded
@@ -606,7 +606,7 @@
 
 /*
         And then something did install the block (2026-09-14). _start in
-        library.c's Linux runtime points the thread register at thread_main, and
+        lib.c's Linux runtime points the thread register at thread_main, and
         thread_start gives every new thread a block of its own, so on Linux
         errno is a field of the calling thread's block: a thread's failures
         are its own, as the standard wants. It is still not __thread. The
@@ -834,7 +834,7 @@ static fn perror(string_address prefix)
         links at 20 on the other two, and the whole structure 144 bytes there
         against 128 here.
 
-        This is deliberately not library.c's file_status. That structure is
+        This is deliberately not lib.c's file_status. That structure is
         the one file_get_status fills and its comment says plainly that only
         size and blocks are at the kernel's offsets -- it has hard_links at 24
         and the special device at 40, which is neither machine's layout. It is
@@ -1149,7 +1149,7 @@ ERROR_ENTRY(mkdir, b32, (string_address path, p32 mode),
 /*
         rename is renameat2 with no flags, not renameat.
 
-        library.c's syscall table records the reason and it is the one genuine divergence
+        lib.c's syscall table records the reason and it is the one genuine divergence
         between arm64 and riscv64 in the whole asm-generic table: riscv never
         had renameat, so the number 38 that arm64 uses for it is something
         else or nothing there. renameat2 is 276 on both and does everything
@@ -1274,7 +1274,7 @@ static p32 umask(p32 mask)
 
 /*
         mmap, munmap and mprotect, which are the POSIX names for what
-        library.c calls memory and memory_free.
+        lib.c calls memory and memory_free.
 
         They are here and not with the allocator because the thing that makes
         them C rather than library routines is exactly what this file is for:
@@ -1343,7 +1343,7 @@ ERROR_ENTRY(fork, b32, (void),
             system_fork())
 
 /*
-        wait4 without the EINTR retry that library.c's system_wait4_retry
+        wait4 without the EINTR retry that lib.c's system_wait4_retry
         does.
 
         That retry is right for the library's own callers and wrong here:
@@ -1369,7 +1369,7 @@ ERROR_ENTRY(wait, b32, (b32 address_to status),
 /*
         _exit and _Exit, which are exit_group and not exit.
 
-        library.c already has exit and it already calls exit_group, so these
+        lib.c already has exit and it already calls exit_group, so these
         two are aliases onto it rather than a second trap. The distinction
         that matters is the one against the C exit that the stdlib family will
         add: that one runs atexit handlers and flushes streams first, and
@@ -1455,7 +1455,7 @@ ERROR_ENTRY(sync, b32, (void),
 
         THE ATOMICS ARE ALREADY HERE
 
-        library.c line 446 onward defines atomic_add, atomic_exchange and
+        lib.c line 446 onward defines atomic_add, atomic_exchange and
         atomic_compare_exchange over the __sync builtins, and the inventory's
         floor paragraph names the A extension as part of what riscv64 is built
         against. Verified rather than assumed: a program built with the shipped
@@ -1531,7 +1531,7 @@ ERROR_ENTRY(sync, b32, (void),
 
         FUTEX_WAIT is 0 and FUTEX_WAKE is 1 in the old multiplexed futex
         syscall, which is number 202 on x86_64 and 98 on the asm-generic
-        table that arm64 and riscv64 share. library.c's syscall table also
+        table that arm64 and riscv64 share. lib.c's syscall table also
         carries futex_wait and futex_wake as syscalls 455 and 454 -- those are
         the new unmultiplexed entries added in 6.7, and a kernel older than
         that answers them ENOSYS. The old one has been there since 2.6 and is
@@ -1688,7 +1688,7 @@ static b32 lock_state(lock address_to it)
 //      The two threads-in-one-process spellings, which is the case this
 //      library will meet first.
 /*
-        On Linux the private spellings are the assembly in library.c's Linux runtime,
+        On Linux the private spellings are the assembly in lib.c's Linux runtime,
         which carries the threads_live elision this note used to put off:
         nothing started a thread then, and thread_start now owns the count.
         What stays here is the lock two processes share, which cannot elide.
@@ -1718,7 +1718,7 @@ static b32 lock_state(lock address_to it)
 /*
         Guarded out of the kernel build and out of a no-platform build, for
         the reason every file in this directory carries the same three lines:
-        core.c includes the umbrella, library.c sets KERNEL_MODE from
+        core.c includes the umbrella, lib.c sets KERNEL_MODE from
         __MODULE__, and a kernel that already has its own errno and its own
         idea of a double must not be handed a second one.
 */
@@ -1727,14 +1727,14 @@ static b32 lock_state(lock address_to it)
 /*
         THE EXISTING INTEGER ENGINE, AND THE STANDARD WRAPPERS
 
-        library.c holds the integer scanners as assembly at
+        lib.c holds the integer scanners as assembly at
         three-architecture parity, and attaches the names that cannot report
         an error with ASM_ALIAS:
 
               abs labs llabs        absolute_whole, absolute_wide
               atoi atol atoll       string_to_whole, string_to_whole_wide
 
-        library.c gives all ten standard names their exact C types. The six
+        lib.c gives all ten standard names their exact C types. The six
         operations above remain direct assembly aliases. strtol, strtoll,
         strtoul and strtoull are C bodies here because errno is C-library
         state and deliberately is not a dependency of the raw platform
@@ -1756,7 +1756,7 @@ static b32 lock_state(lock address_to it)
         These ten were once declared here in the house types, and are not any
         more.
 
-        library.c says them first, in C's own spellings -- long labs(long),
+        lib.c says them first, in C's own spellings -- long labs(long),
         int atoi(const char *) -- and it is right to and this file was not.
         The house and C spellings disagree about nothing at runtime: their
         integers are the same width in the same register on all three targets.
@@ -1766,7 +1766,7 @@ static b32 lock_state(lock address_to it)
 
         So the declarations are gone and nothing else is. The definitions
         this file owns -- the checked strto* wrappers, strtod and the
-        <inttypes.h> spellings below -- use the C declarations in library.c.
+        <inttypes.h> spellings below -- use the C declarations in lib.c.
 */
 
 long strtol(const char address_to input,
@@ -1811,7 +1811,7 @@ unsigned long long strtoull(const char address_to input,
         The three <inttypes.h> spellings, which are the only integer names in
         this family that had no symbol at all.
 
-        intmax_t and uintmax_t are b64 and p64 in library.c, and they only
+        intmax_t and uintmax_t are b64 and p64 in lib.c, and they only
         exist when a program has asked for the compatibility spellings, so
         the signatures below are written in the house types those alias --
         bipolar and positive -- and each of these is the wide routine under a
@@ -1952,7 +1952,7 @@ static positive strtoumax(string_address input, string_address address_to stoppe
         and it answers a different question: it reads backwards from the
         terminator, with no end pointer, no fraction and no exponent. So the
         digit loops are loops, and the accumulation inside them is a serial
-        multiply-and-add with a carry that no routine in library.c can hold
+        multiply-and-add with a carry that no routine in lib.c can hold
         the running value for.
 */
 #if decimal_bits == 64
@@ -4706,7 +4706,7 @@ static p128 numbers_special(const numbers_format address_to shape, bool negative
         }
 
 /*
-        The short decimal is read by library.c's string_to_decimal_short,
+        The short decimal is read by lib.c's string_to_decimal_short,
         which is assembly on all three machines and says there why. What is
         left here is the general path and the choice between them.
 */
@@ -4758,12 +4758,12 @@ NUMBERS_TO(string_to_extended, f128, numbers_extended_shape, numbers_extended,
         One line wrappers rather than macros, for the reason math.c gives:
         a program can take the address of one, and a local variable called
         strtod does not silently become a call. atof is here rather than in
-        library.c beside atoi because it is strtod with the end pointer
+        lib.c beside atoi because it is strtod with the end pointer
         thrown away, and strtod is C.
 */
 //      The end pointer is a char ** and not a string_address address_to,
 //      which is the house spelling everything below the standard names uses.
-//      library.c settled that question for the ninety eight names it covers
+//      lib.c settled that question for the ninety eight names it covers
 //      and these three are the same kind of name reached the same way: a
 //      program that brings its own <stdlib.h> line for strtod must compile
 //      against this one, and it cannot if the tree says the end pointer is
@@ -4806,7 +4806,7 @@ static decimal atof(string_address input)
 
 /*
         Guarded out of the kernel build and out of a no-platform build. core.c
-        includes this umbrella and library.c sets KERNEL_MODE from __MODULE__,
+        includes this umbrella and lib.c sets KERNEL_MODE from __MODULE__,
         so without this the module would pull in a second struct stat, a second
         open and a second errno beside the ones <linux/...> already declares.
         The three families that shipped without this guard were each correct in
@@ -4815,8 +4815,8 @@ static decimal atof(string_address input)
 #if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
 
 /*
-        This is ordinary C, and it is here rather than in library.c for the
-        reason net.c's netlink gives: library.c and its includes hold
+        This is ordinary C, and it is here rather than in lib.c for the
+        reason net.c's netlink gives: lib.c and its includes hold
         declarations
         and assembly and nothing else, and that is checked.
 
@@ -4827,7 +4827,7 @@ static decimal atof(string_address input)
         get the policy wrong and no chance to get the machine more right. The
         two places where the machine is actually involved -- the trap that
         ends the process, and the trap that raises a signal at it -- are calls
-        into routines library.c already owns.
+        into routines lib.c already owns.
 
         The whole family is prefixed stdlib_ where it is ours, and carries the
         C name where C has one.
@@ -5383,7 +5383,7 @@ b32 unsetenv(string_address name)
                         //      place, the null that ends the vector included,
                         //      which is why the count is the distance to the
                         //      end and not one less. memory_copy is memmove
-                        //      -- library.c aliases both names onto it -- so
+                        //      -- lib.c aliases both names onto it -- so
                         //      the overlap is the routine's business.
                         memory_copy(stdlib_environment_vector + index,
                                     stdlib_environment_vector + index + 1,
@@ -5482,7 +5482,7 @@ b32 clearenv(void)
 /*
         Leaving.
 
-        library.c already defines exit, and what it defines is the trap: it
+        lib.c already defines exit, and what it defines is the trap: it
         puts the code in the argument register and calls the kernel, and
         nothing in the process runs afterwards. That is precisely _Exit, and
         it is what _start calls with main's return value.
@@ -5595,8 +5595,8 @@ fn(address_to stdlib_exit_flush_hook)(void) = null;
         not to a stream, and every consumer that would pay the four percent is
         hypothetical.
 
-        The log buffer in library.c is coarser, because it has to be. It is
-        assembly, and library.c holds assembly and declarations and nothing
+        The log buffer in lib.c is coarser, because it has to be. It is
+        assembly, and lib.c holds assembly and declarations and nothing
         else, so there is nowhere in it to keep a stamp and no C to keep one
         from. What is available is the identity recorded at startup, which
         answers a weaker question -- is this the process the program started
@@ -5863,7 +5863,7 @@ DEAD_END fn abort(void)
         which is where a partition costs more in bookkeeping than the
         insertion it would save.
 
-        On the retpoline question this codebase raises: ASM_CALL in library.c
+        On the retpoline question this codebase raises: ASM_CALL in lib.c
         routes an indirect call through __x86_indirect_thunk_ only in a kernel
         build on x86_64 with the retpoline mitigation configured, and that is
         assembly asking for a thunk the compiler would have supplied on its
@@ -6394,7 +6394,7 @@ b32 system(string_address command)
                 //      access(2)'s own X_OK and not FILE_EXECUTE, which is
                 //      open(2)'s flag of the same name and a different value:
                 //      asking faccessat for 010 asks about a permission bit
-                //      that does not exist and is answered EINVAL. library.c
+                //      that does not exist and is answered EINVAL. lib.c
                 //      has the same warning beside memory() about the mmap
                 //      flags, and it is the same mistake.
                 return system_access_at(AT_FDCWD, STDLIB_SHELL,
@@ -6471,7 +6471,7 @@ b32 system(string_address command)
         for clock_gettime through a syscall trap -- ktime_get is what it wants
         -- so there is nothing here it could use even if the names were free.
 
-        A no-platform build has had library.c's syscall table compiled out from
+        A no-platform build has had lib.c's syscall table compiled out from
         under it, so syscall(clock_gettime) is not a number and there is no
         kernel to ask the time of. The calendar arithmetic would still be
         valid there, but half a <time.h> that cannot say what o'clock it is
@@ -6482,7 +6482,7 @@ b32 system(string_address command)
 /*
         This is ordinary C on purpose.
 
-        library.c and everything it includes holds declarations and assembly
+        lib.c and everything it includes holds declarations and assembly
         and nothing else, which is checked. Almost nothing here is a floor a
         machine could do better: the whole of <time.h> below the two syscalls
         is integer arithmetic over a calendar that Rome and then Pope Gregory
@@ -6543,7 +6543,7 @@ typedef b32 clockid_t;
 
 /*
         gettimeofday's pair, which is the older of the two shapes and the one
-        BSD left behind. Signed, both fields, unlike library.c's timespec:
+        BSD left behind. Signed, both fields, unlike lib.c's timespec:
         that one is a duration handed to nanosleep and never negative, this
         one is a point on a line that started in 1970 and has an outside.
 */
@@ -6807,7 +6807,7 @@ b32 clock_gettime(clockid_t which, timespec address_to into)
 }
 
 /*
-        The seconds field of library.c's timespec is p64 and therefore
+        The seconds field of lib.c's timespec is p64 and therefore
         unsigned, because that structure's job in this tree so far has been to
         carry a sleep duration into nanosleep and a duration is never
         negative. A wall clock reading is not a duration: it has an outside,
@@ -9261,7 +9261,7 @@ tm address_to localtime(const time_t address_to stamp)
 /*
         This is ordinary C, and it has to be.
 
-        library.c already holds the half of <math.h> that is
+        lib.c already holds the half of <math.h> that is
         an instruction: sqrt, fabs, trunc, floor, ceil, round, fmin, fmax,
         fma and copysign are one opcode on at least two of the three machines
         and the assembly there is the floor. Nothing below is like that.
@@ -9271,10 +9271,10 @@ tm address_to localtime(const time_t address_to stamp)
         are algorithms, and an algorithm written three times in three
         assemblers is an algorithm with three sets of bugs. So it lives here,
         in the one place the library keeps C -- included from
-        src/compiler_memory.c, which is deliberately outside library.c's
+        src/compiler_memory.c, which is deliberately outside lib.c's
         graph, in the way src/net/net.c holds the netlink wire layer.
 
-        It depends on library.c alone, through its standard names: square_root,
+        It depends on lib.c alone, through its standard names: square_root,
         absolute, decimal_floor, decimal_truncated, decimal_rounded,
         decimal_with_sign and decimal_multiply_add. Every one of those is a
         single instruction on the machines that have it, so reaching for them
@@ -9364,14 +9364,14 @@ tm address_to localtime(const time_t address_to stamp)
 /*
         Everything here takes or returns a decimal, and a decimal in a
         signature is refused by the arm64 kernel build whether or not
-        anything calls it -- the same reason library.c guards its own
+        anything calls it -- the same reason lib.c guards its own
         floating point half. Kernel code may not touch the floating point
         registers without asking first, so this is right anyway.
 
         The second half of the guard is about width. Every polynomial,
         every constant and every bit mask below is double precision, chosen
         for a fifty three bit significand and an eleven bit exponent. On a
-        profile where `decimal` is f32 -- which is what library.c gives a
+        profile where `decimal` is f32 -- which is what lib.c gives a
         thirty two bit target -- none of it would be either correct or
         useful, so the family is simply absent there rather than silently
         wrong. All three architectures this project builds are sixty four
@@ -9412,7 +9412,7 @@ typedef union
         isnan, isinf, isfinite, isnormal, signbit and fpclassify.
 
         The question that had to be answered before writing these was whether
-        they belong beside square_root in library.c as assembly. They do
+        they belong beside square_root in lib.c as assembly. They do
         not, and the reason is that the C library does not define them as
         functions in the first place: they are macros, and a macro is what
         makes them free. isnan of a value already in a register is one move
@@ -9504,7 +9504,7 @@ MATH_CLASSIFIER(extended, f128, p64, MATH_IMPLIED_BIT, MATH_INFINITY_BITS,
 /*
         The magnitude, with the sign bit cleared where it stands.
 
-        absolute() in library.c is fabs, and it stays the right routine for a
+        absolute() in lib.c is fabs, and it stays the right routine for a
         magnitude a caller asked for. Inside this file it is not, and the
         reason is the one the classification block above already gives for
         isnan: the work is a single AND against a constant, and reaching it
@@ -12202,7 +12202,7 @@ static decimal hyperbolic_tangent(decimal value)
         There is no `log`. The library's `log` is the writer, and the natural
         logarithm is `logarithm`, or `ln` for short.
 
-        Also absent, because library.c already has them under prose names:
+        Also absent, because lib.c already has them under prose names:
         sqrt is square_root, fabs is absolute, trunc floor ceil round and
         nearbyint are the decimal_ roundings, copysign is decimal_with_sign,
         fmin and fmax are decimal_smaller and decimal_larger, fdim is
@@ -12252,11 +12252,11 @@ static decimal modf(decimal, decimal address_to)
 
 /*
         Guarded out of the kernel build and out of a no-platform build: core.c
-        includes the umbrella, library.c sets KERNEL_MODE from __MODULE__, and
+        includes the umbrella, lib.c sets KERNEL_MODE from __MODULE__, and
         a module that pulled a second struct sigaction in beside the one
         <linux/signal.h> already has would not compile.
 
-        library.c holds jump_mark, jump_to_mark and the thirty two slot
+        lib.c holds jump_mark, jump_to_mark and the thirty two slot
         jump_state that sigsetjmp extends, under the same guard as this.
 */
 #if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
@@ -12272,7 +12272,7 @@ static decimal modf(decimal, decimal address_to)
         every number below came back the same on all three.
 
         Each one is wrapped in its own ifndef and not in one block ifndef.
-        library.c already defines SIGTRAP, SIGKILL, SIGSTOP and SIGCHLD for
+        lib.c already defines SIGTRAP, SIGKILL, SIGSTOP and SIGCHLD for
         its own use and src/standard/stdlib.c defines SIGABRT for abort, so a
         single guard around the whole list would silently drop the other
         twenty six the first time any one of them was already present. Four
@@ -13030,14 +13030,14 @@ b32 signal_wait(void)
 
 /*
         The names a C program knows these by, as second labels on the same
-        addresses, exactly as library.c attaches strlen to string_length.
+        addresses, exactly as lib.c attaches strlen to string_length.
 
         kill is not in this list and must not be added to it. The error family
         already defines kill, as a static C function with the POSIX name
         itself, so there is no prose routine here to attach and a .set naming
         it would be a second definition of a symbol the assembler has already
         seen in this translation unit. sigsetjmp, __sigsetjmp and siglongjmp
-        are attached in library.c, beside the instructions they name.
+        are attached in lib.c, beside the instructions they name.
 */
 __asm__(
     ASM_ALIAS(signal,      signal_handle)
@@ -13126,7 +13126,7 @@ extern fn siglongjmp(jump_state state, b32 value) DEAD_END;
 /*
         This is ordinary C on purpose, for the reason net.c's netlink gives.
 
-        library.c and everything it includes holds declarations and assembly
+        lib.c and everything it includes holds declarations and assembly
         and nothing else, and that is checked. A buffered stream is policy all
         the way down -- when to refill, when to flush, which direction the
         buffer is currently facing, whether a terminal means line buffering --
@@ -13134,14 +13134,14 @@ extern fn siglongjmp(jump_state state, b32 value) DEAD_END;
         another. Written here it is written once and the same bytes run on all
         three targets.
 
-        It depends on library.c alone: the raw traps, memory_copy,
+        It depends on lib.c alone: the raw traps, memory_copy,
         memory_first_of, system_write_all and system_read_retry. The one thing
         it borrows from a sibling is the allocator, and that borrowing is
         confined to the three macros at the top of the file so there is one
         place to change if the allocator lands under different names.
 
         Everything below the guard needs a platform: syscall numbers, a
-        descriptor table, a kernel that answers ioctl. library.c puts all of
+        descriptor table, a kernel that answers ioctl. lib.c puts all of
         that inside "#ifndef KERNEL_MODE" and then "#ifndef
         STANDARD_NO_PLATFORM", and the two are not the same condition -- the
         standard test lane sets the second to prove the pure library still
@@ -13185,9 +13185,9 @@ fn free(address_any block);
 #define stream_release(block) free(block)
 
 /*
-        The three names library.c gave to descriptor numbers.
+        The three names lib.c gave to descriptor numbers.
 
-        library.c defines stdin, stdout and stderr as 0, 1 and 2, which is
+        lib.c defines stdin, stdout and stderr as 0, 1 and 2, which is
         what a program wants when it is about to call write(2) by hand and
         exactly not what it wants when it is about to call fprintf. This file
         takes the names for the streams, because that is what every C program
@@ -13215,7 +13215,7 @@ fn free(address_any block);
         and a different numbering would silently turn "unbuffered" into
         "fully buffered". BUFSIZ is 4096 rather than glibc's 8192: a page is
         the unit every read and write here ends up costing, and MAX_INPUT
-        beside it in library.c is the same number.
+        beside it in lib.c is the same number.
 
         A dynamically attached default is eight bytes smaller. malloc puts
         its tag in the same allocation, so asking it for a 4096-byte payload
@@ -13542,7 +13542,7 @@ static fn stream_ready(stream address_to handle)
         Push what is staged at the kernel, and forget it either way.
 
         Forgetting it on failure is deliberate and is what buffered_flush in
-        library.c does for the same reason: a caller that reports the failure
+        lib.c does for the same reason: a caller that reports the failure
         and then flushes again -- or simply exits through a path that flushes
         -- must not write the same prefix a second time. The bytes are lost,
         the error indicator is set, and ferror is how anyone finds out.
@@ -15048,7 +15048,7 @@ fn stream_set_buffer(stream address_to handle, string_address buffer)
 /*
         The names <stdio.h> knows these by.
 
-        Aliases rather than second bodies, which is the same choice library.c
+        Aliases rather than second bodies, which is the same choice lib.c
         makes where it gives its assembly routines their libc names: a .set
         there, an alias attribute here, and in both cases one address with two
         labels on it. Nothing is wrapped and nothing jumps.
@@ -15137,7 +15137,7 @@ b32 fputs(string_address text, stream address_to handle)
 /*
         This is ordinary C on purpose, for the reason net.c's netlink gives.
 
-        library.c holds declarations and assembly and nothing else, and that is
+        lib.c holds declarations and assembly and nothing else, and that is
         checked. printf is not a floor. It is a small language -- five flags, a
         width, a precision, eight length modifiers, twenty conversions -- and
         the part of it a machine could do differently from another machine is
@@ -15206,8 +15206,8 @@ b32 fputs(string_address text, stream address_to handle)
         the fallback is not compiled, so the merge is include order and nothing
         else -- stream, then error, then this.
 
-        THE HANDLE GOES THROUGH A TYPEDEF ON PURPOSE. library.c defines stdin,
-        stdout and stderr as the integers 0, 1 and 2 at library.c:12577, and
+        THE HANDLE GOES THROUGH A TYPEDEF ON PURPOSE. lib.c defines stdin,
+        stdout and stderr as the integers 0, 1 and 2 at lib.c:12577, and
         src/sh/shell.c:899 uses stdout as a descriptor in a dup3. Naming FILE
         directly in these signatures would tie them to whichever of the two
         meanings happened to be current. format_stream is whichever one is
@@ -18016,7 +18016,7 @@ static fn perror(string_address prefix)
 /*
         Guarded out of the kernel build and out of a no-platform build, for
         the reason text.c gives beside the same two words. core.c includes
-        this umbrella, library.c sets KERNEL_MODE from __MODULE__, and a
+        this umbrella, lib.c sets KERNEL_MODE from __MODULE__, and a
         kernel has no business carrying a float parser -- arm64 refuses a
         decimal in a signature there whether or not anything calls it, which
         is why math.c and format.c are each one guarded block as well.
@@ -20037,7 +20037,7 @@ static b32 spool_remove_path(string_address path)
 
         A random name is six bytes drawn from an alphabet, and the naive way
         to write it is a loop with letters[byte % 62] in it. Two things are
-        wrong with that. It is a hand-rolled byte loop where library.c has
+        wrong with that. It is a hand-rolled byte loop where lib.c has
         memory_translate, which is a vectorised table walk that does four
         bytes a round; and the modulus is biased, because 256 is not a
         multiple of 62 and the first eight letters come up one time in
@@ -20134,7 +20134,7 @@ static fn spool_name_marks(p8 address_to marks)
         allows a fixed suffix after them for mkstemps, so the search is
         arithmetic from the end rather than a scan: the caller has told us
         exactly how many bytes follow. string_length and memory_compare are
-        library.c's, and memory_compare with a literal six folds to a
+        lib.c's, and memory_compare with a literal six folds to a
         four-byte and a two-byte compare at the call site.
 */
 static bipolar spool_template_marks(string_address form, positive suffix)
@@ -20371,7 +20371,7 @@ static string_address spool_temporary_named(string_address directory,
 
         O_TMPFILE is the create bit or-ed with O_DIRECTORY, and O_DIRECTORY is
         the one open flag whose value differs across these three targets --
-        library.c line 12598 has 040000 for one and 0200000 for the others,
+        lib.c line 12598 has 040000 for one and 0200000 for the others,
         with the reason. Naming both here rather than a literal is what keeps
         that difference in one place.
 */
@@ -20565,7 +20565,7 @@ static stream address_to spool_open_process(string_address command,
         /*
                 Everything this process has buffered belongs to this process,
                 and there are two layers of it here where system() only had
-                one. log is library.c's own buffered writer and log_flush
+                one. log is lib.c's own buffered writer and log_flush
                 empties it; the FILE buffers are stream.c's and stream_flush
                 with a null argument empties all of them. A child that
                 inherits either would write the parent's pending bytes a
@@ -20660,10 +20660,10 @@ static stream address_to spool_open_process(string_address command,
         wrong. POSIX says pclose returns the termination status "as returned
         by waitpid", so a child that exited 3 gives 768 and not 3, and a
         caller wanting the number a shell would print passes it through
-        library.c's wait_status_code. glibc does the same and this matches it
+        lib.c's wait_status_code. glibc does the same and this matches it
         byte for byte in the diff.
 
-        The wait retries EINTR, through library.c's system_wait4_retry rather
+        The wait retries EINTR, through lib.c's system_wait4_retry rather
         than error.c's deliberately non-retrying waitpid. That is the opposite
         choice from the one error.c made and it is right here for the opposite
         reason: error.c's waitpid is a thin wrapper whose caller asked for a
@@ -21073,7 +21073,7 @@ static PURE b32 fileno_unlocked(stream address_to handle)
 /*
         Guarded out of the kernel build and out of a no-platform build, for
         the reason src/standard/error.c states at the same place: core.c
-        includes this umbrella, library.c sets KERNEL_MODE from __MODULE__,
+        includes this umbrella, lib.c sets KERNEL_MODE from __MODULE__,
         and a module that pulled a second struct dirent, a second DIR and a
         second nanosleep in beside the ones <linux/...> already declares would
         not compile. The three families that shipped without this guard were
@@ -21136,7 +21136,7 @@ static PURE b32 fileno_unlocked(stream address_to handle)
 
 /*
         The d_type values. DT_DIR, DT_REG, DT_LNK, DT_FIFO, DT_SOCK, DT_CHR
-        and DT_BLK are already in src/library.c and are not repeated;
+        and DT_BLK are already in src/lib.c and are not repeated;
         the two it does not carry are added here, guarded the same way, so
         that a program switching on d_type has the whole set.
 */
@@ -21149,7 +21149,7 @@ static PURE b32 fileno_unlocked(stream address_to handle)
 #endif
 
 //      O_TMPFILE is the create bit error.c already names, or-ed with
-//      O_DIRECTORY, whose value differs on arm64 and which library.c already
+//      O_DIRECTORY, whose value differs on arm64 and which lib.c already
 //      spells correctly for each machine. Writing it out here rather than
 //      hard-coding 020200000 is what keeps tmpfile working on arm64.
 #ifndef O_TMPFILE
@@ -21213,7 +21213,7 @@ static PURE b32 fileno_unlocked(stream address_to handle)
         WIFEXITED is written against the low seven bits rather than as
         "status & 0xff" so that a status of 0x7f -- stopped -- is not read as
         an exit, and WTERMSIG masks 0x7f rather than 0xff for the same
-        reason. library.c's wait_status_code turns the whole thing into the
+        reason. lib.c's wait_status_code turns the whole thing into the
         single number a shell reports; these are the pieces underneath it.
 */
 #ifndef WIFEXITED
@@ -22128,7 +22128,7 @@ static b32 execle(string_address path, string_address first, ...)
         read before, no subtraction after, and no window in which a second
         signal could make the answer wrong.
 
-        The structure is library.c's timespec, whose fields are p64. clock.c
+        The structure is lib.c's timespec, whose fields are p64. clock.c
         already explains why: it is a duration handed to this call and a
         duration is never negative. A caller that puts a negative second count
         in it gets the same bits the kernel would have seen from a signed
@@ -22173,7 +22173,7 @@ static b32 clock_nanosleep(clockid_t which, b32 flags,
 /*
         sleep, which cannot be called sleep here.
 
-        library.c already exports an assembly routine of that name taking a
+        lib.c already exports an assembly routine of that name taking a
         timespec, three places in this tree call it, and the symbol is in
         every built object. POSIX's sleep takes an unsigned count of seconds
         and returns the seconds it did not sleep, which is a different
@@ -22461,7 +22461,7 @@ static string_address realpath(string_address path, string_address into)
 /*
         basename and dirname, which are already written and are in assembly.
 
-        path_tail_copy and path_head_copy in library.c implement exactly these
+        path_tail_copy and path_head_copy in lib.c implement exactly these
         two rules -- trailing separators go except for root, a path with no
         directory has "." for its head -- with the bound checked and the
         answer's length returned. There is nothing to write here but the
@@ -22478,7 +22478,7 @@ static string_address realpath(string_address path, string_address into)
         into a string literal for every caller who passes one. The next call
         overwrites it, which POSIX says it may.
 
-        Note that library.c also has path_basename, which is a different
+        Note that lib.c also has path_basename, which is a different
         routine again: it writes to a writer rather than to a buffer, and it
         is not what either of these wants.
 */
@@ -22522,7 +22522,7 @@ static string_address dirname(string_address path)
                 every caller it has in this tree and is not what a program
                 that came from glibc expects.
 
-                It is corrected here rather than in library.c because the
+                It is corrected here rather than in lib.c because the
                 assembly is shared with path handling that does not want the
                 distinction, and because the correction is exactly this: a
                 head of "/" out of a path whose first two bytes are slashes

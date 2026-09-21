@@ -1715,7 +1715,7 @@ bool file_real(string_address path, p8 address_to into)
         return file_resolve(path, into, true);
 }
 
-// Reading a small file whole is shared Linux assembly in library.c.
+// Reading a small file whole is shared Linux assembly in lib.c.
 
 // Users and groups ------------------------------------------
 

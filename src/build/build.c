@@ -145,7 +145,7 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
         {"floor_prefix", "rv64"},
         {"floor_march", "rv64imafd_zicsr_zicntr"},
         {"floor_mabi", "lp64d"},
-        {"floor_source", "src/library.c"},
+        {"floor_source", "src/lib.c"},
         {"floor_require", "i m a f d zicsr zicntr"},
         {"floor_forbid", "c zca zcb zcd zcf zcmp zcmt"},
 

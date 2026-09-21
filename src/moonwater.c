@@ -208,7 +208,7 @@ struct script_token {
         char word[SCRIPT_WORD];
 };
 
-// TODO: FOLD? seems like we have something in library.c, this is too trivial?
+// TODO: FOLD? seems like we have something in lib.c, this is too trivial?
 static int script_eq(const char *a, const char *b)
 {
         while (*a && *a == *b) {

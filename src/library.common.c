@@ -1,7 +1,7 @@
 /*
-        Shared C floor above library.c's architecture floor.
+        Shared C floor above lib.c's architecture floor.
 
-        library.c stays assembly and declarations only.  This file owns the
+        lib.c stays assembly and declarations only.  This file owns the
         small structural mechanisms that are genuinely common to libc, the
         shell, utilities, networking and Canvas: layouts, indexed grammars
         and inline state transitions.  Keeping them here prevents subsystem
@@ -3561,7 +3561,7 @@ static inline fn digest_close(digest_state address_to digest, p8 address_to out)
         module allocates with kmalloc and vmalloc and always has.
 
         Windows is out for the plainer reason that memory() and memory_free()
-        -- the mmap pair this stands on -- are themselves inside library.c's
+        -- the mmap pair this stands on -- are themselves inside lib.c's
         "not Windows" guard, so there is nothing underneath to build on.
 */
 #if !defined(KERNEL_MODE) && !defined(WINDOWS)
@@ -3569,7 +3569,7 @@ static inline fn digest_close(digest_state address_to digest, p8 address_to out)
 /*
         This is ordinary C on purpose, for the same reason net.c's netlink is.
 
-        library.c and everything it includes holds declarations and assembly
+        lib.c and everything it includes holds declarations and assembly
         and nothing else, and that is checked. An allocator is not a floor. It
         is policy: which shelf a size goes on, when a chunk is asked of the
         kernel, whether a block that shrank is worth moving. None of that is a
@@ -3668,7 +3668,7 @@ static inline fn digest_close(digest_state address_to digest, p8 address_to out)
         THREADS
 
         Every thread pops and pushes its own shelves. The heads live in the
-        thread block (library.c's Linux runtime), so memory_take and memory_give are
+        thread block (lib.c's Linux runtime), so memory_take and memory_give are
         the same load and store they always were, through fs or tp instead of
         a .bss array, and neither takes a lock. A block freed on a thread
         other than the one that took it simply joins the freeing thread's
@@ -3828,7 +3828,7 @@ static const positive allocator_class_size[ALLOCATOR_CLASSES] = {
 //      which every class has room for, so a pop is a load and a store and the
 //      tag is never disturbed.
 //
-//      The heads themselves are in library.c beside memory_take, which is the
+//      The heads themselves are in lib.c beside memory_take, which is the
 //      only routine that pops one on the path that matters. What is here is
 //      the rest of the family reaching the same object. The two literals that
 //      assembly spells out are checked against this file's constants below.
@@ -3839,7 +3839,7 @@ _Static_assert(ALLOCATOR_CLASSES == THREAD_SHELVES,
 //      a process of one thread.
 #define allocator_free_list (thread_self()->shelves)
 _Static_assert(ALLOCATOR_LARGEST - ALLOCATOR_HEADER == 262136,
-               "library.c's memory_take compares the request against 262136");
+               "lib.c's memory_take compares the request against 262136");
 
 //      The base of the next block to be cut from the current chunk, which is
 //      always eight modulo sixteen, and how many bytes are left after it.
@@ -3949,7 +3949,7 @@ static address_any address_to allocator_link(address_any block)
         register. top_bit_known is the umbrella's own spelling of the same
         question and it is inline everywhere -- bsr on x86_64, clz on arm64,
         and on a riscv baseline with no Zbb to count leading zeros with, the
-        same halving search the riscv bodies in library.c use. Folding it in
+        same halving search the riscv bodies in lib.c use. Folding it in
         is also what let the whole routine be inlined into allocator_take,
         which it was not before: measured on x86_64 over two million small
         allocations, 158.2 million instructions and 80.0 million cycles
@@ -4218,7 +4218,7 @@ static address_any allocator_take(positive bytes, bool address_to fresh)
         different pointers, which is what a program that uses the pointer as
         an identity expects.
 */
-//      What library.c's memory_take jumps to when the shelf could not answer:
+//      What lib.c's memory_take jumps to when the shelf could not answer:
 //      a request past the largest shelf, an empty shelf, or a size that would
 //      wrap. Everything the fast path skipped is redone here, because a slow
 //      path that runs once per refill can afford to.
@@ -4305,7 +4305,7 @@ pub fn allocator_shelves_share(void)
         the containment: the alternative is to index the free list array with
         whatever the number happened to be and write a pointer through it.
 */
-//      The shelf push is assembly in library.c beside the pop. What is left
+//      The shelf push is assembly in lib.c beside the pop. What is left
 //      here is everything a shelf number does not cover, reached by a jump
 //      from it: the block is known to carry a tag of ALLOCATOR_CLASSES or
 //      more, so the shelf test is not repeated.
@@ -4653,10 +4653,10 @@ pub b32 memory_take_aligned_into(address_any address_to result,
         equal, which is the honest answer: they are the same function and the
         prose name is the one it was written under.
 */
-//      memory_take is assembly in library.c, and GCC's alias attribute wants
+//      memory_take is assembly in lib.c, and GCC's alias attribute wants
 //      a C definition in this translation unit to point at. A .set is the
 //      same thing one layer down and does not care how the target was
-//      written, which is how library.c spells every other standard name.
+//      written, which is how lib.c spells every other standard name.
 __asm__(ASM_ALIAS(malloc, memory_take));
 __asm__(ASM_ALIAS(free, memory_give));
 

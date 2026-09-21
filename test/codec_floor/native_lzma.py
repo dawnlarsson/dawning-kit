@@ -1,7 +1,7 @@
 from pathlib import Path
 import re, subprocess
 root=Path('artifacts/codec-floor-native');root.mkdir(parents=True,exist_ok=True)
-lib=Path('src/library.c').read_text(); checks=Path('test/checks.c').read_text();gz=Path('src/sh/gzip.c').read_text();xz=Path('src/sh/xz.c').read_text()
+lib=Path('src/lib.c').read_text(); checks=Path('test/checks.c').read_text();gz=Path('src/sh/gzip.c').read_text();xz=Path('src/sh/xz.c').read_text()
 head='''#include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -123,7 +123,7 @@ a=lib.index('#define ASM_CRC_BASIS(bit)');b=lib.index('__asm__(',a);head+=lib[a:
 for name in ('hash_crc32_tab','hash_crc64_tab'):
  a=lib.index('ASM_RODATA_OBJECT_BEGIN('+name);a=lib.index('\n',a)+1;b=lib.index('    ASM_OBJECT_END('+name,a)
  head+='__asm__(".section __TEXT,__const\\n.globl _'+name+'\\n.p2align 4\\n_'+name+':\\n"\n'+lib[a:b]+'".text\\n");\n'
-head+=subprocess.check_output(['python3','test/differential.py','--harness','native_extract','src/library.c','hash_crc32','hash_crc64','lzma_range_shift','lzma_range_encode','lzma_range_decode','huffman_encode_back','deflate_decode_span','lzma_decode_span','memory_common_prefix','memory_copy_match'],text=True)
+head+=subprocess.check_output(['python3','test/differential.py','--harness','native_extract','src/lib.c','hash_crc32','hash_crc64','lzma_range_shift','lzma_range_encode','lzma_range_decode','huffman_encode_back','deflate_decode_span','lzma_decode_span','memory_common_prefix','memory_copy_match'],text=True)
 a=checks.index('static p64 floor_crc(');b=checks.index('#endif\n#ifdef BENCH_compression_floor',a)
 body=checks[a:b].replace('#ifdef CHECK_compression_floor','')
 # Darwin pages are 16 KiB; the LZMA span check sizes its guards by FLOOR_PAGE.

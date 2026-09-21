@@ -1,16 +1,16 @@
 
 /*
-        Compiler-owned conveniences for code that consumes library.c.
+        Compiler-owned conveniences for code that consumes lib.c.
 
-        This is an opt-in umbrella, not part of library.c's include graph.
-        Including library.c alone gets the hardware routines and declarations
+        This is an opt-in umbrella, not part of lib.c's include graph.
+        Including lib.c alone gets the hardware routines and declarations
         only. Including this file gets those first, then the three fixed-size
         memory specializers and the source-generating compatibility macros
         below. That keeps actual C bodies out of the assembly library without
         making literal-size copies pay the general routine's dispatch cost.
 
         Workload targeting is compile-time, set before this file is included.
-        The outlined assembly in library.c is always the symbol; these knobs
+        The outlined assembly in lib.c is always the symbol; these knobs
         only choose whether a call site expands in the caller or pays the
         call. ELF --gc-sections / Mach-O dead_strip drop unreferenced
         outlined bodies. They do not drop rungs inside a body, so a TU that
@@ -36,7 +36,7 @@
 #ifndef STANDARD_MODERN_C_COMPILER_MEMORY
 #define STANDARD_MODERN_C_COMPILER_MEMORY
 
-#include "library.c"
+#include "lib.c"
 #include "library.common.c"
 
 #ifndef LIBRARY_INLINE
@@ -619,7 +619,7 @@ static inline INLINE address_any copy_running(address_any destination,
 /*
         The short decimal, placed rather than called.
 
-        library.c owns string_to_decimal_short and is where its reasoning
+        lib.c owns string_to_decimal_short and is where its reasoning
         lives. A routine there is a call, though, and for a plain run of
         digits the call is a measurable part of it: five cycles against a body
         of about thirty, which came to 2% of an awk run.
@@ -886,7 +886,7 @@ static inline INLINE address_any fill_running(address_any destination,
 //      bzero is the fill with the byte already chosen; the same small run.
 //      It reaches the long path through memory_fill and not memory_zero for
 //      the reason zero_known does the same: memory_zero is declared in
-//      library.c's standard-names block, which a no-platform build compiles out, while
+//      lib.c's standard-names block, which a no-platform build compiles out, while
 //      memory_fill is declared above that guard and is always there.
 static inline INLINE fn zero_running(address_any destination, positive size)
 {
@@ -1835,7 +1835,7 @@ static inline INLINE string_address append_max_known(string_address destination,
 
         x86_64 and arm64 both complete an unaligned load in one instruction,
         so a word walk over a caller's pointer is free. Baseline RV64I makes
-        no such promise, and every riscv body in library.c is written around
+        no such promise, and every riscv body in lib.c is written around
         that -- memory_first_of aligns down and masks, memory_last_of peels,
         memory_compare checks that the two pointers share a residue and byte
         walks when they do not. An expansion is not allowed to be laxer than
@@ -3317,10 +3317,10 @@ static inline INLINE address_any copy_until_known(address_any destination,
         So the shim is here, in the umbrella, rather than in the startup
         assembly. Two reasons it does not belong there. A program is one
         translation unit -- it includes this file and then defines main -- so a
-        weak default in library.c's Linux runtime and a strong override here would be two
+        weak default in lib.c's Linux runtime and a strong override here would be two
         definitions of one label in a single assembly stream, which is a
         duplicate symbol at assembly time and not an override; weak linking
-        needs separate objects. And that runtime sits inside library.c,
+        needs separate objects. And that runtime sits inside lib.c,
         where everything must be assembly at three-architecture parity, for
         something with no hardware content in it at all.
 

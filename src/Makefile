@@ -65,7 +65,7 @@ obj-$(CONFIG_MOONWATER_FLOODLIGHT) += floodlight.o
 #       already builds -- and those must not be linked into the module as
 #       well, or the symbol they define exists twice and vmlinux does not
 #       link. Canvas's pixel loops are not .asm: they are assembly in
-#       library.c, which core.c includes, assembled only when
+#       lib.c, which core.c includes, assembled only when
 #       CONFIG_MOONWATER_CANVAS builds Canvas.
 #
 #       Which architecture that is comes from the kernel's own configuration

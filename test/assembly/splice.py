@@ -2,7 +2,7 @@
 """
 Take one routine's assembly out of somebody's copy and put it in this one.
 
-Four people cannot edit one file at once, and library.c is one file. So each
+Four people cannot edit one file at once, and lib.c is one file. So each
 works in a whole copy of the tree and their routines come back one at a time,
 found by name rather than by a text merge: ASM_FUNC(name) opens a routine and
 ASM_END(name) closes it, and everything between belongs to whoever owns that
@@ -28,7 +28,7 @@ stops rather than guessing which two.
 import re, shutil, sys, os
 
 HERE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-OURS = os.path.join(HERE, 'src', 'library.c')
+OURS = os.path.join(HERE, 'src', 'lib.c')
 
 
 def blocks(text, name):
@@ -68,9 +68,9 @@ def main(argv):
         return 2
 
     theirs_root = argv[0]
-    theirs_path = os.path.join(theirs_root, 'src', 'library.c')
+    theirs_path = os.path.join(theirs_root, 'src', 'lib.c')
     if not os.path.exists(theirs_path):
-        sys.stderr.write(f'splice: no library.c under {theirs_root}\n')
+        sys.stderr.write(f'splice: no lib.c under {theirs_root}\n')
         return 1
 
     theirs = open(theirs_path).read()

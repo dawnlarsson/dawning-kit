@@ -636,7 +636,7 @@ static fn put_cells(unsigned int character, unsigned int width)
         Programs count columns with wcwidth, and a terminal that disagrees
         puts everything after an ideograph, an emoji or a combining accent a
         column away from where the program meant it. The columns are
-        library.c's unicode_width for the terminal: Unicode 16's East Asian
+        lib.c's unicode_width for the terminal: Unicode 16's East Asian
         Wide and Fullwidth take two, marks and format characters take none,
         and everything below U+0300 takes one -- and where glibc prints what
         Unicode 16 does not, glibc's width, because the programs in a bowl

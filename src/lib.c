@@ -40459,7 +40459,7 @@ ASM_EXPORT(memset64);
 //       Canvas rectangles and alpha blits.
 //
 //       Large rectangles and copied pixel windows go through these. Short
-//       solid runs share memory_fill_u32 in library.c, while glyph expansion
+//       solid runs share memory_fill_u32 in lib.c, while glyph expansion
 //       comes after them. A full compose of one 1280x800 output is four
 //       megabytes of stores, and
 //       the kernel is built -mno-sse on x86, so what gcc emitted for the C was
@@ -47250,12 +47250,12 @@ bipolar thread_wake(b32 address_to word, b32 count);
 /*
         WHAT A SECOND THREAD MAY TOUCH
 
-        The shared-state audit of library.c, library.common.c and standard.c
+        The shared-state audit of lib.c, library.common.c and standard.c
         made when threads arrived (2026-09-14). Utilities never start threads
         themselves; they hand jobs to the pool, and a job runs on a worker.
 
         Safe from any thread:
-          - every pure library.c leaf: memory_*, string_*, the hashes, the
+          - every pure lib.c leaf: memory_*, string_*, the hashes, the
             codec and crypto cores whose state lives in a caller's struct;
           - memory and memory_free (the mmap and munmap traps),
             memory_growth, memory_reserve and memory_release on storage one
@@ -47274,7 +47274,7 @@ bipolar thread_wake(b32 address_to word, b32 count);
         First thread only, by the same rule glibc gives its non-reentrant
         interfaces -- one shared cell each, and no lock:
           - log, log_error, log_flush, string_format(log, ...) and the
-            diagnostics built on them (log_writer_buffer in library.c);
+            diagnostics built on them (log_writer_buffer in lib.c);
           - buffered_write, buffered_reserve and buffered_flush on a buffer
             more than one thread can reach (a job's own buffer is fine);
           - working_directory and its setters, and text_token_place, the
@@ -49490,7 +49490,7 @@ PURE decimal decimal_multiply_add(decimal first, decimal second, decimal addend)
 
         There is no house name for a thirty two bit float -- decimal is f64
         in the profile this builds, and f32 only when the target has nothing
-        wider -- so these are written in f32, the type library.c declares, and
+        wider -- so these are written in f32, the type lib.c declares, and
         the prose name says narrow where the wide one says nothing.
 
         Seven of the nine are one instruction on at least two of the three
@@ -52301,10 +52301,10 @@ fn memory_release(address_any address_to held, positive address_to have,
 //      Emitted only when the umbrella is what is being built, because that is
 //      exactly when library.common.c's allocator comes with it. The routines
 //      below jump to that file's C for anything a shelf cannot answer, and a
-//      configuration that includes library.c on its own -- the standalone
+//      configuration that includes lib.c on its own -- the standalone
 //      printf check is one -- has no such C to jump to and fails at the link
 //      with an undefined allocator_take_slow. compiler_memory.c defines this
-//      before it includes library.c, so the test is answerable here.
+//      before it includes lib.c, so the test is answerable here.
 #if !defined(KERNEL_MODE) && defined(STANDARD_MODERN_C_COMPILER_MEMORY) && \
         defined(LIBRARY_THREAD_RUNTIME)
 ALLOCATES ALLOCATES_SIZE(1) address_any memory_take(positive bytes);
@@ -53482,7 +53482,7 @@ __asm__(
 // The C carried an empty "if (size < 4096)" with a note about a bump
 // allocator. It compiled to nothing and it is still not written.
 #if defined(WINDOWS)
-#error "Windows requires a hardware-floor assembly implementation for the Windows ABI; the former C implementation is reference-only and is not part of library.c"
+#error "Windows requires a hardware-floor assembly implementation for the Windows ABI; the former C implementation is reference-only and is not part of lib.c"
 #endif
 
 /*
@@ -53496,7 +53496,7 @@ __asm__(
 
         Experimental C standard library
 
-        The prototypes for the standard names library.c makes symbols of
+        The prototypes for the standard names lib.c makes symbols of
 
         Dawn Larsson - Apache-2.0 license
         github.com/dawnlarsson/dawning-kit
@@ -53505,7 +53505,7 @@ __asm__(
 */
 
 /*
-        library.c defines a function-like macro floor(a) that casts through
+        lib.c defines a function-like macro floor(a) that casts through
         bipolar. The token `floor` followed by an open bracket therefore
         became a cast and not a call, which is a truncation toward zero and
         not a floor at all for a negative argument, and it is enough to turn
@@ -53515,7 +53515,7 @@ __asm__(
 */
 #undef floor
 
-/* <string.h>, the part of it library.c writes in assembly. */
+/* <string.h>, the part of it lib.c writes in assembly. */
 void address_to memcpy(void address_to destination, const void address_to source,
                        sized size);
 void address_to memmove(void address_to destination, const void address_to source,
@@ -54058,7 +54058,7 @@ __asm__(
         ASM_FUNC puts an endbr64 at the top. The kernel reaches this with a
         return rather than an indirect jump, so indirect branch tracking does
         not require the marker, but a build with a shadow stack would need
-        more than a marker here and the closing note on jump_mark in library.c already says
+        more than a marker here and the closing note on jump_mark in lib.c already says
         that the indirect jump at the end of jump_to_mark is the other place
         such a build has to be revisited.
 */
@@ -54125,7 +54125,7 @@ __asm__(
         So sigsetjmp is a stub that saves the mask and then TAIL jumps to
         jump_mark with the stack exactly as it was on entry. jump_mark then
         records sigsetjmp's own caller, which is what it must record, and the
-        register lists in library.c's jump_mark are not copied here or anywhere else.
+        register lists in lib.c's jump_mark are not copied here or anywhere else.
         There is one save-the-registers routine in this library and this file
         does not become a second one.
 */
@@ -54133,7 +54133,7 @@ __asm__(
 /*
         Where the mask goes, and why it goes in the same array.
 
-        library.c's jump_state reserves thirty two slots for a jump_state and its comment
+        lib.c's jump_state reserves thirty two slots for a jump_state and its comment
         says why: riscv64 is the widest at twenty six slots, and the spare six
         are for "a later addition, a signal mask among them". This is that
         addition. Slot 26 records whether a mask was asked for at all and slot

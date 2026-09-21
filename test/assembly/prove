@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#       Do two versions of library.c assemble to the same instructions?
+#       Do two versions of lib.c assemble to the same instructions?
 #
 #           sh test/assembly/prove <before.c> <after.c>
 #
@@ -12,7 +12,7 @@
 #
 set -u
 
-before=${1:-src/library.c}
+before=${1:-src/lib.c}
 after=${2:-src/library.next.c}
 
 CLANG=${CLANG:-/opt/homebrew/opt/llvm/bin/clang}
@@ -33,12 +33,12 @@ trap 'rm -rf "$work"' EXIT INT TERM
 # Deliberately compile the pure library. Compiler-owned call-site
 # specializations live in compiler_memory.c and are not instructions emitted
 # by either library snapshot.
-echo '#include "library.c"' > "$work/tu.c"
+echo '#include "lib.c"' > "$work/tu.c"
 
 snap() {
         src=$1 tag=$2
         mkdir -p "$work/$tag"
-        cp "$src" "$work/$tag/library.c"
+        cp "$src" "$work/$tag/lib.c"
         ln -sfn "$root/src/platform" "$work/$tag/platform"
 
         for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \

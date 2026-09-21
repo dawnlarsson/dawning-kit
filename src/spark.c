@@ -646,7 +646,7 @@ _Static_assert(__builtin_offsetof(struct spark_settings, sum) == 44 &&
 #define spark_settings_padded(length) (((unsigned long)(length) + 3) & ~3ul)
 
 //      The sum a sealed slot carries: CRC-32 over its header with the sum field
-//      read as zero, then exactly length bytes of payload -- library.c's
+//      read as zero, then exactly length bytes of payload -- lib.c's
 //      hash_crc32, which the kernel and the shell both read before this file,
 //      chained the way the moonwater command seals a slot.
 static inline unsigned int spark_settings_sum(const struct spark_settings *slot)

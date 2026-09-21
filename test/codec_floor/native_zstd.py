@@ -51,8 +51,8 @@ int main(void){
  printf("%u/%u zstd sequence fixtures passed on native arm64\n",checks,checks);return 0;
 }
 '''
-asm=subprocess.check_output(['python3','test/differential.py','--harness','native_extract','src/library.c','zstd_bits_open','zstd_bits_reload','zstd_sequences_run','memory_copy_match'],text=True)
-source=Path('src/library.c').read_text().splitlines()
+asm=subprocess.check_output(['python3','test/differential.py','--harness','native_extract','src/lib.c','zstd_bits_open','zstd_bits_reload','zstd_sequences_run','memory_copy_match'],text=True)
+source=Path('src/lib.c').read_text().splitlines()
 blocks=[];at=0
 while at<len(source):
     if source[at].startswith('#define ZSTD_SEQ_ARM64_'):

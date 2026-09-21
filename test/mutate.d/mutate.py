@@ -39,7 +39,7 @@ LEDGER = os.path.join(ROOT, 'test', 'mutate.d', 'ledger.json')
 #       nothing, so the pairing is written down rather than assumed.
 #
 TARGETS = {
-    'library': ('src/library.c',  'verify'),
+    'library': ('src/lib.c',  'verify'),
     'text':    ('src/sh/text.c',  'text'),
     'shell':   ('src/sh/lex.c',   'shell'),
     'parse':   ('src/sh/parse.c', 'shell'),
@@ -60,7 +60,7 @@ STRUCTURAL = {'0x0101010101010101', '0x8080808080808080', '0x7f7f7f7f7f7f7f7f',
 def routines_of(text, path):
     """Where each routine starts, so a mutation can be named by the one it is in."""
     marks = []
-    if path.endswith('library.c'):
+    if path.endswith('lib.c'):
         for m in re.finditer(r'ASM_FUNC\(([A-Za-z0-9_]+)\)', text):
             marks.append((m.start(), m.group(1)))
     for m in re.finditer(r'^[A-Za-z_][A-Za-z0-9_ *]*?\b([a-z_][a-z0-9_]*)\s*\([^;]*$',
@@ -147,7 +147,7 @@ RELATIONS = [('<=', '<'), ('<', '<='), ('>=', '>'), ('>', '>='),
 
 def relations(text, path):
     """The same idea in C: a bound that is off by one is a comparison."""
-    if path.endswith('library.c'):
+    if path.endswith('lib.c'):
         return
     marks = routines_of(text, path)
     for was, now in RELATIONS:
@@ -285,9 +285,9 @@ class Workers:
 
 
 BUILDS = {
-    'src/library.c': [
+    'src/lib.c': [
         ['sh', '-c',
-         'printf \'#include "library.c"\\n\' > $0/tu.c && '
+         'printf \'#include "lib.c"\\n\' > $0/tu.c && '
          'for t in x86_64 aarch64 riscv64; do '
          '  clang --target=$t-unknown-linux-gnu -c $0/tu.c -o /dev/null '
          '    -I$0/src -nostdlib -ffreestanding -fno-builtin -O2 '

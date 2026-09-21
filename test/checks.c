@@ -232,7 +232,7 @@ static fn test_cases_walk(test_case address_to walk)
 
 #elif defined(SHARED_declare_cases)
 /*
-        Every name library.c gives a standard spelling to, called by that
+        Every name lib.c gives a standard spelling to, called by that
         spelling.
 
         This file is the point of the whole exercise and it is deliberately
@@ -243,7 +243,7 @@ static fn test_cases_walk(test_case address_to walk)
 
         It is compiled twice from two files that share nothing but this one.
         CHECK_declare includes src/compiler_memory.c and gets every name
-        below from the declarations in src/library.c and the ASM_ALIAS
+        below from the declarations in src/lib.c and the ASM_ALIAS
         symbols beside them.
         CHECK_declare_reference includes the host's <string.h>, <ctype.h>,
         <stdlib.h>, <strings.h>, <math.h> and <setjmp.h> and gets them from
@@ -10864,7 +10864,7 @@ b32 main()
 #include "../src/compiler_memory.c"
 
 /*
-        Differential test for the assembly in library.c.
+        Differential test for the assembly in lib.c.
 
         Every routine in there replaced a C one that was known to work. This
         keeps that C, under another name, and checks the two answer the same
@@ -10877,7 +10877,7 @@ b32 main()
         not pass.
 
         Adding a routine means adding its reference and a case below. A
-        reference is the C that used to be in library.c, copied verbatim: the
+        reference is the C that used to be in lib.c, copied verbatim: the
         point is to compare against what was already trusted, not against a
         second attempt at the same idea.
 */
@@ -10943,7 +10943,7 @@ positive next()
 }
 
 /*
-        The references: the C that was in library.c before the assembly.
+        The references: the C that was in lib.c before the assembly.
 */
 address_any reference_fill(address_any destination, b8 value, positive size)
 {
@@ -14389,7 +14389,7 @@ fn check_table_find()
 /*
         The names, in both libraries.
 
-        library.c writes an assembly override for a C function and says which
+        lib.c writes an assembly override for a C function and says which
         with a MOONWATER_HAVE_ macro. library.next.c has no C function to
         override -- the assembly is the routine and the libc names are aliases
         onto it -- so it defines no such macro at all, and a case guarded on
@@ -14402,7 +14402,7 @@ fn check_table_find()
         under each spelling, weak and bound to its symbol by name: a weak name
         the linker cannot find is null instead of an error, so one binary asks
         the library what it has rather than asking the preprocessor what it
-        once had. Bound by name because a prototype would collide -- library.c
+        once had. Bound by name because a prototype would collide -- lib.c
         declares a strrchr of its own and next declares none.
 
         A routine under neither name is named in the transcript and counted.
@@ -21028,7 +21028,7 @@ fn check_paths()
         either side of it. The code goes in with the register's high half
         dirty on odd code points, which a 32-bit argument allows. Last, the
         table against the one the references lay out, so the table shipped is
-        the layout library.c describes and not just one that happens to agree.
+        the layout lib.c describes and not just one that happens to agree.
 */
 #define SHARED_unicode_width_reference
 #include "checks.c"
@@ -30090,7 +30090,7 @@ int main(void)
         change in this file that alters one of them has changed the answer.
 */
 
-//      A literal where a string_address is wanted. str() in library.c gives a
+//      A literal where a string_address is wanted. str() in lib.c gives a
 //      pointer and a length together, which is the wrong shape for a call that
 //      takes one argument.
 #define text(literal) ((string_address)(literal))
@@ -30154,7 +30154,7 @@ DEAD_END static fn stdlib_test_child(b32 which)
         //      forked child the two buffers answer differently and this is a
         //      forked child. A stream records which process filled it and this
         //      one filled its own, so exit writes it out; the log buffer lives
-        //      in library.c where there is nowhere to keep that, so an implicit
+        //      in lib.c where there is nowhere to keep that, so an implicit
         //      flush leaves it alone in any child at all. The block above
         //      stdlib_buffers_are_ours says why, and CHECK_leaving has
         //      both halves under test.
@@ -30346,7 +30346,7 @@ test(abort_beats_a_blocked_signal)
 
         This was called returning_from_main_is_the_bare_trap, and the block
         here said that making the C spelling reach a return would mean
-        changing assembly inside library.c's graph, which no family owned. It
+        changing assembly inside lib.c's graph, which no family owned. It
         did not need to. The umbrella grew a startup shim, the shim calls main
         and then exit, and returning from main now runs the handlers and
         flushes exactly as C says it does; CHECK_leaving proves that by
@@ -31657,7 +31657,7 @@ test(an_explicit_flush_in_a_child_still_writes_what_it_inherited)
 
 /*
         The log buffer is coarser, and the block above stdlib_buffers_are_ours
-        says why: it lives in assembly, library.c holds assembly and
+        says why: it lives in assembly, lib.c holds assembly and
         declarations and nothing else, so there is nowhere in it to keep the
         stamp a stream keeps. What gates it instead is the identity recorded
         at startup, so a forked child's implicit flush leaves the log alone.
@@ -31687,7 +31687,7 @@ test(a_forked_childs_log_flush_is_not_doubled_by_a_fork)
         both has to be able to predict which arrives first.
 
         They are independent all the way down: the stream buffer is stream.c's
-        and the log buffer is library.c's, they are flushed by different code and
+        and the log buffer is lib.c's, they are flushed by different code and
         they reach descriptor one by different calls. So a hand flush of the
         log goes out immediately and a printf still waiting in the stream
         buffer goes out later, whatever order the two calls were written in.
@@ -32021,7 +32021,7 @@ static int number_widest_limbs;
         The number conversions: text into an integer, and text into a float
         that is the nearest one.
 
-        Every strtod case here also exercises library.c's
+        Every strtod case here also exercises lib.c's
         string_to_decimal_short, which reads a plain run of at most fifteen
         digits and hands everything harder to the general path. Its bail set
         is what this lane is for: the first version answered nought for
@@ -32032,7 +32032,7 @@ static int number_widest_limbs;
 
         THE INTEGER NAMES ARE CHECKED BY BEING CALLED. abs, labs, llabs, atoi,
         atol, atoll, strtol, strtoll, strtoul, strtoull, imaxabs, strtoimax
-        and strtoumax are assembly in src/library.c with no C
+        and strtoumax are assembly in src/lib.c with no C
         declaration in front of them, which meant that until numbers.c every
         one of those call sites was a compile error in a file that linked
         perfectly. So the first group is a call to each of them with an answer
@@ -37400,7 +37400,7 @@ b32 main(void)
 #ifdef CHECK_format
 #ifdef FORMAT_STANDALONE
 /*
-        printf on library.c and library.common.c alone, with none of the
+        printf on lib.c and library.common.c alone, with none of the
         families it normally sits among. They live in one file now, so the
         way to ask for one of them is to skip the rest by name. Not by
         claiming their include guards: format.c carries its own minimal FILE
@@ -37425,7 +37425,7 @@ b32 main(void)
 #define STANDARD_SKIP_SCAN
 #define STANDARD_SKIP_SPOOL
 #define STANDARD_SKIP_PROCESS
-#include "../src/library.c"
+#include "../src/lib.c"
 #include "../src/library.common.c"
 #include "../src/standard.c"
 #else
@@ -39062,7 +39062,7 @@ b32 main(void)
 */
 
 /*
-        The digests go through log, library.c's own buffered writer on
+        The digests go through log, lib.c's own buffered writer on
         descriptor one, rather than through the stdio family whose formatter
         is the thing being measured.
 */
@@ -40853,7 +40853,7 @@ int main(void)
 */
 
 /*
-        The trace goes through log, which is library.c's own buffered writer
+        The trace goes through log, which is lib.c's own buffered writer
         on descriptor one and has nothing to do with the streams and pipes
         being measured. CHECK_stream says why in more words and the
         reason is the same: a trace printed through the thing it is measuring
@@ -41186,7 +41186,7 @@ static fn test_sleeping(void)
         true_is("nanosleep returned within a second", elapsed < 1000000000u);
 
         /*
-                The name `sleep` still means library.c's assembly routine.
+                The name `sleep` still means lib.c's assembly routine.
 
                 This is the whole reason process_sleep_seconds exists under
                 its own name: the POSIX spelling is behind
@@ -42574,7 +42574,7 @@ int main(void)
         This lane began as the answer to one question -- what would it cost
         to make the allocator, errno and the streams safe for a second thread
         -- and carried its own clone trampoline to ask it, because nothing in
-        the tree made threads. thread_start in library.c does now, with the
+        the tree made threads. thread_start in lib.c does now, with the
         thread block, CHILD_CLEARTID and a guard-paged stack, so the lane
         uses it and proves it instead.
 
@@ -48737,7 +48737,7 @@ static fn crypto_floor_aes_ctr(void)
         arithmetic.
 
         crypto_fe_mul, sqr, add and sub hand the two NIST field primes to
-        library.c; a copy of the same crypto_field at another address adds
+        lib.c; a copy of the same crypto_field at another address adds
         and subtracts in crypto.c's C, which is the reference there, and
         multiplies and squares are held to the C Montgomery multiply and
         square crypto.c ran before montgomery_multiply
@@ -59812,7 +59812,7 @@ b32 main(void)
         terminal or wcwidth, runs one body over one stream and prints the sum
         of its widths, so perf stat or an emulator's instruction count sees
         one body a process; none builds the stream and exits, for the fixed
-        cost. `table` prints unicode_width_tab's lines for library.c, laid out
+        cost. `table` prints unicode_width_tab's lines for lib.c, laid out
         from the references.
 */
 #include "../src/compiler_memory.c"
@@ -60532,7 +60532,7 @@ int main(void)
         The byte hunts, run on this machine.
 
         Built by sh test/run native, which lifts the arm64 bodies out of
-        library.c first. Both shapes that broke them before the fix are here,
+        lib.c first. Both shapes that broke them before the fix are here,
         plus a sweep of every alignment and length; see FINDING for what the
         two shapes are and why random data does not find them.
 */
@@ -60835,7 +60835,7 @@ int printf(const char *, ...);
 static u8 got[ROOM], want[ROOM], from[ROOM];
 static u64 checks, bad;
 
-// The references: what the C in library.c did before the assembly.
+// The references: what the C in lib.c did before the assembly.
 static void r_fill(u8 *d, int v, u64 n)
 {
         while (n--)
@@ -61145,7 +61145,7 @@ int main(void)
 #endif /* CHECK_native_bulk */
 
 #ifdef CHECK_native_reverse
-/* ARM64 memory_reverse lifted verbatim from library.c and run on the host. */
+/* ARM64 memory_reverse lifted verbatim from lib.c and run on the host. */
 #include "reverse.h"
 
 #define NATIVE_SEED 0x2545f4914f6cdd1dull
@@ -62878,7 +62878,7 @@ b32 main(void)
 
 #ifdef BENCH_floor
 /*
-        Every routine in library.c, against the speed of the machine.
+        Every routine in lib.c, against the speed of the machine.
 
         The lower-bound candidate is a loop that moves the unavoidable traffic
         and computes nothing.  A semantic routine's useful question is how
@@ -63326,7 +63326,7 @@ b32 main(void)
 /*
         The assembly against the C byte loop it replaced.
 
-        library.c's string_length, string_compare and string_first_of forward
+        lib.c's string_length, string_compare and string_first_of forward
         to assembly on x86_64, arm64 and riscv64 and to a byte loop anywhere
         else. This runs both halves side by side at the lengths the choice
         actually turns on, so "a word at a time is faster" is a number rather
@@ -70839,7 +70839,7 @@ b32 main(void)
 /* malloc/free class fast path against its call and free-list traffic floors.
    The subjects are memory_take and memory_give, which malloc and free are
    second labels on: what the pair times is the shelf pop and the shelf push
-   in library.c, with refill, mapping and every tag those two do not own
+   in lib.c, with refill, mapping and every tag those two do not own
    staying in the C that their miss paths jump to. */
 #include "../src/compiler_memory.c"
 #define SHARED_bench_measure

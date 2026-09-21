@@ -6,7 +6,7 @@
         quote removal last, after every expansion has had its turn, and a lexer
         that strips them early cannot tell "$x" from $x afterwards.
 
-        The scanning is string_span from library.c, which is assembly on every
+        The scanning is string_span from lib.c, which is assembly on every
         architecture and reads about two bytes a cycle. A lexer is almost
         entirely that one operation: run to the next thing that matters. Every
         set below is prepared once, so the inner loop never asks what kind of

@@ -1,5 +1,5 @@
 /*
-        Each CPU-bound library.c leaf against this machine's traffic floor.
+        Each CPU-bound lib.c leaf against this machine's traffic floor.
 
         Not vs glibc. The floor is a loop that moves the same bytes and
         computes nothing: one-stream read, two-stream read, copy, or fill.
@@ -10,7 +10,7 @@
 
             Darwin (lifted ARM64 bodies):
                 python3 test/differential.py --harness native_extract \
-                    src/library.c $NAMES > /tmp/lifted.h
+                    src/lib.c $NAMES > /tmp/lifted.h
                 cc -O2 -fno-builtin -DUSE_LIFTED -DSKIP_SHA256 -DSKIP_GHASH -DSKIP_FIELD -DSKIP_AES -DSKIP_HEX -DSKIP_LOCK \
                     -DSKIP_ITOA -I/tmp test/hardware_floor.c -o /tmp/hwfloor
 
@@ -31,8 +31,8 @@
                 memory_search_prepared_core string_to_positive
                 memory_copy_end memory_copy_apart_end
 
-            Linux (outlined library.c):
-                printf '%s\n' '#include "src/library.c"' > /tmp/mw.c
+            Linux (outlined lib.c):
+                printf '%s\n' '#include "src/lib.c"' > /tmp/mw.c
                 cc -O2 -ffreestanding -fno-builtin -fno-stack-protector \
                     -c /tmp/mw.c -o /tmp/libmw.o -I.
                 objcopy --redefine-sym _start=moonwater_start /tmp/libmw.o
@@ -279,7 +279,7 @@ void *memory_copy_end(void *, const void *, unsigned long);
 void *memory_copy_apart_end(void *, const void *, unsigned long);
 #endif
 
-/* The lock is Linux runtime assembly (in library.c) and only the
+/* The lock is Linux runtime assembly (in lib.c) and only the
    outlined library carries it. threads_live is forced to one around the
    company row to time the atomic path in this single-threaded harness. */
 #if defined(USE_OURS) && !defined(SKIP_LOCK)

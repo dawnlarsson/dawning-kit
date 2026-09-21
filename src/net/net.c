@@ -32,7 +32,7 @@
 /*
         This is ordinary C on purpose.
 
-        library.c and everything it includes holds declarations and assembly
+        lib.c and everything it includes holds declarations and assembly
         and nothing else, which is checked. What follows is a cursor walking a
         buffer appending length-prefixed attributes -- function bodies, and
         with nothing in them a machine would do differently from any other
@@ -40,7 +40,7 @@
         lets it be written once instead of three times, and what lets the test
         include it directly and run the same bytes on all three targets.
 
-        It depends on library.c alone. No shell anything: the freestanding
+        It depends on lib.c alone. No shell anything: the freestanding
         test builds this file without a shell in sight.
 
         Everything below is measured, not remembered. The offsets came out of
@@ -1727,7 +1727,7 @@ static COLD bipolar dns_resolve_any(string_address path, string_address name,
         wget speaks TLS 1.3 with AES-128-GCM, X25519, P-256 and P-384. The chain for that
         handshake is ECDSA on P-256 and P-384, RSA PKCS#1 and RSA-PSS SHA-256;
         Alpine and GitHub still present RSA leaves. SHA-256 compression is
-        sha256_compress in library.c, on the same hardware floor as the rest
+        sha256_compress in lib.c, on the same hardware floor as the rest
         of the binary, and SHA-384 is sha512_blocks through the same streaming
         digests the checksum utilities use. X25519 and ECDSA stay C for now. None of
         this is a kernel crypto ABI: AF_ALG is off on Moonwater, and a
@@ -1741,7 +1741,7 @@ typedef unsigned __int128 crypto_wide;
 
 /* Big endian 64 bit fields -- GCM's length block, a key wrap's integrity
    check, a bignum limb -- are an unaligned pair of 32 bit halves, and the
-   halves are library.c's own byte-reversing load and store. */
+   halves are lib.c's own byte-reversing load and store. */
 static p64 crypto_be64(const p8 address_to bytes)
 {
         return ((p64)network_load_32((p8 address_to)bytes) << 32) |
@@ -2060,7 +2060,7 @@ static fn crypto_aes128_expand(p8 address_to key, p8 address_to round)
 
 /*
         GHASH over a span, the last partial block zero padded. The multiply
-        is ghash_blocks in library.c over the table ghash_key made; GCM's
+        is ghash_blocks in lib.c over the table ghash_key made; GCM's
         framing stays here.
 */
 static fn crypto_ghash_span(p8 address_to state, p8 address_to table,
@@ -2726,10 +2726,10 @@ static bool crypto_fe_is_zero(const p64 address_to a, positive n)
         return crypto_fe_zero_bit(a, n) != 0;
 }
 
-/* The two NIST field primes run on library.c's p256_ and p384_ routines.
+/* The two NIST field primes run on lib.c's p256_ and p384_ routines.
    Any other modulus -- the group orders -- and a crypto_field copied to
    another address add and subtract in the C below and multiply in
-   library.c's montgomery_multiply, which is how CHECK_net compares the
+   lib.c's montgomery_multiply, which is how CHECK_net compares the
    field routines against the generic path. */
 static fn crypto_fe_add(p64 address_to d, const p64 address_to a,
                         const p64 address_to b, const crypto_field address_to f)

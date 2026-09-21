@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit known-argument specialization coverage for library.c's inventory.
+"""Audit known-argument specialization coverage for lib.c's inventory.
 
 src/compiler_memory.c replaces calls whose decisive argument the compiler
 already knows with the narrower operation that argument permits. Forty-eight
@@ -58,11 +58,11 @@ import manifest
 ROOT = manifest.ROOT
 COMPILER_MEMORY = ROOT / 'src/compiler_memory.c'
 
-#       Where a declaration may live. library.c holds most of them; the
+#       Where a declaration may live. lib.c holds most of them; the
 #       platform includes hold the rest, and a parameter named in a row has to
 #       be findable in one of these.
 DECLARATION_SOURCES = (
-    'src/library.c',
+    'src/lib.c',
 )
 
 Coverage = namedtuple('Coverage',

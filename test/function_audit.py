@@ -211,7 +211,7 @@ def inventory():
 
 def library_routines():
     """Return semantic routines, architecture bodies, and zero-body aliases."""
-    _, _, _, sources = included_audit(str(ROOT / 'src/library.c'), 'linux')
+    _, _, _, sources = included_audit(str(ROOT / 'src/lib.c'), 'linux')
     have, order, _, _, _, _, _ = graph_assembly_inventory(sources)
 
     # Architecture-local aliases are already semantic routines in ``order``.

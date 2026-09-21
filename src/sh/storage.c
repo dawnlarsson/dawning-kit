@@ -2011,7 +2011,7 @@ b32 storage_findfs_run(positive argc, string_address address_to argv,
         of both files instead of six subtly different ones.
 
         The input and entry tables grow through memory_reserve, whose copying,
-        growth and allocation floor is in library.c assembly on every target.
+        growth and allocation floor is in lib.c assembly on every target.
         Parsing begins only after the input has stopped moving; entry strings
         are therefore zero-copy views into the owned input block.  There is no
         line, field, path or entry ceiling.

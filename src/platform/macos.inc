@@ -19,7 +19,7 @@
         needs to do.
 
         This is deliberately Mach-O assembly rather than the ELF-shaped
-        ASM_FUNC/ASM_END vocabulary in library.c. Darwin C symbols have a
+        ASM_FUNC/ASM_END vocabulary in lib.c. Darwin C symbols have a
         leading underscore, Mach-O has no ELF .type/.size directives, and the
         linker entry named _start must really be _start rather than the
         __start a C function named _start would emit.
