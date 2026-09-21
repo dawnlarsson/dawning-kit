@@ -21751,16 +21751,23 @@ static bool hardlink_metadata_same(hardlink_file address_to one,
 
 /* Strict stability is separate from user-selected equivalence.  Even -c may
    not use bytes observed before a concurrent size/mode/owner/time change. */
+static bool hardlink_link_same(file_facts address_to old,
+                               file_facts address_to now);
+
+/*
+        The same file, and nothing about it touched since it was looked at.
+
+        That is the link comparison below and one more question: whether the
+        change time moved. Writing the other six out again here is how the
+        two drift -- a field added to one and not the other -- and states
+        nothing about why a snapshot asks more than a link does.
+*/
 static bool hardlink_snapshot_same(file_facts address_to old,
                                    file_facts address_to now)
 {
-        return file_same_identity(old, now) && old->size == now->size &&
-               old->mode == now->mode && old->owner == now->owner &&
-               old->group == now->group &&
+        return hardlink_link_same(old, now) &&
                hardlink_moment_same(address_of old->changed,
-                                    address_of now->changed) &&
-               hardlink_moment_same(address_of old->modified,
-                                    address_of now->modified);
+                                    address_of now->changed);
 }
 
 /* A load below one half makes repeated or overlapping input trees O(n).
