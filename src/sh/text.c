@@ -4100,6 +4100,7 @@ typedef struct
 
 static const b8 text_set_ascii[STRING_SET_BYTES] = {[0 ... 127] = 1};
 static const b8 wc_set_graphic[STRING_SET_BYTES] = {[0x21 ... 0x7e] = 1};
+static const b8 wc_set_printing[STRING_SET_BYTES] = {[0x20 ... 0x7e] = 1};
 
 static fn wc_utf8_step(wc_utf8 address_to state, bool valid, p32 code)
 {
@@ -4310,7 +4311,12 @@ static fn wc_bytes_general(const p8 address_to at, positive left, bool want_line
                 p8 character = at[c];
                 positive run = 0;
 
-                if (character >= 0x21 && character < 0x7f)
+                // Without words a space is only a column, so a run can go
+                // on through it: a line of text is then one span, not one
+                // a word, and -L alone ran seven percent behind GNU.
+                if (!want_words && character >= 0x20 && character < 0x7f)
+                        run = string_span_max(at + c, left - c, wc_set_printing);
+                else if (character >= 0x21 && character < 0x7f)
                         run = string_span_max(at + c, left - c, wc_set_graphic);
                 if (run)
                 {
