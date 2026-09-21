@@ -751,7 +751,6 @@ static bipolar file_exec_path_try(string_address address_to words);
 #include "storage_format.c"
 #include "text.c"
 #include "checksum.c"
-#include "cksum.c"
 #include "awk.c"
 #include "tools.c"
 #include "pty.c"
