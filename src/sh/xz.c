@@ -3352,7 +3352,10 @@ static bool xz_encode_setup(p8 level)
         xz_writer.batch_blocks = xz_batch_room(xz_writer.block) / xz_writer.block;
         if (xz_writer.batch_blocks > XZ_BATCH_BLOCKS)
                 xz_writer.batch_blocks = XZ_BATCH_BLOCKS;
-        if (!xz_writer.batch_blocks)
+        //      One worker encodes one block at a time whatever waits behind
+        //      it, and a single-core -6 held three 24 MiB blocks of input
+        //      for nothing.
+        if (!xz_writer.batch_blocks || xz_serial || parallel_width() == 1)
                 xz_writer.batch_blocks = 1;
         xz_writer.input_n = 0;
         xz_writer.index_n = 0;
