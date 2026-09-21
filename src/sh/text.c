@@ -23398,6 +23398,17 @@ static fn sort_items_load_range(positive from, positive to, b32 stage,
         for (positive at = from; at < to; at++)
         {
                 sort_item address_to item = sort_items + at;
+
+                // A radix pass moves the items and not the lines, so each
+                // window is loaded from a record and bytes that are anywhere:
+                // the record sixteen ahead and the bytes eight ahead are
+                // asked for now.
+                if (at + 16 < to)
+                        __builtin_prefetch(sort_lines + sort_items[at + 16].line);
+
+                if (at + 8 < to)
+                        __builtin_prefetch(sort_text + sort_lines[sort_items[at + 8].line].at +
+                                           depth);
                 sort_view view = sort_view_of(item->line);
 
                 sort_item_window(item, address_of view, stage, depth);
@@ -23504,6 +23515,22 @@ static fn sort_items_insert(positive from, positive to, b32 stage, positive dept
         positive skip = depth != positive_max ? (depth & ~(positive)7) + 8 : 0;
         bool plain = sort_stage_kind[stage] == SORT_STAGE_BYTES &&
                      !sort_stage_fold[stage] && skip;
+
+        /*
+                Two windows that agree send the comparison to the lines, and a
+                line's record and its bytes are wherever the input left them:
+                that load was a fifth of sort. Every record of the range is
+                asked for first, then the bytes past the windows, so the
+                misses overlap instead of arriving one comparison at a time.
+        */
+        if (plain)
+        {
+                for (positive at = from; at < to; at++)
+                        __builtin_prefetch(sort_lines + sort_items[at].line);
+
+                for (positive at = from; at < to; at++)
+                        __builtin_prefetch(sort_text + sort_lines[sort_items[at].line].at + skip);
+        }
 
         for (positive at = from + 1; at < to; at++)
         {
