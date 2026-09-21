@@ -227,6 +227,8 @@ cover('direct_benchmark', 'test/checks.c#BENCH_translate', 'memory_translate',
       'paired former-C/assembly timing over byte-table translation sizes')
 cover('direct_benchmark', 'test/checks.c#BENCH_delete', 'memory_delete_bytes',
       'paired former-C/assembly timing over byte deletion by table at three densities')
+cover('direct_benchmark', 'test/checks.c#BENCH_squeeze', 'memory_squeeze_bytes',
+      'paired former-C/assembly timing over squeezing repeats by table at three set sizes')
 
 
 # Private cores are present in the timed call graph, but the harness cannot

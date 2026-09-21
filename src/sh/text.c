@@ -14243,105 +14243,28 @@ static b32 text_tr()
         if (!squeeze && text_tr_parallel(remove, remove ? in_first : mapped))
                 return text_done(text_status);
 
-        b32 last_written = -1;
-
-        /*
-                One byte squeezed and nothing else, which is what tr -s ' '
-                and tr -s '\n' are: the bytes between its runs are found and
-                moved whole, and each run is one byte. The walk below looks
-                at every byte and branches on each one, and against a space
-                every few letters it ran at six cycles a byte, twice GNU's.
-        */
-        positive squeeze_count = 0;
-        p8 squeeze_only = 0;
-
-        for (positive i = 0; squeeze && !remove && !second && i < 256; i++)
-                if (squeezed[i])
-                {
-                        squeeze_count++;
-                        squeeze_only = (p8)i;
-                }
+        // The last byte written, carried from one read to the next for the
+        // squeeze; past 255 before the first.
+        positive previous = 256;
 
         while (text_fill())
         {
                 p8 address_to at = text_input.buffer + text_input.position;
                 positive left = text_input.filled - text_input.position;
+                positive kept = left;
 
-                if (!remove && !squeeze)
-                {
-                        memory_translate(at, left, mapped);
-                        text_put(at, left);
-                        text_input.position = text_input.filled;
-                        continue;
-                }
-
-                positive kept = 0;
-
-                if (squeeze_count == 1)
-                {
-                        for (positive c = 0; c < left;)
-                        {
-                                p8 address_to hit = memory_first_of(at + c, squeeze_only, left - c);
-                                positive stop = hit ? (positive)(hit - at) : left;
-
-                                if (stop > c)
-                                {
-                                        if (kept != c)
-                                                memory_copy(at + kept, at + c, stop - c);
-
-                                        kept += stop - c;
-                                        last_written = at[kept - 1];
-                                        c = stop;
-                                }
-
-                                if (!hit)
-                                        break;
-
-                                if (last_written != (b32)squeeze_only)
-                                        at[kept++] = squeeze_only;
-
-                                last_written = squeeze_only;
-                                c++;
-                                c += memory_span_byte(at + c, squeeze_only, left - c);
-                        }
-                }
-                else if (!remove && !second)
-                {
-                        // With no translation, a squeezed run is the input
-                        // byte itself. Skip the run with the bounded hardware
-                        // span instead of repeating the table lookup per byte.
-                        for (positive c = 0; c < left;)
-                        {
-                                p8 character = at[c++];
-
-                                if (!squeezed[character] || (b32)character != last_written)
-                                        at[kept++] = character;
-
-                                last_written = character;
-
-                                if (squeezed[character] && c < left && at[c] == character)
-                                        c += memory_span_byte(at + c, character, left - c);
-                        }
-                }
-                else if (remove && !squeeze)
+                // Deleting or translating first, then squeezing what that
+                // wrote: -ds squeezes SET2 after deleting SET1, and -s with
+                // two sets squeezes the translated bytes.
+                if (remove)
                         kept = memory_delete_bytes(at, left, in_first);
-                else
+                else if (second || !squeeze)
+                        memory_translate(at, left, mapped);
+
+                if (squeeze && kept)
                 {
-                        for (positive c = 0; c < left; c++)
-                        {
-                                p8 character = at[c];
-
-                                if (remove && in_first[character])
-                                        continue;
-
-                                p8 out = remove ? character : mapped[character];
-
-                                if (squeezed[out] && (b32)out == last_written)
-                                        continue;
-
-                                at[kept++] = out;
-                                last_written = out;
-                        }
+                        kept = memory_squeeze_bytes(at, kept, squeezed, previous);
+                        previous = kept ? at[kept - 1] : previous;
                 }
 
                 text_put(at, kept);

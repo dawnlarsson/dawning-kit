@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        332 routines (319 public, 13 local), 331 of them on all three and 1 local to one.
+        333 routines (320 public, 13 local), 332 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -225,6 +225,7 @@
           memory_search_prepared_core    local   yes     yes     yes
           memory_span_byte               public  yes     yes     yes
           memory_span_byte_wide          local   yes     --      --
+          memory_squeeze_bytes           public  yes     yes     yes
           memory_sum_bytes               public  yes     yes     yes
           memory_take                    public  yes     yes     yes
           memory_to_lower_ascii          public  yes     yes     yes
@@ -11146,6 +11147,86 @@ __asm__(
     "jmp .Lmemory_delete_x64_four\n"
 #endif
     ASM_END(memory_delete_bytes)
+
+    //
+    //       memory_squeeze_bytes -- keep each byte unless the table marks it
+    //       and it repeats the byte kept before it, in order, at the front of
+    //       the block. The byte kept before the block is `previous`, any value
+    //       past 255 when there was none. Answers how many were kept; bytes
+    //       past them inside the block are unspecified.
+    //
+    //       Every byte kept before another is that byte's predecessor in the
+    //       input, since only a repeat is ever dropped, so the question is
+    //       asked of neighbours in the input and a vector answers it whole:
+    //       the block shifted by one byte against itself is "repeats", the
+    //       table looked up as memory_delete_bytes looks it up is "marked",
+    //       and their and is what vpcompressb leaves out. The narrow body is
+    //       branchless a byte at a time, as memory_delete_bytes' is.
+    //
+    //       tr -s kept three C loops for this: squeeze alone, delete then
+    //       squeeze, translate then squeeze. Each is now a pass of the
+    //       library's delete or translate, then this.
+    //
+    ASM_FUNC(memory_squeeze_bytes)
+    "mov %rdi, %rax\n   mov %rdi, %r11\n   mov %rcx, %r9\n"
+    "test %rsi, %rsi\n   jz .Lmemory_squeeze_x64_done\n"
+#ifndef KERNEL_MODE
+    "cmp $64, %rsi\n   jae .Lmemory_squeeze_x64_dispatch\n"
+#endif
+    ".balign 16\n.Lmemory_squeeze_x64_one:\n"
+    "movzbl (%rdi), %ecx\n   mov %cl, (%rax)\n   xor %r8d, %r8d\n"
+    "cmp %rcx, %r9\n   sete %r8b\n   mov %rcx, %r9\n"
+    "cmpb $0, (%rdx,%rcx)\n   setne %r10b\n   and %r10b, %r8b\n   xor $1, %r8d\n"
+    "add %r8, %rax\n   inc %rdi\n   dec %rsi\n   jnz .Lmemory_squeeze_x64_one\n"
+    ".Lmemory_squeeze_x64_done:\n   sub %r11, %rax\n"
+    ASM_RET
+#ifndef KERNEL_MODE
+    ".Lmemory_squeeze_x64_dispatch:\n"
+    ASM_NARROW("cpu_has_avx512", ".Lmemory_squeeze_x64_one")
+    ASM_NARROW("cpu_has_avx512_vbmi", ".Lmemory_squeeze_x64_one")
+    "movzbl cpu_has_avx512_vbmi2(%rip), %ecx\n"
+    "cmp $1, %ecx\n   je .Lmemory_squeeze_x64_one\n"
+    "ja .Lmemory_squeeze_x64_wide_start\n"
+    // First wide call anywhere: memory_delete_bytes' question, asked here.
+    "push %rbx\n   mov %rdx, %r8\n   mov $7, %eax\n   xor %ecx, %ecx\n"
+    "cpuid\n   mov %r8, %rdx\n   pop %rbx\n   mov %rdi, %rax\n"
+    "shr $6, %ecx\n   and $1, %ecx\n   inc %ecx\n"
+    "mov %cl, cpu_has_avx512_vbmi2(%rip)\n"
+    "cmp $1, %ecx\n   je .Lmemory_squeeze_x64_one\n"
+    ".Lmemory_squeeze_x64_wide_start:\n"
+    // No byte before the block: one that is not its first byte.
+    "cmp $255, %r9\n   jbe 1f\n   movzbl (%rdi), %r9d\n   xor $1, %r9d\n"
+    "1:  vpbroadcastb %r9d, %zmm8\n"
+    "vmovdqu64 .Lmemory_squeeze_x64_previous(%rip), %zmm9\n"
+    "vmovdqu64 (%rdx), %zmm4\n   vmovdqu64 64(%rdx), %zmm5\n"
+    "vmovdqu64 128(%rdx), %zmm6\n   vmovdqu64 192(%rdx), %zmm7\n"
+    "vptestmb %zmm4, %zmm4, %k1\n   vpmovm2b %k1, %zmm4\n"
+    "vptestmb %zmm5, %zmm5, %k1\n   vpmovm2b %k1, %zmm5\n"
+    "vptestmb %zmm6, %zmm6, %k1\n   vpmovm2b %k1, %zmm6\n"
+    "vptestmb %zmm7, %zmm7, %k1\n   vpmovm2b %k1, %zmm7\n"
+    ".balign 16\n.Lmemory_squeeze_x64_wide:\n"
+    "vmovdqu64 (%rdi), %zmm0\n   vmovdqa64 %zmm0, %zmm10\n"
+    "vpermt2b %zmm8, %zmm9, %zmm10\n   vpcmpeqb %zmm10, %zmm0, %k3\n"
+    "vmovdqa64 %zmm4, %zmm1\n   vpermt2b %zmm5, %zmm0, %zmm1\n"
+    "vmovdqa64 %zmm6, %zmm2\n   vpermt2b %zmm7, %zmm0, %zmm2\n"
+    "vpmovb2m %zmm0, %k1\n   vmovdqu8 %zmm2, %zmm1{%k1}\n   vpmovb2m %zmm1, %k2\n"
+    "kandq %k3, %k2, %k2\n   knotq %k2, %k2\n"
+    "vpcompressb %zmm0, %zmm3{%k2}{z}\n   vmovdqu64 %zmm3, (%rax)\n"
+    "kmovq %k2, %rcx\n   popcnt %rcx, %rcx\n   add %rcx, %rax\n"
+    "vmovdqa64 %zmm0, %zmm8\n"
+    "add $64, %rdi\n   sub $64, %rsi\n   cmp $64, %rsi\n"
+    "jae .Lmemory_squeeze_x64_wide\n"
+    // The block's last byte, from the register: the store above may have
+    // left something else in memory where it was.
+    "vextracti32x4 $3, %zmm8, %xmm8\n   vpextrb $15, %xmm8, %r9d\n   vzeroupper\n"
+    "test %rsi, %rsi\n   jz .Lmemory_squeeze_x64_done\n"
+    "jmp .Lmemory_squeeze_x64_one\n"
+    ".pushsection .rodata\n   .balign 64\n"
+    // Lane 0 takes the previous vector's last byte, lane i this one's i - 1.
+    ".Lmemory_squeeze_x64_previous:\n   .byte 127,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62\n"
+    ".popsection\n"
+#endif
+    ASM_END(memory_squeeze_bytes)
 
     /*
             Exchange two separate byte runs in place.
@@ -22911,6 +22992,21 @@ __asm__(
     ".Lmemory_delete_arm64_done:\n   sub x0, x8, x7\n"
     ASM_RET
     ASM_END(memory_delete_bytes)
+
+    // memory_squeeze_bytes: a byte at a time with no branch on the data,
+    // every byte stored at the cursor and the cursor moved by cinc unless the
+    // byte repeats the one before it and its entry is marked; ccmp asks the
+    // table only when the byte repeats. The x86_64 block carries the full
+    // contract.
+    ASM_FUNC(memory_squeeze_bytes)
+    "mov x7, x0\n   mov x8, x0\n   cbz x1, .Lmemory_squeeze_arm64_done\n"
+    ".Lmemory_squeeze_arm64_one:\n"
+    "ldrb w4, [x0], #1\n   strb w4, [x8]\n   ldrb w9, [x2, x4]\n"
+    "cmp x4, x3\n   ccmp w9, #0, #4, eq\n   cinc x8, x8, eq\n   mov x3, x4\n"
+    "subs x1, x1, #1\n   b.ne .Lmemory_squeeze_arm64_one\n"
+    ".Lmemory_squeeze_arm64_done:\n   sub x0, x8, x7\n"
+    ASM_RET
+    ASM_END(memory_squeeze_bytes)
 
     // memory_exchange_apart: disjoint exchange with equal and zero-sized
     // no-op cases. The x86_64 block carries the full contract.
@@ -35551,6 +35647,20 @@ __asm__(
     ASM_RET
     ASM_END(memory_delete_bytes)
 
+    // memory_squeeze_bytes: a byte at a time with no branch on the data, the
+    // cursor moved by one less the and of "repeats" and "marked" -- seqz and
+    // snez, so neither C nor Zbb. The x86_64 block carries the full contract.
+    ASM_FUNC(memory_squeeze_bytes)
+    "mv t5, a0\n   mv t0, a0\n   beqz a1, .Lmemory_squeeze_rv_done\n"
+    ".Lmemory_squeeze_rv_one:\n"
+    "lbu t1, 0(a0)\n   sb t1, 0(t0)\n   add t2, a2, t1\n   lbu t2, 0(t2)\n"
+    "xor t3, t1, a3\n   seqz t3, t3\n   snez t2, t2\n   and t3, t3, t2\n"
+    "xori t3, t3, 1\n   add t0, t0, t3\n   mv a3, t1\n"
+    "addi a0, a0, 1\n   addi a1, a1, -1\n   bnez a1, .Lmemory_squeeze_rv_one\n"
+    ".Lmemory_squeeze_rv_done:\n   sub a0, t0, t5\n"
+    ASM_RET
+    ASM_END(memory_squeeze_bytes)
+
     // memory_exchange_apart: disjoint exchange with equal and zero-sized
     // no-op cases. The x86_64 block carries the full contract. RV64 may trap
     // on an unaligned wide access. The xor chooses the widest shared residue;
@@ -43217,6 +43327,14 @@ address_any memory_translate(address_any block, positive size,
 READS_WRITES(1, 2)
 positive memory_delete_bytes(address_any block, positive size,
                              address_any table);
+// Keep each byte unless the table marks it and it repeats the byte kept before
+// it, in order, at the front of the block; previous is the byte kept before
+// the block, or any value past 255 when there was none. Answers how many were
+// kept; bytes past them inside the block are unspecified. Size zero accesses
+// neither pointer; the table must not overlap the block.
+READS_WRITES(1, 2)
+positive memory_squeeze_bytes(address_any block, positive size,
+                              address_any table, positive previous);
 // Swap exactly size bytes between separate ranges. The ranges must be
 // disjoint unless left == right; equal addresses and zero size are no-ops and
 // do not dereference either address.

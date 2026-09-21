@@ -11919,6 +11919,109 @@ fn check_delete_bytes()
         memory_free(pages, 3 * 4096);
 }
 
+/*
+        memory_squeeze_bytes against the byte loop tr used to run: every size
+        across the vector edges, every residue, marks from none to nearly all,
+        bytes drawn from a four-letter alphabet so that repeats are the rule,
+        and the byte before the block absent, equal to the first byte and
+        different from it. On x86_64 each body in turn, as for deletion.
+*/
+fn check_squeeze_bytes()
+{
+        static const positive sizes[] = {
+            0, 1, 2, 3, 4, 5, 7, 8, 63, 64, 65, 66, 67, 127, 128, 129,
+            191, 255, 256, 257, 1000, 4095, 4096,
+        };
+        static p8 want[4096], table[256];
+        p8 address_to pages = memory(3 * 4096);
+        bool mapped = (bipolar)(positive)pages > 0;
+
+        same("memory_squeeze_bytes", "guard mapping", mapped, 1);
+        if (!mapped)
+                return;
+        bool protected =
+            system_call_3(syscall(mprotect), (positive)pages, 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0) == 0;
+        same("memory_squeeze_bytes", "guard pages protected", protected, 1);
+        if (!protected)
+        {
+                memory_free(pages, 3 * 4096);
+                return;
+        }
+        p8 address_to got = pages + 4096;
+        p64 seed = 0x2545f4914f6cdd1dull;
+#if X64
+        p8 avx512 = cpu_has_avx512, vbmi2 = cpu_has_avx512_vbmi2;
+        positive tiers = 3;
+#else
+        positive tiers = 1;
+#endif
+        for (positive tier = 0; tier < tiers; tier++)
+        {
+#if X64
+                cpu_has_avx512 = tier < 2 ? avx512 : 0;
+                cpu_has_avx512_vbmi2 = tier == 1 ? 1 : vbmi2;
+#endif
+                same("memory_squeeze_bytes", "null zero-sized answer",
+                     (memory_squeeze_bytes)(null, 0, null, 256), 0);
+                for (positive s = 0; s < array_count(sizes); s++)
+                        for (positive residue = 0; residue <= 64; residue += residue < 8 ? 1 : 7)
+                                for (positive density = 0; density < 4; density++)
+                                        for (positive before = 0; before < 3; before++)
+                                {
+                                        positive size = sizes[s];
+                                        positive offset = residue == 64 || size + residue > 4096
+                                                              ? 4096 - size : residue;
+                                        for (positive i = 0; i < 256; i++)
+                                        {
+                                                seed ^= seed << 13;
+                                                seed ^= seed >> 7;
+                                                seed ^= seed << 17;
+                                                p8 mark = (p8)(seed >> 24) | 1;
+                                                bool marked = density == 3 ? (seed & 15) != 0
+                                                              : density == 2 ? (seed & 1) != 0
+                                                              : density == 1 ? i == 'a' || i == 0xf1
+                                                                             : false;
+                                                table[i] = marked ? mark : 0;
+                                        }
+                                        static const p8 alphabet[4] = {'a', 'b', ' ', 0xf1};
+                                        for (positive i = 0; i < 4096; i++)
+                                        {
+                                                seed ^= seed << 13;
+                                                seed ^= seed >> 7;
+                                                seed ^= seed << 17;
+                                                got[i] = want[i] = (seed >> 40) % 5 ? alphabet[(seed >> 20) & 3]
+                                                                                    : (p8)seed;
+                                        }
+                                        positive previous = before == 0 ? 256
+                                                            : before == 1 && size ? want[offset]
+                                                                              : 'z';
+                                        positive kept = 0;
+                                        positive last = previous;
+                                        for (positive i = 0; i < size; i++)
+                                        {
+                                                p8 value = want[offset + i];
+                                                if (!(table[value] && value == last))
+                                                        want[offset + kept++] = value;
+                                                last = value;
+                                        }
+                                        positive answer = (memory_squeeze_bytes)(got + offset, size,
+                                                                                table, previous);
+                                        same("memory_squeeze_bytes", "kept count", answer, kept);
+                                        same_bytes("memory_squeeze_bytes", "kept bytes and those before",
+                                                   got, want, offset + kept);
+                                        same_bytes("memory_squeeze_bytes", "bytes after the block",
+                                                   got + offset + size, want + offset + size,
+                                                   4096 - offset - size);
+                                }
+        }
+#if X64
+        cpu_has_avx512 = avx512;
+        cpu_has_avx512_vbmi2 = vbmi2;
+#endif
+        memory_free(pages, 3 * 4096);
+}
+
 fn check_checksums()
 {
         same("memory_sum_bytes", "null zero-sized span",
@@ -21220,6 +21323,7 @@ b32 main()
         check_cells_from_ascii();
         check_unicode_width();
         check_delete_bytes();
+        check_squeeze_bytes();
         check_checksums();
         check_copy_match();
         check_move();
@@ -62116,6 +62220,152 @@ int main(void)
 }
 #endif /* CHECK_native_reverse */
 
+#ifdef CHECK_native_squeeze
+/* ARM64 memory_squeeze_bytes lifted verbatim from lib.c and run on the host:
+   every size to 300 and every residue against a reference, then the
+   former C loop tr ran against the body over a megabyte of words. */
+#include "squeeze.h"
+
+#define NATIVE_SEED 0x9e3779b97f4a7c15ull
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
+
+u64 memory_squeeze_bytes(void *, u64, const void *, u64);
+
+#define TEXT (1u << 20)
+
+static u8 got[1024], want[1024], table[256];
+static u8 source[TEXT], block[TEXT];
+static u64 checks, bad;
+
+static u64 reference(u8 *at, u64 size, const u8 *marks, u64 previous)
+{
+        u64 kept = 0;
+
+        for (u64 i = 0; i < size; i++) {
+                u8 value = at[i];
+
+                if (!(marks[value] && value == previous))
+                        at[kept++] = value;
+                previous = value;
+        }
+        return kept;
+}
+
+// The loop tr -s ran before: a byte at a time, the run after a marked byte
+// skipped by a span.
+__attribute__((noinline)) static u64 former(u8 *at, u64 left, const u8 *squeezed)
+{
+        u64 kept = 0;
+        int last = -1;
+
+        for (u64 c = 0; c < left;) {
+                u8 character = at[c++];
+
+                if (!squeezed[character] || character != last)
+                        at[kept++] = character;
+                last = character;
+                if (squeezed[character])
+                        while (c < left && at[c] == character)
+                                c++;
+        }
+        return kept;
+}
+
+static void matrix(void)
+{
+        static const u8 alphabet[4] = {'a', 'b', ' ', 0xf1};
+
+        for (u64 density = 0; density < 3; density++)
+                for (u64 size = 0; size <= 300; size++)
+                        for (u64 residue = 0; residue < 16; residue++) {
+                                u64 offset = 64 + residue;
+                                u64 previous = size % 3 == 0 ? 256 : size % 3 == 1 ? 'a' : 'z';
+
+                                for (u64 i = 0; i < 256; i++)
+                                        table[i] = density == 2 ? (u8)(next() & 1)
+                                                   : density == 1 ? i == 'a' || i == ' '
+                                                                  : 1;
+                                for (u64 i = 0; i < sizeof(got); i++)
+                                        got[i] = want[i] = next() % 5 ? alphabet[next() & 3] : (u8)next();
+
+                                u64 kept = reference(want + offset, size, table, previous);
+                                u64 answer = memory_squeeze_bytes(got + offset, size, table, previous);
+
+                                checks++;
+                                if (answer != kept) {
+                                        if (bad++ < 8)
+                                                printf("  FAIL size %lu residue %lu: kept %lu want %lu\n",
+                                                       size, residue, answer, kept);
+                                        continue;
+                                }
+                                checks++;
+                                for (u64 i = 0; i < offset + kept; i++)
+                                        if (got[i] != want[i]) {
+                                                if (bad++ < 8)
+                                                        printf("  FAIL size %lu residue %lu byte %lu\n",
+                                                               size, residue, i);
+                                                break;
+                                        }
+                                checks++;
+                                for (u64 i = offset + size; i < sizeof(got); i++)
+                                        if (got[i] != want[i]) {
+                                                if (bad++ < 8)
+                                                        printf("  FAIL size %lu residue %lu past the block\n",
+                                                               size, residue);
+                                                break;
+                                        }
+                        }
+}
+
+static void timing(void)
+{
+        static const char *names[3] = {"tr -s ' '", "tr -s a-z", "every byte"};
+
+        for (u64 i = 0; i < TEXT; i++) {
+                u64 pick = next() % 40;
+
+                source[i] = pick < 30 ? (u8)('a' + pick % 26) : pick < 38 ? ' ' : '\n';
+        }
+
+        for (u64 set = 0; set < 3; set++) {
+                u64 best_former = ~0ul, best_body = ~0ul, kept_former = 0, kept_body = 0;
+
+                for (u64 i = 0; i < 256; i++)
+                        table[i] = set == 2 || (set == 1 && i >= 'a' && i <= 'z') || (set == 0 && i == ' ');
+                for (u64 trial = 0; trial < 7; trial++) {
+                        u64 start, took;
+
+                        __builtin_memcpy(block, source, TEXT);
+                        start = ticks();
+                        kept_former = former(block, TEXT, table);
+                        took = ticks() - start;
+                        best_former = took < best_former ? took : best_former;
+
+                        __builtin_memcpy(block, source, TEXT);
+                        start = ticks();
+                        kept_body = memory_squeeze_bytes(block, TEXT, table, 256);
+                        took = ticks() - start;
+                        best_body = took < best_body ? took : best_body;
+                }
+                checks++;
+                if (kept_former != kept_body)
+                        bad++;
+                printf("  %s, one megabyte: former C %lu ticks, assembly %lu, asm/C %lu%%\n",
+                       names[set], best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+        }
+}
+
+int main(void)
+{
+        matrix();
+        timing();
+        printf("arm64 memory_squeeze_bytes: %lu checks | %lu failures\n", checks, bad);
+        return bad ? 1 : 0;
+}
+#endif /* CHECK_native_squeeze */
+
 #ifdef CHECK_native_series
 /* Exact production ARM64 decimal-record loop, checked against libc output. */
 #include "series.h"
@@ -68921,6 +69171,191 @@ b32 main(void)
         return 0;
 }
 #endif /* BENCH_delete */
+
+#ifdef BENCH_squeeze
+/* In-place squeezing of repeats by table: tr's former byte loop against
+   library assembly, over text-shaped bytes. Each round restores the block
+   first, and that copy is timed on its own and taken out of both sides. */
+#include "../src/lib.util.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define MAXIMUM (1u << 20)
+#define TARGET_BYTES (1u << 26)
+
+static p8 source_block[MAXIMUM];
+static p8 former_block[MAXIMUM];
+static p8 assembly_block[MAXIMUM];
+static p8 marks[256];
+static positive former_kept;
+static positive assembly_kept;
+static volatile positive sink;
+
+// The loop tr -s ran before the library had this: a byte at a time, the run
+// after a marked byte skipped with the hardware span.
+NOT_INLINED static positive former_squeeze(p8 address_to at, positive left,
+                                           const p8 address_to squeezed)
+{
+        positive kept = 0;
+        b32 last_written = -1;
+
+        for (positive c = 0; c < left;)
+        {
+                p8 character = at[c++];
+
+                if (!squeezed[character] || (b32)character != last_written)
+                        at[kept++] = character;
+
+                last_written = character;
+
+                if (squeezed[character] && c < left && at[c] == character)
+                        c += memory_span_byte(at + c, character, left - c);
+        }
+
+        return kept;
+}
+
+// Words of letters with one to three spaces between them and a newline now
+// and then.
+static fn prepare_source(void)
+{
+        p64 seed = 0x9e3779b97f4a7c15ull;
+
+        for (positive at = 0; at < MAXIMUM; at++)
+        {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+
+                positive pick = (positive)(seed % 40);
+
+                source_block[at] = pick < 30 ? (p8)('a' + pick % 26)
+                                   : pick < 38 ? (p8)' '
+                                               : (p8)'\n';
+        }
+}
+
+// tr -s ' ', tr -s 'a-z' and tr -s with every byte marked.
+static fn choose_marks(positive set)
+{
+        for (positive value = 0; value < 256; value++)
+                marks[value] = set == 2 || (set == 1 && value >= 'a' && value <= 'z');
+
+        if (set == 0)
+                marks[' '] = 1;
+}
+
+static positive rounds_for(positive length)
+{
+        positive rounds = TARGET_BYTES / length;
+
+        if (rounds < 8)
+                rounds = 8;
+        if (rounds > (1u << 20))
+                rounds = 1u << 20;
+        return rounds;
+}
+
+static p64 run_copy(positive length, positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                memory_copy_apart(former_block, source_block, length);
+                sink += former_block[0];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static p64 run(bool assembly, positive length, positive rounds)
+{
+        p8 address_to block = assembly ? assembly_block : former_block;
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                memory_copy_apart(block, source_block, length);
+
+                positive kept = assembly ? memory_squeeze_bytes(block, length, marks, 256)
+                                         : former_squeeze(block, length, marks);
+
+                if (assembly)
+                        assembly_kept = kept;
+                else
+                        former_kept = kept;
+
+                sink += kept + block[0];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static bool row(positive length, positive set)
+{
+        positive rounds = rounds_for(length);
+        positive ratios[TRIES];
+
+        choose_marks(set);
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 copy = run_copy(length, rounds);
+                p64 former;
+                p64 assembly;
+
+                if (trial & 1)
+                {
+                        assembly = run(true, length, rounds);
+                        former = run(false, length, rounds);
+                }
+                else
+                {
+                        former = run(false, length, rounds);
+                        assembly = run(true, length, rounds);
+                }
+
+                if (former_kept != assembly_kept ||
+                    memory_compare(former_block, assembly_block, former_kept))
+                        return false;
+
+                p64 former_work = former > copy ? former - copy : 1;
+                p64 assembly_work = assembly > copy ? assembly - copy : 0;
+
+                ratios[trial] = (positive)(assembly_work * 10000 / former_work);
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %p bytes, set %p  median asm/C %p.%p%%\n", length,
+                      set, ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+        return true;
+}
+
+b32 main(void)
+{
+        static const positive sizes[] = {64, 4096, MAXIMUM};
+
+        prepare_source();
+        string_format(log, "memory_squeeze_bytes, paired median of %p, restoring copy taken out\n",
+                      (positive)TRIES);
+
+        for (positive at = 0; at < sizeof(sizes) / sizeof(sizes[0]); at++)
+                for (positive set = 0; set < 3; set++)
+                        if (!row(sizes[at], set))
+                        {
+                                string_format(log, "memory_squeeze_bytes result mismatch\n");
+                                log_flush();
+                                return 1;
+                        }
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_squeeze */
 
 #ifdef BENCH_ascii_case
 /* ASCII-folded bounded comparison: scalar reference against library assembly. */
