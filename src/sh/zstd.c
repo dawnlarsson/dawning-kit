@@ -1908,7 +1908,6 @@ static bool zstd_decode_end(void)
         return zstd_why == null;
 }
 
-#include "compression_huffman.c"
 
 static zstd_xxh zstd_enc_hash;
 
@@ -2590,7 +2589,7 @@ static positive zstd_pack_literals(zstd_encoder address_to e,
         {
                 positive kraft = 0;
                 max_bits = 0;
-                compression_build_lengths(work, 256, length_new, 11);
+                huffman_lengths(work, 256, length_new, 11);
                 for (at = 0; at < 256; at++)
                         if (length_new[at])
                         {

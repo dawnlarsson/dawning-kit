@@ -618,6 +618,9 @@ cover('worth_it', 'mode', 'lzma_range_encode lzma_range_decode',
 cover('folds_already', 'n', 'huffman_encode_back',
       'literal stream lengths are runtime block slices; empty input already '
       'takes the exact terminal-byte path')
+cover('folds_already', 'limit', 'huffman_lengths',
+      'the limit only matters on the rare path that splits codes; the sort '
+      'and joins do not depend on it')
 cover('nothing_to_fold', None, 'deflate_tokens_count deflate_tokens_encode',
       'a pointer to a block of tokens and its code tables, all run-time data')
 cover('nothing_to_fold', None, 'lzma_range_shift deflate_decode_span lzma_decode_span',

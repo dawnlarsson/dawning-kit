@@ -11,7 +11,6 @@
         checks; there is no BCJ.
 */
 
-#include "compression_huffman.c"
 
 #define XZ_IN 16384
 #define XZ_MATCH_MAX 273

@@ -1198,7 +1198,14 @@ static fn gzip_lengths_to_codes(p8 address_to length, positive n,
                         code[at] = gzip_revbits(next[length[at]]++, length[at]);
 }
 
-#include "compression_huffman.c"
+/* The match finder's hash of the three bytes at a position: 16 bits. */
+static inline INLINE p16 compression_hash3(p8 address_to bytes)
+{
+        p32 h = ((p32)bytes[0] << 16) ^ ((p32)bytes[1] << 8) ^ bytes[2];
+
+        h *= 0x1e35a7bdu;
+        return (p16)(h >> 16);
+}
 
 static bool gzip_lengths_ok(p8 address_to length, positive n, p8 limit)
 {
@@ -1361,8 +1368,8 @@ static fn gzip_block_emit(gzip_encoder address_to e, p8 address_to src, positive
         for (positive i = 0; i < GZIP_MAXDIST; i++)
                 fixed_bits += dist_freq[i] * 5;
 
-        compression_build_lengths(lit_freq, GZIP_MAXLIT, lit_len, GZIP_MAXBITS);
-        compression_build_lengths(dist_freq, GZIP_MAXDIST, dist_len, GZIP_MAXBITS);
+        huffman_lengths(lit_freq, GZIP_MAXLIT, lit_len, GZIP_MAXBITS);
+        huffman_lengths(dist_freq, GZIP_MAXDIST, dist_len, GZIP_MAXBITS);
         if (!lit_len[256])
                 lit_len[256] = 1;
         {
@@ -1445,7 +1452,7 @@ static fn gzip_block_emit(gzip_encoder address_to e, p8 address_to src, positive
                 else
                         cfreq[0] += run;
         }
-        compression_build_lengths(cfreq, 19, clen, 7);
+        huffman_lengths(cfreq, 19, clen, 7);
         if (!gzip_lengths_ok(clen, 19, 7) || !gzip_used_coded(cfreq, clen, 19))
         {
                 if (stored_bits <= fixed_bits)

@@ -76017,8 +76017,8 @@ static fn floor_deflate_codes(void)
                         lit[i] = GZIP_CELL_EXCEPTIONAL | GZIP_CELL_SUBTABLE | (p32)((i * 37) % 4000) << 16 | 0x0400;
                 for (positive i = 0; i < GZIP_OFFSET_CELLS; i++)
                         dist[i] = GZIP_CELL_EXCEPTIONAL | GZIP_CELL_SUBTABLE | (p32)((i * 29) % 3000) << 16 | 0x0700;
-                bool built = compression_build_lengths(freq, GZIP_MAXLIT, lens, 15) &&
-                             compression_build_lengths(freq + GZIP_MAXLIT, 30, lens + GZIP_MAXLIT, 15);
+                bool built = huffman_lengths(freq, GZIP_MAXLIT, lens, 15) &&
+                             huffman_lengths(freq + GZIP_MAXLIT, 30, lens + GZIP_MAXLIT, 15);
                 lens[GZIP_MAXLIT + 30] = lens[GZIP_MAXLIT + 31] = 0;
                 built = built && gzip_huffman_cells(lit, lens, GZIP_MAXLIT, GZIP_LITLEN_ROOT, 1) == 0 &&
                         gzip_huffman_cells(dist, lens + GZIP_MAXLIT, 30, GZIP_OFFSET_ROOT, 2) == 0;
@@ -76601,6 +76601,168 @@ static fn floor_lzma_span(void)
         memory_free(output, 4 * FLOOR_PAGE);
 }
 
+/* huffman_lengths against the heap it replaced: the heap pops the least
+   (count, node) each time, and the lengths must come out the same for
+   counts of every shape summing below 2^22, the contract, including
+   Fibonacci runs past every limit. */
+static fn floor_huffman_heap_down(p32 address_to count, p32 address_to heap, positive used, positive at)
+{
+        p32 item = heap[at];
+
+        for (;;)
+        {
+                positive child = at * 2;
+
+                if (child > used)
+                        break;
+                if (child < used && (count[heap[child + 1]] < count[heap[child]] ||
+                                     (count[heap[child + 1]] == count[heap[child]] && heap[child + 1] < heap[child])))
+                        child++;
+                if (count[item] < count[heap[child]] || (count[item] == count[heap[child]] && item <= heap[child]))
+                        break;
+                heap[at] = heap[child];
+                at = child;
+        }
+        heap[at] = item;
+}
+
+static bool floor_huffman_heap(p32 address_to freq, positive n, p8 address_to length, positive limit)
+{
+        p32 count[576], heap[577];
+        b32 dad[576];
+        positive used = 0, next = n, counts[16] = {0}, slots = 0, sorted[288], placed = 0;
+
+        memory_fill(length, 0, n);
+        for (positive at = 0; at < n; at++)
+        {
+                count[at] = freq[at];
+                dad[at] = -1;
+                if (freq[at])
+                        heap[++used] = (p32)at;
+        }
+        for (positive at = used / 2; at >= 1; at--)
+                floor_huffman_heap_down(count, heap, used, at);
+        if (used < 2)
+        {
+                if (!used) { length[0] = 1; if (n > 1) length[1] = 1; }
+                else { length[heap[1]] = 1; if (heap[1] == 0 && n > 1) length[1] = 1; else if (n) length[0] = 1; }
+                return true;
+        }
+        while (used > 1)
+        {
+                p32 first = heap[1], second;
+
+                heap[1] = heap[used--];
+                floor_huffman_heap_down(count, heap, used, 1);
+                second = heap[1];
+                count[next] = count[first] + count[second];
+                dad[first] = dad[second] = (b32)next;
+                dad[next] = -1;
+                heap[1] = (p32)next;
+                floor_huffman_heap_down(count, heap, used, 1);
+                next++;
+        }
+        for (positive at = 0; at < n; at++)
+        {
+                positive depth = 0;
+
+                if (!freq[at])
+                        continue;
+                for (b32 walk = dad[at]; walk >= 0; walk = dad[walk])
+                        depth++;
+                if (depth > limit)
+                        depth = limit;
+                length[at] = (p8)depth;
+                counts[depth]++;
+                slots += (positive)1 << (limit - depth);
+        }
+        if (slots <= ((positive)1 << limit))
+                return true;
+        while (slots > ((positive)1 << limit))
+        {
+                positive bits = limit - 1;
+
+                while (bits && !counts[bits])
+                        bits--;
+                if (!bits || !counts[limit])
+                        return false;
+                counts[bits]--;
+                counts[bits + 1] += 2;
+                counts[limit]--;
+                slots--;
+        }
+        for (positive at = 0; at < n; at++)
+                if (freq[at])
+                {
+                        positive place = placed++;
+
+                        while (place && freq[sorted[place - 1]] > freq[at])
+                        {
+                                sorted[place] = sorted[place - 1];
+                                place--;
+                        }
+                        sorted[place] = at;
+                }
+        placed = 0;
+        for (positive bits = limit; bits; bits--)
+                for (positive take = 0; take < counts[bits]; take++)
+                        length[sorted[placed++]] = (p8)bits;
+        return true;
+}
+
+static fn floor_huffman_lengths(void)
+{
+        static p32 freq[288];
+        p8 got[288], want[288];
+        p32 random = 0x9e3779b9u;
+        bool same = true;
+        positive widths[] = {1, 2, 3, 19, 30, 32, 256, 286, 288};
+
+        for (positive trial = 0; trial < 60000; trial++)
+        {
+#define FLOOR_RANDOM() (random ^= random << 13, random ^= random >> 17, random ^= random << 5, random)
+                positive n = widths[FLOOR_RANDOM() % array_count(widths)];
+                positive limit = n == 19 ? 7 : 1 + FLOOR_RANDOM() % 15;
+                positive shape = FLOOR_RANDOM() % 8;
+
+                if (limit < 9 && n > 256) limit = 9;
+                if (limit < 8 && n > 128) limit = 8;
+                if (limit < 5 && n > 19) limit = 5;
+                for (positive i = 0; i < n; i++)
+                {
+                        p32 r = FLOOR_RANDOM();
+                        freq[i] = shape == 0 ? (r % 3 ? 0 : r >> 22)
+                                : shape == 1 ? (r & 1) << ((r >> 27) % 14)
+                                : shape == 2 ? (r % 5 == 0)
+                                : shape == 3 ? r % 7
+                                : shape == 4 ? (r >> 8) & ((1u << (1 + r % 13)) - 1)
+                                : shape == 5 ? (i < 30 ? (p32)(i * i * i + 1) : r % 4 == 0)
+                                : shape == 6 ? r >> 19
+                                : r % 50;
+                }
+                //      One count past sixteen bits, for a third radix pass.
+                if (shape == 7)
+                        freq[FLOOR_RANDOM() % n] = FLOOR_RANDOM() & 0x1fffff;
+                if (shape == 5 && FLOOR_RANDOM() % 2)
+                {
+                        p32 a = 1, b = 1;
+
+                        for (positive i = 0; i < n && i < 30; i++)
+                        {
+                                freq[i] = a;
+                                p32 t = a + b; a = b; b = t;
+                        }
+                }
+                memory_fill(got, 0x5a, sizeof(got));
+                bool r1 = floor_huffman_heap(freq, n, want, limit);
+                bool r2 = huffman_lengths(freq, n, got, limit);
+                if (r1 != r2 || (r1 && memory_compare(got, want, n)))
+                        same = false;
+#undef FLOOR_RANDOM
+        }
+        check("huffman_lengths builds the heap's tree for every shape of counts", same);
+}
+
 static fn floor_codebook(void)
 {
         p32 freq[288];
@@ -76617,7 +76779,7 @@ static fn floor_codebook(void)
                                 freq[(i + rotate) % n] = a;
                                 p32 next = a + b; a = b; b = next;
                         }
-                        bool valid = compression_build_lengths(freq, n, length, limit);
+                        bool valid = huffman_lengths(freq, n, length, limit);
                         positive kraft = 0;
                         for (positive i = 0; i < n; i++)
                         {
@@ -76753,6 +76915,7 @@ b32 main(void)
         floor_deflate();
         floor_deflate_codes();
         floor_deflate_tokens();
+        floor_huffman_lengths();
         return test_report(null);
 }
 #endif
