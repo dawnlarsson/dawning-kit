@@ -23336,7 +23336,7 @@ static fn sort_radix(positive from, positive to, b32 stage, positive depth)
                         least = left < least ? left : least;
                 }
 
-                positive shared = differ ? (positive)__builtin_clzll(differ) >> 3 : 8;
+                positive shared = differ ? (positive)bits_leading_zeros(differ) >> 3 : 8;
                 positive clear = shared < least ? shared : least;
 
                 if (clear > column)
