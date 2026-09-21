@@ -12131,6 +12131,85 @@ fn check_offsets_of_either()
         memory_free(pages, 3 * 4096);
 }
 
+/*
+        memory_offsets_between and memory_offsets_outside against a byte
+        loop: the same sizes, residues and limits as memory_offsets_of_either,
+        over random bytes, ranges from one value to all of them. On x86_64
+        with and without AVX-512.
+*/
+fn check_offsets_range()
+{
+        static const positive sizes[] = {0, 1, 15, 16, 17, 63, 64, 65, 129, 1000, 4096};
+        static const p8 ranges[][2] = {{0x20, 0x7e}, {8, 10}, {0, 0}, {0xff, 0xff}, {0, 0xff}, {'a', 'z'}};
+        static p32 got[4200], want[4200];
+        static p8 bytes[4096 + 64];
+        p64 seed = 0x13198a2e03707344ull;
+#if X64
+        p8 avx512 = cpu_has_avx512;
+        positive tiers = 2;
+#else
+        positive tiers = 1;
+#endif
+        for (positive i = 0; i < sizeof(bytes); i++)
+        {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                bytes[i] = (seed & 3) ? (p8)('a' + (seed >> 8) % 40) : (p8)(seed >> 16);
+        }
+        for (positive tier = 0; tier < tiers; tier++)
+        {
+#if X64
+                cpu_has_avx512 = tier == 0 ? avx512 : 0;
+#endif
+                for (positive r = 0; r < array_count(ranges); r++)
+                        for (positive outside = 0; outside < 2; outside++)
+                                for (positive s = 0; s < array_count(sizes); s++)
+                                        for (positive residue = 0; residue < 64; residue += 21)
+                                        {
+                                                positive size = sizes[s];
+                                                const p8 address_to at = bytes + residue;
+                                                p8 low = ranges[r][0], high = ranges[r][1];
+                                                positive count = 0;
+
+                                                for (positive i = 0; i < size; i++)
+                                                        if ((at[i] >= low && at[i] <= high) != (outside != 0))
+                                                                want[count++] = (p32)i;
+
+                                                static const positive limits[] = {1, 7, 64, 65, 5000};
+                                                for (positive l = 0; l < array_count(limits); l++)
+                                                {
+                                                        positive limit = limits[l], have = 0, from = 0;
+                                                        bool ok = true;
+
+                                                        for (;;)
+                                                        {
+                                                                positive answer = outside
+                                                                    ? (memory_offsets_outside)(got, at + from, size - from, low, high, limit)
+                                                                    : (memory_offsets_between)(got, at + from, size - from, low, high, limit);
+                                                                if (answer > limit)
+                                                                {
+                                                                        ok = false;
+                                                                        break;
+                                                                }
+                                                                for (positive i = 0; i < answer; i++)
+                                                                        if (have + i >= count || got[i] + from != want[have + i])
+                                                                                ok = false;
+                                                                have += answer;
+                                                                if (answer < limit || !ok)
+                                                                        break;
+                                                                from += got[answer - 1] + 1;
+                                                        }
+                                                        same("memory_offsets_between/outside", "offsets", ok, 1);
+                                                        same("memory_offsets_between/outside", "count", have, count);
+                                                }
+                                        }
+        }
+#if X64
+        cpu_has_avx512 = avx512;
+#endif
+}
+
 fn check_checksums()
 {
         same("memory_sum_bytes", "null zero-sized span",
@@ -21434,6 +21513,7 @@ b32 main()
         check_delete_bytes();
         check_squeeze_bytes();
         check_offsets_of_either();
+        check_offsets_range();
         check_checksums();
         check_copy_match();
         check_move();
@@ -62489,6 +62569,8 @@ int main(void)
 
 typedef unsigned int u32;
 u64 memory_offsets_of_either(u32 *, const void *, u64, u8, u8, u64);
+u64 memory_offsets_between(u32 *, const void *, u64, u8, u8, u64);
+u64 memory_offsets_outside(u32 *, const void *, u64, u8, u8, u64);
 
 #define READ (1u << 16)
 
@@ -62574,10 +62656,65 @@ static void timing(void)
                best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
 }
 
+static void ranges(void)
+{
+        static const u8 bounds[][2] = {{0x20, 0x7e}, {8, 10}, {0, 0}, {0, 0xff}};
+        u64 best_former = ~0ul, best_body = ~0ul, a = 0, b = 0;
+
+        for (u64 i = 0; i < sizeof(bytes); i++)
+                bytes[i] = next() % 4 ? (u8)('a' + next() % 40) : (u8)next();
+        for (u64 r = 0; r < 4; r++)
+                for (u64 outside = 0; outside < 2; outside++)
+                        for (u64 size = 0; size <= 200; size++) {
+                                u8 low = bounds[r][0], high = bounds[r][1];
+                                u64 count = 0, answer;
+
+                                for (u64 i = 0; i < size; i++)
+                                        if ((bytes[i] >= low && bytes[i] <= high) != (outside != 0))
+                                                want[count++] = (u32)i;
+                                answer = outside ? memory_offsets_outside(got, bytes, size, low, high, 100000)
+                                                 : memory_offsets_between(got, bytes, size, low, high, 100000);
+                                checks++;
+                                if (answer != count) {
+                                        if (bad++ < 8)
+                                                printf("  FAIL range %lu outside %lu size %lu\n", r, outside, size);
+                                        continue;
+                                }
+                                for (u64 i = 0; i < count; i++)
+                                        if (got[i] != want[i]) {
+                                                bad++;
+                                                break;
+                                        }
+                        }
+        for (u64 trial = 0; trial < 9; trial++) {
+                u64 start = ticks();
+                for (int r = 0; r < 64; r++) {
+                        u64 count = 0;
+                        for (u64 i = 0; i < READ; i++)
+                                if (bytes[i] < 0x20 || bytes[i] > 0x7e)
+                                        want[count++] = (u32)i;
+                        a = count;
+                }
+                u64 took = ticks() - start;
+                best_former = took < best_former ? took : best_former;
+                start = ticks();
+                for (int r = 0; r < 64; r++)
+                        b = memory_offsets_outside(got, bytes, READ, 0x20, 0x7e, READ);
+                took = ticks() - start;
+                best_body = took < best_body ? took : best_body;
+        }
+        checks++;
+        if (a != b)
+                bad++;
+        printf("  outside printable, 64 reads of 64 KB: former C %lu ticks, assembly %lu, asm/C %lu%%\n",
+               best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+}
+
 int main(void)
 {
         matrix();
         timing();
+        ranges();
         printf("arm64 memory_offsets_of_either: %lu checks | %lu failures\n", checks, bad);
         return bad ? 1 : 0;
 }
@@ -69715,6 +69852,48 @@ static p64 run(bool assembly, positive length, positive rounds)
         return get_cpu_time() - start;
 }
 
+NOT_INLINED static positive former_outside(p32 address_to positions,
+                                           const p8 address_to block, positive size)
+{
+        positive count = 0;
+
+        for (positive at = 0; at < size; at++)
+                if (block[at] < 0x20 || block[at] > 0x7e)
+                        positions[count++] = (p32)at;
+
+        return count;
+}
+
+static bool range_row(positive length)
+{
+        positive rounds = TARGET_BYTES / length;
+        positive ratios[TRIES];
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 start = get_cpu_time();
+                for (positive round = 0; round < rounds; round++)
+                        sink += former_count = former_outside(former_offsets, source_block, length);
+                p64 former = get_cpu_time() - start;
+                start = get_cpu_time();
+                for (positive round = 0; round < rounds; round++)
+                        sink += assembly_count = memory_offsets_outside(assembly_offsets, source_block,
+                                                                        length, 0x20, 0x7e, MAXIMUM);
+                p64 assembly = get_cpu_time() - start;
+
+                if (former_count != assembly_count ||
+                    memory_compare(former_offsets, assembly_offsets, former_count * sizeof(p32)))
+                        return false;
+
+                ratios[trial] = (positive)(assembly * 10000 / (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  outside printable, %p bytes  median asm/C %p.%p%%\n", length,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+        return true;
+}
+
 static bool row(positive length)
 {
         positive rounds = TARGET_BYTES / length;
@@ -69758,7 +69937,7 @@ b32 main(void)
         string_format(log, "memory_offsets_of_either, paired median of %p\n", (positive)TRIES);
 
         for (positive at = 0; at < sizeof(sizes) / sizeof(sizes[0]); at++)
-                if (!row(sizes[at]))
+                if (!row(sizes[at]) || !range_row(sizes[at]))
                 {
                         string_format(log, "memory_offsets_of_either result mismatch\n");
                         log_flush();

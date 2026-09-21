@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        334 routines (321 public, 13 local), 333 of them on all three and 1 local to one.
+        336 routines (323 public, 13 local), 335 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -213,7 +213,9 @@
           memory_into_hex                public  yes     yes     yes
           memory_into_hex_case           public  yes     yes     yes
           memory_last_of                 public  yes     yes     yes
+          memory_offsets_between         public  yes     yes     yes
           memory_offsets_of_either       public  yes     yes     yes
+          memory_offsets_outside         public  yes     yes     yes
           memory_release                 public  yes     yes     yes
           memory_reserve                 public  yes     yes     yes
           memory_reverse                 public  yes     yes     yes
@@ -11285,6 +11287,66 @@ __asm__(
     ".Lmemory_offsets_x64_done:\n"
     ASM_RET
     ASM_END(memory_offsets_of_either)
+
+    //
+    //       memory_offsets_between / memory_offsets_outside -- where every
+    //       byte inside, or outside, [low, high] is, as 32-bit offsets from
+    //       the block in order, until limit of them: the rest of
+    //       memory_offsets_of_either's contract. The special bytes of a
+    //       layout -- a tab, a backspace and a newline for expand, anything
+    //       not printable for wc -L and cat -v -- are one range or its
+    //       complement, so a whole read is classified in one pass and the
+    //       caller walks only the bytes that need a decision, where asking
+    //       a span routine once per run paid a vector's latency per run.
+    //
+    //       The byte less low, compared unsigned against high less low, is
+    //       "inside"; the complement is knot. Offsets are packed as
+    //       memory_offsets_of_either packs them.
+    //
+    ASM_FUNC(memory_offsets_between)
+    "xor %r11d, %r11d\n   jmp .Lmemory_offsets_range_x64\n"
+    ASM_END(memory_offsets_between)
+    ASM_FUNC(memory_offsets_outside)
+    "mov $1, %r11d\n"
+    ".Lmemory_offsets_range_x64:\n"
+    // rdi positions, rsi block, rdx size, cl low, r8b high, r9 limit, r11 outside
+    "push %rbx\n   push %r12\n   mov %r11, %r12\n"
+    "movzbl %cl, %ecx\n   movzbl %r8b, %r8d\n   sub %ecx, %r8d\n   and $255, %r8d  # the width less one\n"
+    "xor %eax, %eax\n   xor %r10d, %r10d\n   test %r9, %r9\n   jz .Lmemory_offsets_range_x64_leave\n"
+#ifndef KERNEL_MODE
+    "cmp $64, %rdx\n   jb .Lmemory_offsets_range_x64_one\n"
+    ASM_NARROW("cpu_has_avx512", ".Lmemory_offsets_range_x64_one")
+    "vpbroadcastb %ecx, %zmm1\n   vpbroadcastb %r8d, %zmm2\n"
+    "vmovdqu64 .Lmemory_offsets_range_x64_iota(%rip), %zmm3\n"
+    "mov $16, %r11d\n   vpbroadcastd %r11d, %zmm5\n"
+    ".balign 16\n.Lmemory_offsets_range_x64_wide:\n"
+    "mov %rdx, %r11\n   sub %r10, %r11\n   cmp $64, %r11\n   jb .Lmemory_offsets_range_x64_wide_end\n"
+    "mov %r9, %r11\n   sub %rax, %r11\n   cmp $64, %r11\n   jb .Lmemory_offsets_range_x64_wide_end\n"
+    "vmovdqu64 (%rsi,%r10), %zmm0\n   vpsubb %zmm1, %zmm0, %zmm0\n   vpcmpub $2, %zmm2, %zmm0, %k1\n"
+    "test %r12d, %r12d\n   jz 1f\n   knotq %k1, %k1\n"
+    "1:  kortestq %k1, %k1\n   jz .Lmemory_offsets_range_x64_next\n"
+    "vpbroadcastd %r10d, %zmm4\n   vpaddd %zmm3, %zmm4, %zmm4\n"
+    "vpcompressd %zmm4, %zmm6{%k1}{z}\n   vmovdqu32 %zmm6, (%rdi,%rax,4)\n   kmovw %k1, %r11d\n   popcnt %r11d, %r11d\n   add %r11, %rax\n"
+    "kshiftrq $16, %k1, %k1\n   vpaddd %zmm5, %zmm4, %zmm4\n"
+    "vpcompressd %zmm4, %zmm6{%k1}{z}\n   vmovdqu32 %zmm6, (%rdi,%rax,4)\n   kmovw %k1, %r11d\n   popcnt %r11d, %r11d\n   add %r11, %rax\n"
+    "kshiftrq $16, %k1, %k1\n   vpaddd %zmm5, %zmm4, %zmm4\n"
+    "vpcompressd %zmm4, %zmm6{%k1}{z}\n   vmovdqu32 %zmm6, (%rdi,%rax,4)\n   kmovw %k1, %r11d\n   popcnt %r11d, %r11d\n   add %r11, %rax\n"
+    "kshiftrq $16, %k1, %k1\n   vpaddd %zmm5, %zmm4, %zmm4\n"
+    "vpcompressd %zmm4, %zmm6{%k1}{z}\n   vmovdqu32 %zmm6, (%rdi,%rax,4)\n   kmovw %k1, %r11d\n   popcnt %r11d, %r11d\n   add %r11, %rax\n"
+    ".Lmemory_offsets_range_x64_next:\n   add $64, %r10\n   jmp .Lmemory_offsets_range_x64_wide\n"
+    ".Lmemory_offsets_range_x64_wide_end:\n   vzeroupper\n"
+    ".pushsection .rodata\n   .balign 64\n"
+    ".Lmemory_offsets_range_x64_iota:\n   .long 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15\n"
+    ".popsection\n"
+#endif
+    ".balign 16\n.Lmemory_offsets_range_x64_one:\n"
+    "cmp %rdx, %r10\n   jae .Lmemory_offsets_range_x64_leave\n   cmp %r9, %rax\n   jae .Lmemory_offsets_range_x64_leave\n"
+    "movzbl (%rsi,%r10), %r11d\n   mov %r10d, (%rdi,%rax,4)\n   sub %ecx, %r11d\n   and $255, %r11d\n"
+    "xor %ebx, %ebx\n   cmp %r8d, %r11d\n   setbe %bl\n   xor %r12d, %ebx\n"
+    "add %rbx, %rax\n   inc %r10\n   jmp .Lmemory_offsets_range_x64_one\n"
+    ".Lmemory_offsets_range_x64_leave:\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(memory_offsets_outside)
 
     /*
             Exchange two separate byte runs in place.
@@ -23093,6 +23155,39 @@ __asm__(
     ".Lmemory_offsets_arm64_done:\n   mov x0, x6\n"
     ASM_RET
     ASM_END(memory_offsets_of_either)
+
+    // memory_offsets_between / _outside: sixteen bytes a turn, the byte less
+    // low held unsigned against the width with cmhs and inverted by mvn for
+    // outside, then read off as memory_offsets_of_either reads its hits. The
+    // x86_64 block carries the full contract.
+    ASM_FUNC(memory_offsets_between)
+    "mov x12, xzr\n   b .Lmemory_offsets_range_arm64\n"
+    ASM_END(memory_offsets_between)
+    ASM_FUNC(memory_offsets_outside)
+    "mov x12, #1\n"
+    ".Lmemory_offsets_range_arm64:\n"
+    "and w3, w3, #255\n   and w4, w4, #255\n   sub w4, w4, w3\n   and w4, w4, #255\n"
+    "mov x6, xzr\n   mov x7, xzr\n   cbz x5, .Lmemory_offsets_range_arm64_done\n"
+    "dup v1.16b, w3\n   dup v2.16b, w4\n   mov x13, #0x8888888888888888\n"
+    ".Lmemory_offsets_range_arm64_wide:\n"
+    "sub x8, x2, x7\n   cmp x8, #16\n   b.lo .Lmemory_offsets_range_arm64_one\n"
+    "sub x8, x5, x6\n   cmp x8, #16\n   b.lo .Lmemory_offsets_range_arm64_one\n"
+    "ldr q0, [x1, x7]\n   sub v0.16b, v0.16b, v1.16b\n   cmhs v3.16b, v2.16b, v0.16b\n"
+    "cbz x12, 1f\n   mvn v3.16b, v3.16b\n"
+    "1:  shrn v3.8b, v3.8h, #4\n   fmov x9, d3\n   and x9, x9, x13\n"
+    "cbz x9, .Lmemory_offsets_range_arm64_next\n"
+    ".Lmemory_offsets_range_arm64_bits:\n   rbit x10, x9\n   clz x10, x10\n   add x10, x7, x10, lsr #2\n"
+    "str w10, [x0, x6, lsl #2]\n   add x6, x6, #1\n   sub x11, x9, #1\n   and x9, x9, x11\n"
+    "cbnz x9, .Lmemory_offsets_range_arm64_bits\n"
+    ".Lmemory_offsets_range_arm64_next:\n   add x7, x7, #16\n   b .Lmemory_offsets_range_arm64_wide\n"
+    ".Lmemory_offsets_range_arm64_one:\n"
+    "cmp x7, x2\n   b.hs .Lmemory_offsets_range_arm64_done\n   cmp x6, x5\n   b.hs .Lmemory_offsets_range_arm64_done\n"
+    "ldrb w9, [x1, x7]\n   str w7, [x0, x6, lsl #2]\n   sub w9, w9, w3\n   and w9, w9, #255\n"
+    "cmp w9, w4\n   cset x10, ls\n   eor x10, x10, x12\n   add x6, x6, x10\n"
+    "add x7, x7, #1\n   b .Lmemory_offsets_range_arm64_one\n"
+    ".Lmemory_offsets_range_arm64_done:\n   mov x0, x6\n"
+    ASM_RET
+    ASM_END(memory_offsets_outside)
 
     // memory_exchange_apart: disjoint exchange with equal and zero-sized
     // no-op cases. The x86_64 block carries the full contract.
@@ -35784,6 +35879,25 @@ __asm__(
     ASM_RET
     ASM_END(memory_offsets_of_either)
 
+    // memory_offsets_between / _outside: a byte at a time, the byte less low
+    // held against the width with sltu and flipped for outside. The x86_64
+    // block carries the full contract.
+    ASM_FUNC(memory_offsets_between)
+    "li t6, 0\n   j .Lmemory_offsets_range_rv\n"
+    ASM_END(memory_offsets_between)
+    ASM_FUNC(memory_offsets_outside)
+    "li t6, 1\n"
+    ".Lmemory_offsets_range_rv:\n"
+    "andi a3, a3, 255\n   andi a4, a4, 255\n   sub a4, a4, a3\n   andi a4, a4, 255\n   li t0, 0\n   li t1, 0\n"
+    ".Lmemory_offsets_range_rv_one:\n"
+    "bgeu t1, a2, .Lmemory_offsets_range_rv_done\n   bgeu t0, a5, .Lmemory_offsets_range_rv_done\n"
+    "add t2, a1, t1\n   lbu t2, 0(t2)\n   slli t3, t0, 2\n   add t3, a0, t3\n   sw t1, 0(t3)\n"
+    "sub t2, t2, a3\n   andi t2, t2, 255\n   sltu t4, a4, t2\n   xori t4, t4, 1\n   xor t4, t4, t6\n"
+    "add t0, t0, t4\n   addi t1, t1, 1\n   j .Lmemory_offsets_range_rv_one\n"
+    ".Lmemory_offsets_range_rv_done:\n   mv a0, t0\n"
+    ASM_RET
+    ASM_END(memory_offsets_outside)
+
     // memory_exchange_apart: disjoint exchange with equal and zero-sized
     // no-op cases. The x86_64 block carries the full contract. RV64 may trap
     // on an unaligned wide access. The xor chooses the widest shared residue;
@@ -43487,6 +43601,13 @@ WRITES(1) READS(2, 3)
 positive memory_offsets_of_either(p32 address_to positions, address_any block,
                                   positive size, p8 first, p8 second,
                                   positive limit);
+// The same for every byte inside [low, high], or outside it; low <= high.
+WRITES(1) READS(2, 3)
+positive memory_offsets_between(p32 address_to positions, address_any block,
+                                positive size, p8 low, p8 high, positive limit);
+WRITES(1) READS(2, 3)
+positive memory_offsets_outside(p32 address_to positions, address_any block,
+                                positive size, p8 low, p8 high, positive limit);
 // Swap exactly size bytes between separate ranges. The ranges must be
 // disjoint unless left == right; equal addresses and zero size are no-ops and
 // do not dereference either address.

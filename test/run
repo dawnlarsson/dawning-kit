@@ -3178,7 +3178,7 @@ python3 test/differential.py --harness native_extract "$lib" memory_decimal_seri
         > "$work/series.h" || exit 1
 python3 test/differential.py --harness native_extract "$lib" memory_squeeze_bytes \
         > "$work/squeeze.h" || exit 1
-python3 test/differential.py --harness native_extract "$lib" memory_offsets_of_either \
+python3 test/differential.py --harness native_extract "$lib" memory_offsets_of_either memory_offsets_between memory_offsets_outside \
         > "$work/offsets.h" || exit 1
 
 #       And one for the wide hunts, holding those eight and nothing else, so

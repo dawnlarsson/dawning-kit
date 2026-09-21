@@ -4295,6 +4295,64 @@ static fn wc_utf8_finish(wc_utf8 address_to state)
         a byte at a time. Its own function so the loop keeps its registers
         whatever else text_wc grows.
 */
+/*
+        -L in a single-byte locale without -w: only the bytes that are not
+        printable ask anything, so one library pass hands their offsets over
+        and every printable run between two of them is its length in columns.
+        A newline, return or form feed ends a line's width, a tab goes to the
+        next stop of eight, and anything else not printable takes no room.
+*/
+#define WC_SPECIALS 4096
+
+static p32 wc_specials[WC_SPECIALS];
+
+static fn wc_bytes_longest(const p8 address_to at, positive left, bool want_lines,
+                           positive address_to lines_out, positive address_to longest_out,
+                           positive address_to column_out)
+{
+        positive lines = address_to lines_out;
+        positive longest = address_to longest_out;
+        positive column = address_to column_out;
+        positive from = 0;
+
+        while (from < left)
+        {
+                positive count = memory_offsets_outside(wc_specials, at + from, left - from,
+                                                        0x20, 0x7e, WC_SPECIALS);
+                positive done = from;
+
+                for (positive i = 0; i < count; i++)
+                {
+                        positive special = from + wc_specials[i];
+                        p8 character = at[special];
+
+                        column += special - done;
+                        done = special + 1;
+
+                        if (character == '\n' || character == '\r' || character == '\f')
+                        {
+                                lines += want_lines && character == '\n';
+                                longest = column > longest ? column : longest;
+                                column = 0;
+                        }
+                        else if (character == '\t')
+                                column += 8 - column % 8;
+                }
+
+                if (count < WC_SPECIALS)
+                {
+                        column += left - done;
+                        break;
+                }
+
+                from = done;
+        }
+
+        address_to lines_out = lines;
+        address_to longest_out = longest;
+        address_to column_out = column;
+}
+
 static fn wc_bytes_general(const p8 address_to at, positive left, bool want_lines,
                            bool want_words, bool posix, positive address_to lines_out,
                            positive address_to words_out, positive address_to longest_out,
@@ -4630,10 +4688,14 @@ static b32 text_wc()
                                 continue;
                         }
 
-                        wc_bytes_general(at, left, want_lines, want_words, posix,
-                                         address_of lines, address_of words,
-                                         address_of longest, address_of column,
-                                         address_of inside);
+                        if (!want_words)
+                                wc_bytes_longest(at, left, want_lines, address_of lines,
+                                                 address_of longest, address_of column);
+                        else
+                                wc_bytes_general(at, left, want_lines, want_words, posix,
+                                                 address_of lines, address_of words,
+                                                 address_of longest, address_of column,
+                                                 address_of inside);
 
                         text_input.position = text_input.filled;
                 }

@@ -231,6 +231,11 @@ cover('direct_benchmark', 'test/checks.c#BENCH_squeeze', 'memory_squeeze_bytes',
       'paired former-C/assembly timing over squeezing repeats by table at three set sizes')
 cover('direct_benchmark', 'test/checks.c#BENCH_offsets', 'memory_offsets_of_either',
       'paired byte-loop/assembly timing over delimiter and line-end offsets of comma rows')
+cover('direct_benchmark', 'test/checks.c#BENCH_offsets', 'memory_offsets_outside',
+      'byte-loop/assembly timing over the offsets of every byte outside printable ASCII')
+cover('benchmark_context', 'test/checks.c#BENCH_offsets', 'memory_offsets_between',
+      'the inside half of the same body, entered with the complement off',
+      anchors={'memory_offsets_between': 'memory_offsets_outside'})
 
 
 # Private cores are present in the timed call graph, but the harness cannot
