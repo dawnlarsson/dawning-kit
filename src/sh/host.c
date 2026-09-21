@@ -6542,6 +6542,8 @@ static COLD bipolar sntp_query(string_address name, bool filter, bool tight,
 
 
 #define LOCALE_ZONE_PATH "/root/timezone"
+#define LOCALE_ZONE_MODE_PATH "/root/timezone.mode"
+#define LOCALE_ZONE_NETWORK_PATH HOST_STATE "/timezone.network"
 #define LOCALE_NTP_PATH "/root/ntp"
 #define LOCALE_NTP_SERVER_PATH "/root/ntp.server"
 #define LOCALE_NTP_FILTER_PATH "/root/ntp.filter"
@@ -6823,6 +6825,9 @@ static b32 locale_zone_list(void)
         string_format(log, "  offsets  +1  -5  +5:30  UTC+2"
                            TERM_DIM "   +1 is an hour ahead of UTC,"
                            " with no daylight saving" TERM_RESET "\n");
+        string_format(log, "  auto     " TERM_DIM "the zone Cloudflare places "
+                           "this network in, asked once per network"
+                           TERM_RESET "\n");
         log_flush();
         return 0;
 }
@@ -6867,16 +6872,53 @@ static fn locale_zone_moment(p8 address_to into, positive room)
                 string_copy_bounded(into, "(the clock could not be read)", room);
 }
 
+/*
+        How the zone came to be what it is, as /root/timezone.mode says:
+        "manual" after moonwater timezone ZONE, "auto" and where the answer
+        came from once the network has been asked, and nothing at all on a
+        machine that has never been told either way -- which is auto.
+*/
+static bool locale_zone_manual(void)
+{
+        p8 mode[48];
+
+        locale_word(LOCALE_ZONE_MODE_PATH, mode, sizeof(mode));
+        return host_starts(mode, "manual");
+}
+
+static fn locale_zone_how(p8 address_to into, positive room)
+{
+        p8 mode[48];
+
+        locale_word(LOCALE_ZONE_MODE_PATH, mode, sizeof(mode));
+        if (host_starts(mode, "manual"))
+                string_copy_bounded(into, "(manual)", room);
+        else if (host_starts(mode, "auto cloudflare"))
+                string_copy_bounded(into, "(auto, from Cloudflare)", room);
+        else if (host_starts(mode, "auto country ") && mode[13])
+        {
+                string_copy_bounded(into, "(auto, from country ", room);
+                string_append_bounded(into, mode + 13, room);
+                string_append_bounded(into, ")", room);
+        }
+        else
+                string_copy_bounded(into, "(auto, waiting for the network)",
+                                    room);
+}
+
 static b32 locale_zone_status(void)
 {
         p8 zone[80];
         p8 title[128];
+        p8 how[48];
         p8 when[48];
 
         locale_word(LOCALE_ZONE_PATH, zone, sizeof(zone));
         locale_zone_title(zone, title, sizeof(title));
+        locale_zone_how(how, sizeof(how));
         locale_zone_moment(when, sizeof(when));
-        string_format(log, host_label "timezone %s\n", title);
+        string_format(log, host_label "timezone %s " TERM_DIM "%s" TERM_RESET
+                                      "\n", title, how);
         string_format(log, "  local %s\n", when);
         log_flush();
         return 0;
@@ -6995,37 +7037,552 @@ static fn locale_zone_apply(void)
 //      with the sign the other way round, a country in the wrong half of a
 //      continent -- is visible at the moment it is set, not at the next
 //      meeting.
-static b32 locale_zone_set(string_address name)
+static b32 locale_zone_store(string_address zone, string_address mode)
 {
-        p8 zone[80];
         p8 was[80];
         p8 before[48];
         p8 after[48];
         p8 title[128];
+        p8 how[48];
         p8 old_shown[80];
-
-        if (!radio_text_plain(name, string_length(name)) ||
-            !locale_zone_resolve(name, zone, sizeof(zone)))
-                return host_refuse("unknown timezone %s -- "
-                                   "moonwater timezone list shows the names\n",
-                                   name);
 
         locale_word(LOCALE_ZONE_PATH, was, sizeof(was));
         locale_zone_describe(was, old_shown, sizeof(old_shown));
         locale_zone_moment(before, sizeof(before));
 
-        if (radio_write_word(LOCALE_ZONE_PATH, zone) < 0)
+        if (radio_write_word(LOCALE_ZONE_PATH, zone) < 0 ||
+            radio_write_word(LOCALE_ZONE_MODE_PATH, mode) < 0)
                 return host_fail("timezone", -1);
 
         locale_zone_moment(after, sizeof(after));
         locale_zone_title(zone, title, sizeof(title));
-        string_format(log, host_label "timezone %s\n", title);
+        locale_zone_how(how, sizeof(how));
+        string_format(log, host_label "timezone %s " TERM_DIM "%s" TERM_RESET
+                                      "\n", title, how);
         string_format(log, "  before  %s  " TERM_DIM "%s" TERM_RESET "\n",
                       before, old_shown);
         string_format(log, "  after   %s\n", after);
         locale_zone_apply();
         log_flush();
         return 0;
+}
+
+static b32 locale_zone_set(string_address name)
+{
+        p8 zone[80];
+
+        if (!radio_text_plain(name, string_length(name)) ||
+            !locale_zone_resolve(name, zone, sizeof(zone)))
+                return host_refuse("unknown timezone %s -- "
+                                   "moonwater timezone list shows the names\n",
+                                   name);
+        return locale_zone_store(zone, "manual");
+}
+
+/*
+        Auto: the zone the network says this machine is in.
+
+        Cloudflare geolocates every request it answers, and its speed test
+        says what it found in a response header: speed.cloudflare.com's
+        /__down?bytes=0 comes back empty with "timezone: Europe/Stockholm"
+        and "country: SE". That endpoint is the speed test's own and nobody
+        promised it, so there are two ways down from it: the country it gave,
+        read as the zone most of that country's people live in, and failing
+        that /cdn-cgi/trace, which every Cloudflare host serves and which
+        says "loc=SE". A name the table does not hold is never stored -- it
+        falls to the country, and with nothing at all the zone stays what it
+        was.
+
+        One request, over TLS, is sent when a network appears: at boot once
+        there is a default route, and again when the route's interface,
+        gateway or gateway's hardware address changes -- a new lease, another
+        wifi network. Not more often than every three minutes, backing off to
+        an hour while it fails, and never in manual mode. The request carries
+        nothing but the connection itself, and Cloudflare sees that address
+        either way; moonwater timezone ZONE turns it off.
+
+        The ask runs in a child of the machine process, like the NTP query,
+        after the clock has been set if it is going to be, since a clock at
+        the epoch fails every certificate. What the answer was asked for is
+        kept in /run/moonwater/timezone.network so a hand-run
+        moonwater timezone auto and the machine do not ask twice.
+*/
+#define LOCALE_AUTO_HOST "speed.cloudflare.com"
+#define LOCALE_AUTO_PATH "/__down?bytes=0"
+#define LOCALE_AUTO_TRACE_HOST "cloudflare.com"
+#define LOCALE_AUTO_TRACE_PATH "/cdn-cgi/trace"
+#define LOCALE_AUTO_SECONDS 10
+#define LOCALE_AUTO_LEAST 180
+#define LOCALE_AUTO_MOST 3600
+#define LOCALE_AUTO_CLOCK_WAIT 60
+#define LOCALE_AUTO_ROOM 4096
+#define LOCALE_NETWORK_ROOM 96
+#define LOCALE_ROUTE_GATEWAY 0x2
+
+typedef struct
+{
+        p8 zone[64];
+        p8 mode[32];
+} locale_auto_answer;
+
+/*
+        Which network this is: the default route's interface and gateway,
+        and the gateway's hardware address when the neighbour table has it.
+        Empty with no default route. Two networks that both hand out
+        192.168.1.1 differ in the last part, which is why it is there.
+*/
+static fn locale_network(p8 address_to into, positive room)
+{
+        p8 table[4096];
+        p8 gateway[16] = {0};
+        p8 device[20] = {0};
+        bipolar got;
+        string_address line;
+
+        into[0] = end;
+        got = host_read_text("/proc/net/route", table, sizeof(table));
+        if (got <= 0)
+                return;
+        for (line = (string_address)table; line && line[0];)
+        {
+                string_address next = string_first_of(line, '\n');
+                p8 word[5][24];
+                positive words = 0;
+                string_address at = line;
+
+                if (next)
+                        address_to(p8 address_to)next = end;
+                while (words < 5 && at[0])
+                {
+                        positive length = 0;
+
+                        while (at[0] == ' ' || at[0] == '\t')
+                                at++;
+                        while (at[0] && at[0] != ' ' && at[0] != '\t' &&
+                               length + 1 < sizeof(word[0]))
+                                word[words][length++] = (p8)(at++)[0];
+                        word[words][length] = end;
+                        if (length)
+                                words++;
+                }
+                //      Iface Destination Gateway Flags: a default route
+                //      through a gateway.
+                if (words >= 4 && string_equals(word[1], "00000000") &&
+                    ((positive)string_to_number_unsigned(word[3], null, 16) &
+                     LOCALE_ROUTE_GATEWAY))
+                {
+                        string_copy_bounded(device, word[0], sizeof(device));
+                        string_copy_bounded(gateway, word[2], sizeof(gateway));
+                        break;
+                }
+                line = next ? next + 1 : null;
+        }
+        if (!device[0])
+                return;
+
+        string_copy_bounded(into, device, room);
+        string_append_bounded(into, " ", room);
+        string_append_bounded(into, gateway, room);
+
+        //      /proc/net/arp names the gateway dotted, the route in the
+        //      kernel's own byte order as hex; read the one as the other.
+        {
+                p32 raw = (p32)string_to_number_unsigned(gateway, null, 16);
+                p8 dotted[20];
+                positive at = 0;
+
+                dotted[at++] = '\n';
+                for (positive octet = 0; octet < 4; octet++)
+                {
+                        if (octet)
+                                dotted[at++] = '.';
+                        at += positive_into(dotted + at, (raw >> (8 * octet)) & 0xff);
+                }
+                dotted[at++] = ' ';
+                dotted[at] = end;
+                got = host_read_text("/proc/net/arp", table, sizeof(table));
+                if (got > 0)
+                {
+                        //      IP address, HW type, Flags, HW address: the
+                        //      first colon on the gateway's line is two
+                        //      digits into its hardware address.
+                        p8 address_to row = (p8 address_to)memory_search(
+                            table, (positive)got, dotted, string_length(dotted));
+                        p8 address_to stop = row ? (p8 address_to)memory_search(
+                                                       row + 1,
+                                                       (positive)(table + got - row - 1),
+                                                       "\n", 1)
+                                                 : null;
+                        positive span = row ? (positive)((stop ? stop : table + got) - row)
+                                            : 0;
+                        p8 address_to colon = row ? (p8 address_to)memory_search(
+                                                        row, span, ":", 1)
+                                                  : null;
+
+                        if (colon && colon + 15 <= row + span &&
+                            memory_compare(colon - 2, "00:00:00:00:00:00", 17))
+                        {
+                                p8 mac[18];
+
+                                memory_copy(mac, colon - 2, 17);
+                                mac[17] = end;
+                                string_append_bounded(into, " ", room);
+                                string_append_bounded(into, mac, room);
+                        }
+                }
+        }
+}
+
+/*
+        The same network: the same interface and gateway, and the same
+        hardware address unless one side has not learned it yet -- the
+        neighbour table fills in after the first packet, and that is not a
+        new network.
+*/
+static positive locale_network_route(string_address text)
+{
+        positive at = 0;
+        positive spaces = 0;
+
+        while (text[at] && !(text[at] == ' ' && ++spaces == 2))
+                at++;
+        return at;
+}
+
+static bool locale_network_same(string_address now, string_address asked)
+{
+        positive a = locale_network_route(now);
+        positive b = locale_network_route(asked);
+
+        if (!now[0] || !asked[0] || a != b || memory_compare(now, asked, a))
+                return false;
+        if (!now[a] || !asked[b])
+                return true;
+        return string_equals(now + a, asked + b);
+}
+
+static bipolar locale_auto_get(string_address host, string_address path,
+                               p8 address_to into, positive room,
+                               positive address_to used,
+                               positive address_to header)
+{
+        http_link link;
+        http_response response;
+        network_deadline deadline;
+        p32 ip = http_lookup(host);
+        bipolar status;
+
+        address_to used = 0;
+        address_to header = 0;
+        into[0] = end;
+        if (!ip)
+                return HTTP_NO_HOST;
+        status = http_link_open(address_of link, ip, HTTP_HTTPS_PORT, host,
+                                true, true);
+        if (status)
+                return status;
+        status = http_send_get(address_of link, host, HTTP_HTTPS_PORT, path,
+                               true, '1', (string_address) "Moonwater");
+        if (!status)
+                status = http_response_head(address_of link, into, room - 1,
+                                            used, header, address_of response,
+                                            LOCALE_AUTO_SECONDS, 0, false);
+        if (!status && !http_response_is_success(response.code))
+                status = HTTP_STATUS;
+        //      A small body, read to its length or the server's close.
+        if (!status &&
+            network_deadline_begin(address_of deadline, LOCALE_AUTO_SECONDS, 0))
+                while (address_to used + 1 < room &&
+                       (response.body_kind != HTTP_BODY_LENGTH ||
+                        address_to used - address_to header < response.body_length))
+                {
+                        positive got = 0;
+
+                        if (http_link_read_until(address_of link,
+                                                 into + address_to used,
+                                                 room - 1 - address_to used,
+                                                 address_of got,
+                                                 address_of deadline) ||
+                            !got)
+                                break;
+                        address_to used += got;
+                }
+        http_link_close(address_of link);
+        into[address_to used] = end;
+        return status;
+}
+
+//      A header's value or a trace line's, if it is a plain word that fits.
+static bool locale_auto_word(string_address value, positive length,
+                             p8 address_to into, positive room)
+{
+        if (!value || !length || length >= room)
+                return false;
+        for (positive at = 0; at < length; at++)
+        {
+                p8 c = (p8)value[at];
+
+                if (!byte_is_alnum(c) && c != '/' && c != '_' && c != '-' &&
+                    c != '+')
+                        return false;
+        }
+        memory_copy(into, value, length);
+        into[length] = end;
+        return true;
+}
+
+static bool locale_auto_country(string_address code,
+                                locale_auto_answer address_to answer)
+{
+        string_address zone = clock_zone_country(code);
+
+        if (!zone)
+                return false;
+        string_copy_bounded(answer->zone, zone, sizeof(answer->zone));
+        string_copy_bounded(answer->mode, "auto country ", sizeof(answer->mode));
+        string_append_bounded(answer->mode, code, sizeof(answer->mode));
+        for (positive at = 13; answer->mode[at]; at++)
+                if (answer->mode[at] >= 'a' && answer->mode[at] <= 'z')
+                        answer->mode[at] -= 32;
+        return true;
+}
+
+/*
+        What an answer says, read the way everything from the network is:
+        each word checked for shape, then required to be a name the table
+        holds before it is believed. The speed test's headers first -- its
+        zone, else its country -- and the trace's loc= line otherwise.
+*/
+static bool locale_auto_from_headers(p8 address_to head, positive length,
+                                     locale_auto_answer address_to answer)
+{
+        p8 word[64];
+        positive size = 0;
+        string_address value;
+        string_address named;
+
+        value = http_header(head, length, (string_address) "timezone",
+                            address_of size, null);
+        if (locale_auto_word(value, size, word, sizeof(word)) &&
+            string_first_of(word, '/') && (named = clock_zone_named(word)))
+        {
+                string_copy_bounded(answer->zone, named, sizeof(answer->zone));
+                string_copy_bounded(answer->mode, "auto cloudflare",
+                                    sizeof(answer->mode));
+                return true;
+        }
+        value = http_header(head, length, (string_address) "country",
+                            address_of size, null);
+        return locale_auto_word(value, size, word, sizeof(word)) &&
+               locale_auto_country(word, answer);
+}
+
+static bool locale_auto_from_trace(p8 address_to body, positive length,
+                                   locale_auto_answer address_to answer)
+{
+        p8 word[8];
+        positive at = 0;
+
+        while (at + 4 <= length)
+        {
+                positive stop = at;
+
+                while (stop < length && body[stop] != '\n')
+                        stop++;
+                if (!memory_compare(body + at, "loc=", 4))
+                {
+                        positive size = stop - at - 4;
+
+                        if (size && body[at + 4 + size - 1] == '\r')
+                                size--;
+                        return locale_auto_word((string_address)(body + at + 4),
+                                                size, word, sizeof(word)) &&
+                               locale_auto_country(word, answer);
+                }
+                at = stop + 1;
+        }
+        return false;
+}
+
+//      The whole question, and nothing stored: the zone and how it was
+//      found, or the reason none was.
+static bipolar locale_auto_ask(locale_auto_answer address_to answer)
+{
+        p8 reply[LOCALE_AUTO_ROOM];
+        positive used = 0;
+        positive header = 0;
+        bipolar status;
+
+        memory_zero(answer, sizeof(address_to answer));
+        status = locale_auto_get((string_address)LOCALE_AUTO_HOST,
+                                 (string_address)LOCALE_AUTO_PATH, reply,
+                                 sizeof(reply), address_of used,
+                                 address_of header);
+        if (!status && locale_auto_from_headers(reply, header, answer))
+                return 0;
+        status = locale_auto_get((string_address)LOCALE_AUTO_TRACE_HOST,
+                                 (string_address)LOCALE_AUTO_TRACE_PATH, reply,
+                                 sizeof(reply), address_of used,
+                                 address_of header);
+        if (status)
+                return status;
+        return locale_auto_from_trace(reply + header, used - header, answer)
+                   ? 0
+                   : HTTP_MALFORMED;
+}
+
+static string_address locale_auto_reason(bipolar status)
+{
+        switch (status)
+        {
+        case HTTP_NO_HOST:
+                return (string_address) "the name did not resolve";
+        case HTTP_NO_ROUTE:
+                return (string_address) "no route to it";
+        case HTTP_TLS:
+                return (string_address) "TLS failed -- is the clock right?";
+        case HTTP_STATUS:
+                return (string_address) "it answered with an error";
+        case HTTP_MALFORMED:
+                return (string_address) "the answer named no zone";
+        }
+        return (string_address) "no answer";
+}
+
+static fn locale_auto_asked(string_address network)
+{
+        if (!network || !network[0])
+        {
+                system_remove_at(AT_FDCWD, LOCALE_ZONE_NETWORK_PATH, 0);
+                return;
+        }
+        host_state_ready();
+        radio_write_word(LOCALE_ZONE_NETWORK_PATH, network);
+}
+
+/*
+        The zone a network answer names, put where a zone goes. By hand it
+        says what it did the way moonwater timezone ZONE does; in the
+        machine's child it only writes, and the machine's own loop carries
+        the new offset to the kernel on its next turn.
+*/
+static bipolar locale_auto_take(locale_auto_answer address_to answer,
+                                bool loud)
+{
+        p8 was[80];
+        p8 mode[48];
+
+        locale_word(LOCALE_ZONE_PATH, was, sizeof(was));
+        locale_word(LOCALE_ZONE_MODE_PATH, mode, sizeof(mode));
+        if (loud)
+                return locale_zone_store(answer->zone, answer->mode) ? -1 : 0;
+        if (string_equals(was, answer->zone) &&
+            string_equals(mode, answer->mode))
+                return 0;
+        if (radio_write_word(LOCALE_ZONE_PATH, answer->zone) < 0 ||
+            radio_write_word(LOCALE_ZONE_MODE_PATH, answer->mode) < 0)
+                return -1;
+        tzset();
+        (void)bowl_write_localtime_host();
+        (void)bowl_write_localtime_all(null);
+        {
+                string_address line[] = {"timezone ", answer->zone, " (",
+                                         answer->mode, ")", null};
+
+                host_kmsg(line);
+        }
+        return 0;
+}
+
+//      moonwater timezone auto, and the auto half of time sync.
+static b32 locale_zone_auto(void)
+{
+        locale_auto_answer answer;
+        p8 network[LOCALE_NETWORK_ROOM];
+        p8 zone[80];
+        bipolar status;
+
+        if (locale_zone_manual() &&
+            radio_write_word(LOCALE_ZONE_MODE_PATH, "auto") < 0)
+                return host_fail("timezone", -1);
+        locale_network(network, sizeof(network));
+        status = locale_auto_ask(address_of answer);
+        if (status)
+        {
+                locale_auto_asked(null);
+                locale_word(LOCALE_ZONE_PATH, zone, sizeof(zone));
+                string_format(log_error, host_label "timezone auto: Cloudflare "
+                                         "could not be asked (%s); keeping %s "
+                                         "until the network answers\n",
+                              locale_auto_reason(status),
+                              zone[0] ? (string_address)zone
+                                      : (string_address) "UTC");
+                log_flush();
+                return 1;
+        }
+        if (locale_auto_take(address_of answer, true) < 0)
+                return 1;
+        locale_auto_asked(network);
+        return 0;
+}
+
+static p64 locale_auto_next;
+static positive locale_auto_wait = LOCALE_AUTO_LEAST;
+static locale_child locale_auto_child = {0, -1};
+
+static fn locale_auto_keep(void)
+{
+        p64 now = system_clock_ns(HOST_CLOCK_BOOTTIME);
+        bipolar ended = locale_child_poll(address_of locale_auto_child);
+        p8 network[LOCALE_NETWORK_ROOM];
+        p8 asked[LOCALE_NETWORK_ROOM];
+
+        if (ended == LOCALE_CHILD_RUNNING)
+                return;
+        if (ended != LOCALE_CHILD_IDLE)
+        {
+                locale_auto_next = now + (p64)locale_auto_wait * 1000000000ull;
+                locale_auto_wait = ended ? (locale_auto_wait * 2 > LOCALE_AUTO_MOST
+                                                ? LOCALE_AUTO_MOST
+                                                : locale_auto_wait * 2)
+                                         : LOCALE_AUTO_LEAST;
+                if (!ended)
+                        locale_auto_next = now + (p64)LOCALE_AUTO_LEAST *
+                                                     1000000000ull;
+                return;
+        }
+        if (locale_zone_manual())
+                return;
+        //      A certificate is only as good as the clock that checks it:
+        //      while NTP is on and has not set it, wait a minute for it.
+        if (locale_ntp_wanted() && !locale_clock_synced() &&
+            now < (p64)LOCALE_AUTO_CLOCK_WAIT * 1000000000ull)
+                return;
+        locale_network(network, sizeof(network));
+        if (!network[0])
+                return;
+        locale_word(LOCALE_ZONE_NETWORK_PATH, asked, sizeof(asked));
+        if (locale_network_same(network, asked))
+        {
+                //      The gateway's address arrived after the answer did.
+                if (string_length(network) > string_length(asked))
+                        locale_auto_asked(network);
+                return;
+        }
+        if (locale_auto_next && now < locale_auto_next)
+                return;
+
+        if (!locale_child_fork(address_of locale_auto_child))
+        {
+                locale_auto_answer answer;
+                bool took = !locale_auto_ask(address_of answer) &&
+                            !locale_zone_manual() &&
+                            !locale_auto_take(address_of answer, false);
+
+                if (took)
+                        locale_auto_asked(network);
+                locale_child_end(address_of locale_auto_child, took ? 0 : 1);
+        }
 }
 
 /*
@@ -7076,11 +7633,19 @@ static b32 locale_time_sync(void)
 
                 positive_into_padded(fraction, whole / 1000000 % 1000, 3, '0');
                 fraction[3] = end;
+                //      Under a millisecond reads as +0.000, not -0.000.
                 string_format(log, host_label "time moved %s%p.%s s by %s\n",
-                              moved < 0 ? "-" : "+", whole / 1000000000,
+                              moved < 0 && whole >= 1000000 ? "-" : "+",
+                              whole / 1000000000,
                               fraction, locale_ntp_answered);
         }
         locale_zone_kernel_east = LOCALE_ZONE_NOT_APPLIED;
+        log_flush();
+        //      In auto the zone is asked for again as well, which is the one
+        //      Cloudflare request a person can make by hand; it prints its
+        //      own before and after and applies what it found.
+        if (!locale_zone_manual() && !locale_zone_auto())
+                return failed < 0 ? 1 : 0;
         locale_zone_status();
         locale_zone_apply();
         log_flush();
@@ -7544,6 +8109,8 @@ static fn locale_restore(void)
 
         locale_ntp_next = 0;
         locale_ntp_retry = LOCALE_NTP_RETRY_LEAST;
+        locale_auto_next = 0;
+        locale_auto_wait = LOCALE_AUTO_LEAST;
         if (locale_ntp_wanted())
                 locale_ntp_keep();
 }
@@ -7602,6 +8169,7 @@ static fn locale_recover(void)
         (void)locale_zone_kernel();
         if (locale_ntp_wanted())
                 locale_ntp_keep();
+        locale_auto_keep();
 }
 
 static b32 host_locale(string_address address_to arguments, positive count)
@@ -7630,6 +8198,8 @@ static b32 host_locale(string_address address_to arguments, positive count)
                         return locale_zone_list();
                 if (!bowl_is_root())
                         return host_refuse("%s needs root\n", "moonwater");
+                if (string_equals(word, "auto"))
+                        return locale_zone_auto();
                 return locale_zone_set(word);
         }
 
@@ -7682,6 +8252,7 @@ static string_address host_wipe_keep[] = {
     "bluetooth.power",
     "internet",
     "timezone",
+    "timezone.mode",
     "ntp",
     "ntp.server",
     "ntp.filter",
@@ -8057,7 +8628,10 @@ static fn host_usage_write(writer out)
                       TERM_BOLD "  time [sync]" TERM_RESET
                       "                 " TERM_DIM "the clock; sync sets it and the zone now" TERM_RESET "\n"
                       TERM_BOLD "  timezone [ZONE|se|+1|list]" TERM_RESET
-                      " " TERM_DIM "the clock's zone [UTC]" TERM_RESET "\n"
+                      " " TERM_DIM "the clock's zone; setting one makes it manual" TERM_RESET "\n"
+                      TERM_BOLD "  timezone auto" TERM_RESET
+                      "               " TERM_DIM "from the network [auto]: one Cloudflare" TERM_RESET "\n"
+                      "                              " TERM_DIM "request per network joined" TERM_RESET "\n"
                       TERM_BOLD "  ntp [on|off]" TERM_RESET
                       "                " TERM_DIM "set the clock from the network [on]" TERM_RESET "\n"
                       TERM_BOLD "  ntp filter [on|off]" TERM_RESET
@@ -8150,11 +8724,13 @@ static b32 host_status(void)
                 p8 keyboard[16];
 
                 p8 shown[128];
+                p8 how[48];
 
                 locale_word(LOCALE_ZONE_PATH, zone, sizeof(zone));
                 locale_word(LOCALE_KEYBOARD_PATH, keyboard, sizeof(keyboard));
                 locale_zone_title(zone, shown, sizeof(shown));
-                string_format(log, "  timezone %s\n", shown);
+                locale_zone_how(how, sizeof(how));
+                string_format(log, "  timezone %s %s\n", shown, how);
                 string_format(log, "  ntp %s, filter %s\n",
                               locale_ntp_wanted() ? (string_address) "on"
                                                   : (string_address) "off",

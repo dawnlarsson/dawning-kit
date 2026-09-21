@@ -60378,6 +60378,100 @@ static fn machine_sntp(void)
               locale_discipline_ok());
 }
 
+/*
+        Auto timezone: which answers from the network are believed, and
+        when a network counts as the one already asked about. The request
+        itself is the boot lane's, on a guest with a real route out.
+*/
+static fn machine_auto(void)
+{
+        locale_auto_answer answer;
+        p8 word[64];
+
+        check("a new gateway hardware address is not a new network until both are known",
+              locale_network_same("eth0 0202000A", "eth0 0202000A 52:55:0a:00:02:02") &&
+                  locale_network_same("eth0 0202000A 52:55:0a:00:02:02", "eth0 0202000A"));
+        check("another router behind the same address is",
+              !locale_network_same("wlan0 0101A8C0 aa:bb:cc:00:00:01",
+                                   "wlan0 0101A8C0 aa:bb:cc:00:00:02"));
+        check("and so is another interface or gateway, or none",
+              !locale_network_same("wlan0 0101A8C0", "eth0 0101A8C0") &&
+                  !locale_network_same("eth0 0101A8C0", "eth0 0201A8C0") &&
+                  !locale_network_same("", "") &&
+                  !locale_network_same("eth0 0101A8C0", ""));
+        check("a zone word from the network is a plain name",
+              locale_auto_word("Europe/Stockholm", 16, word, sizeof(word)) &&
+                  string_equals(word, "Europe/Stockholm") &&
+                  !locale_auto_word("../../etc", 9, word, sizeof(word)) &&
+                  !locale_auto_word("Europe/Stock holm", 17, word, sizeof(word)) &&
+                  !locale_auto_word("", 0, word, sizeof(word)));
+        check("a country answer names its zone and says it is a country's",
+              locale_auto_country("se", address_of answer) &&
+                  string_equals(answer.zone, "Europe/Stockholm") &&
+                  string_equals(answer.mode, "auto country SE") &&
+                  locale_auto_country("SV", address_of answer) &&
+                  string_equals(answer.zone, "America/El_Salvador") &&
+                  !locale_auto_country("xx", address_of answer) &&
+                  !locale_auto_country("uk", address_of answer));
+
+        {
+                static const struct
+                {
+                        char head[160];
+                        char zone[40];
+                        char mode[24];
+                } heads[] = {
+                        {"HTTP/1.1 200 OK\r\ncountry: SE\r\ntimezone: Europe/Stockholm\r\n\r\n",
+                         "Europe/Stockholm", "auto cloudflare"},
+                        //      a link is stored as the zone it names
+                        {"HTTP/1.1 200 OK\r\nTimezone: Asia/Calcutta\r\n\r\n",
+                         "Asia/Kolkata", "auto cloudflare"},
+                        //      a name the table does not hold falls to the country
+                        {"HTTP/1.1 200 OK\r\ntimezone: Mars/Olympus\r\ncountry: NZ\r\n\r\n",
+                         "Pacific/Auckland", "auto country NZ"},
+                        //      and one that is not a plain word is not read at all
+                        {"HTTP/1.1 200 OK\r\ntimezone: ../../etc/shadow\r\ncountry: us\r\n\r\n",
+                         "America/New_York", "auto country US"},
+                        //      a zone that is only an abbreviation is not a place
+                        {"HTTP/1.1 200 OK\r\ntimezone: CET\r\n\r\n", "", ""},
+                        {"HTTP/1.1 200 OK\r\n\r\n", "", ""},
+                };
+                bool all = true;
+
+                for (positive at = 0; at < array_count(heads); at++)
+                {
+                        bool took;
+
+                        memory_zero(address_of answer, sizeof(answer));
+                        took = locale_auto_from_headers(
+                            (p8 address_to)heads[at].head,
+                            string_length(heads[at].head), address_of answer);
+                        if (took != (heads[at].zone[0] != 0) ||
+                            (took && (!string_equals(answer.zone, heads[at].zone) ||
+                                      !string_equals(answer.mode, heads[at].mode))))
+                                all = false;
+                }
+                check("the speed test's headers are read as zone, else country",
+                      all);
+        }
+        {
+                static char trace[] = "fl=1030f73\nh=cloudflare.com\nip=192.0.2.1\n"
+                                      "colo=ARN\nloc=SE\ntls=TLSv1.3\n";
+                static char bare[] = "loc=JP\r\n";
+                static char none[] = "fl=1\nloc=\n";
+
+                check("and the trace's loc= line when they are not there",
+                      locale_auto_from_trace((p8 address_to)trace,
+                                             sizeof(trace) - 1, address_of answer) &&
+                          string_equals(answer.zone, "Europe/Stockholm") &&
+                          locale_auto_from_trace((p8 address_to)bare,
+                                                 sizeof(bare) - 1, address_of answer) &&
+                          string_equals(answer.zone, "Asia/Tokyo") &&
+                          !locale_auto_from_trace((p8 address_to)none,
+                                                  sizeof(none) - 1, address_of answer));
+        }
+}
+
 b32 main(void)
 {
         machine_hooks();
@@ -60385,6 +60479,7 @@ b32 main(void)
         machine_policy();
         machine_stop_self();
         machine_sntp();
+        machine_auto();
         return test_report(null);
 }
 #endif /* CHECK_machine */

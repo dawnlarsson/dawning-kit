@@ -44,9 +44,11 @@ moonwater bluetooth add NAME           remember a bluetooth device
 moonwater priority internet            which link to use when cable and wifi are both up
 moonwater priority internet wired|wifi wired wins by default
 moonwater time                         the clock: local, UTC, and whether NTP has set it
-moonwater time sync                    ask an NTP server now, then put the zone back everywhere
-moonwater timezone                     the clock's zone [UTC]
-moonwater timezone ZONE                IANA name or POSIX TZ string
+moonwater time sync                    ask an NTP server now, and in auto the zone too
+moonwater timezone                     the clock's zone, and whether it is auto or manual
+moonwater timezone auto                the zone the network is in [auto]: one Cloudflare request per network
+moonwater timezone ZONE                IANA name, country code, +1 or POSIX TZ string; manual from then on
+moonwater timezone list                every zone and country code
 moonwater ntp                          whether the clock is set from the network
 moonwater ntp on|off                   keep asking the network [on]
 moonwater ntp filter [on|off]          keep the lowest-delay sample of five [on]
@@ -84,6 +86,18 @@ zoneinfo directory: every tzdata zone and link (420 zones from tzdata 2026c,
 `src/build/zones.py` regenerates them) maps to the POSIX rule its TZif footer
 carries, which is right from the zone's last change on and does not replay older
 history. `moonwater timezone list` prints them.
+
+The zone is auto until one is set by hand. When the machine gets a default route
+(at boot, on a new DHCP lease or wifi network: a different interface, gateway or
+gateway hardware address), it makes one HTTPS request to
+`speed.cloudflare.com/__down?bytes=0`, whose `timezone` header is Cloudflare's
+geolocation of the connection, and takes that zone, or the most populous zone of
+its `country` header, or of `loc=` from `cloudflare.com/cdn-cgi/trace` if the
+first request fails. A name the table does not hold is never stored, and with no
+answer the zone stays what it was. At most one request every three minutes,
+backing off to an hour while failing, and none at all in manual mode.
+`/root/timezone.mode` says which (`manual`, or `auto` and where it came from),
+and `moonwater timezone` and `moonwater status` show it.
 Canvas layouts other than US are the compositor's table, switched live.
 Steam Deck radios (RTL8822CE, MT7921) also need the matching linux-firmware files
 under `/lib/firmware`; the drivers are in the image, the blobs are not.
@@ -98,7 +112,7 @@ two-word shape as `moonwater bind canvas on`.
 A kiosk is the machine script after wipe, not a second verb. `moonwater wipe`
 empties `/home` and everything under `/root` except the overlay
 (`/root/main.moonwater.sh`) and the radio files (`wifi`, `wifi.power`,
-`bluetooth`, `bluetooth.power`, `internet`) plus `timezone`, `ntp`,
+`bluetooth`, `bluetooth.power`, `internet`) plus `timezone`, `timezone.mode`, `ntp`,
 `ntp.server`, `ntp.filter` and `keyboard`. `/bowls` is left alone, so
 pre-installed software survives. The builtin `moonwater_init` always wipes
 once the boot verdict is `live` or `disk`. Overlay the script and start

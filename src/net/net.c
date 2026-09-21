@@ -1547,7 +1547,18 @@ static COLD bipolar dns_resolve_at(p32 server, p16 port, string_address name,
         positive question_length;
         network_deadline deadline;
 
-        if (!network_transaction_secure(address_of id, sizeof id))
+        /*
+                A machine with no RDRAND and no virtio-rng seeds the kernel's
+                generator from interrupts, which an idle box or guest can take
+                minutes to supply, and the nonblocking ask refuses until then:
+                every name failed to resolve on a Nehalem or Sandy Bridge
+                guest while a Haswell one resolved them at once. Blocking is
+                the other answer, and it is what makes the kernel run its
+                jitter entropy and finish seeding in about a second. Still the
+                CSPRNG either way, never a guessable id.
+        */
+        if (!network_transaction_secure(address_of id, sizeof id) &&
+            system_random_fill(address_of id, sizeof id, 0))
                 return DNS_NO_RANDOM;
 
         written = dns_write_name(request + DNS_HEADER,

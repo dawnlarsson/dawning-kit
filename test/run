@@ -10134,6 +10134,17 @@ tries=0
 until moonwater ntp | grep -q synchronised || [ "$tries" -ge 60 ]; do sleep 1; tries=$((tries + 1)); done
 sleep 2
 printf 'ntp-own-%s\n' "$(moonwater ntp | grep -c synchronised)" | rev
+#
+#       Auto, the default: with no zone ever set, the machine asks Cloudflare
+#       once it has a route and a clock and takes the zone named there, or
+#       the country's. Which zone depends on where the box is, so what is
+#       checked is where it came from and that it is a real name, not which.
+#       Needs a route out from the box, like NTP.
+#
+tries=0
+until moonwater timezone | grep -q 'auto, from' || [ "$tries" -ge 90 ]; do sleep 1; tries=$((tries + 1)); done
+printf 'otua-%s\n' "$(moonwater timezone | grep -c 'auto, from Cloudflare\|auto, from country [A-Z][A-Z]')" | rev
+printf 'enoz-%s\n' "$(grep -c '^[A-Z][A-Za-z_-]*/[A-Za-z_/+-]*$' /root/timezone)" | rev
 moonwater time sync > /tmp/time-sync 2>&1
 printf 'cnys%s\n' $? | rev
 sleep 3
@@ -10152,7 +10163,10 @@ printf 'praw%s\n' $(( (zone_after - zone_before) / 600 )) | rev
 date +%z | rev
 printf 'deilppa%s\n' "$(grep -c 'applied to  the kernel, this system' /tmp/zone-set)" | rev
 printf 'fizt%s\n' "$(head -c 5 /etc/localtime)" | rev
+printf 'launam%s\n' "$(grep -c '(manual)' /tmp/zone-set)" | rev
 moonwater timezone UTC > /dev/null 2>&1
+moonwater timezone auto > /tmp/zone-auto 2>&1
+printf 'kcab-otua-%s-%s\n' "$?" "$(grep -c 'auto, from' /tmp/zone-auto)" | rev
 #
 #       A fresh shell waits until the live register changes, then asks for the
 #       same denied image directly and through a #! line.  Starting it before
@@ -10203,6 +10217,10 @@ timeout 180 qemu-system-x86_64 -m 2G -smp 2 -cpu Nehalem \
 #
 says transcript 'the machine set the clock itself' '1-nwo-ptn'
 says transcript 'time sync answers'    '0sync'
+says transcript 'the zone is auto and came from the network' '1-auto'
+says transcript 'and is a zone name the table holds' '1-zone'
+says transcript 'setting a zone makes it manual' '1manual'
+says transcript 'and timezone auto asks again' '1-0-auto-back'
 says transcript 'and the clock stays set' '1-tpek-ptn'
 says transcript 'setting a zone does not move the clock' '0warp'
 says transcript 'and the clock reads the zone it was set to' '0010+'
