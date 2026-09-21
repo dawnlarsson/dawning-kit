@@ -1959,7 +1959,7 @@ static const p8 conversion_flag_bytes['0' + 1] = {
    accept more than this holds. What changes is which pathological spellings
    wrap: past four billion rather than past eighteen quintillion. Both are
    past what any consumer accepts, and every consumer now says so -- file.c
-   and format.c already tested the overflow bit, and awk and the shell's
+   and standard.c's format already tested the overflow bit, and awk and the shell's
    printf were reading a wrapped width as a width and now do not. */
 typedef struct
 {
@@ -3558,7 +3558,7 @@ static inline fn digest_close(digest_state address_to digest, p8 address_to out)
 #if !defined(KERNEL_MODE) && !defined(WINDOWS)
 
 /*
-        This is ordinary C on purpose, for the same reason netlink.c is.
+        This is ordinary C on purpose, for the same reason net.c's netlink is.
 
         library.c and everything it includes holds declarations and assembly
         and nothing else, and that is checked. An allocator is not a floor. It

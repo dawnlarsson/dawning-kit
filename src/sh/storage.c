@@ -6,7 +6,7 @@
         out. They were already compiled one after the other into the same
         unit, in this order, and each of their headers described itself by
         pointing at the others -- "the storage family", "the table loaders
-        in storage_discovery.c are public to the rest of it". A family that
+        above are public to the rest of it". A family that
         has to introduce itself in four places is one file.
 
         None of them owns command dispatch. A shell builtin and a multicall

@@ -4858,7 +4858,8 @@ static decimal atof(string_address input)
 
 /*
         This is ordinary C, and it is here rather than in library.c for the
-        reason netlink.c gives: library.c and its includes hold declarations
+        reason net.c's netlink gives: library.c and its includes hold
+        declarations
         and assembly and nothing else, and that is checked.
 
         Nothing below is a hardware floor. An allocator has policy; a sort has
@@ -9332,7 +9333,7 @@ tm address_to localtime(const time_t address_to stamp)
         assemblers is an algorithm with three sets of bugs. So it lives here,
         in the one place the library keeps C -- included from
         src/compiler_memory.c, which is deliberately outside library.c's
-        graph, in the way src/net/netlink.c holds the netlink wire layer.
+        graph, in the way src/net/net.c holds the netlink wire layer.
 
         It depends on library.c alone, through its standard names: square_root,
         absolute, decimal_floor, decimal_truncated, decimal_rounded,
@@ -13204,7 +13205,7 @@ extern fn siglongjmp(jump_state state, b32 value) DEAD_END;
 #define STANDARD_MODERN_C_STANDARD_STREAM
 
 /*
-        This is ordinary C on purpose, for the reason netlink.c gives.
+        This is ordinary C on purpose, for the reason net.c's netlink gives.
 
         library.c and everything it includes holds declarations and assembly
         and nothing else, and that is checked. A buffered stream is policy all
@@ -15225,7 +15226,7 @@ b32 fputs(string_address text, stream address_to handle)
 #define STANDARD_MODERN_C_FORMAT
 
 /*
-        This is ordinary C on purpose, for the reason netlink.c gives.
+        This is ordinary C on purpose, for the reason net.c's netlink gives.
 
         library.c holds declarations and assembly and nothing else, and that is
         checked. printf is not a floor. It is a small language -- five flags, a

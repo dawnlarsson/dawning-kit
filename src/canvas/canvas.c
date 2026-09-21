@@ -6,26 +6,15 @@
         device can be opened like any other file, and struct drm_file leads
         back to the drm_device behind it.
 
-            window.c    the page a program shares with this, and the whole
-                        interface it needs -- see there first
-            pane.c      windows: creating, destroying, and reading the shared
-                        page without trusting it
-            library.c   one run of pixels and one glyph, per architecture,
-                        under KERNEL_MODE. Everything Canvas draws goes
-                        through them
-            paint.c     pixels: a pointer, a pitch, a rectangle
-            text.c      words: a box, where the lines break, where they sit
-            compose.c   what a window looks like and in what order
-            plane.c     the cursor, on a hardware plane or in the framebuffer
-            drag.c      moving a window, across a seam if it comes to that
-            output.c    outputs, their placement, and starting and stopping
-            keys.c      what a keyboard means, and which window hears it
-            client.c    attaching to DRM, and finding cards to attach to
-            pointer.c   input
+        Two files are not here. window.c is the page a program shares with
+        this and the whole interface it needs -- see there first. One run of
+        pixels and one glyph are library.c assembly under KERNEL_MODE, per
+        architecture, and everything Canvas draws goes through them.
 
-        Included rather than compiled apart, so that order is a dependency
-        order. Included by core.c in turn, which is where the headers are, and
-        before library.c, which redefines bool and defines "end" as a macro.
+        The rest is the sections below, in dependency order: paint, text,
+        pane, console, compose, plane, drag, output, keys, client, pointer.
+        Included by core.c, which is where the headers are, and before
+        library.c, which redefines bool and defines "end" as a macro.
 
         There is one desktop across every card, and one cursor on it. Windows
         and the cursor are in desktop coordinates; an output is a rectangle of
@@ -569,8 +558,8 @@ static PURE _Bool output_touched(struct output *output, const struct drm_rect *d
 static void target_rectangle(const struct target *t, int x, int y, int w, int h,
                               u32 colour);
 
-// The console window is made and drawn like any other, so pane.c has to be
-// able to say a shape changed before console.c is read.
+// The console window is made and drawn like any other, so pane has to be
+// able to say a shape changed before the console section below.
 static void console_regrid(struct pane *pane);
 
 static CONST struct canvas *canvas_from_client(struct drm_client_dev *client)
@@ -772,7 +761,7 @@ static void canvas_palette(u32 *palette, u32 format)
         cheapest at.
 
         A glyph and a cursor are the same picture to this, so there is one walk
-        and not two. It lives here rather than beside the glyphs because paint.c
+        and not two. It lives here rather than beside the glyphs because paint
         is included first and the cursor below is drawn from it.
 */
 static void bits_draw(const struct target *t, int x, int y, int scale,
@@ -1006,7 +995,7 @@ static PURE _Bool glyph_is_cell(void)
                font_glyph_pitch(canvas_font->width) == 1;
 }
 
-// One glyph, which is a bitmap like any other: bits_draw in paint.c is the
+// One glyph, which is a bitmap like any other: bits_draw above is the
 // walk, and the face says how wide and how tall.
 static void glyph_draw(const struct target *t, int x, int y, int scale,
                        unsigned char character, u32 colour)
@@ -1957,7 +1946,7 @@ static void pane_regrid(struct pane *pane)
         pane_view_clamp(pane);
 
         /*
-                A resize reaches here from drag.c without going through
+                A resize reaches here from drag below without going through
                 pane_refresh, so a pane the compositor owns has no page to be
                 told and nobody to tell. Its cells are the compositor's, and
                 the shape they are drawn in is this one -- which is what makes
@@ -3006,7 +2995,7 @@ static void desktop_frame_pass(void)
         thing here that touches the display.
 
         The lines, the ring they sit in and the wheel that moves over it are
-        the ones every window of cells has, in pane.c, and what turns a stream
+        the ones every window of cells has, in pane above, and what turns a stream
         of bytes into lines is the emulator in sh/term.c -- the same one the
         shell's terminal is. So a carriage return, a tab and an escape sequence
         mean here what they mean there, and this file is only the wiring.
@@ -4133,7 +4122,7 @@ struct pane_bar_geometry
 /*
         The bar, and the thumb in it, in the desktop's own coordinates.
 
-        Drawn here and taken hold of in drag.c, worked out in one place so the
+        Drawn here and taken hold of in drag below, worked out in one place so the
         thumb a hand grabs is the thumb that was drawn. Answers false for a
         window with nothing to scroll, which is also the answer to whether
         there is anything there to press.
@@ -4471,7 +4460,7 @@ static void output_draw_cursor(struct output *output, u32 *pixels)
 
         /*
                 Whether this draws the cursor, kept here. cursor_shown is
-                plane.c's -- set when a plane is armed over the pointer and
+                the plane section's -- set when a plane is armed over the pointer and
                 counted by the pointer applet as a plane showing it -- and
                 storing this answer into it cleared a live plane's flag on
                 every compose: a terminal redrawing under a cursor that sat on

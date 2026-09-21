@@ -13,7 +13,7 @@
         tool emits and from the source that emits them.
 */
 
-/* dns.c is included by net.c below this file.  hostid deliberately reuses
+/* net.c's DNS section, below this file, is where that resolver is.  hostid deliberately reuses
    that small resolver instead of bringing libc/NSS or a second DNS client
    into the shell. */
 static bipolar dns_resolve_any(string_address path, string_address name,

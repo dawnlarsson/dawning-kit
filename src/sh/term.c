@@ -3346,7 +3346,8 @@ static fn SPARE term_key_modified(unsigned int character, unsigned int code,
 
                 Without this a program on the far end cannot tell Shift+Right
                 from Right, because nothing in the bytes says. The compositor
-                has known which modifiers were down since keys.c read them; it
+                has known which modifiers were down since canvas's keys section
+                read them; it
                 is only this last step that threw the answer away.
         */
         if (held)

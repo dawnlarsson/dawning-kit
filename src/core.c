@@ -168,7 +168,7 @@ struct device_context
 
 
 // The assembly in this directory. Each .asm is its own object -- assembly
-// cannot be included into this translation unit the way display.c is
+// cannot be included into this translation unit the way canvas.c is
 // -- so the compiler is told its shape here, in the file that calls it.
 //
 

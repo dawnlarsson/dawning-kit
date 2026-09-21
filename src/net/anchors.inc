@@ -11,7 +11,7 @@
             key length, offset of the key in tls_anchor_keys
         where the key bytes are x || y for a curve and the unsigned
         big-endian modulus for RSA, stored raw and back to back in entry
-        order.  The hashes only find candidates: tls.c compares the whole
+        order.  The hashes only find candidates: net.c compares the whole
         key, or verifies a signature with it, before it trusts anything.  To
         regenerate, walk the bundle with python cryptography and print these
         fields for every RSA root of 2048 to 4096 bits with an odd exponent

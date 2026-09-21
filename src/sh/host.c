@@ -3606,7 +3606,7 @@ static COLD bipolar nl80211_interface(nl80211 address_to session,
                    : (found->found ? 0 : -19);
 }
 
-/* WPA's PBKDF2 and PRF are HMAC-SHA-1, which is crypto.c's HMAC under a
+/* WPA's PBKDF2 and PRF are HMAC-SHA-1, which is net.c's HMAC under a
    different digest and nothing else. */
 static COLD fn wifi_hmac_sha1(p8 address_to key, positive key_length,
                          p8 address_to data, positive length, p8 address_to out)
@@ -3678,7 +3678,7 @@ static COLD bool wifi_psk(p8 address_to ssid, positive ssid_length,
 
 /* One byte of InvMixColumns.  The matrix's four rows are the same four
    coefficients rotated, so the row it is wanted for says where to start
-   reading them, and the multiply is crypto.c's constant-time one -- the
+   reading them, and the multiply is net.c's constant-time one -- the
    same GF(2^8) its S-box inversion runs in. */
 static COLD p8 wifi_unmix(p8 address_to column, positive row)
 {
@@ -3693,7 +3693,7 @@ static COLD p8 wifi_unmix(p8 address_to column, positive row)
 }
 
 /* The inverse S-box, built rather than written out: it is the forward box's
-   inverse permutation, and crypto.c already computes that box in the field
+   inverse permutation, and net.c already computes that box in the field
    it lives in. Two hundred and fifty six hand-typed bytes are two hundred
    and fifty six chances to mistype one, and built this way the two boxes
    cannot disagree. The unwrap builds it once and lends it to every block. */
@@ -5478,7 +5478,8 @@ static b32 host_radio(string_address address_to arguments, positive count)
 
         What is not proven is the clock being set. Nothing here can take
         CLOCK_REALTIME on a machine that is not ours to disturb, so the
-        step and slew paths in locale.c have never been executed against a
+        step and slew paths in the locale section below have never been
+        executed against a
         kernel that carried them out. What is checked is the request: the
         mode words against uapi/linux/timex.h, and the decision between
         stepping and slewing against crafted offsets in the machine lane.
