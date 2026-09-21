@@ -38,6 +38,17 @@ CONFIG_MOONWATER_FLOODLIGHT=y
 CONFIG_INITRAMFS_SOURCE="../fs"
 
 CONFIG_RD_GZIP=y
+
+# The built-in initramfs goes in as a plain cpio. The image around it is
+# already zstd, so gzip inside it was a second compression that zstd could
+# not see through: the image comes out 250 KB smaller without it, and the
+# gunzip -- 6.9 ms, which the module's initcall waits out in
+# wait_for_initramfs before it can mount /dev -- is gone, in exchange for
+# the kernel decompressor producing 2.6 MB more. Twelve paired KVM boots:
+# the wait from 7.0 ms to 0.1 in every one, Run /init 8.4 ms sooner at the
+# median. RD_GZIP above stays for an initrd handed in by a boot loader.
+CONFIG_INITRAMFS_COMPRESSION_NONE=y
+CONFIG_INITRAMFS_COMPRESSION_GZIP=n
 #
 # Nine options were removed from this file because they could never take:
 # GENERIC_IRQ_CHIP, GENERIC_IRQ_INJECTION, GENERIC_IRQ_STAT_SNAPSHOT,
