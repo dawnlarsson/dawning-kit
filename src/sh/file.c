@@ -6212,11 +6212,20 @@ static bool file_source_destination(string_address program, positive first,
         listing that quietly used the wrong zone would be worse than one that
         says which zone it used.
 */
-#define LS_MAX_ENTRIES 8192
-#define LS_ARENA (1 << 20)
+/*
+        A directory of more entries than this is refused. It was 8192, which a
+        man page section or a mail folder passes, and the refusal is of the
+        whole listing. The arenas below are bss, so a listing pays only for the
+        entries it reads, and every other program in the image pays address
+        space and nothing else: 176 bytes an entry across the tables sized by
+        this, and 64 bytes a name on average in the arena.
+*/
+#define LS_MAX_ENTRIES (1 << 17)
+#define LS_ARENA (1 << 23)
 #define LS_PATTERNS 64
 #define LS_LISTED 4096
 
+// The four-byte fields together, so an entry is 128 bytes and not 144.
 typedef struct
 {
         positive name;
@@ -6226,15 +6235,15 @@ typedef struct
         positive group;
         p64 size;
         b64 modified;
-        p32 modified_fraction;
         b64 accessed;
-        p32 accessed_fraction;
         b64 changed;
-        p32 changed_fraction;
         b64 created;
-        p32 created_fraction;
         p64 inode;
         p64 blocks;
+        p32 modified_fraction;
+        p32 accessed_fraction;
+        p32 changed_fraction;
+        p32 created_fraction;
         p32 rdev_major;
         p32 rdev_minor;
         bool known;
@@ -6242,6 +6251,8 @@ typedef struct
         bool points_at_directory;
         bool quoted;
 } ls_entry;
+
+_Static_assert(sizeof(ls_entry) == 128, "an ls entry packs to 128 bytes");
 
 static ls_entry ls_entries[LS_MAX_ENTRIES];
 static positive ls_sorted[LS_MAX_ENTRIES];
