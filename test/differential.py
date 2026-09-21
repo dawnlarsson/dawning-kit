@@ -27689,6 +27689,12 @@ int main(void) {
               bowl_needs_isolated("/usr/bin/pacman") &&
               bowl_needs_isolated("/sbin/apk"),
           "package tools stay isolated");
+    check(bowl_needs_isolated("/usr/bin/dnf") &&
+              bowl_needs_isolated("/nix/var/nix/profiles/default/bin/nix") &&
+              bowl_needs_isolated("/nix/var/nix/profiles/default/bin/nix-channel") &&
+              bowl_needs_isolated("/nix/var/nix/profiles/default/bin/nix-store") &&
+              !bowl_needs_isolated("/root/.nix-profile/bin/hello"),
+          "dnf and the nix commands stay isolated, what nix installs does not");
     check(!bowl_needs_isolated("/usr/bin/jq") &&
               !bowl_needs_isolated("/usr/bin/weston") &&
               !bowl_needs_isolated("apt-get"),

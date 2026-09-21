@@ -52611,9 +52611,10 @@ static fn landing(void)
 }
 
 /*
-        Fedora, which is not a root tarball: the rows, the JSON of Fedora's
-        real OCI layout, and a two-layer image whose second layer whites out,
-        unpacked on real directories.
+        Fedora and Nix, which are not root tarballs: the rows that name them,
+        the JSON of Fedora's real OCI layout, and both unpacked on real
+        directories -- a two-layer image whose second layer whites out, and
+        a Nix release whose directories tar must make itself.
 */
 static fn unpack_path(p8 address_to into, string_address name,
                       string_address rest)
@@ -52758,11 +52759,9 @@ static fn distros(void)
                      program && *program; program++)
                         isolated &= bowl_needs_isolated(*program);
 
-                if (row->refuse)
-                        continue;
                 check("Every setup row is a bowl with a marker, a URL and a manager",
                       bowl_named_root(row->root) && row->marker[0] == '/' &&
-                          row->url &&
+                          !row->refuse && row->url &&
                           !string_compare_max(row->url, "https://", 8) &&
                           row->store && row->expose && row->expose[0] &&
                           row->archive_bytes && row->tree_bytes && row->next);
@@ -52773,10 +52772,13 @@ static fn distros(void)
         }
 
         const struct bowl_distro address_to fedora = bowl_find_distro("fedora");
+        const struct bowl_distro address_to nix = bowl_find_distro("nix");
 
-        check("Fedora is set up, pinned, and unpacked from its OCI layout",
-              fedora && !fedora->refuse && fedora->sha256 &&
-                  fedora->unpack == bowl_extract_oci);
+        check("Fedora and Nix are set up, pinned, and unpacked their own way",
+              fedora && nix && fedora->sha256 && nix->sha256 &&
+                  fedora->unpack == bowl_extract_oci &&
+                  nix->unpack == bowl_extract_nix &&
+                  nix->prime == BOWL_PRIME_NIX);
 }
 
 static fn json(void)
@@ -53007,6 +53009,132 @@ static fn oci(void)
         bowl_forget_path(base);
 }
 
+static fn nix(void)
+{
+        static string_address paths[] = {
+            "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nix-2.35.2",
+            "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nix-2.35.2/bin",
+            "/nix/store/0123456789abcdefghijklmnpqrsvwxyz-nix",
+            "/nix/store/0123456789abcdfghijklmnpqrsvwxy-nix",
+            "/nix/store/0123456789abcdfghijklmnpqrsvwxyz",
+            "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-a\"b",
+            "/nix/stor/0123456789abcdfghijklmnpqrsvwxyz-nix",
+        };
+        static string_address members[] = {
+            "nix-9.9-x86_64-linux/install", "nix-9.9-x86_64-linux/.reginfo",
+            "nix-9.9-x86_64-linux/install-multi-user",
+            "nix-9.9-x86_64-linux/store/0123456789abcdfghijklmnpqrsvwxyz-nix-9.9/bin/nix",
+            null};
+        static const p8 script[] =
+            "#!/bin/sh\n\nset -e\n"
+            "nix=\"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nix-9.9\"\n"
+            "cacert=\"/nix/store/zyxwvsrqpnmlkjihgfdcba9876543210-nss-cacert-1.0\"\n";
+        p8 base[256];
+        p8 root[256];
+        p8 broken[256];
+        p8 archive[256];
+        p8 other[256];
+        p8 found[BOWL_NIX_PATH];
+        p8 cacert[BOWL_NIX_PATH];
+
+        for (positive at = 0; at < array_count(paths); at++)
+                check("A Nix store path is a hash of 32 base-32 digits and a name",
+                      bowl_nix_store_path(paths[at], string_length(paths[at])) ==
+                          (at == 0));
+
+        check("The installer's nix and cacert lines are read",
+              bowl_nix_assigned(script, sizeof script - 1, "nix", found) &&
+                  string_equals(found, "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nix-9.9") &&
+                  bowl_nix_assigned(script, sizeof script - 1, "cacert", cacert) &&
+                  !bowl_nix_assigned(script, sizeof script - 1, "ni", found));
+
+        unpack_path(base, "nixwork", "");
+        unpack_path(root, "nix", "");
+        unpack_path(broken, "nixbad", "");
+        string_copy_bounded(archive, base, sizeof archive);
+        string_append_bounded(archive, "/release.tar", sizeof archive);
+        string_copy_bounded(other, base, sizeof other);
+        string_append_bounded(other, "/other.tar", sizeof other);
+
+        unpack_directory(base, "/nix-9.9-x86_64-linux/store/"
+                               "0123456789abcdfghijklmnpqrsvwxyz-nix-9.9/bin");
+        bool made = unpack_write(base, "/nix-9.9-x86_64-linux/install", script, 0755) &&
+                    unpack_write(base, "/nix-9.9-x86_64-linux/.reginfo", "registered\n", 0644) &&
+                    unpack_write(base, "/nix-9.9-x86_64-linux/install-multi-user", "", 0755) &&
+                    unpack_write(base, "/nix-9.9-x86_64-linux/store/"
+                                       "0123456789abcdfghijklmnpqrsvwxyz-nix-9.9/bin/nix",
+                                 "#!/bin/sh\n", 0755) &&
+                    //      Files only: the release lists no directories.
+                    unpack_tar(archive, base, false, members) &&
+                    unpack_write(base, "/nix-9.9-x86_64-linux/install", "#!/bin/sh\n", 0755) &&
+                    unpack_tar(other, base, false, members);
+
+        check("A Nix release is made for the check", made);
+        if (!made)
+                return;
+
+        check("A Nix release lands as a store at /nix/store",
+              bowl_land(archive, root, "/nix/.reginfo", bowl_extract_nix) == 0 &&
+                  bowl_has(root, "/nix/.reginfo") &&
+                  bowl_has(root, "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nix-9.9/bin/nix"));
+        check("and nothing of the release but its store is left",
+              !bowl_has(root, "/install") && !bowl_has(root, "/install-multi-user") &&
+                  !bowl_has(root, "/store") && !bowl_has(root, "/.reginfo"));
+        check("The installer's two paths are kept for the profile",
+              bowl_nix_read_seed(root, found, cacert) &&
+                  string_equals(found, "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nix-9.9") &&
+                  string_equals(cacert, "/nix/store/zyxwvsrqpnmlkjihgfdcba9876543210-nss-cacert-1.0"));
+        check("The root and the store tar made are opened to everyone",
+              unpack_mode(root, "") == 0755 && unpack_mode(root, "/nix/store") == 0755);
+        check("A single-user Nix has its conf, its users and its channel",
+              bowl_has(root, "/etc/nix/nix.conf") && bowl_has(root, "/etc/passwd") &&
+                  bowl_has(root, "/etc/group") && bowl_has(root, "/root/.nix-channels") &&
+                  bowl_has(root, "/etc/resolv.conf"));
+        check("A conf the person changed is left alone",
+              unpack_write(root, "/etc/nix/nix.conf", "sandbox = true\n", 0644) &&
+                  bowl_configure(root) == 0 &&
+                  unpack_says(root, "/etc/nix/nix.conf", "sandbox = true\n"));
+
+        check("A release whose installer names no store paths is refused",
+              bowl_land(other, broken, "/nix/.reginfo", bowl_extract_nix) != 0 &&
+                  !bowl_has(broken, "/nix/.reginfo"));
+
+        bowl_forget_path(root);
+        bowl_forget_path(broken);
+        bowl_forget_path(base);
+}
+
+/*
+        A program is asked for the way it will run, inside its root. A Nix
+        profile's commands are links to /nix/store, which from the host name
+        nothing; asking the host path refused every one of them.
+*/
+static fn executable_in_root(void)
+{
+        p8 root[256];
+        p8 path[256];
+
+        unpack_path(root, "exec", "");
+        unpack_directory(root, "/opt/real");
+        unpack_directory(root, "/bin");
+        bool made = unpack_write(root, "/opt/real/tool", "#!/bin/sh\n", 0755) &&
+                    unpack_write(root, "/opt/real/data", "data\n", 0644);
+
+        string_copy_bounded(path, root, sizeof path);
+        string_append_bounded(path, "/bin/tool", sizeof path);
+        made &= system_symbolic_link_at("/opt/real/tool", AT_FDCWD, path) == 0;
+        string_copy_bounded(path, root, sizeof path);
+        string_append_bounded(path, "/bin/data", sizeof path);
+        made &= system_symbolic_link_at("/opt/real/data", AT_FDCWD, path) == 0;
+
+        check("A program behind an absolute link runs inside its root",
+              made && bowl_executable_in_root(root, "/bin/tool") == 0 &&
+                  bowl_executable_in_root(root, "/bin/data") < 0 &&
+                  bowl_executable_in_root(root, "/bin/none") < 0);
+
+        bowl_forget_path(root);
+}
+
 b32 main(void)
 {
         names();
@@ -53019,6 +53147,8 @@ b32 main(void)
         distros();
         json();
         oci();
+        nix();
+        executable_in_root();
         return test_report(null);
 }
 #endif /* CHECK_bowl */

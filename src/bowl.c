@@ -107,6 +107,10 @@ static struct bowl_mount_point bowl_isolated_mounts[] = {
         still listed for a bowl that has the database but no broader share
         tree. /usr/libexec is weston-desktop-shell and the rest of the
         helpers compiled next to the libraries.
+
+        /nix is a Nix bowl's store. Everything Nix installs names its loader
+        and libraries by /nix/store paths, so without it a program from
+        a Nix profile runs only in the isolated view.
 */
 static struct bowl_layer bowl_fast_layers[] = {
     {"/lib", false},
@@ -122,6 +126,7 @@ static struct bowl_layer bowl_fast_layers[] = {
     {"/etc/fonts", false},
     {"/etc/ssl", false},
     {"/etc/pki", false},
+    {"/nix", false},
     {null, false},
 };
 
@@ -292,6 +297,28 @@ static bipolar bowl_open_in_root(string_address root, string_address path,
         return opened;
 }
 
+/*
+        Whether a guest program can be run, asked the way it will be run: as
+        though root were /. A Nix profile is links to absolute /nix/store
+        paths, which from the host name nothing, so asking the host path
+        refused every program a Nix bowl has.
+*/
+static bipolar bowl_executable_in_root(string_address root,
+                                       string_address program)
+{
+        bipolar handle = bowl_open_in_root(root, program, O_PATH | O_CLOEXEC);
+        bipolar failed;
+
+        if (handle < 0)
+                return handle;
+
+        failed = system_call_4(syscall(faccessat2), (positive)handle,
+                               (positive) "", BOWL_ACCESS_EXECUTE,
+                               AT_EMPTY_PATH);
+        system_close(handle);
+        return failed;
+}
+
 static bool bowl_root_path(p8 address_to into, positive room,
                            string_address root, string_address path)
 {
@@ -428,7 +455,8 @@ static bool bowl_needs_isolated(string_address program)
             "apt-config", "apt-key", "apt-mark", "aptitude", "dpkg",
             "dpkg-deb", "dpkg-query", "dpkg-reconfigure", "dpkg-divert",
             "apk", "dnf", "dnf5", "rpm", "yum", "nix", "nix-env",
-            "nix-build", "nix-shell"};
+            "nix-build", "nix-shell", "nix-channel", "nix-store",
+            "nix-instantiate", "nix-collect-garbage"};
         p8 name[256];
 
         if (!program || program[0] != '/')
@@ -542,7 +570,7 @@ static b32 bowl_expose_program(string_address root, string_address program,
             sizeof(BOWL_EXPOSE_DIRECTORY) + name_length >= sizeof(launcher))
                 return bowl_refuse("exposed path is too long\n");
 
-        failed = system_access_at(AT_FDCWD, installed, BOWL_ACCESS_EXECUTE);
+        failed = bowl_executable_in_root(root, program);
         if (failed < 0)
                 return bowl_fail(installed, failed);
 
@@ -647,7 +675,7 @@ static b32 bowl_expose(positive count, string_address address_to arguments)
 }
 
 static string_address bowl_guest_bins[] = {
-    "/usr/bin", "/usr/sbin", "/bin", null};
+    "/usr/bin", "/usr/sbin", "/bin", "/root/.nix-profile/bin", null};
 
 static bool bowl_split_guest_path(string_address path, p8 address_to root,
                                   positive root_room, p8 address_to program,
@@ -735,8 +763,7 @@ static bool bowl_fill_command(string_address name, p8 address_to into,
                                        name) ||
                             !bowl_root_path(installed, sizeof(installed), root,
                                             rel) ||
-                            system_access_at(AT_FDCWD, installed,
-                                             BOWL_ACCESS_EXECUTE) < 0)
+                            bowl_executable_in_root(root, rel) < 0)
                                 continue;
 
                         if (!bowl_expose_program(root, rel, name, false) &&
@@ -2597,6 +2624,7 @@ static bool bowl_archive_usable(string_address path, p64 floor)
 static b32 bowl_write_pacman(string_address root);
 static b32 bowl_write_apk(string_address root);
 static b32 bowl_write_apt(string_address root);
+static b32 bowl_write_nix(string_address root);
 
 static b32 bowl_configure(string_address root)
 {
@@ -2626,6 +2654,9 @@ static b32 bowl_configure(string_address root)
         bowl_clear_lock(root, "/var/cache/apt/archives/lock");
         bowl_clear_lock(root, "/run/dnf/dnf.conf.lock");
         bowl_clear_lock(root, "/var/lib/rpm/.rpm.lock");
+
+        if (!failed && bowl_has(root, "/nix/.reginfo"))
+                failed = bowl_write_nix(root);
 
         return failed;
 }
@@ -3613,6 +3644,247 @@ static b32 bowl_extract_oci(string_address archive, string_address root)
         return failed;
 }
 
+/* ---- A Nix store as a bowl. ---- */
+
+/*
+        Nix is not a distribution root. Its binary release is a store: the
+        closure of nix itself -- glibc, curl, busybox for the builder shell,
+        CA certificates -- under nix-VERSION-SYSTEM/store, a .reginfo that
+        registers those paths in the database, and an install script whose
+        first lines name the nix and cacert paths to put in a profile.
+
+        A Nix bowl is that store at /nix/store and nothing under it: every
+        program Nix runs names its libraries and loader by /nix/store paths,
+        so the root needs no /usr at all. It is single-user as root, the way
+        the release's own installer sets up a machine without a daemon --
+        Moonwater has no service manager to run one. Landing moves the store
+        into place and keeps the two names as /nix/.bowl-seed; the database
+        and profile come after, in the isolated view (bowl_prime_nix).
+*/
+#define BOWL_NIX_SEED "/nix/.bowl-seed"
+#define BOWL_NIX_PATH 160
+
+/* nix="/nix/store/HASH-NAME" as the release's install script spells it: a
+   store path of 32 base-32 digits and a name, and nothing a shell or a path
+   could read more into. */
+static bool bowl_nix_store_path(string_address path, positive length)
+{
+        static const p8 prefix[] = "/nix/store/";
+        positive at = sizeof(prefix) - 1;
+
+        if (length >= BOWL_NIX_PATH || length < at + 34 ||
+            memory_compare(path, prefix, at))
+                return false;
+
+        for (positive digit = 0; digit < 32; digit++, at++)
+                if (!((path[at] >= '0' && path[at] <= '9') ||
+                      (path[at] >= 'a' && path[at] <= 'z' && path[at] != 'e' &&
+                       path[at] != 'o' && path[at] != 'u' && path[at] != 't')))
+                        return false;
+        if (path[at++] != '-')
+                return false;
+
+        for (; at < length; at++)
+                if (!byte_is_alnum(path[at]) && path[at] != '-' &&
+                    path[at] != '.' && path[at] != '_' && path[at] != '+')
+                        return false;
+
+        return true;
+}
+
+// The value of NAME="..." at the start of a line, when it is a store path.
+static bool bowl_nix_assigned(string_address text, positive length,
+                              string_address name, p8 address_to out)
+{
+        positive name_length = string_length(name);
+
+        for (positive at = 0; at < length;)
+        {
+                positive stop = at + memory_span_without_byte(text + at, '\n',
+                                                              length - at);
+
+                if (stop - at > name_length + 3 &&
+                    !memory_compare(text + at, name, name_length) &&
+                    text[at + name_length] == '=' &&
+                    text[at + name_length + 1] == '"' && text[stop - 1] == '"')
+                {
+                        positive from = at + name_length + 2;
+                        positive size = stop - 1 - from;
+
+                        if (!bowl_nix_store_path(text + from, size))
+                                return false;
+                        memory_copy(out, text + from, size);
+                        out[size] = end;
+                        return true;
+                }
+
+                at = stop + 1;
+        }
+
+        return false;
+}
+
+static bool bowl_nix_read_seed(string_address root, p8 address_to nix,
+                               p8 address_to cacert)
+{
+        p8 path[BOWL_PATH_LIMIT];
+        p8 text[2 * BOWL_NIX_PATH + 32];
+        bipolar got;
+
+        if (!bowl_root_path(path, sizeof(path), root, BOWL_NIX_SEED))
+                return false;
+        got = file_slurp(path, text, sizeof(text));
+        if (got <= 0 || (positive)got >= sizeof(text))
+                return false;
+
+        return bowl_nix_assigned(text, (positive)got, "nix", nix) &&
+               bowl_nix_assigned(text, (positive)got, "cacert", cacert);
+}
+
+static b32 bowl_extract_nix(string_address archive, string_address root)
+{
+        static p8 script[65536];
+        static string_address keep[] = {"nix", null};
+        p8 nix[BOWL_NIX_PATH];
+        p8 cacert[BOWL_NIX_PATH];
+        p8 seed[2 * BOWL_NIX_PATH + 32];
+        p8 from[BOWL_PATH_LIMIT];
+        p8 to[BOWL_PATH_LIMIT];
+        p8 leaf[BOWL_PATH_LIMIT];
+        byte_store out = {seed, sizeof(seed), 0};
+        bipolar failed;
+        bipolar parent;
+        bipolar got;
+
+        failed = bowl_extract(archive, root);
+        if (!failed)
+                failed = bowl_flatten(root, "/.reginfo");
+        if (failed)
+                return failed;
+
+        //      tar makes a directory the archive does not list private, and
+        //      the release lists neither its top directory, which is the
+        //      root now, nor store/.
+        failed = system_change_mode_at(AT_FDCWD, root, 0755);
+        if (failed)
+                return bowl_fail(root, failed);
+
+        if (!bowl_root_path(from, sizeof(from), root, "/install"))
+                return bowl_refuse("bowl path is too long\n");
+        got = file_slurp(from, script, sizeof(script));
+        if (got <= 0 || (positive)got >= sizeof(script) ||
+            !bowl_nix_assigned(script, (positive)got, "nix", nix) ||
+            !bowl_nix_assigned(script, (positive)got, "cacert", cacert))
+                return bowl_refuse("archive is not a Nix binary release\n");
+
+        if (!byte_store_append_exact(address_of out, "nix=\"", 5) ||
+            !byte_store_append_exact(address_of out, nix, string_length(nix)) ||
+            !byte_store_append_exact(address_of out, "\"\ncacert=\"", 10) ||
+            !byte_store_append_exact(address_of out, cacert,
+                                     string_length(cacert)) ||
+            !byte_store_append_exact(address_of out, "\"\n", 2))
+                return bowl_refuse("Nix store path is too long\n");
+
+        if (!bowl_root_path(to, sizeof(to), root, "/nix"))
+                return bowl_refuse("bowl path is too long\n");
+        failed = bowl_mkdir(to);
+        if (failed < 0)
+                return bowl_fail(to, failed);
+
+        if (!bowl_root_path(from, sizeof(from), root, "/store") ||
+            !bowl_root_path(to, sizeof(to), root, "/nix/store"))
+                return bowl_refuse("bowl path is too long\n");
+        failed = system_rename_at(AT_FDCWD, from, AT_FDCWD, to, 0);
+        if (!failed)
+                failed = system_change_mode_at(AT_FDCWD, to, 0755);
+        if (failed)
+                return bowl_fail(to, failed);
+
+        if (!bowl_root_path(to, sizeof(to), root, BOWL_NIX_SEED))
+                return bowl_refuse("bowl path is too long\n");
+        failed = bowl_write_bytes(to, seed, out.used);
+        if (failed)
+                return failed;
+
+        // Last: /nix/.reginfo is the marker that the store is in place.
+        if (!bowl_root_path(from, sizeof(from), root, "/.reginfo") ||
+            !bowl_root_path(to, sizeof(to), root, "/nix/.reginfo"))
+                return bowl_refuse("bowl path is too long\n");
+        failed = system_rename_at(AT_FDCWD, from, AT_FDCWD, to, 0);
+        if (failed)
+                return bowl_fail(to, failed);
+
+        // The installer scripts: this is what they would have done.
+        parent = system_open_parent_nofollow(AT_FDCWD, root, false, 0, leaf,
+                                             sizeof(leaf));
+        if (parent < 0)
+                return bowl_fail(root, parent);
+        failed = bowl_reset_walk_at(parent, leaf, 0, false, keep);
+        system_close(parent);
+        return failed ? bowl_fail(root, failed) : 0;
+}
+
+/*
+        What a single-user Nix needs around its store.
+
+        nix.conf: no build users -- there is no nixbld group and the bowl is
+        root -- and no sandbox: the isolated view is already a namespace of
+        its own, and a build sandbox inside it needs user namespaces the
+        Moonwater kernel may not have; substitutes from cache.nixos.org need
+        neither. The new command and flakes are on, so `nix run nixpkgs#hello`
+        works as the Nix manual writes it. A file that is already there is the
+        person's and is left alone, as are passwd and group, which Nix asks
+        for its user's name and home.
+
+        The channel is subscribed as the installer does, not fetched: nixpkgs
+        unpacks to half a gigabyte in a store a live session keeps in memory,
+        and flakes need no channel at all.
+*/
+static b32 bowl_write_nix(string_address root)
+{
+        static const struct
+        {
+                string_address path;
+                string_address text;
+        } files[] = {
+            {"/etc/nix/nix.conf",
+             "build-users-group =\n"
+             "sandbox = false\n"
+             "experimental-features = nix-command flakes\n"},
+            {"/etc/passwd", "root:x:0:0:root:/root:/bin/sh\n"
+                            "nobody:x:65534:65534:nobody:/var/empty:/bin/false\n"},
+            {"/etc/group", "root:x:0:\nnogroup:x:65534:\n"},
+            {"/root/.nix-channels",
+             "https://channels.nixos.org/nixpkgs-unstable nixpkgs\n"},
+        };
+        static string_address directories[] = {"/etc/nix", "/root", null};
+        p8 path[BOWL_PATH_LIMIT];
+        bipolar failed;
+
+        for (positive at = 0; directories[at]; at++)
+        {
+                if (!bowl_root_path(path, sizeof(path), root, directories[at]))
+                        return bowl_refuse("bowl path is too long\n");
+                failed = bowl_mkdir(path);
+                if (failed < 0)
+                        return bowl_fail(path, failed);
+        }
+
+        for (positive at = 0; at < array_count(files); at++)
+        {
+                if (bowl_has(root, files[at].path))
+                        continue;
+                if (!bowl_root_path(path, sizeof(path), root, files[at].path))
+                        return bowl_refuse("bowl path is too long\n");
+                failed = bowl_write_bytes(path, files[at].text,
+                                          string_length(files[at].text));
+                if (failed)
+                        return failed;
+        }
+
+        return 0;
+}
+
 /*
         unpack puts the archive's tree under root: bowl_extract for a root
         tarball, or a distribution's own way of unpacking one that is not.
@@ -3697,19 +3969,25 @@ static b32 bowl_land(string_address archive, string_address root,
 #define BOWL_DEBIAN_URL \
         "https://github.com/debuerreotype/docker-debian-artifacts/raw/dist-amd64/stable/oci/blobs/rootfs.tar.gz"
 /*
-        Fedora is pinned to a release and to its SHA-256, taken from the
-        CHECKSUM file beside the image, which Fedora signs. A newer release
-        is a new pair of lines here.
+        Fedora and Nix are pinned to a release and to its SHA-256, taken from
+        the release's own word for it: Fedora's CHECKSUM file beside the
+        image, which Fedora signs, and the hash line of the installer at
+        nixos.org/nix/install. A newer release is a new pair of lines here.
 */
 #define BOWL_FEDORA_URL \
         "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Container/x86_64/images/Fedora-Container-Base-Generic-44-1.7.x86_64.oci.tar.xz"
 #define BOWL_FEDORA_SHA256 \
         "75200f5752a74a21a616ca9a75e25beb594e2e117a0195c54f87c0b3e3974d1b"
+#define BOWL_NIX_URL \
+        "https://releases.nixos.org/nix/nix-2.35.2/nix-2.35.2-x86_64-linux.tar.xz"
+#define BOWL_NIX_SHA256 \
+        "0c3960a9792331a22081c3c7a5d8465db9b17c50b3acdf18587fa4c6f2cb1158"
 #define BOWL_INTERPRETER "/bowl"
 #define BOWL_BIN_DIRECTORY "/bin"
 
 #define BOWL_PRIME_NONE 0
 #define BOWL_PRIME_ARCH 1
+#define BOWL_PRIME_NIX 2
 
 struct bowl_distro
 {
@@ -3826,9 +4104,11 @@ static b32 bowl_setup_download(string_address dest, string_address url,
         return 0;
 }
 
+/* input, when there is one, is a file in the bowl the program reads as its
+   standard input. */
 static b32 bowl_setup_isolated(string_address root, string_address program,
                                string_address address_to arguments,
-                               string_address what)
+                               string_address what, string_address input)
 {
         bipolar child;
 
@@ -3841,7 +4121,21 @@ static b32 bowl_setup_isolated(string_address root, string_address program,
         }
         child = system_fork();
         if (child == 0)
+        {
+                if (input)
+                {
+                        bipolar handle = bowl_open_in_root(root, input,
+                                                           FILE_READ | O_CLOEXEC);
+
+                        if (handle < 0)
+                                exit(bowl_fail(input, handle));
+                        if (system_descriptor_install(handle, 0) < 0)
+                                exit(bowl_fail(input, -ERROR_INPUT_OUTPUT));
+                        if (handle)
+                                system_close(handle);
+                }
                 exit(bowl_launch(root, program, arguments, true));
+        }
 
         return bowl_wait_applet(child, what);
 }
@@ -3984,11 +4278,56 @@ static b32 bowl_prime_arch(string_address root)
         string_format(log, bowl_label "initialising the keyring\n");
         log_flush();
         failed = bowl_setup_isolated(root, "/usr/bin/pacman-key", init_argv,
-                                     "pacman-key --init failed\n");
+                                     "pacman-key --init failed\n", null);
         if (!failed)
                 failed = bowl_setup_isolated(root, "/usr/bin/pacman-key",
                                              populate_argv,
-                                             "pacman-key --populate failed\n");
+                                             "pacman-key --populate failed\n",
+                                             null);
+        return failed;
+}
+
+/*
+        The two steps of the release's installer that run Nix: register the
+        store's paths in the database from .reginfo, then put nix and the CA
+        certificates in the default profile, which is where every exposed
+        command and Nix's own TLS look. Each is skipped once it has been done,
+        so a setup that stopped part way picks up where it was.
+*/
+static b32 bowl_prime_nix(string_address root)
+{
+        p8 nix[BOWL_NIX_PATH];
+        p8 cacert[BOWL_NIX_PATH];
+        p8 program[BOWL_NIX_PATH + 32];
+        b32 failed = 0;
+
+        if (!bowl_nix_read_seed(root, nix, cacert))
+                return bowl_refuse("the Nix store has no seed; remove "
+                                   BOWL_ROOT_PREFIX "nix and set it up again\n");
+
+        if (!bowl_has(root, "/nix/var/nix/db/db.sqlite"))
+        {
+                string_address argv[] = {program, "--load-db", null};
+
+                path_join(program, sizeof(program), nix, "bin/nix-store");
+                string_format(log, bowl_label "registering the store\n");
+                log_flush();
+                failed = bowl_setup_isolated(root, program, argv,
+                                             "nix-store --load-db failed\n",
+                                             "/nix/.reginfo");
+        }
+
+        if (!failed && !bowl_has(root, "/nix/var/nix/profiles/default/bin/nix"))
+        {
+                string_address argv[] = {program, "-i", nix, cacert, null};
+
+                path_join(program, sizeof(program), nix, "bin/nix-env");
+                string_format(log, bowl_label "installing Nix in its profile\n");
+                log_flush();
+                failed = bowl_setup_isolated(root, program, argv,
+                                             "nix-env -i failed\n", null);
+        }
+
         return failed;
 }
 
@@ -4010,7 +4349,13 @@ static string_address bowl_alpine_expose[] = {"/sbin/apk", null};
 static string_address bowl_debian_expose[] = {
     "/usr/bin/apt-get", "/usr/bin/apt", null};
 static string_address bowl_fedora_expose[] = {"/usr/bin/dnf", null};
-
+static string_address bowl_nix_expose[] = {
+    "/nix/var/nix/profiles/default/bin/nix",
+    "/nix/var/nix/profiles/default/bin/nix-env",
+    "/nix/var/nix/profiles/default/bin/nix-channel",
+    "/nix/var/nix/profiles/default/bin/nix-shell",
+    "/nix/var/nix/profiles/default/bin/nix-build",
+    "/nix/var/nix/profiles/default/bin/nix-store", null};
 
 /*
         The sizes are what each download and its unpacked tree took on a
@@ -4019,8 +4364,9 @@ static string_address bowl_fedora_expose[] = {"/usr/bin/dnf", null};
         Alpine 3,698,422 to 8,675,328, Debian 49,337,828 to 130,928,640. On
         2026-09-21 the same way: Fedora 70,170,200 to 191,016,960, and its
         tree counts the 70,938,624 its one layer takes while it is unpacked,
-        which the download does not outlive. A release that has grown since
-        is what the check after the download is for, and a failure part way
+        which the download does not outlive; Nix 27,131,728 to 125,870,080
+        with its database and profile made. A release that has grown since is
+        what the check after the download is for, and a failure part way
         still says how much room is left.
 */
 static const struct bowl_distro bowl_distros[] = {
@@ -4041,9 +4387,11 @@ static const struct bowl_distro bowl_distros[] = {
      "/usr/bin/dnf", "dnf makecache", null, (p64)32 * 1024 * 1024,
      70170200, 261955584, BOWL_PRIME_NONE, bowl_fedora_expose,
      BOWL_FEDORA_SHA256, bowl_extract_oci},
-    {"nix", "Nix", BOWL_ROOT_PREFIX "nix", null, null, "/bin/nix", null,
-     "nix is a /nix store, not a distro root\n", 0, 0, 0, BOWL_PRIME_NONE, null,
-     null, null},
+    {"nix", "Nix", BOWL_ROOT_PREFIX "nix",
+     BOWL_ROOT_PREFIX "nix-x86_64-linux.tar.xz", BOWL_NIX_URL, "/nix/.reginfo",
+     "nix-channel --update, or nix run nixpkgs#hello", null,
+     (p64)8 * 1024 * 1024, 27131728, 125870080, BOWL_PRIME_NIX,
+     bowl_nix_expose, BOWL_NIX_SHA256, bowl_extract_nix},
 };
 
 static const struct bowl_distro address_to bowl_find_distro(string_address name)
@@ -4135,11 +4483,11 @@ static b32 bowl_setup_distro(const struct bowl_distro address_to distro)
         }
 
         if (distro->prime == BOWL_PRIME_ARCH)
-        {
                 failed = bowl_prime_arch(distro->root);
-                if (failed)
-                        return failed;
-        }
+        else if (distro->prime == BOWL_PRIME_NIX)
+                failed = bowl_prime_nix(distro->root);
+        if (failed)
+                return failed;
 
         program = distro->expose;
         while (program && *program)
