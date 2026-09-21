@@ -942,7 +942,7 @@ static fn text_begin(string_address name)
 // paths are bounded library searches; grep and sed keep only the range check
 // and the offset that belongs to their surrounding regular-expression state.
 static string_address text_literal_find(string_address text, positive length,
-                                        positive from, string_address want,
+                                        positive from, const_string want,
                                         positive size, bool icase,
                                         positive2 anchors)
 {
@@ -4080,6 +4080,16 @@ static p8 wc_utf8_decode(const p8 address_to at, positive size, p32 address_to c
         return WC_VALID;
 }
 
+/*      carried never exceeds three, and that is what makes four enough.
+        Both places that set it set it from a decode that answered WC_SHORT,
+        and wc_utf8_decode returns WC_SHORT only where it ran out before
+        need, which is four at the most -- so a held sequence is a proper
+        prefix and a proper prefix of four bytes is three.
+
+        GCC cannot see that through the inlined copy and says so, about a
+        rung it cannot reach. Stating it with __builtin_unreachable was
+        tried: it silences those and produces two more of the same kind
+        about have - length, so the count moves and nothing is learned. */
 typedef struct
 {
         positive chars, words, longest, column;
@@ -16340,7 +16350,7 @@ typedef struct
 */
 static bool grep_literal_bounded(const grep_plan address_to plan,
                                  string_address line, positive length,
-                                 string_address want, positive size,
+                                 const_string want, positive size,
                                  positive2 anchors)
 {
         if (plan->boundary == REGEX_BOUNDARY_LINE)

@@ -42849,7 +42849,7 @@ PURE b32 string_compare(string_address source, string_address input);
 PURE string_address string_first_of(string_address source, p8 character);
 
 PURE positive string_span(string_address source, const b8 address_to set);
-PURE positive string_span_max(string_address source, positive bound,
+PURE positive string_span_max(const_string source, positive bound,
                               const b8 address_to set);
 positive string_digits(string_address source, positive address_to used);
 bipolar string_bipolar(string_address source, positive address_to used);
@@ -43048,7 +43048,8 @@ positive cells_from_ascii(address_any cells, address_any bytes, positive limit,
 // Returns {bytes, characters}, bounded by both size and count. Invalid UTF-8
 // bytes each count once; zero bounds permit a null block without reading it.
 PURE positive2 memory_utf8_span(address_any block, positive size, positive count);
-PURE b32 memory_compare_ascii_case(address_any one, address_any two, positive size);
+PURE b32 memory_compare_ascii_case(const address_any one, const address_any two,
+                                   positive size);
 PURE address_any memory_first_of_ascii_case(address_any block, b8 value,
                                             positive size);
 // Select the corpus-rarest search anchors once for a needle that will be
@@ -43060,17 +43061,19 @@ PURE address_any memory_first_of_ascii_case(address_any block, b8 value,
 PURE positive2 memory_search_prepare(address_any needle, positive needle_size,
                                      bool ascii_case);
 PURE address_any memory_search_prepared(address_any block, positive size,
-                                        address_any needle, positive needle_size,
+                                        const address_any needle,
+                                        positive needle_size,
                                         positive anchor, positive second_anchor);
 PURE address_any memory_search_ascii_case_prepared(address_any block, positive size,
-                                                   address_any needle,
+                                                   const address_any needle,
                                                    positive needle_size,
                                                    positive anchor,
                                                    positive second_anchor);
 PURE address_any memory_search_ascii_case(address_any block, positive size,
                                           address_any needle, positive needle_size);
 PURE READS(1, 3) address_any memory_last_of(address_any block, b8 value, positive size);
-PURE READS(1, 2) positive2 memory_count_words(address_any block, positive size, bool inside);
+PURE READS(1, 2) positive2 memory_count_words(const address_any block, positive size,
+                                              bool inside);
 // Reverse exactly size bytes in place. Returns block; sizes below two do not
 // read or write it, so a null block is valid when size is zero.
 READS_WRITES(1, 2) address_any memory_reverse(address_any block, positive size);
