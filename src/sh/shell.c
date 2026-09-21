@@ -544,7 +544,7 @@ fn shell_thread_instance_mode(bool preserve_ignored);
 fn run_lines(string_address text);
 
 /* The mount table is shared by file and storage utilities. Its parser lives
-   in storage_discovery.c, while this declaration keeps consumers independent
+   in storage.c, while this declaration keeps consumers independent
    of source inclusion order. */
 typedef struct
 {
@@ -745,10 +745,7 @@ static bipolar file_exec_path_try(string_address address_to words);
 #include "zstd.c"
 #include "tar.c"
 #include "snapshot.c"
-#include "storage_blkid.c"
-#include "storage_discovery.c"
-#include "storage_mount.c"
-#include "storage_format.c"
+#include "storage.c"
 #include "text.c"
 #include "checksum.c"
 #include "awk.c"

@@ -46,7 +46,7 @@ GENERATORS = {
     ('src/sh/builtin.c', 'STORAGE_ADAPTER'):
         ('shell_{}', 'storage_program_{}'),
     ('src/sh/builtin.c', 'TEST_LOGICAL_LEVEL'): ('{}',),
-    ('src/sh/storage_discovery.c', 'STORAGE_TABLE_RELEASE'): ('{}',),
+    ('src/sh/storage.c', 'STORAGE_TABLE_RELEASE'): ('{}',),
     ('src/sh/tools.c', 'PS_TAKE'): ('{}',),
     ('src/standard.c', 'PROCESS_EXECL'): ('{}',),
     ('src/standard.c', 'ERROR_OPEN'): ('{}',),
