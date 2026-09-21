@@ -6875,14 +6875,31 @@ static fn locale_zone_moment(p8 address_to into, positive room)
 /*
         How the zone came to be what it is, as /root/timezone.mode says:
         "manual" after moonwater timezone ZONE, "auto" and where the answer
-        came from once the network has been asked, and nothing at all on a
-        machine that has never been told either way -- which is auto.
+        came from once the network has been asked.
+
+        With no mode file the zone file decides. Before auto existed the only
+        way to get a /root/timezone was a person typing one, so a machine
+        carrying one from then is manual -- auto would otherwise overwrite
+        the zone they chose with wherever Cloudflare places them -- and a
+        machine with neither has never been told anything, which is auto.
 */
+static fn locale_zone_mode(p8 address_to into, positive room)
+{
+        p8 zone[80];
+
+        locale_word(LOCALE_ZONE_MODE_PATH, into, room);
+        if (into[0])
+                return;
+        locale_word(LOCALE_ZONE_PATH, zone, sizeof(zone));
+        if (zone[0])
+                string_copy_bounded(into, "manual", room);
+}
+
 static bool locale_zone_manual(void)
 {
         p8 mode[48];
 
-        locale_word(LOCALE_ZONE_MODE_PATH, mode, sizeof(mode));
+        locale_zone_mode(mode, sizeof(mode));
         return host_starts(mode, "manual");
 }
 
@@ -6890,7 +6907,7 @@ static fn locale_zone_how(p8 address_to into, positive room)
 {
         p8 mode[48];
 
-        locale_word(LOCALE_ZONE_MODE_PATH, mode, sizeof(mode));
+        locale_zone_mode(mode, sizeof(mode));
         if (host_starts(mode, "manual"))
                 string_copy_bounded(into, "(manual)", room);
         else if (host_starts(mode, "auto cloudflare"))

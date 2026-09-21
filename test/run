@@ -10168,6 +10168,16 @@ moonwater timezone UTC > /dev/null 2>&1
 moonwater timezone auto > /tmp/zone-auto 2>&1
 printf 'kcab-otua-%s-%s\n' "$?" "$(grep -c 'auto, from' /tmp/zone-auto)" | rev
 #
+#       A zone file from before auto existed, with no mode beside it, was
+#       typed by someone and stays theirs; with neither file it is auto.
+#
+rm -f /root/timezone.mode
+printf 'Europe/London\n' > /root/timezone
+printf 'dlo-%s\n' "$(moonwater timezone | grep -c '(manual)')" | rev
+rm -f /root/timezone
+printf 'hserf-%s\n' "$(moonwater timezone | grep -c 'auto, waiting')" | rev
+moonwater timezone UTC > /dev/null 2>&1
+#
 #       A fresh shell waits until the live register changes, then asks for the
 #       same denied image directly and through a #! line.  Starting it before
 #       the write keeps this test independent of the parent's cached report;
@@ -10221,6 +10231,8 @@ says transcript 'the zone is auto and came from the network' '1-auto'
 says transcript 'and is a zone name the table holds' '1-zone'
 says transcript 'setting a zone makes it manual' '1manual'
 says transcript 'and timezone auto asks again' '1-0-auto-back'
+says transcript 'a zone set before auto is manual' '1-old'
+says transcript 'and no zone at all is auto' '1-fresh'
 says transcript 'and the clock stays set' '1-tpek-ptn'
 says transcript 'setting a zone does not move the clock' '0warp'
 says transcript 'and the clock reads the zone it was set to' '0010+'

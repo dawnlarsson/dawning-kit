@@ -97,7 +97,9 @@ first request fails. A name the table does not hold is never stored, and with no
 answer the zone stays what it was. At most one request every three minutes,
 backing off to an hour while failing, and none at all in manual mode.
 `/root/timezone.mode` says which (`manual`, or `auto` and where it came from),
-and `moonwater timezone` and `moonwater status` show it.
+and `moonwater timezone` and `moonwater status` show it. A `/root/timezone` with no
+mode beside it was set by hand before auto existed and stays manual until
+`moonwater timezone auto`.
 Canvas layouts other than US are the compositor's table, switched live.
 Steam Deck radios (RTL8822CE, MT7921) also need the matching linux-firmware files
 under `/lib/firmware`; the drivers are in the image, the blobs are not.
