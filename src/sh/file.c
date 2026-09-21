@@ -887,7 +887,7 @@ static bool path_walk_join(p8 address_to into, positive room,
         return true;
 }
 
-CONST RETURNS_NONNULL string_address file_reason(bipolar code);
+PURE RETURNS_NONNULL string_address file_reason(bipolar code);
 /* Claim an exclusive temporary beside the destination for callers which
    still publish through their own descriptor-bound transaction. */
 static COLD bipolar file_temporary_open_at(bipolar directory,
@@ -4608,7 +4608,14 @@ static fn file_color_sgr(writer write, file_color_span color)
         write((address_any) "m", 1);
 }
 
-CONST RETURNS_NONNULL string_address file_reason(bipolar code)
+/*      PURE and not CONST, for the reason system_error_message gives about
+        itself: const is the mark that says the body reads no memory at all,
+        and this one reads the table below and calls a routine that reads
+        another. Nothing was miscompiled by the stronger claim -- both tables
+        are static const, so the answer really does depend on the argument
+        alone -- but it was a claim the body does not support, and it costs
+        sixty-four bytes to stop making it. */
+PURE RETURNS_NONNULL string_address file_reason(bipolar code)
 {
         static const p8 accepted[] = {
             ERROR_NO_ENTRY, ERROR_NO_PROCESS, ERROR_BAD_DESCRIPTOR,

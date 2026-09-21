@@ -17,15 +17,18 @@ ccflags-y += $(if $(MOONWATER_STOCK),-DSTOCK_STRINGS)
 moonwater-y := core.o
 
 #       The machine script baked into the module. CONFIG_MOONWATER_MACHINE_SCRIPT
-#       is a path relative to the repository root (src/../). kbuild sees this
-#       directory through a symlink at kernel/moonwater, so resolve $(src)
-#       first and then walk up, otherwise ../ is kernel/ rather than the repo.
+#       is a path relative to the repository root. kbuild sees this directory
+#       through a symlink at kernel/moonwater, so resolve $(src) first and
+#       then walk up, otherwise ../ is kernel/ rather than the repo. Two
+#       levels, because this directory is src/moonwater and the root is
+#       above src. A miss leaves realpath empty and .incbin is handed "",
+#       which the assembler reports as "unable to include `./'".
 mw-machine-script := $(patsubst "%",%,$(CONFIG_MOONWATER_MACHINE_SCRIPT))
 ifeq ($(mw-machine-script),)
 mw-machine-script := main.moonwater.sh
 endif
 mw-src := $(realpath $(src))
-mw-machine-abs := $(realpath $(mw-src)/../$(mw-machine-script))
+mw-machine-abs := $(realpath $(mw-src)/../../$(mw-machine-script))
 
 moonwater-y += machine_script.o
 targets += machine_script.S
@@ -89,10 +92,11 @@ moonwater-y += $(asm-sources:.asm=.o)
 targets += $(asm-sources:.asm=.S)
 
 #       $(src) is kernel/moonwater inside the kernel tree, which is a symlink
-#       to this repository's src/. A relative path out of it would land back
-#       in the kernel tree, so realpath follows the link home first.
+#       to this repository's src/moonwater. A relative path out of it would
+#       land back in the kernel tree, so realpath follows the link home
+#       first, and then two levels up to the root where build lives.
 quiet_cmd_asm = ASM     $@
-      cmd_asm = $(realpath $(src))/../build asm '$(asm-arch-y)' $< $@
+      cmd_asm = $(realpath $(src))/../../build asm '$(asm-arch-y)' $< $@
 
 $(obj)/%.S: $(src)/%.asm FORCE
 	$(call if_changed,asm)
