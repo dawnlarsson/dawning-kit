@@ -1931,7 +1931,7 @@ lane_exact()
 text_asm_one()
 {
         python3 test/differential.py --harness native_extract --source \
-                src/sh/text.c join_blank_field > "$work/text_asm.h" || return 1
+                src/sh/text.c text_blank_field > "$work/text_asm.h" || return 1
         target_build freestanding_check text_asm "$work/text_asm.$target" "$target" \
                 "-I$work" || return 1
         $target_runner "$work/text_asm.$target" > "$work/text_asm.$target.out" 2>&1
@@ -3205,7 +3205,7 @@ python3 test/differential.py --harness native_extract "$lib" memory_offsets_of_e
         > "$work/offsets.h" || exit 1
 python3 test/differential.py --harness native_extract "$lib" string_hash_33_length \
         > "$work/hash.h" || exit 1
-python3 test/differential.py --harness native_extract "$text" join_blank_field \
+python3 test/differential.py --harness native_extract "$text" text_blank_field \
         > "$work/join.h" || exit 1
 
 #       And one for the wide hunts, holding those eight and nothing else, so

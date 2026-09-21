@@ -853,14 +853,6 @@ static bool text_line_view_refill(p8 address_to address_to line,
         return true;
 }
 
-static fn text_put_line()
-{
-        text_put(text_line, text_line_length);
-
-        if (text_line_ended)
-                text_put_character(text_delimiter);
-}
-
 // Whatever is left of the input, straight out, without looking at any of it.
 // This is what cat is doing nearly every time it is run, and what head and
 // tail do once they have seeked to where their answer starts. It stops at the
@@ -2823,125 +2815,128 @@ static fn join_fields_begin(join_fields address_to fields,
 
 
 /*
-        join's blank-separated field, from where the last one stopped: x is the
-        first byte at or after at that is not a space, a tab or a newline, and y
-        the first such byte after x, both no further than the length. Sixteen
+        A blank-separated field, from where the last one stopped: x is the first
+        byte at or after at that is not a space, a tab or extra, and y the first
+        such byte after x, both no further than the length. join's blanks are
+        these and the newline; sort's, uniq's and cut -w's are only the two, so
+        they pass the tab again. Sixteen
         bytes are classed at once and each end is one bit scan, where the byte
         loop GCC made of it branched on every byte and mispredicted its way out
         of every field. Sixteen bytes past the length are read where the page
         allows and never counted; at a page's last sixteen bytes a byte loop
         answers.
 */
-positive2 join_blank_field(const p8 address_to bytes, positive length, positive at);
+positive2 text_blank_field(const p8 address_to bytes, positive length, positive at,
+                           p8 extra);
 
 #if X64
 __asm__(
-    ASM_FUNC(join_blank_field)
-    "movdqa .Ljoin_blank_x64_space(%rip), %xmm5\n"
-    "movdqa .Ljoin_blank_x64_tab(%rip), %xmm6\n"
-    "movdqa .Ljoin_blank_x64_newline(%rip), %xmm7\n"
+    ASM_FUNC(text_blank_field)
+    "movdqa .Ltext_blank_x64_space(%rip), %xmm5\n"
+    "movdqa .Ltext_blank_x64_tab(%rip), %xmm6\n"
+    "movzbl %cl, %r11d\n   movd %r11d, %xmm7\n   punpcklbw %xmm7, %xmm7\n"
+    "pshuflw $0, %xmm7, %xmm7\n   pshufd $0, %xmm7, %xmm7\n"
     "mov %rdx, %rax\n"
     // The first byte that is not a blank.
-    ".Ljoin_blank_x64_skip:\n"
-    "cmp %rsi, %rax\n   jae .Ljoin_blank_x64_none\n"
-    "lea (%rdi,%rax), %rcx\n   and $4095, %ecx\n   cmp $4080, %ecx\n   ja .Ljoin_blank_x64_skip_byte\n"
+    ".Ltext_blank_x64_skip:\n"
+    "cmp %rsi, %rax\n   jae .Ltext_blank_x64_none\n"
+    "lea (%rdi,%rax), %rcx\n   and $4095, %ecx\n   cmp $4080, %ecx\n   ja .Ltext_blank_x64_skip_byte\n"
     "movdqu (%rdi,%rax), %xmm0\n   movdqa %xmm0, %xmm1\n   movdqa %xmm0, %xmm2\n"
     "pcmpeqb %xmm5, %xmm1\n   pcmpeqb %xmm6, %xmm2\n   pcmpeqb %xmm7, %xmm0\n"
     "por %xmm2, %xmm1\n   por %xmm0, %xmm1\n   pmovmskb %xmm1, %r9d\n"
-    "mov %r9d, %r8d\n   xor $0xffff, %r8d\n   jz .Ljoin_blank_x64_skip16\n"
+    "mov %r9d, %r8d\n   xor $0xffff, %r8d\n   jz .Ltext_blank_x64_skip16\n"
     "bsf %r8d, %ecx\n   lea (%rax,%rcx), %r10\n"
     // The blanks after it, from the same sixteen.
-    "shr %cl, %r9d\n   test %r9d, %r9d\n   jz .Ljoin_blank_x64_word\n"
+    "shr %cl, %r9d\n   test %r9d, %r9d\n   jz .Ltext_blank_x64_word\n"
     "bsf %r9d, %r9d\n   lea (%r10,%r9), %rdx\n"
-    ".Ljoin_blank_x64_clamp:\n"
+    ".Ltext_blank_x64_clamp:\n"
     "mov %r10, %rax\n   cmp %rsi, %rax\n   cmova %rsi, %rax\n"
     "cmp %rsi, %rdx\n   cmova %rsi, %rdx\n"
     ASM_RET
-    ".Ljoin_blank_x64_skip16:\n   add $16, %rax\n   jmp .Ljoin_blank_x64_skip\n"
-    ".Ljoin_blank_x64_skip_byte:\n"
+    ".Ltext_blank_x64_skip16:\n   add $16, %rax\n   jmp .Ltext_blank_x64_skip\n"
+    ".Ltext_blank_x64_skip_byte:\n"
     "movzbl (%rdi,%rax), %ecx\n   cmp $32, %ecx\n   je 1f\n   cmp $9, %ecx\n   je 1f\n"
-    "cmp $10, %ecx\n   jne 2f\n"
-    "1:  inc %rax\n   jmp .Ljoin_blank_x64_skip\n"
-    "2:  mov %rax, %r10\n   lea 1(%rax), %rdx\n   jmp .Ljoin_blank_x64_word_loop\n"
-    ".Ljoin_blank_x64_none:\n   mov %rsi, %rax\n   mov %rsi, %rdx\n"
+    "cmp %r11d, %ecx\n   jne 2f\n"
+    "1:  inc %rax\n   jmp .Ltext_blank_x64_skip\n"
+    "2:  mov %rax, %r10\n   lea 1(%rax), %rdx\n   jmp .Ltext_blank_x64_word_loop\n"
+    ".Ltext_blank_x64_none:\n   mov %rsi, %rax\n   mov %rsi, %rdx\n"
     ASM_RET
     // The word runs past the sixteen: on to its first blank.
-    ".Ljoin_blank_x64_word:\n   lea 16(%rax), %rdx\n"
-    ".Ljoin_blank_x64_word_loop:\n"
-    "cmp %rsi, %rdx\n   jae .Ljoin_blank_x64_clamp\n"
-    "lea (%rdi,%rdx), %rcx\n   and $4095, %ecx\n   cmp $4080, %ecx\n   ja .Ljoin_blank_x64_word_byte\n"
+    ".Ltext_blank_x64_word:\n   lea 16(%rax), %rdx\n"
+    ".Ltext_blank_x64_word_loop:\n"
+    "cmp %rsi, %rdx\n   jae .Ltext_blank_x64_clamp\n"
+    "lea (%rdi,%rdx), %rcx\n   and $4095, %ecx\n   cmp $4080, %ecx\n   ja .Ltext_blank_x64_word_byte\n"
     "movdqu (%rdi,%rdx), %xmm0\n   movdqa %xmm0, %xmm1\n   movdqa %xmm0, %xmm2\n"
     "pcmpeqb %xmm5, %xmm1\n   pcmpeqb %xmm6, %xmm2\n   pcmpeqb %xmm7, %xmm0\n"
     "por %xmm2, %xmm1\n   por %xmm0, %xmm1\n   pmovmskb %xmm1, %r9d\n"
-    "test %r9d, %r9d\n   jz 3f\n   bsf %r9d, %r9d\n   add %r9, %rdx\n   jmp .Ljoin_blank_x64_clamp\n"
-    "3:  add $16, %rdx\n   jmp .Ljoin_blank_x64_word_loop\n"
-    ".Ljoin_blank_x64_word_byte:\n"
-    "movzbl (%rdi,%rdx), %ecx\n   cmp $32, %ecx\n   je .Ljoin_blank_x64_clamp\n"
-    "cmp $9, %ecx\n   je .Ljoin_blank_x64_clamp\n   cmp $10, %ecx\n   je .Ljoin_blank_x64_clamp\n"
-    "inc %rdx\n   jmp .Ljoin_blank_x64_word_loop\n"
+    "test %r9d, %r9d\n   jz 3f\n   bsf %r9d, %r9d\n   add %r9, %rdx\n   jmp .Ltext_blank_x64_clamp\n"
+    "3:  add $16, %rdx\n   jmp .Ltext_blank_x64_word_loop\n"
+    ".Ltext_blank_x64_word_byte:\n"
+    "movzbl (%rdi,%rdx), %ecx\n   cmp $32, %ecx\n   je .Ltext_blank_x64_clamp\n"
+    "cmp $9, %ecx\n   je .Ltext_blank_x64_clamp\n   cmp %r11d, %ecx\n   je .Ltext_blank_x64_clamp\n"
+    "inc %rdx\n   jmp .Ltext_blank_x64_word_loop\n"
     ".pushsection .rodata\n   .balign 16\n"
-    ".Ljoin_blank_x64_space:\n   .fill 16, 1, 32\n"
-    ".Ljoin_blank_x64_tab:\n   .fill 16, 1, 9\n"
-    ".Ljoin_blank_x64_newline:\n   .fill 16, 1, 10\n"
+    ".Ltext_blank_x64_space:\n   .fill 16, 1, 32\n"
+    ".Ltext_blank_x64_tab:\n   .fill 16, 1, 9\n"
     ".popsection\n"
-    ASM_END(join_blank_field)
+    ASM_END(text_blank_field)
 );
 #elif ARM64
 __asm__(
-    ASM_FUNC(join_blank_field)
-    "movi v1.16b, #32\n   movi v2.16b, #9\n   movi v3.16b, #10\n   mov x3, x2\n"
+    ASM_FUNC(text_blank_field)
+    "and w16, w3, #255\n   movi v1.16b, #32\n   movi v2.16b, #9\n   dup v3.16b, w16\n   mov x3, x2\n"
     // A field most often follows one blank: the byte at at, or the one
     // after it, starts it, and the vector is only for the word's end.
-    "cmp x3, x1\n   b.hs .Ljoin_blank_arm64_none\n   ldrb w4, [x0, x3]\n"
-    "cmp w4, #32\n   ccmp w4, #9, #4, ne\n   ccmp w4, #10, #4, ne\n   b.ne .Ljoin_blank_arm64_start\n"
-    "add x3, x3, #1\n   cmp x3, x1\n   b.hs .Ljoin_blank_arm64_none\n   ldrb w4, [x0, x3]\n"
-    "cmp w4, #32\n   ccmp w4, #9, #4, ne\n   ccmp w4, #10, #4, ne\n   b.eq .Ljoin_blank_arm64_skip\n"
-    ".Ljoin_blank_arm64_start:\n   mov x10, x3\n   add x11, x3, #1\n   b .Ljoin_blank_arm64_word_loop\n"
-    ".Ljoin_blank_arm64_skip:\n"
-    "cmp x3, x1\n   b.hs .Ljoin_blank_arm64_none\n"
-    "add x5, x0, x3\n   and x4, x5, #4095\n   cmp x4, #4080\n   b.hi .Ljoin_blank_arm64_skip_byte\n"
+    "cmp x3, x1\n   b.hs .Ltext_blank_arm64_none\n   ldrb w4, [x0, x3]\n"
+    "cmp w4, #32\n   ccmp w4, #9, #4, ne\n   ccmp w4, w16, #4, ne\n   b.ne .Ltext_blank_arm64_start\n"
+    "add x3, x3, #1\n   cmp x3, x1\n   b.hs .Ltext_blank_arm64_none\n   ldrb w4, [x0, x3]\n"
+    "cmp w4, #32\n   ccmp w4, #9, #4, ne\n   ccmp w4, w16, #4, ne\n   b.eq .Ltext_blank_arm64_skip\n"
+    ".Ltext_blank_arm64_start:\n   mov x10, x3\n   add x11, x3, #1\n   b .Ltext_blank_arm64_word_loop\n"
+    ".Ltext_blank_arm64_skip:\n"
+    "cmp x3, x1\n   b.hs .Ltext_blank_arm64_none\n"
+    "add x5, x0, x3\n   and x4, x5, #4095\n   cmp x4, #4080\n   b.hi .Ltext_blank_arm64_skip_byte\n"
     "ldr q0, [x5]\n   cmeq v4.16b, v0.16b, v1.16b\n   cmeq v5.16b, v0.16b, v2.16b\n"
     "cmeq v6.16b, v0.16b, v3.16b\n   orr v4.16b, v4.16b, v5.16b\n   orr v4.16b, v4.16b, v6.16b\n"
     "shrn v4.8b, v4.8h, #4\n   fmov x6, d4\n   mvn x7, x6\n"
-    "cbz x7, .Ljoin_blank_arm64_skip16\n"
+    "cbz x7, .Ltext_blank_arm64_skip16\n"
     "rbit x8, x7\n   clz x8, x8\n   lsr x8, x8, #2\n   add x10, x3, x8\n"
-    "lsl x11, x8, #2\n   lsr x12, x6, x11\n   cbz x12, .Ljoin_blank_arm64_word\n"
+    "lsl x11, x8, #2\n   lsr x12, x6, x11\n   cbz x12, .Ltext_blank_arm64_word\n"
     "rbit x12, x12\n   clz x12, x12\n   add x11, x10, x12, lsr #2\n"
-    ".Ljoin_blank_arm64_clamp:\n"
+    ".Ltext_blank_arm64_clamp:\n"
     "cmp x10, x1\n   csel x0, x1, x10, hi\n   cmp x11, x1\n   csel x1, x1, x11, hi\n"
     ASM_RET
-    ".Ljoin_blank_arm64_skip16:\n   add x3, x3, #16\n   b .Ljoin_blank_arm64_skip\n"
-    ".Ljoin_blank_arm64_skip_byte:\n"
+    ".Ltext_blank_arm64_skip16:\n   add x3, x3, #16\n   b .Ltext_blank_arm64_skip\n"
+    ".Ltext_blank_arm64_skip_byte:\n"
     "ldrb w4, [x0, x3]\n   cmp w4, #32\n   b.eq 1f\n   cmp w4, #9\n   b.eq 1f\n"
-    "cmp w4, #10\n   b.ne 2f\n"
-    "1:  add x3, x3, #1\n   b .Ljoin_blank_arm64_skip\n"
-    "2:  mov x10, x3\n   add x11, x3, #1\n   b .Ljoin_blank_arm64_word_loop\n"
-    ".Ljoin_blank_arm64_none:\n   mov x0, x1\n"
+    "cmp w4, w16\n   b.ne 2f\n"
+    "1:  add x3, x3, #1\n   b .Ltext_blank_arm64_skip\n"
+    "2:  mov x10, x3\n   add x11, x3, #1\n   b .Ltext_blank_arm64_word_loop\n"
+    ".Ltext_blank_arm64_none:\n   mov x0, x1\n"
     ASM_RET
-    ".Ljoin_blank_arm64_word:\n   add x11, x3, #16\n"
-    ".Ljoin_blank_arm64_word_loop:\n"
-    "cmp x11, x1\n   b.hs .Ljoin_blank_arm64_clamp\n"
-    "add x5, x0, x11\n   and x4, x5, #4095\n   cmp x4, #4080\n   b.hi .Ljoin_blank_arm64_word_byte\n"
+    ".Ltext_blank_arm64_word:\n   add x11, x3, #16\n"
+    ".Ltext_blank_arm64_word_loop:\n"
+    "cmp x11, x1\n   b.hs .Ltext_blank_arm64_clamp\n"
+    "add x5, x0, x11\n   and x4, x5, #4095\n   cmp x4, #4080\n   b.hi .Ltext_blank_arm64_word_byte\n"
     // Eight bytes in general registers first, which is where most words
     // end: each class's lowest zero byte is exact, so the lowest of the
     // three is the word's end.
     "ldr x6, [x5]\n   mov x13, #0x0101010101010101\n   mov x14, #0x8080808080808080\n"
     "mov x15, #0x2020202020202020\n   eor x7, x6, x15\n   sub x8, x7, x13\n   bic x8, x8, x7\n"
     "add x15, x13, x13, lsl #3\n   eor x7, x6, x15\n   sub x9, x7, x13\n   bic x9, x9, x7\n   orr x8, x8, x9\n"
-    "add x15, x13, x13, lsl #2\n   lsl x15, x15, #1\n   eor x7, x6, x15\n   sub x9, x7, x13\n   bic x9, x9, x7\n   orr x8, x8, x9\n"
+    "mul x15, x16, x13\n   eor x7, x6, x15\n   sub x9, x7, x13\n   bic x9, x9, x7\n   orr x8, x8, x9\n"
     "ands x8, x8, x14\n   b.eq 4f\n   rbit x8, x8\n   clz x8, x8\n   add x11, x11, x8, lsr #3\n"
-    "b .Ljoin_blank_arm64_clamp\n"
-    "4:  add x11, x11, #8\n   b .Ljoin_blank_arm64_word_loop\n"
-    ".Ljoin_blank_arm64_word_byte:\n"
-    "ldrb w4, [x0, x11]\n   cmp w4, #32\n   b.eq .Ljoin_blank_arm64_clamp\n"
-    "cmp w4, #9\n   b.eq .Ljoin_blank_arm64_clamp\n   cmp w4, #10\n   b.eq .Ljoin_blank_arm64_clamp\n"
-    "add x11, x11, #1\n   b .Ljoin_blank_arm64_word_loop\n"
-    ASM_END(join_blank_field)
+    "b .Ltext_blank_arm64_clamp\n"
+    "4:  add x11, x11, #8\n   b .Ltext_blank_arm64_word_loop\n"
+    ".Ltext_blank_arm64_word_byte:\n"
+    "ldrb w4, [x0, x11]\n   cmp w4, #32\n   b.eq .Ltext_blank_arm64_clamp\n"
+    "cmp w4, #9\n   b.eq .Ltext_blank_arm64_clamp\n   cmp w4, w16\n   b.eq .Ltext_blank_arm64_clamp\n"
+    "add x11, x11, #1\n   b .Ltext_blank_arm64_word_loop\n"
+    ASM_END(text_blank_field)
 );
 #elif RISCV64
 __asm__(
-    ASM_FUNC(join_blank_field)
-    "mv t0, a2\n   li t3, 32\n   li t4, 9\n   li t5, 10\n"
+    ASM_FUNC(text_blank_field)
+    "mv t0, a2\n   li t3, 32\n   li t4, 9\n   andi t5, a3, 255\n"
     "1:  bgeu t0, a1, 4f\n   add t1, a0, t0\n   lbu t2, 0(t1)\n"
     "beq t2, t3, 2f\n   beq t2, t4, 2f\n   beq t2, t5, 2f\n   j 3f\n"
     "2:  addi t0, t0, 1\n   j 1b\n"
@@ -2953,7 +2948,7 @@ __asm__(
     ASM_RET
     "4:  mv a0, a1\n"
     ASM_RET
-    ASM_END(join_blank_field)
+    ASM_END(text_blank_field)
 );
 #endif
 
@@ -2969,7 +2964,7 @@ static bool join_field_next(join_fields address_to fields,
 
         if (!fields->separated)
         {
-                positive2 field = join_blank_field(fields->bytes, fields->length, at);
+                positive2 field = text_blank_field(fields->bytes, fields->length, at, '\n');
 
                 if (field.x == fields->length)
                 {
@@ -3752,23 +3747,6 @@ static const b8 cat_special_set[8][256] = {
     {[0 ... 9] = 1, [11 ... 31] = 1, [127 ... 255] = 1},
     {[0 ... 31] = 1, [127 ... 255] = 1},
 };
-
-static fn cat_number()
-{
-        // Six wide and right aligned, then a tab, which is what GNU does and
-        // what anything reading the output will expect.
-        p8 address_to field = text_reserve(positive_char_max + 1);
-
-        if (field)
-        {
-                positive length = positive_into_padded(
-                    field, cat_line_number, 6, ' ');
-                field[length] = '\t';
-                text_out_used -= positive_char_max - length;
-        }
-
-        cat_line_number++;
-}
 
 // A byte as -v spells it: control characters as ^X, the high half as M- and
 // then the same rule again. Tab and newline are touched separately by -T.
@@ -14863,12 +14841,7 @@ static positive uniq_skipped(p8 address_to line, positive length,
         positive skip = 0;
 
         for (positive f = 0; f < fields && skip < length; f++)
-        {
-                skip += string_span_max(line + skip, length - skip,
-                                        string_set_blanks);
-                skip += string_span_max(line + skip, length - skip,
-                                        text_set_inside);
-        }
+                skip = text_blank_field(line, length, skip, '\t').y;
 
         return skip + min(characters, length - skip);
 }
@@ -22711,15 +22684,8 @@ static inline INLINE positive sort_field_edge(p8 address_to at,
                 return scan;
         }
 
-        // Fields are short: two table walks a field beat two calls a field.
         for (positive i = first; i < field && scan < length; i++)
-        {
-                while (scan < length && string_set_blanks[at[scan]])
-                        scan++;
-
-                while (scan < length && text_set_inside[at[scan]])
-                        scan++;
-        }
+                scan = text_blank_field(at, length, scan, '\t').y;
 
         return scan;
 }

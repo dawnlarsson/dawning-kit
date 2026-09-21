@@ -24071,18 +24071,21 @@ b32 main(void)
 /*
         The branching assembly the text tools keep in src/sh/text.c, lifted
         block and all by the extractor's --source mode and built here on each
-        machine: join_blank_field against the byte walk join ran before it, at
+        machine: text_blank_field against the byte walk join ran before it, at
         every length, start and alignment, through bytes of every class, and
         against the last bytes of a page.
 */
 #include "../src/lib.util.c"
 #include "text_asm.h"
 
-positive2 join_blank_field(const p8 address_to bytes, positive length, positive at);
+positive2 text_blank_field(const p8 address_to bytes, positive length, positive at,
+                           p8 extra);
 
 static positive checks, failures;
 
-static bool text_asm_blank(p8 byte) { return byte == ' ' || byte == '\t' || byte == '\n'; }
+static p8 text_asm_extra;
+
+static bool text_asm_blank(p8 byte) { return byte == ' ' || byte == '\t' || byte == text_asm_extra; }
 
 static positive2 text_asm_former(const p8 address_to bytes, positive length, positive at)
 {
@@ -24102,14 +24105,14 @@ static fn text_asm_join(const p8 address_to bytes, positive length)
         for (positive at = 0; at <= length; at++)
         {
                 positive2 want = text_asm_former(bytes, length, at);
-                positive2 got = join_blank_field(bytes, length, at);
+                positive2 got = text_blank_field(bytes, length, at, text_asm_extra);
 
                 checks++;
                 if (got.x != want.x || (want.x != length && got.y != want.y))
                 {
                         failures++;
                         if (failures < 10)
-                                string_format(log, "FAIL join_blank_field length %p at %p\n",
+                                string_format(log, "FAIL text_blank_field length %p at %p\n",
                                               length, at);
                 }
         }
@@ -24130,9 +24133,15 @@ b32 main(void)
                 room[i] = (seed & 3) ? pieces[3 + (seed >> 8) % 5] : pieces[(seed >> 8) % 3];
         }
 
-        for (positive length = 0; length <= 120; length++)
-                for (positive offset = 0; offset < 16; offset++)
-                        text_asm_join(room + 64 + offset, length);
+        for (positive extra = 0; extra < 2; extra++)
+        {
+                text_asm_extra = extra ? '\t' : '\n';
+                for (positive length = 0; length <= 120; length++)
+                        for (positive offset = 0; offset < 16; offset++)
+                                text_asm_join(room + 64 + offset, length);
+        }
+
+        text_asm_extra = '\n';
 
         if ((bipolar)(positive)pages > 0 &&
             system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0) == 0)
@@ -63760,7 +63769,7 @@ int main(void)
 #endif /* CHECK_native_hash */
 
 #ifdef CHECK_native_join
-/* ARM64 join_blank_field lifted verbatim from src/sh/text.c: every start in
+/* ARM64 text_blank_field lifted verbatim from src/sh/text.c: every start in
    records of blanks and words at every alignment against the byte walk join
    used to run, the last bytes of a page, then that walk against the body over
    a read of join-shaped records. */
@@ -63772,7 +63781,7 @@ int main(void)
 #undef SHARED_native
 
 typedef struct { u64 x, y; } pair;
-pair join_blank_field(const u8 *, u64, u64);
+pair text_blank_field(const u8 *, u64, u64, u64);
 void *mmap(void *, u64, int, int, int, long);
 int mprotect(void *, u64, int);
 
@@ -63812,7 +63821,7 @@ int main(void)
                         for (u64 at = 0; at <= length; at += 1 + at / 8) {
                                 const u8 *bytes = room + 64 + offset;
                                 pair want = former(bytes, length, at);
-                                pair got = join_blank_field(bytes, length, at);
+                                pair got = text_blank_field(bytes, length, at, '\n');
                                 u64 wx = want.x, wy = want.x == length ? length : want.y;
 
                                 checks++;
@@ -63830,7 +63839,7 @@ int main(void)
                         fill(bytes, length);
                         for (u64 at = 0; at <= length; at++) {
                                 pair want = former(bytes, length, at);
-                                pair got = join_blank_field(bytes, length, at);
+                                pair got = text_blank_field(bytes, length, at, '\n');
                                 checks++;
                                 if (got.x != want.x || (want.x != length && got.y != want.y))
                                         bad++;
@@ -63869,7 +63878,7 @@ int main(void)
                 fields = 0;
                 for (int r = 0; r < 16; r++)
                         for (u64 at = 0; at < used;) {
-                                pair field = join_blank_field(text, used, at);
+                                pair field = text_blank_field(text, used, at, '\n');
                                 if (field.x == used)
                                         break;
                                 at = field.y;
@@ -63884,7 +63893,7 @@ int main(void)
                 bad++;
         printf("  fields of join records: former C %lu ticks, assembly %lu, asm/C %lu%%\n",
                best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
-        printf("arm64 join_blank_field: %lu checks | %lu failures\n", checks, bad);
+        printf("arm64 text_blank_field: %lu checks | %lu failures\n", checks, bad);
         return bad ? 1 : 0;
 }
 #endif /* CHECK_native_join */
