@@ -251,6 +251,9 @@ memory_search_prepared_core memory_search_ascii_case_prepared_core
 ''', 'private cores reached by the directly timed prepared searches',
       {'memory_search_prepared_core': 'memory_search_prepared',
        'memory_search_ascii_case_prepared_core': 'memory_search_ascii_case_prepared'})
+cover('benchmark_context', 'test/checks.c#BENCH_offsets', 'memory_offsets_range_x64',
+      'private body both range entries tail-jump into, timed through them',
+      {'memory_offsets_range_x64': 'memory_offsets_outside'})
 cover('benchmark_context', 'test/checks.c#BENCH_paths', 'path_split_core',
       'private core reached by all three directly timed path wrappers',
       {'path_split_core': 'path_head_copy'})

@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        344 routines (331 public, 13 local), 343 of them on all three and 1 local to one.
+        345 routines (331 public, 14 local), 343 of them on all three and 2 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -221,6 +221,7 @@
           memory_offsets_in_set          public  yes     yes     yes
           memory_offsets_of_either       public  yes     yes     yes
           memory_offsets_outside         public  yes     yes     yes
+          memory_offsets_range_x64       local   yes     --      --
           memory_release                 public  yes     yes     yes
           memory_reserve                 public  yes     yes     yes
           memory_reverse                 public  yes     yes     yes
@@ -415,6 +416,7 @@
           zstd_sequences_run             public  yes     yes     yes
 
         Private to one machine, by choice:
+          memory_offsets_range_x64 -- local to x86_64
           memory_span_byte_wide -- local to x86_64
 */
 
@@ -11564,12 +11566,17 @@ __asm__(
     //       "inside"; the complement is knot. Offsets are packed as
     //       memory_offsets_of_either packs them.
     //
+    //       The two entries are their own symbols and the body a third, which
+    //       each reaches by a tail jump: objtool reads a jump into the middle
+    //       of another function as falling through into it.
+    //
     ASM_FUNC(memory_offsets_between)
-    "xor %r11d, %r11d\n   jmp .Lmemory_offsets_range_x64\n"
+    "xor %r11d, %r11d\n   jmp memory_offsets_range_x64\n"
     ASM_END(memory_offsets_between)
     ASM_FUNC(memory_offsets_outside)
-    "mov $1, %r11d\n"
-    ".Lmemory_offsets_range_x64:\n"
+    "mov $1, %r11d\n   jmp memory_offsets_range_x64\n"
+    ASM_END(memory_offsets_outside)
+    ASM_LOCAL_FUNC(memory_offsets_range_x64)
     // rdi positions, rsi block, rdx size, cl low, r8b high, r9 limit, r11 outside
     "push %rbx\n   push %r12\n   mov %r11, %r12\n"
     "movzbl %cl, %ecx\n   movzbl %r8b, %r8d\n   sub %ecx, %r8d\n   and $255, %r8d  # the width less one\n"
@@ -11637,7 +11644,7 @@ __asm__(
     "add %rbx, %rax\n   inc %r10\n   jmp .Lmemory_offsets_range_x64_one\n"
     ".Lmemory_offsets_range_x64_leave:\n   pop %r12\n   pop %rbx\n"
     ASM_RET
-    ASM_END(memory_offsets_outside)
+    ASM_LOCAL_END(memory_offsets_range_x64)
 
     //
     //       memory_offsets_in_set -- where every byte the table marks with a
