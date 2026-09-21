@@ -9288,11 +9288,11 @@ __asm__(
        zmm, VPCLMULQDQ and AVX-512: 48 blocks a turn, 12 vectors of four,
        paired so vpternlogq sums two products into each accumulator. 32
        measured the same and 16 was 28 GB/s. zmm16 up only, so no
-       vzeroupper. The tails are four-block turns and then single blocks.
+       vzeroupper. The tail under 48 is one masked turn as long as it is.
 
        xmm, PCLMULQDQ and SSE: 8 blocks a turn, 12.1 GB/s against 7.4 for
-       4. Its memory operands are legacy SSE, which is why the table has to
-       be 16-byte aligned.
+       4, and the tail one turn as long as it is. Its memory operands are
+       legacy SSE, which is why the table has to be 16-byte aligned.
 
        Registers the bodies leave holding products are cleared on the way
        out; the powers themselves are only ever memory operands. */
@@ -9353,6 +9353,16 @@ __asm__(
     "movdqa %xmm0, %xmm1\n   psrldq $8, %xmm1\n   pxor %xmm0, %xmm1\n"         \
     "pclmulqdq $0x00, " sum "(%rsi), %xmm1\n   pxor %xmm1, %xmm11\n"
 #define GHASH_XMM_FIRST "pxor %xmm8, %xmm0\n"
+//  The same block against the power %r9 points at, its sum 768 on.
+#define GHASH_XMM_TAIL(first)                                                 \
+    "movdqu (%rdx), %xmm0\n   pshufb %xmm15, %xmm0\n" first                  \
+    "movdqa %xmm0, %xmm1\n   pclmulqdq $0x00, (%r9), %xmm1\n"                 \
+    "pxor %xmm1, %xmm9\n"                                                     \
+    "movdqa %xmm0, %xmm1\n   pclmulqdq $0x11, (%r9), %xmm1\n"                 \
+    "pxor %xmm1, %xmm10\n"                                                    \
+    "movdqa %xmm0, %xmm1\n   psrldq $8, %xmm1\n   pxor %xmm0, %xmm1\n"         \
+    "pclmulqdq $0x00, 768(%r9), %xmm1\n   pxor %xmm1, %xmm11\n"                \
+    "add $16, %rdx\n   add $16, %r9\n"
 #define GHASH_XMM_FINISH                                                      \
     "pxor %xmm9, %xmm11\n   pxor %xmm10, %xmm11\n"                            \
     "movdqa %xmm11, %xmm1\n   pslldq $8, %xmm1\n   psrldq $8, %xmm11\n"        \
@@ -9474,21 +9484,21 @@ __asm__(
     GHASH_XMM_FINISH
     "add $128, %rdx\n   sub $8, %rcx\n   cmp $8, %rcx\n"
     "jae .Lghash_blocks_x64_xmm_turn\n"
+    //  Under eight blocks, one turn as long as what is left: r blocks
+    //  against H^r ... H^1 from 768 - 16 r and one reduction, where a turn
+    //  of four and then single blocks paid a reduction on the state's chain
+    //  each.
     ".Lghash_blocks_x64_xmm_four:\n"
-    "cmp $4, %rcx\n   jb .Lghash_blocks_x64_xmm_one\n"
-    GHASH_XMM_ZERO
-    GHASH_XMM_BLOCK("0", "704", "1472", GHASH_XMM_FIRST)
-    GHASH_XMM_BLOCK("16", "720", "1488", "")
-    GHASH_XMM_BLOCK("32", "736", "1504", "")
-    GHASH_XMM_BLOCK("48", "752", "1520", "")
-    GHASH_XMM_FINISH
-    "add $64, %rdx\n   sub $4, %rcx\n"
-    ".Lghash_blocks_x64_xmm_one:\n"
     "test %rcx, %rcx\n   jz .Lghash_blocks_x64_xmm_done\n"
     GHASH_XMM_ZERO
-    GHASH_XMM_BLOCK("0", "752", "1520", GHASH_XMM_FIRST)
+    "mov %rcx, %r9\n   shl $4, %r9\n   neg %r9\n   lea 768(%rsi,%r9), %r9\n"
+    GHASH_XMM_TAIL(GHASH_XMM_FIRST)
+    "dec %rcx\n   jz .Lghash_blocks_x64_xmm_fold\n"
+    ".Lghash_blocks_x64_xmm_more:\n"
+    GHASH_XMM_TAIL("")
+    "dec %rcx\n   jnz .Lghash_blocks_x64_xmm_more\n"
+    ".Lghash_blocks_x64_xmm_fold:\n"
     GHASH_XMM_FINISH
-    "add $16, %rdx\n   dec %rcx\n   jmp .Lghash_blocks_x64_xmm_one\n"
     ".Lghash_blocks_x64_xmm_done:\n"
     "pshufb %xmm15, %xmm8\n   movdqu %xmm8, (%rdi)\n"
     "pxor %xmm0, %xmm0\n   pxor %xmm1, %xmm1\n   pxor %xmm8, %xmm8\n"
@@ -21450,6 +21460,16 @@ __asm__(
     "ext v7.16b, v4.16b, v4.16b, #8\n   eor v7.16b, v7.16b, v4.16b\n"        \
     "ldr q5, [x1, #" sum "]\n"                                                \
     "pmull v6.1q, v7.1d, v5.1d\n   eor v3.16b, v3.16b, v6.16b\n"
+//  The same block against the power x9 points at, its sum 768 on, for the
+//  tail's turn, whose length is not known until it runs.
+#define GHASH_PMULL_TAIL(first)                                               \
+    "ldr q4, [x2], #16\n   rev64 v4.16b, v4.16b\n" first                      \
+    "ldr q5, [x9]\n"                                                          \
+    "pmull2 v6.1q, v4.2d, v5.2d\n   eor v1.16b, v1.16b, v6.16b\n"             \
+    "pmull v6.1q, v4.1d, v5.1d\n   eor v2.16b, v2.16b, v6.16b\n"              \
+    "ext v7.16b, v4.16b, v4.16b, #8\n   eor v7.16b, v7.16b, v4.16b\n"        \
+    "ldr q5, [x9, #768]\n   add x9, x9, #16\n"                                \
+    "pmull v6.1q, v7.1d, v5.1d\n   eor v3.16b, v3.16b, v6.16b\n"
 //  The middle less the other two, split across the halves, and the low
 //  half folded into the high by two multiplies with 0xc2 << 56 in v31.
 #define GHASH_PMULL_FINISH                                                    \
@@ -21511,12 +21531,21 @@ __asm__(
     GHASH_PMULL_BLOCK("752", "1520", "")
     GHASH_PMULL_FINISH
     "sub x3, x3, #32\n   cmp x3, #32\n   b.hs .Lghash_blocks_arm64_turn\n"
+    //  What is left under 32 blocks is one turn as long as it is: r blocks
+    //  against H^r ... H^1 from 768 - 16 r, and one reduction. A block at a
+    //  time paid a whole reduction on the state's chain each, 12 ns on an
+    //  M2 Pro, so 31 blocks took 387 ns where 33 took 53.
     ".Lghash_blocks_arm64_one:\n"
     "cbz x3, .Lghash_blocks_arm64_store\n"
     GHASH_PMULL_ZERO
-    GHASH_PMULL_BLOCK("752", "1520", GHASH_PMULL_FIRST)
+    "sub x9, x1, x3, lsl #4\n   add x9, x9, #768\n"
+    GHASH_PMULL_TAIL(GHASH_PMULL_FIRST)
+    "subs x3, x3, #1\n   b.eq .Lghash_blocks_arm64_fold\n"
+    ".Lghash_blocks_arm64_more:\n"
+    GHASH_PMULL_TAIL("")
+    "subs x3, x3, #1\n   b.ne .Lghash_blocks_arm64_more\n"
+    ".Lghash_blocks_arm64_fold:\n"
     GHASH_PMULL_FINISH
-    "sub x3, x3, #1\n   b .Lghash_blocks_arm64_one\n"
     ".Lghash_blocks_arm64_store:\n"
     "rev64 v0.16b, v0.16b\n   str q0, [x0]\n"
     "movi v0.16b, #0\n   movi v1.16b, #0\n   movi v2.16b, #0\n   movi v3.16b, #0\n"
@@ -34451,10 +34480,13 @@ __asm__(
     ASM_LOCAL_END(ghash_integer)
 
     // See the x86_64 body for the table. With Zbc a block is one Karatsuba
-    // product of three clmul/clmulh pairs against H times x^-1 and a fold
-    // of two more by 0xc2 << 56, so there is no shift anywhere; without Zbb
-    // the block and the state still come in a byte at a time. Checked under
-    // qemu only, so no timing is claimed here.
+    // product of three clmul/clmulh pairs against a power of H times x^-1,
+    // and a turn of up to 48 blocks sums its products before one fold of two
+    // more by 0xc2 << 56, so there is no shift anywhere and the state's
+    // chain waits on one reduction a turn rather than one a block. The state
+    // joins the turn's first block and is zeroed after it, so every block
+    // runs the same code. Without Zbb the block and the state still come in
+    // a byte at a time. Checked under qemu only, so no timing is claimed.
     ASM_FUNC(ghash_blocks)
 #ifndef KERNEL_MODE
     "lla t0, cpu_has_pclmul\n   lbu t0, 0(t0)\n   bnez t0, .Lghash_blocks_rv_zbc\n"
@@ -34464,35 +34496,50 @@ __asm__(
     ".Lghash_blocks_rv_zbc:\n"
     ".option push\n   .option arch, +zbc\n"
     "beqz a3, .Lghash_blocks_rv_zbc_done\n"
-    "addi sp, sp, -32\n   sd s0, 0(sp)\n   sd s1, 8(sp)\n   sd s2, 16(sp)\n"
+    "addi sp, sp, -64\n   sd s0, 0(sp)\n   sd s1, 8(sp)\n   sd s2, 16(sp)\n"
+    "sd s3, 24(sp)\n   sd s4, 32(sp)\n   sd s5, 40(sp)\n   sd s6, 48(sp)\n"
+    "sd s7, 56(sp)\n"
     "li t6, 0xc2\n   slli t6, t6, 56\n"
-    "ld a4, 752(a1)\n   ld a5, 760(a1)\n   ld a6, 1520(a1)\n"
     GHASH_RISCV_LOAD("a0", "a7", "0", "1", "2", "3", "4", "5", "6", "7")
     GHASH_RISCV_LOAD("a0", "t4", "8", "9", "10", "11", "12", "13", "14", "15")
+    //  s7 blocks this turn, against H^s7 ... H^1 from s6 = 768 - 16 s7;
+    //  low products in s0/s1, high in s2/s3, the sums' in s4/s5.
+    ".Lghash_blocks_rv_zbc_turn:\n"
+    "li t0, 48\n   mv s7, a3\n   bleu a3, t0, 1f\n   mv s7, t0\n1:\n"
+    "sub a3, a3, s7\n"
+    "slli t0, s7, 4\n   sub s6, a1, t0\n   addi s6, s6, 768\n"
+    "li s0, 0\n   li s1, 0\n   li s2, 0\n   li s3, 0\n   li s4, 0\n   li s5, 0\n"
     ".Lghash_blocks_rv_zbc_block:\n"
     GHASH_RISCV_LOAD("a2", "t0", "0", "1", "2", "3", "4", "5", "6", "7")
     "xor a7, a7, t0\n"
     GHASH_RISCV_LOAD("a2", "t0", "8", "9", "10", "11", "12", "13", "14", "15")
     "xor t4, t4, t0\n"
-    //  Low, high and sum products; the middle less the other two.
-    "clmul t0, t4, a4\n   clmulh t1, t4, a4\n"
-    "clmul t2, a7, a5\n   clmulh t3, a7, a5\n"
-    "xor s0, t4, a7\n   clmul s1, s0, a6\n   clmulh s2, s0, a6\n"
-    "xor s1, s1, t0\n   xor s1, s1, t2\n   xor s2, s2, t1\n   xor s2, s2, t3\n"
-    //  w0 t0, w1 t1, w2 t2, w3 t3; w0 folds into w1 and w2, then w1 into
-    //  w2 and w3.
-    "xor t1, t1, s1\n   xor t2, t2, s2\n"
-    "clmul s1, t0, t6\n   clmulh s2, t0, t6\n"
-    "xor t1, t1, s1\n   xor t2, t2, t0\n   xor t2, t2, s2\n"
-    "clmul s1, t1, t6\n   clmulh s2, t1, t6\n"
-    "xor t2, t2, s1\n   xor t3, t3, t1\n   xor t3, t3, s2\n"
+    "ld a4, 0(s6)\n   ld a5, 8(s6)\n   ld a6, 768(s6)\n"
+    "clmul t0, t4, a4\n   xor s0, s0, t0\n   clmulh t0, t4, a4\n   xor s1, s1, t0\n"
+    "clmul t0, a7, a5\n   xor s2, s2, t0\n   clmulh t0, a7, a5\n   xor s3, s3, t0\n"
+    "xor t1, t4, a7\n"
+    "clmul t0, t1, a6\n   xor s4, s4, t0\n   clmulh t0, t1, a6\n   xor s5, s5, t0\n"
+    "li a7, 0\n   li t4, 0\n"
+    "addi a2, a2, 16\n   addi s6, s6, 16\n   addi s7, s7, -1\n"
+    "bnez s7, .Lghash_blocks_rv_zbc_block\n"
+    //  w0 t0, w1 t1, w2 t2, w3 t3 and the middle less the other two in
+    //  a4/a5; w0 folds into w1 and w2, then w1 into w2 and w3.
+    "mv t0, s0\n   mv t1, s1\n   mv t2, s2\n   mv t3, s3\n"
+    "xor a4, s4, s0\n   xor a4, a4, s2\n   xor a5, s5, s1\n   xor a5, a5, s3\n"
+    "xor t1, t1, a4\n   xor t2, t2, a5\n"
+    "clmul a4, t0, t6\n   clmulh a5, t0, t6\n"
+    "xor t1, t1, a4\n   xor t2, t2, t0\n   xor t2, t2, a5\n"
+    "clmul a4, t1, t6\n   clmulh a5, t1, t6\n"
+    "xor t2, t2, a4\n   xor t3, t3, t1\n   xor t3, t3, a5\n"
     "mv a7, t3\n   mv t4, t2\n"
-    "addi a2, a2, 16\n   addi a3, a3, -1\n   bnez a3, .Lghash_blocks_rv_zbc_block\n"
+    "bnez a3, .Lghash_blocks_rv_zbc_turn\n"
     GHASH_RISCV_STORE("a0", "a7", "0", "1", "2", "3", "4", "5", "6", "7")
     GHASH_RISCV_STORE("a0", "t4", "8", "9", "10", "11", "12", "13", "14", "15")
     "li a4, 0\n   li a5, 0\n   li a6, 0\n   li a7, 0\n   li t0, 0\n   li t1, 0\n"
     "li t2, 0\n   li t3, 0\n   li t4, 0\n   li t5, 0\n"
-    "ld s0, 0(sp)\n   ld s1, 8(sp)\n   ld s2, 16(sp)\n   addi sp, sp, 32\n"
+    "ld s0, 0(sp)\n   ld s1, 8(sp)\n   ld s2, 16(sp)\n   ld s3, 24(sp)\n"
+    "ld s4, 32(sp)\n   ld s5, 40(sp)\n   ld s6, 48(sp)\n   ld s7, 56(sp)\n"
+    "addi sp, sp, 64\n"
     ".Lghash_blocks_rv_zbc_done:\n"
     ".option pop\n"
     ASM_RET
