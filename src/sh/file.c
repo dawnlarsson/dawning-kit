@@ -3015,7 +3015,7 @@ static bool file_walk_open_found(file_walk address_to walk, bipolar directory,
 
 /* Callers keep their chosen buffer size and error policy. Kernel getdents
    records are trusted here; storage's defensive input walk is separate. */
-static inline INLINE struct linux_dirent64 address_to file_directory_next(
+static inline struct linux_dirent64 address_to file_directory_next(
     bipolar handle, p8 address_to block, positive capacity,
     positive address_to have, positive address_to at, bipolar address_to error)
 {
