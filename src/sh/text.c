@@ -18380,6 +18380,23 @@ static fn grep_field_into(parallel_output address_to output, address_any data,
         }
 }
 
+// Whether every match holds a string, none of which has a NUL in it.
+static PURE bool grep_nul_free(const grep_plan address_to plan)
+{
+        if (plan->literal && plan->literal->literal_length)
+                return !memory_first_of(plan->literal->literal, 0,
+                                        plan->literal->literal_length);
+
+        if (!plan->set || !plan->set->count)
+                return false;
+
+        for (positive i = 0; i < plan->set->count; i++)
+                if (!plan->set->size[i])
+                        return false;
+
+        return !memory_first_of(plan->set->bytes, 0, plan->set->used);
+}
+
 /*
         One file of the walk, as grep_one reads a regular file it opened
         itself, from its span loop to its last word. False hands it back.
@@ -18466,6 +18483,19 @@ static bool grep_leaf_file(grep_run address_to run, string_address path,
         // Where the rest of a binary file is only whether it holds a string,
         // what is kept between reads is where one could cross them.
         positive window = longest ? longest - 1 : 0;
+
+        /*
+                A file with holes, asked for something no run of NULs can be
+                part of: every match holds a string with no NUL in it, and no
+                line is printed with its NULs, since a printed file is binary
+                from its first hole on. A hole is then a run of empty lines
+                or of bytes between lines that never answer, and GNU seeks
+                past it. Blocks short of the size is all that is asked here;
+                SEEK_DATA says where a hole really ends.
+        */
+        bool holes = facts.blocks * 512 < facts.size && !invert &&
+                     !run->null_data && (binary_regions || !printing) &&
+                     grep_nul_free(address_of plan);
         p8 address_to buffer = scratch->buffer;
         positive kept = 0;
         positive read_to = 0;
@@ -18517,6 +18547,38 @@ static bool grep_leaf_file(grep_run address_to run, string_address path,
                         }
                 }
 
+                /*
+                        A read of nothing but NULs, once NULs cannot be printed:
+                        the rest of its hole is skipped. One NUL stays, to end
+                        the line or part the bytes as the hole did, and the
+                        next read starts on a region's edge as every read does.
+                */
+                if (holes && (tail || !binary_regions) && !ended && got > 1 &&
+                    memory_span_byte(buffer + kept, 0, got) == got)
+                {
+                        positive past = read_to + got;
+                        bipolar data = system_call_3(syscall(lseek), handle,
+                                                     (bipolar)past, 3);
+
+                        if (data == -6)
+                        {
+                                ended = true;
+                                read_to = past - 1;
+                                got = 1;
+                        }
+                        else if (data >= 0 && (positive)data != past)
+                        {
+                                positive next = (positive)data -
+                                                (positive)data % GREP_BINARY_REGION;
+
+                                next = next > past ? next : past;
+                                system_call_3(syscall(lseek), handle, (bipolar)next,
+                                              FILE_SEEK_SET);
+                                read_to = next - 1;
+                                got = 1;
+                        }
+                }
+
                 positive start = read_to - kept;
                 positive fill = kept + got;
 
@@ -18550,7 +18612,14 @@ static bool grep_leaf_file(grep_run address_to run, string_address path,
                         continue;
                 }
 
-                p8 address_to last = fill ? memory_last_of(buffer, text_delimiter, fill) : null;
+                /*
+                        What was kept is the start of a line, with no end in
+                        it, so only the read can hold the last end. Asking
+                        the whole buffer walked a line with no end in sight
+                        once per read, and 200 MB of one line took 2.5 s.
+                */
+                p8 address_to last = got ? memory_last_of(buffer + kept, text_delimiter, got)
+                                         : null;
                 positive whole = last ? (positive)(last - buffer) + 1 : 0;
 
                 // The last line has no end, and is given one as the line
@@ -18634,8 +18703,11 @@ static bool grep_leaf_file(grep_run address_to run, string_address path,
                 if (ended || state.done)
                         break;
 
+                // A line still with no end stays where it is.
                 kept = fill - whole;
-                memory_copy(buffer, buffer + whole, kept);
+
+                if (whole)
+                        memory_copy(buffer, buffer + whole, kept);
         }
 
         if (state.complex)
