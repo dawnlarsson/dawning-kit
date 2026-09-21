@@ -77170,6 +77170,57 @@ static fn floor_zstd_huffman_cells(void)
         check("zstd Huffman cells fill the table a symbol at a time would", same);
 }
 
+/* huffman_codes against RFC 1951's canonical assignment, reversed a bit
+   at a time, over lengths huffman_lengths makes and fixed-code shapes. */
+static fn floor_huffman_codes(void)
+{
+        static p32 freq[288];
+        p8 length[288];
+        p32 got[288], want[288];
+        p32 random = 0x85ebca6bu;
+        bool same = true;
+
+        for (positive trial = 0; trial < 20000; trial++)
+        {
+#define FLOOR_RANDOM() (random ^= random << 13, random ^= random >> 17, random ^= random << 5, random)
+                positive n = 1 + FLOOR_RANDOM() % 288, limit = 7 + FLOOR_RANDOM() % 9;
+                p32 next[16] = {0}, count[16] = {0}, code = 0;
+
+                for (positive i = 0; i < n; i++)
+                        freq[i] = FLOOR_RANDOM() % 4 ? FLOOR_RANDOM() % (1 + FLOOR_RANDOM() % 3000) : 0;
+                if (trial % 7 == 0)
+                        for (positive i = 0; i < n; i++)
+                                length[i] = (p8)(i % 16);
+                else if (!huffman_lengths(freq, n, length, limit))
+                        continue;
+                for (positive i = 0; i < n; i++)
+                        count[length[i]]++;
+                count[0] = 0;
+                for (positive len = 1; len < 16; len++)
+                {
+                        code = (code + count[len - 1]) << 1;
+                        next[len] = code;
+                }
+                for (positive i = 0; i < n; i++)
+                {
+                        p32 value = 0, c;
+
+                        want[i] = 0;
+                        if (!length[i])
+                                continue;
+                        c = next[length[i]]++;
+                        for (positive b = 0; b < length[i]; b++, c >>= 1)
+                                value = value << 1 | (c & 1);
+                        want[i] = value | (p32)length[i] << 16;
+                }
+                huffman_codes(length, n, got);
+                if (memory_compare(got, want, n * sizeof(p32)))
+                        same = false;
+#undef FLOOR_RANDOM
+        }
+        check("huffman_codes gives deflate's canonical codes, reversed", same);
+}
+
 #ifdef CHECK_compression_floor
 b32 main(void)
 {
@@ -77183,6 +77234,7 @@ b32 main(void)
         floor_deflate_tokens();
         floor_huffman_lengths();
         floor_zstd_huffman_cells();
+        floor_huffman_codes();
         return test_report(null);
 }
 #endif

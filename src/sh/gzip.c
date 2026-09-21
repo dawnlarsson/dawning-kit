@@ -62,19 +62,6 @@ static bool gzip_fail(string_address why)
         return false;
 }
 
-static p16 gzip_revbits(p16 code, p8 len)
-{
-        p16 reversed = 0;
-
-        while (len)
-        {
-                reversed = (p16)((reversed << 1) | (code & 1));
-                code >>= 1;
-                len--;
-        }
-        return reversed;
-}
-
 /* Count code lengths into count. The code space still unused, -1 for a
    length past limit, -2 for lengths that over-subscribe the space. */
 static bipolar gzip_code_space(p8 address_to length, positive n, p8 limit,
@@ -100,9 +87,9 @@ static bipolar gzip_code_space(p8 address_to length, positive n, p8 limit,
 }
 
 static p8 gzip_fixed_lit_len[GZIP_MAXLIT];
-static p16 gzip_fixed_lit_code[GZIP_MAXLIT];
+static p32 gzip_fixed_lit_code[GZIP_MAXLIT];
 static p8 gzip_fixed_dist_len[GZIP_MAXDIST];
-static p16 gzip_fixed_dist_code[GZIP_MAXDIST];
+static p32 gzip_fixed_dist_code[GZIP_MAXDIST];
 static bool gzip_fixed_codes;
 static fn gzip_fixed_init(void);
 
@@ -1173,31 +1160,6 @@ static fn gzip_bits_align(gzip_encoder address_to e)
         e->bits = 0;
 }
 
-static fn gzip_lengths_to_codes(p8 address_to length, positive n,
-                                p16 address_to code)
-{
-        p16 next[GZIP_MAXBITS + 1];
-        p16 count[GZIP_MAXBITS + 1];
-        positive len;
-        positive at;
-        p16 walk = 0;
-
-        memory_fill(count, 0, sizeof(count));
-        memory_fill(code, 0, n * sizeof(p16));
-        for (at = 0; at < n; at++)
-                count[length[at]]++;
-        count[0] = 0;
-        next[0] = 0;
-        for (len = 1; len <= GZIP_MAXBITS; len++)
-        {
-                walk = (p16)((walk + count[len - 1]) << 1);
-                next[len] = walk;
-        }
-        for (at = 0; at < n; at++)
-                if (length[at])
-                        code[at] = gzip_revbits(next[length[at]]++, length[at]);
-}
-
 /* The match finder's hash of the three bytes at a position: 16 bits. */
 static inline INLINE p16 compression_hash3(p8 address_to bytes)
 {
@@ -1291,27 +1253,18 @@ static fn gzip_fixed_init(void)
                 gzip_fixed_lit_len[at] = 8;
         for (at = 0; at < GZIP_MAXDIST; at++)
                 gzip_fixed_dist_len[at] = 5;
-        gzip_lengths_to_codes(gzip_fixed_lit_len, GZIP_MAXLIT,
-                              gzip_fixed_lit_code);
-        gzip_lengths_to_codes(gzip_fixed_dist_len, GZIP_MAXDIST,
-                              gzip_fixed_dist_code);
+        huffman_codes(gzip_fixed_lit_len, GZIP_MAXLIT, gzip_fixed_lit_code);
+        huffman_codes(gzip_fixed_dist_len, GZIP_MAXDIST, gzip_fixed_dist_code);
         gzip_fixed_codes = true;
 }
 
 /* The tokens of one deflate block: literals from src, and pairs whose
    positions are offsets into src, in order, then the end of block. */
 static fn gzip_write_tokens(gzip_encoder address_to e, p8 address_to src, positive length,
-                            positive pairs, p16 address_to lit_code, p8 address_to lit_len,
-                            p16 address_to dist_code, p8 address_to dist_len)
+                            positive pairs, p32 address_to lit, p32 address_to dist)
 {
-        p32 lit[GZIP_MAXLIT];
-        p32 dist[GZIP_MAXDIST];
         gzip_tokens j;
 
-        for (positive i = 0; i < GZIP_MAXLIT; i++)
-                lit[i] = lit_code[i] | (p32)lit_len[i] << 16;
-        for (positive i = 0; i < GZIP_MAXDIST; i++)
-                dist[i] = dist_code[i] | (p32)dist_len[i] << 16;
         gzip_tokens_open(address_of j, e, src, length, pairs);
         j.lit = lit;
         j.dist = dist;
@@ -1329,8 +1282,7 @@ static fn gzip_write_fixed(gzip_encoder address_to e, p8 address_to src, positiv
 {
         gzip_put_bits(e, last ? 1 : 0, 1);
         gzip_put_bits(e, 1, 2);
-        gzip_write_tokens(e, src, length, pairs, gzip_fixed_lit_code, gzip_fixed_lit_len,
-                          gzip_fixed_dist_code, gzip_fixed_dist_len);
+        gzip_write_tokens(e, src, length, pairs, gzip_fixed_lit_code, gzip_fixed_dist_code);
 }
 
 /* A dynamic block, or fixed or stored when the tree would not pay. */
@@ -1341,8 +1293,8 @@ static fn gzip_block_emit(gzip_encoder address_to e, p8 address_to src, positive
         p32 dist_freq[GZIP_MAXDIST];
         p8 lit_len[GZIP_MAXLIT];
         p8 dist_len[GZIP_MAXDIST];
-        p16 lit_code[GZIP_MAXLIT];
-        p16 dist_code[GZIP_MAXDIST];
+        p32 lit_code[GZIP_MAXLIT];
+        p32 dist_code[GZIP_MAXDIST];
         positive bits = 0, extra_bits = 0, fixed_bits = 3;
         positive chunks = length ? (length + 65534) / 65535 : 1;
         positive stored_bits = length * 8 + chunks * 40 +
@@ -1392,8 +1344,8 @@ static fn gzip_block_emit(gzip_encoder address_to e, p8 address_to src, positive
                         gzip_write_fixed(e, src, length, pairs, last);
                 return;
         }
-        gzip_lengths_to_codes(lit_len, GZIP_MAXLIT, lit_code);
-        gzip_lengths_to_codes(dist_len, GZIP_MAXDIST, dist_code);
+        huffman_codes(lit_len, GZIP_MAXLIT, lit_code);
+        huffman_codes(dist_len, GZIP_MAXDIST, dist_code);
 
         bits = extra_bits;
         for (positive i = 0; i < GZIP_MAXLIT; i++)
@@ -1402,7 +1354,7 @@ static fn gzip_block_emit(gzip_encoder address_to e, p8 address_to src, positive
                 bits += dist_freq[i] * dist_len[i];
 
         p8 clen[19];
-        p16 ccode[19];
+        p32 ccode[19];
         p32 cfreq[19];
         p8 seq[288 + 32];
         positive nseq = 0;
@@ -1461,7 +1413,7 @@ static fn gzip_block_emit(gzip_encoder address_to e, p8 address_to src, positive
                         gzip_write_fixed(e, src, length, pairs, last);
                 return;
         }
-        gzip_lengths_to_codes(clen, 19, ccode);
+        huffman_codes(clen, 19, ccode);
 
         while (hclen > 4 && !clen[gzip_clen_order[hclen - 1]])
                 hclen--;
@@ -1499,40 +1451,40 @@ static fn gzip_block_emit(gzip_encoder address_to e, p8 address_to src, positive
                 }
                 if (here)
                 {
-                        gzip_put_bits(e, ccode[here], clen[here]);
+                        gzip_put_bits(e, ccode[here] & 0xffff, ccode[here] >> 16);
                         run--;
                         while (run >= 3)
                         {
                                 positive take = run > 6 ? 6 : run;
 
-                                gzip_put_bits(e, ccode[16], clen[16]);
+                                gzip_put_bits(e, ccode[16] & 0xffff, ccode[16] >> 16);
                                 gzip_put_bits(e, (p32)(take - 3), 2);
                                 run -= take;
                         }
                         while (run)
                         {
-                                gzip_put_bits(e, ccode[here], clen[here]);
+                                gzip_put_bits(e, ccode[here] & 0xffff, ccode[here] >> 16);
                                 run--;
                         }
                 }
                 else if (run >= 11)
                 {
-                        gzip_put_bits(e, ccode[18], clen[18]);
+                        gzip_put_bits(e, ccode[18] & 0xffff, ccode[18] >> 16);
                         gzip_put_bits(e, (p32)(run - 11), 7);
                 }
                 else if (run >= 3)
                 {
-                        gzip_put_bits(e, ccode[17], clen[17]);
+                        gzip_put_bits(e, ccode[17] & 0xffff, ccode[17] >> 16);
                         gzip_put_bits(e, (p32)(run - 3), 3);
                 }
                 else
                         while (run)
                         {
-                                gzip_put_bits(e, ccode[0], clen[0]);
+                                gzip_put_bits(e, ccode[0] & 0xffff, ccode[0] >> 16);
                                 run--;
                         }
         }
-        gzip_write_tokens(e, src, length, pairs, lit_code, lit_len, dist_code, dist_len);
+        gzip_write_tokens(e, src, length, pairs, lit_code, dist_code);
 }
 
 /* Positions are offsets into base, stored plus one so zero is empty. */

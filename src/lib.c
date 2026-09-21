@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        341 routines (328 public, 13 local), 340 of them on all three and 1 local to one.
+        342 routines (329 public, 13 local), 341 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -157,6 +157,7 @@
           hash_xxh64_begin               public  yes     yes     yes
           hash_xxh64_finish              public  yes     yes     yes
           host_into                      public  yes     yes     yes
+          huffman_codes                  public  yes     yes     yes
           huffman_encode_back            public  yes     yes     yes
           huffman_lengths                public  yes     yes     yes
           jump_mark                      public  yes     yes     yes
@@ -13065,6 +13066,84 @@ __asm__(
     ".byte 0, 1, 2, 3, 4, 5, 6, 7, 8, 5, 5, 6, 6, 7, 7, 8, 8, 6, 6, 7, 7, 7, 8, 8, 8, 7, 7, 7, 7, 8, 8, 8, 8\n"
     ASM_RET
     ASM_END(huffman_lengths)
+    /* huffman_codes(length, n, table): deflate's canonical codes for n
+       code lengths of at most 15, shortest codes first and each length's
+       in symbol order, as table[i] = the code bit-reversed for an LSB-first
+       stream | length << 16, and 0 for a length of 0. */
+    ASM_FUNC(huffman_codes)
+    "pushq %rbx\n"
+    "subq $64, %rsp\n"
+    "xorl %eax, %eax\n"
+    ".Lhcodes_x64_zero:\n"
+    "movq $0, (%rsp,%rax,8)\n"
+    "incl %eax\n"
+    "cmpl $8, %eax\n"
+    "jb .Lhcodes_x64_zero\n"
+    "xorl %ecx, %ecx\n"
+    "testq %rsi, %rsi\n"
+    "jz .Lhcodes_x64_done\n"
+    ".Lhcodes_x64_count:\n"
+    "movzbl (%rdi,%rcx), %eax\n"
+    "incl (%rsp,%rax,4)\n"
+    "incq %rcx\n"
+    "cmpq %rsi, %rcx\n"
+    "jb .Lhcodes_x64_count\n"
+    // next[len] = (next[len - 1] + count[len - 1]) << 1, over the counts in place
+    "xorl %eax, %eax\n"
+    "xorl %r8d, %r8d\n"
+    "movl $1, %ecx\n"
+    ".Lhcodes_x64_next:\n"
+    "movl (%rsp,%rcx,4), %r9d\n"
+    "addl %r8d, %eax\n"
+    "addl %eax, %eax\n"
+    "movl %eax, (%rsp,%rcx,4)\n"
+    "movl %r9d, %r8d\n"
+    "incl %ecx\n"
+    "cmpl $16, %ecx\n"
+    "jb .Lhcodes_x64_next\n"
+    "leaq .Lhcodes_x64_reverse(%rip), %r10\n"
+    "xorl %r11d, %r11d\n"
+    ".Lhcodes_x64_code:\n"
+    "movzbl (%rdi,%r11), %ecx\n"
+    "xorl %eax, %eax\n"
+    "testl %ecx, %ecx\n"
+    "jz .Lhcodes_x64_store\n"
+    "movl (%rsp,%rcx,4), %r8d\n"
+    "leal 1(%r8), %r9d\n"
+    "movl %r9d, (%rsp,%rcx,4)\n"
+    "movzbl %r8b, %eax\n"
+    "movzbl (%r10,%rax), %eax\n"
+    "shll $8, %eax\n"
+    "movzwl %r8w, %r8d\n"
+    "shrl $8, %r8d\n"
+    "movzbl (%r10,%r8), %r8d\n"
+    "orl %r8d, %eax\n"
+    "movl %ecx, %ebx\n"
+    "negl %ecx\n"
+    "addl $16, %ecx\n"
+    "shrl %cl, %eax\n"
+    "shll $16, %ebx\n"
+    "orl %ebx, %eax\n"
+    ".Lhcodes_x64_store:\n"
+    "movl %eax, (%rdx,%r11,4)\n"
+    "incq %r11\n"
+    "cmpq %rsi, %r11\n"
+    "jb .Lhcodes_x64_code\n"
+    ".Lhcodes_x64_done:\n"
+    "addq $64, %rsp\n"
+    "popq %rbx\n"
+    "ret\n"
+    ".Lhcodes_x64_reverse:\n"
+    ".byte 0, 128, 64, 192, 32, 160, 96, 224, 16, 144, 80, 208, 48, 176, 112, 240, 8, 136, 72, 200, 40, 168, 104, 232, 24, 152, 88, 216, 56, 184, 120, 248\n"
+    ".byte 4, 132, 68, 196, 36, 164, 100, 228, 20, 148, 84, 212, 52, 180, 116, 244, 12, 140, 76, 204, 44, 172, 108, 236, 28, 156, 92, 220, 60, 188, 124, 252\n"
+    ".byte 2, 130, 66, 194, 34, 162, 98, 226, 18, 146, 82, 210, 50, 178, 114, 242, 10, 138, 74, 202, 42, 170, 106, 234, 26, 154, 90, 218, 58, 186, 122, 250\n"
+    ".byte 6, 134, 70, 198, 38, 166, 102, 230, 22, 150, 86, 214, 54, 182, 118, 246, 14, 142, 78, 206, 46, 174, 110, 238, 30, 158, 94, 222, 62, 190, 126, 254\n"
+    ".byte 1, 129, 65, 193, 33, 161, 97, 225, 17, 145, 81, 209, 49, 177, 113, 241, 9, 137, 73, 201, 41, 169, 105, 233, 25, 153, 89, 217, 57, 185, 121, 249\n"
+    ".byte 5, 133, 69, 197, 37, 165, 101, 229, 21, 149, 85, 213, 53, 181, 117, 245, 13, 141, 77, 205, 45, 173, 109, 237, 29, 157, 93, 221, 61, 189, 125, 253\n"
+    ".byte 3, 131, 67, 195, 35, 163, 99, 227, 19, 147, 83, 211, 51, 179, 115, 243, 11, 139, 75, 203, 43, 171, 107, 235, 27, 155, 91, 219, 59, 187, 123, 251\n"
+    ".byte 7, 135, 71, 199, 39, 167, 103, 231, 23, 151, 87, 215, 55, 183, 119, 247, 15, 143, 79, 207, 47, 175, 111, 239, 31, 159, 95, 223, 63, 191, 127, 255\n"
+    ASM_RET
+    ASM_END(huffman_codes)
     /* zstd_huffman_cells(cells, weight, count, max_bits, first): the
        literal decoder's table at eleven bits from the weights of count
        symbols. A symbol of weight w takes 1 << (w - 1 + 11 - max_bits)
@@ -25604,6 +25683,57 @@ __asm__(
     ".p2align 2\n"
     ASM_RET
     ASM_END(huffman_lengths)
+    /* See the x86_64 huffman_codes contract. */
+    ASM_FUNC(huffman_codes)
+    "sub sp, sp, #64\n"
+    "stp xzr, xzr, [sp]\n"
+    "stp xzr, xzr, [sp, #16]\n"
+    "stp xzr, xzr, [sp, #32]\n"
+    "stp xzr, xzr, [sp, #48]\n"
+    "mov x3, #0\n"
+    "cbz x1, .Lhcodes_arm64_done\n"
+    ".Lhcodes_arm64_count:\n"
+    "ldrb w4, [x0, x3]\n"
+    "ldr w5, [sp, x4, lsl #2]\n"
+    "add w5, w5, #1\n"
+    "str w5, [sp, x4, lsl #2]\n"
+    "add x3, x3, #1\n"
+    "cmp x3, x1\n"
+    "b.lo .Lhcodes_arm64_count\n"
+    "mov w4, #0\n"
+    "mov w6, #0\n"
+    "mov x3, #1\n"
+    ".Lhcodes_arm64_next:\n"
+    "ldr w5, [sp, x3, lsl #2]\n"
+    "add w4, w4, w6\n"
+    "lsl w4, w4, #1\n"
+    "str w4, [sp, x3, lsl #2]\n"
+    "mov w6, w5\n"
+    "add x3, x3, #1\n"
+    "cmp x3, #16\n"
+    "b.lo .Lhcodes_arm64_next\n"
+    "mov x3, #0\n"
+    ".Lhcodes_arm64_code:\n"
+    "ldrb w4, [x0, x3]\n"
+    "mov w7, #0\n"
+    "cbz w4, .Lhcodes_arm64_store\n"
+    "ldr w5, [sp, x4, lsl #2]\n"
+    "add w6, w5, #1\n"
+    "str w6, [sp, x4, lsl #2]\n"
+    "rbit w7, w5\n"
+    "mov w8, #32\n"
+    "sub w8, w8, w4\n"
+    "lsr w7, w7, w8\n"
+    "orr w7, w7, w4, lsl #16\n"
+    ".Lhcodes_arm64_store:\n"
+    "str w7, [x2, x3, lsl #2]\n"
+    "add x3, x3, #1\n"
+    "cmp x3, x1\n"
+    "b.lo .Lhcodes_arm64_code\n"
+    ".Lhcodes_arm64_done:\n"
+    "add sp, sp, #64\n"
+    ASM_RET
+    ASM_END(huffman_codes)
     /* See the x86_64 zstd_huffman_cells contract. */
     ASM_FUNC(zstd_huffman_cells)
     "add w10, w3, #1\n"
@@ -38995,6 +39125,74 @@ __asm__(
     "add sp, sp, t0\n"
     ASM_RET
     ASM_END(huffman_lengths)
+    /* See the x86_64 huffman_codes contract. */
+    ASM_FUNC(huffman_codes)
+    "addi sp, sp, -64\n"
+    "sd zero, 0(sp)\n"
+    "sd zero, 8(sp)\n"
+    "sd zero, 16(sp)\n"
+    "sd zero, 24(sp)\n"
+    "sd zero, 32(sp)\n"
+    "sd zero, 40(sp)\n"
+    "sd zero, 48(sp)\n"
+    "sd zero, 56(sp)\n"
+    "li t0, 0\n"
+    "beqz a1, .Lhcodes_rv_done\n"
+    ".Lhcodes_rv_count:\n"
+    "add t1, a0, t0\n"
+    "lbu t1, 0(t1)\n"
+    "slli t1, t1, 2\n"
+    "add t1, sp, t1\n"
+    "lw t2, 0(t1)\n"
+    "addiw t2, t2, 1\n"
+    "sw t2, 0(t1)\n"
+    "addi t0, t0, 1\n"
+    "bltu t0, a1, .Lhcodes_rv_count\n"
+    "li t3, 0\n"
+    "li t4, 0\n"
+    "li t0, 1\n"
+    "li t5, 16\n"
+    ".Lhcodes_rv_next:\n"
+    "slli t1, t0, 2\n"
+    "add t1, sp, t1\n"
+    "lw t2, 0(t1)\n"
+    "addw t3, t3, t4\n"
+    "slliw t3, t3, 1\n"
+    "sw t3, 0(t1)\n"
+    "mv t4, t2\n"
+    "addi t0, t0, 1\n"
+    "bltu t0, t5, .Lhcodes_rv_next\n"
+    "li t0, 0\n"
+    ".Lhcodes_rv_code:\n"
+    "add t1, a0, t0\n"
+    "lbu t1, 0(t1)\n"
+    "li t6, 0\n"
+    "beqz t1, .Lhcodes_rv_store\n"
+    "slli t2, t1, 2\n"
+    "add t2, sp, t2\n"
+    "lw t3, 0(t2)\n"
+    "addiw t4, t3, 1\n"
+    "sw t4, 0(t2)\n"
+    "mv t4, t1\n"
+    ".Lhcodes_rv_bit:\n"
+    "slli t6, t6, 1\n"
+    "andi t5, t3, 1\n"
+    "or t6, t6, t5\n"
+    "srli t3, t3, 1\n"
+    "addi t4, t4, -1\n"
+    "bnez t4, .Lhcodes_rv_bit\n"
+    "slli t5, t1, 16\n"
+    "or t6, t6, t5\n"
+    ".Lhcodes_rv_store:\n"
+    "slli t2, t0, 2\n"
+    "add t2, a2, t2\n"
+    "sw t6, 0(t2)\n"
+    "addi t0, t0, 1\n"
+    "bltu t0, a1, .Lhcodes_rv_code\n"
+    ".Lhcodes_rv_done:\n"
+    "addi sp, sp, 64\n"
+    ASM_RET
+    ASM_END(huffman_codes)
     /* See the x86_64 zstd_huffman_cells contract. */
     ASM_FUNC(zstd_huffman_cells)
     "addi t0, a3, 1\n"
@@ -46124,6 +46322,8 @@ READS_WRITES(1) fn deflate_tokens_encode(address_any job);
    2^22; 0 when they cannot be limited. */
 READS(1) WRITES(3) bool huffman_lengths(const p32 address_to freq, positive n,
                                         p8 address_to length, positive limit);
+/* Deflate's canonical codes, bit-reversed, as code | length << 16. */
+READS(1) WRITES(3) fn huffman_codes(const p8 address_to length, positive n, p32 address_to table);
 /* The zstd literal decoder's eleven-bit table from checked weights. */
 WRITES(1) fn zstd_huffman_cells(address_any cells, const p8 address_to weight, positive count,
                                 positive max_bits, p32 address_to first);
