@@ -7112,6 +7112,27 @@ static p32 text_tab_specials[TEXT_TAB_SPECIALS];
 // the column after it.
 static positive text_tab_expand_one(p8 character, positive column)
 {
+        /*
+                Stops only every so many columns, and no more than sixteen
+                apart, which is expand as it is nearly always run: the stop is
+                arithmetic and the blanks are two stores of sixteen into the
+                output, where a stop was a search and the blanks a writer's
+                loop.
+        */
+        if (character == '\t' && !text_tab_stop_count && text_tab_repeat &&
+            text_tab_repeat <= 16 && column <= positive_max - 16)
+        {
+                positive after = column - column % text_tab_repeat + text_tab_repeat;
+                p8 address_to into = text_reserve(16);
+
+                if (into)
+                {
+                        __builtin_memcpy(into, "                ", 16);
+                        text_out_used -= 16 - (after - column);
+                        return after;
+                }
+        }
+
         if (character == '\t')
         {
                 positive stop;
