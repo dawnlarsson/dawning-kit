@@ -4175,7 +4175,6 @@ typedef struct
 } wc_utf8;
 
 static const b8 text_set_ascii[STRING_SET_BYTES] = {[0 ... 127] = 1};
-static const b8 wc_set_graphic[STRING_SET_BYTES] = {[0x21 ... 0x7e] = 1};
 
 static fn wc_utf8_step(wc_utf8 address_to state, bool valid, p32 code)
 {
@@ -4365,13 +4364,21 @@ static fn wc_utf8_finish(wc_utf8 address_to state)
         state->carried = 0;
 }
 
+static positive wc_total_mode;
+
+static bool wc_option_seen(p8 letter, string_address value)
+{
+        if (letter != 'T' || !value)
+                return true;
+
+        if (!text_word_of(value, wc_totals, 4, address_of wc_total_mode))
+                return string_diagnostic(&text_diagnostic, 0, value, "invalid argument");
+
+        return true;
+}
+
 /*
-        -L in a single-byte locale, and whatever else was asked beside it,
-        a byte at a time. Its own function so the loop keeps its registers
-        whatever else text_wc grows.
-*/
-/*
-        -L in a single-byte locale without -w: only the bytes that are not
+        -L in a single-byte locale: only the bytes that are not
         printable ask anything, so one library pass hands their offsets over
         and every printable run between two of them is its length in columns.
         A newline, return or form feed ends a line's width, a tab goes to the
@@ -4426,105 +4433,6 @@ static fn wc_bytes_longest(const p8 address_to at, positive left, bool want_line
         address_to lines_out = lines;
         address_to longest_out = longest;
         address_to column_out = column;
-}
-
-static fn wc_bytes_general(const p8 address_to at, positive left, bool want_lines,
-                           bool want_words, bool posix, positive address_to lines_out,
-                           positive address_to words_out, positive address_to longest_out,
-                           positive address_to column_out, bool address_to inside_out)
-{
-        positive lines = address_to lines_out;
-        positive words = address_to words_out;
-        positive longest = address_to longest_out;
-        positive column = address_to column_out;
-        bool inside = address_to inside_out;
-
-        for (positive c = 0; c < left; )
-        {
-                p8 character = at[c];
-                positive run = 0;
-
-                if (character >= 0x21 && character < 0x7f)
-                        run = string_span_max(at + c, left - c, wc_set_graphic);
-                if (run)
-                {
-                        column += run;
-                        if (want_words && !inside)
-                        {
-                                inside = true;
-                                words++;
-                        }
-                        c += run;
-                        continue;
-                }
-
-                if (want_lines && character == '\n')
-                        lines++;
-
-                /*
-                        -L is a width on a terminal rather
-                        than a count of bytes. A tab reaches
-                        the next stop eight columns apart; a
-                        return or a form feed starts the line
-                        over without being a line for the
-                        purpose of counting them; and a byte
-                        that would not show takes no room at
-                        all, which is why a line of control
-                        characters is nought columns wide and
-                        not as many as it has bytes.
-                */
-                if (character == '\n' || character == '\r' ||
-                    character == '\f')
-                {
-                        if (column > longest)
-                                longest = column;
-
-                        column = 0;
-                }
-                else if (character == '\t')
-                {
-                        column += 8 - column % 8;
-                }
-                else if (character >= 0x20 && character < 0x7f)
-                {
-                        column++;
-                }
-
-                if (want_words)
-                {
-                        if (byte_is_space(character) ||
-                            (character == 0xa0 && !posix))
-                        {
-                                inside = false;
-                        }
-                        else if (!inside)
-                        {
-                                inside = true;
-                                words++;
-                        }
-                }
-                c++;
-        }
-
-
-        address_to lines_out = lines;
-        address_to words_out = words;
-        address_to longest_out = longest;
-        address_to column_out = column;
-        address_to inside_out = inside;
-}
-
-static positive wc_total_mode;
-
-static bool wc_option_seen(p8 letter, string_address value)
-{
-        if (letter != 'T' || !value)
-                return true;
-
-        if (!text_word_of(value, wc_totals, 4, address_of wc_total_mode))
-                return string_diagnostic(&text_diagnostic, 0, value, "invalid argument");
-
-        return true;
 }
 
 static b32 text_wc()
@@ -4715,57 +4623,51 @@ static b32 text_wc()
                                 remains only where terminal column width is
                                 genuinely part of the answer.
                         */
-                        if (!want_longest)
-                        {
-                                if (want_lines)
-                                        lines += memory_count(at, left, '\n');
-
-                                /*
-                                        A byte 0xa0 is U+00A0, a no-break
-                                        space, which GNU's wc splits words
-                                        at in the C locale unless
-                                        POSIXLY_CORRECT is set. The counting
-                                        pass knows only ASCII white space, so
-                                        a read holding one is counted between
-                                        them, the word state ending at each.
-                                */
-                                if (want_words)
-                                {
-                                        p8 address_to from = at;
-                                        p8 address_to past = at + left;
-
-                                        for (;;)
-                                        {
-                                                p8 address_to stop = posix ? null
-                                                    : (p8 address_to)memory_first_of(
-                                                          from, 0xa0, (positive)(past - from));
-                                                positive run = (positive)((stop ? stop : past) - from);
-                                                positive2 counted_words =
-                                                    memory_count_words(from, run, inside);
-
-                                                words += counted_words.x;
-                                                inside = (bool)counted_words.y;
-
-                                                if (!stop)
-                                                        break;
-
-                                                inside = false;
-                                                from = stop + 1;
-                                        }
-                                }
-
-                                text_input.position = text_input.filled;
-                                continue;
-                        }
-
-                        if (!want_words)
+                        /*
+                                Each question is its own library pass over the
+                                read: lines by memory_count, words by the word
+                                counter, and -L by the offsets of the bytes that
+                                are not printable, which counts lines as well.
+                        */
+                        if (want_longest)
                                 wc_bytes_longest(at, left, want_lines, address_of lines,
                                                  address_of longest, address_of column);
-                        else
-                                wc_bytes_general(at, left, want_lines, want_words, posix,
-                                                 address_of lines, address_of words,
-                                                 address_of longest, address_of column,
-                                                 address_of inside);
+                        else if (want_lines)
+                                lines += memory_count(at, left, '\n');
+
+                        /*
+                                A byte 0xa0 is U+00A0, a no-break
+                                space, which GNU's wc splits words
+                                at in the C locale unless
+                                POSIXLY_CORRECT is set. The counting
+                                pass knows only ASCII white space, so
+                                a read holding one is counted between
+                                them, the word state ending at each.
+                        */
+                        if (want_words)
+                        {
+                                p8 address_to from = at;
+                                p8 address_to past = at + left;
+
+                                for (;;)
+                                {
+                                        p8 address_to stop = posix ? null
+                                            : (p8 address_to)memory_first_of(
+                                                  from, 0xa0, (positive)(past - from));
+                                        positive run = (positive)((stop ? stop : past) - from);
+                                        positive2 counted_words =
+                                            memory_count_words(from, run, inside);
+
+                                        words += counted_words.x;
+                                        inside = (bool)counted_words.y;
+
+                                        if (!stop)
+                                                break;
+
+                                        inside = false;
+                                        from = stop + 1;
+                                }
+                        }
 
                         text_input.position = text_input.filled;
                 }
