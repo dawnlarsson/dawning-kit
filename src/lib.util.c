@@ -15449,21 +15449,25 @@ static bool stdlib_buffers_are_ours(void)
 */
 #define FILE_ADVISE_NO_HUGE_PAGE 15
 
-/* Both are the link script's, and spark.ld is the only script this tree
-   links with. KERNEL_MODE is not linked by it at all -- a module's
-   __bss_start is the whole kernel's -- so the call is spelled out of that
-   build rather than left to the shim above it never being called. */
+/* Both are spark.ld's, and weak because not every link of this library uses
+   it: the build tool bootstraps with the host toolchain and no script at all,
+   where a strong reference is an undefined symbol and the tree cannot build
+   itself. An undefined weak symbol is zero, so the call is simply skipped
+   where the bss has no boundary to name. KERNEL_MODE is excluded outright --
+   a module's __bss_start is the whole kernel's. */
 #if defined(LINUX) && !defined(KERNEL_MODE)
-extern p8 __bss_start[];
-extern p8 __bss_end[];
+extern p8 __bss_start[] WEAK;
+extern p8 __bss_end[] WEAK;
 #endif
 
 fn stdlib_program_starting(void)
 {
 #if defined(LINUX) && !defined(KERNEL_MODE)
-        system_call_3(syscall(madvise), (positive)(address_any)__bss_start,
-                      (positive)(__bss_end - __bss_start),
-                      FILE_ADVISE_NO_HUGE_PAGE);
+        if (__bss_start && __bss_end > __bss_start)
+                system_call_3(syscall(madvise),
+                              (positive)(address_any)__bss_start,
+                              (positive)(__bss_end - __bss_start),
+                              FILE_ADVISE_NO_HUGE_PAGE);
 #endif
 #ifdef LINUX
         stdlib_process_at_start = program_initial_identity();
