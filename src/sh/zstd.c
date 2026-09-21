@@ -138,12 +138,12 @@ static p64 zstd_fcs;
 static bool zstd_have_fcs;
 static p32 zstd_rep[3];
 static zstd_huff zstd_lit_huff;
-static zstd_fse zstd_ll;
-static zstd_fse zstd_of;
-static zstd_fse zstd_ml;
-static zstd_fse zstd_ll_prev;
-static zstd_fse zstd_of_prev;
-static zstd_fse zstd_ml_prev;
+/* Each sequence alphabet's table lives in one of two buffers, and a block
+   takes its tables by pointer: a repeated table is the previous block's
+   own, a default is the prebuilt one, and a new one is built into the
+   buffer the previous block did not use, so no table is ever copied. */
+static zstd_fse zstd_seq_tables[3][2];
+static zstd_fse address_to zstd_seq_prev[3];
 static p8 zstd_lit_buf[ZSTD_BLOCK_MAX + 64];
 static p8 zstd_comp[ZSTD_BLOCK_MAX + 32];
 static bool zstd_fse_ready;
@@ -968,25 +968,25 @@ static bool zstd_put_fill(p8 value, positive n)
 }
 
 
-static bool zstd_seq_table(zstd_fse address_to table, zstd_fse address_to prev,
-                           p8 mode, p8 address_to src, positive src_len,
-                           positive address_to used, p8 kind, positive max_sym,
-                           p8 max_log)
+static bool zstd_seq_table(zstd_fse address_to address_to out, p8 mode, p8 address_to src,
+                           positive src_len, positive address_to used, p8 kind,
+                           positive max_sym, p8 max_log)
 {
+        zstd_fse address_to const prev = zstd_seq_prev[kind];
+        zstd_fse address_to const table = prev == address_of zstd_seq_tables[kind][0]
+                                              ? address_of zstd_seq_tables[kind][1]
+                                              : address_of zstd_seq_tables[kind][0];
+
         address_to used = 0;
 
         if (mode == 0)
         {
                 zstd_fse_defaults();
-                if (kind == 0)
-                        memory_copy(table, address_of zstd_ll_def, sizeof(zstd_fse));
-                else if (kind == 1)
-                        memory_copy(table, address_of zstd_of_def, sizeof(zstd_fse));
-                else
-                        memory_copy(table, address_of zstd_ml_def, sizeof(zstd_fse));
-                table->valid = true;
+                address_to out = kind == 0 ? address_of zstd_ll_def
+                               : kind == 1 ? address_of zstd_of_def : address_of zstd_ml_def;
                 return true;
         }
+        address_to out = table;
         if (mode == 1)
         {
                 if (!src_len)
@@ -1011,9 +1011,9 @@ static bool zstd_seq_table(zstd_fse address_to table, zstd_fse address_to prev,
         }
         if (mode == 3)
         {
-                if (!prev->valid)
+                if (!prev)
                         return zstd_fail("zstd repeat FSE with no previous table");
-                memory_copy(table, prev, sizeof(zstd_fse));
+                address_to out = prev;
                 return true;
         }
 
@@ -1200,25 +1200,22 @@ static bool zstd_sequences(p8 address_to src, positive src_len, p8 address_to li
         if (modes & 3)
                 return zstd_fail("zstd reserved sequence bits");
 
-        if (!zstd_seq_table(address_of zstd_ll, address_of zstd_ll_prev,
-                            (p8)(modes >> 6), p, (positive)(stop - p),
+        if (!zstd_seq_table(address_of job.ll, (p8)(modes >> 6), p, (positive)(stop - p),
                             address_of used, 0, 35, 9))
                 return false;
         p += used;
-        if (!zstd_seq_table(address_of zstd_of, address_of zstd_of_prev,
-                            (p8)((modes >> 4) & 3), p, (positive)(stop - p),
+        if (!zstd_seq_table(address_of job.of, (p8)((modes >> 4) & 3), p, (positive)(stop - p),
                             address_of used, 1, 31, 8))
                 return false;
         p += used;
-        if (!zstd_seq_table(address_of zstd_ml, address_of zstd_ml_prev,
-                            (p8)((modes >> 2) & 3), p, (positive)(stop - p),
+        if (!zstd_seq_table(address_of job.ml, (p8)((modes >> 2) & 3), p, (positive)(stop - p),
                             address_of used, 2, 52, 9))
                 return false;
         p += used;
 
-        memory_copy(address_of zstd_ll_prev, address_of zstd_ll, sizeof(zstd_fse));
-        memory_copy(address_of zstd_of_prev, address_of zstd_of, sizeof(zstd_fse));
-        memory_copy(address_of zstd_ml_prev, address_of zstd_ml, sizeof(zstd_fse));
+        zstd_seq_prev[0] = job.ll;
+        zstd_seq_prev[1] = job.of;
+        zstd_seq_prev[2] = job.ml;
 
         if (p >= stop)
                 return zstd_fail("zstd truncated sequence bitstream");
@@ -1230,9 +1227,6 @@ static bool zstd_sequences(p8 address_to src, positive src_len, p8 address_to li
         job.lit_len = lit_len;
         job.seq = p;
         job.seq_len = (positive)(stop - p);
-        job.ll = address_of zstd_ll;
-        job.of = address_of zstd_of;
-        job.ml = address_of zstd_ml;
         job.rep = zstd_rep;
         job.nseq = nseq;
         job.output_end = zstd_window + zstd_pos + zstd_block_limit;
@@ -1545,12 +1539,9 @@ static bool zstd_frame(void)
         zstd_rep[0] = 1;
         zstd_rep[1] = 4;
         zstd_rep[2] = 8;
-        zstd_ll.valid = false;
-        zstd_of.valid = false;
-        zstd_ml.valid = false;
-        zstd_ll_prev.valid = false;
-        zstd_of_prev.valid = false;
-        zstd_ml_prev.valid = false;
+        zstd_seq_prev[0] = null;
+        zstd_seq_prev[1] = null;
+        zstd_seq_prev[2] = null;
         zstd_lit_huff.valid = false;
         frame_start = zstd_decoded;
         if (checksum)
