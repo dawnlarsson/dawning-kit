@@ -15732,8 +15732,22 @@ ASM_FUNC(positive_to_string)
     "mov $4, %eax\n   jmp .Lpositive_into_done\n"
     ".Lpositive_into_wide:\n   sub $56, %rsp  # aligned calls; scratch occupies the top twenty bytes\n"
     "mov %rdi, (%rsp)\n   mov %r11, 8(%rsp)\n   lea 56(%rsp), %rdi\n   call positive_digits_core\n"
-    "mov %rsi, 16(%rsp)\n   mov %rdi, %rsi\n   mov (%rsp), %rdi\n   mov 16(%rsp), %rdx\n"
-    "call memory_copy_apart\n   mov 16(%rsp), %rax\n   mov (%rsp), %rdi\n   mov 8(%rsp), %r11\n"
+    //
+    //       The scratch was written a halfword at a time, ending at an even
+    //       address, and is read back while those stores are still in
+    //       flight. A load that spans two of them cannot be forwarded and
+    //       waits for both to reach the cache: memory_copy_apart's pair of
+    //       overlapping words did exactly that for every number of five
+    //       digits or more, and cat -n and nl ran five to seven percent more
+    //       cycles for it. Reading back on the stores' own grid -- one byte
+    //       for an odd count, which sits inside a store, then halfwords --
+    //       is forwarded every time.
+    //
+    "mov (%rsp), %r8\n   xor %ecx, %ecx\n   test $1, %sil\n   jz 1f\n"
+    "movzbl (%rdi), %eax\n   mov %al, (%r8)\n   mov $1, %ecx\n"
+    "1:  movzwl (%rdi,%rcx), %eax\n   mov %ax, (%r8,%rcx)\n   add $2, %rcx\n"
+    "cmp %rsi, %rcx\n   jb 1b\n"
+    "mov %rsi, %rax\n   mov %r8, %rdi\n   mov 8(%rsp), %r11\n"
     "test $2, %r11d\n   jz 3f\n   movb $0, (%rdi,%rax)\n"
     "3:\n   and $1, %r11d\n   add %r11, %rax\n   add $56, %rsp\n"
     ASM_RET
