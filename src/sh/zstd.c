@@ -3614,16 +3614,26 @@ zstd_price_literal(const zstd_price address_to pr, p8 byte, bool fractional)
 static __attribute__((always_inline)) inline bipolar
 zstd_price_litlen(const zstd_price address_to pr, positive length, bool fractional)
 {
+        bipolar over = 0;
         p8 code;
 
         if (pr->predefined)
                 return zstd_weight((p32)length, fractional);
+        //      A run past the block ceiling is priced as the longest run
+        //      there is a code for, plus a bit. This used to call back into
+        //      this function with that length, which is a recursion the
+        //      compiler has to unwind before it can honour always_inline --
+        //      it manages under the flags shipped today and refuses outright
+        //      under others, with an error naming the attribute.
         if (length >= ZSTD_BLOCK_MAX)
-                return 256 + zstd_price_litlen(pr, ZSTD_BLOCK_MAX - 1, fractional);
+        {
+                over = 256;
+                length = ZSTD_BLOCK_MAX - 1;
+        }
         code = length < 64 ? zstd_ll_codes[length]
                            : (p8)(19 + zstd_highbit32((p32)length));
-        return (bipolar)(zstd_ll_extra[code] * 256 + pr->ll_base -
-                         zstd_weight(pr->ll[code], fractional));
+        return over + (bipolar)(zstd_ll_extra[code] * 256 + pr->ll_base -
+                                zstd_weight(pr->ll[code], fractional));
 }
 
 static __attribute__((always_inline)) inline bipolar
