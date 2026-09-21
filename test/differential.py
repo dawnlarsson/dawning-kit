@@ -16956,7 +16956,7 @@ static unsigned int hash_crc32(unsigned int crc, const void *data, unsigned long
 '''
     source += spark.replace('#include "platform/spark.inc"',
                             (root / "src/platform/spark.inc").read_text())
-    source += section(core, "struct snapshot_builder", "static HOT void snapshot_system")
+    source += section(spark, "struct snapshot_builder", "static HOT void snapshot_system")
     source += r'''
 static void snapshot_system(struct snapshot_header *header) { header->memory_total=42; }
 static void snapshot_cpus(struct snapshot_builder *build, struct snapshot_header *header) {
@@ -16978,7 +16978,8 @@ static void snapshot_networks(struct snapshot_builder *build, struct snapshot_he
     }
 }
 '''
-    source += section(core, "static HOT long report_snapshot", "static long device_ioctl")
+    source += section(spark, "static HOT long report_snapshot",
+                      "#endif /* SPARK_KERNEL */")
     source += r'''
 #define WINDOW_FRAME 1u
 #define WINDOW_FULLSCREEN 2u
@@ -17163,9 +17164,9 @@ static long stat_task_ns, stat_spawns;
 #define user_mode_thread(fn, arg, sig) \
         ((void)(sig), spawn_handed=(arg), spawn_entered++, spawn_pid)
 '''
-    source += section(core, "struct spawn_work", "/*\n        Starts one program")
-    source += section(core, "static int copy_strings", "static long do_spawn")
-    source += section(core, "static long do_spawn", "static long report_stats")
+    source += section(spark, "struct spawn_work", "/*\n        Starts one program")
+    source += section(spark, "static int copy_strings", "static long do_spawn")
+    source += section(spark, "static long do_spawn", "static long report_stats")
     source += r'''
 static long report_stats(struct stats *out) { (void)out; return 322; }
 /* memdup_user answers an ERR_PTR, and IS_ERR above is the test it is read
@@ -17668,7 +17669,8 @@ static long canvas_turn_on(struct canvas_control *answer) {
 static long canvas_turn_off(void) { canvas_offs++; return canvas_off_answer; }
 static void canvas_state(struct canvas_control *answer) { canvas_states++;answer->running=1;answer->cards=1; }
 '''
-    source += section(core, "static long report_canvas", "#endif\n\n/*\n        Typed system state")
+    source += section(core, "static long report_canvas",
+                      "#endif\n\nstatic long device_ioctl")
     # Here rather than beside the geometry it reshapes: resize_move reads the
     # drag state off desktop, and desktop is the mock declared just above.
     source += r'''
@@ -19495,9 +19497,9 @@ line_add_padded() { line_add "$@"; }
 def harness_spark_entry(argv):
     """Actual Spark entry publication plus exhaustive kernel capability/state gates."""
     root = HARNESS_ROOT
-    core = (root / "src/core.c").read_text()
-    start = core.index("static unsigned long __ro_after_init spark_cpu_features;")
-    features = core[start:core.index("#endif", start)]
+    spark = (root / "src/spark.c").read_text()
+    start = spark.index("static unsigned long __ro_after_init spark_cpu_features;")
+    features = spark[start:spark.index("#endif", start)]
     source = r'''
 #include <stdint.h>
 #include <stdio.h>
@@ -25309,7 +25311,7 @@ def harness_image_nodes(argv):
         check(name.lstrip('/') in system,
               '%s is a SYSTEM applet, which is why the image links it to the '
               'shell' % terminal)
-    check('work->path = SPARK_TERMINAL_PROGRAM;' in core,
+    check('work->path = SPARK_TERMINAL_PROGRAM;' in spark,
           'the compositor asks for the path spark publishes')
     #   And spells none of its own, which is the shape that could drift.
     at = core.index('static int spawn_terminal(void)')
