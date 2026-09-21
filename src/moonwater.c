@@ -2039,6 +2039,36 @@ static fn host_machine_hook(positive slot, unsigned int which,
                                   first, second);
 }
 
+/*
+        What this process answers, and what PID 1 reads into it.
+
+        init retires the machine for the rest of the boot on 0 and on 1,
+        because those are the two ways it is finished on purpose: 0 is the
+        queue told to end, 1 is a stop event already handed to shell_stop.
+        Every other answer is a machine that did not get to start, or one
+        that could not keep going, and init restarts it a bounded number of
+        times.
+
+        So a failure has to say something else. host_fail answers 1, so a
+        /dev/spark that is not there yet, an attach the last machine process
+        has not let go of, or one refused ioctl is otherwise a boot in which
+        moonwater_init never runs -- and host_events_boot skips the settings
+        init list whenever the overlay names that hook, whether or not
+        anything is left to run it, so on a machine whose script defines
+        moonwater_init nothing runs at boot at all.
+
+        The bound image lines are not part of that: bind_queue hands a press
+        to the machine only while an attach is live, and the process that
+        died took its attach with it, so the power button is still poweroff.
+
+        Not being root stays at host_refuse's 1. Every other refusal in this
+        command answers 1, and PID 1 runs this as root, so that answer never
+        reaches the retirement.
+*/
+#define HOST_MACHINE_ENDED 0
+#define HOST_MACHINE_STOPPED 1
+#define HOST_MACHINE_FAILED 2
+
 static b32 host_machine_run(void)
 {
         struct machine_control control;
@@ -2049,6 +2079,7 @@ static b32 host_machine_run(void)
         positive slot[MOONWATER_HOOKS];
         unsigned int i;
         bool marked = false;
+        b32 answer = HOST_MACHINE_ENDED;
 
         if (!bowl_is_root())
                 return host_refuse("%s needs root\n", "moonwater machine");
@@ -2060,12 +2091,15 @@ static b32 host_machine_run(void)
                 env_assign(host_machine_env[i].name, host_machine_env[i].value);
 
         device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
-        if (device < 0)
-                return host_fail(SPARK_DEVICE, device);
+        if (device < 0) {
+                host_fail(SPARK_DEVICE, device);
+                return HOST_MACHINE_FAILED;
+        }
         failed = host_machine_ioctl(device, MOONWATER_ATTACH, address_of control);
         if (failed < 0) {
                 system_close(device);
-                return host_fail("machine attach", failed);
+                host_fail("machine attach", failed);
+                return HOST_MACHINE_FAILED;
         }
         //      The attach is ours from here, and every stop this process
         //      performs goes through host_machine_stop, including the one
@@ -2077,7 +2111,8 @@ static b32 host_machine_run(void)
         failed = host_machine_source();
         if (failed < 0) {
                 host_machine_close(device);
-                return host_fail("machine script", failed);
+                host_fail("machine script", failed);
+                return HOST_MACHINE_FAILED;
         }
 
         if (!host_starts((string_address)verdict, "ask "))
@@ -2106,8 +2141,15 @@ static b32 host_machine_run(void)
                 failed = host_machine_wait(device, address_of control);
                 if (failed == -4 || failed == -ETIMEDOUT)
                         continue;
-                if (failed < 0)
+                if (failed < 0) {
+                        //      Not an ending: the wait itself was refused.
+                        //      Answering the ending's own 0 here is the one
+                        //      refused ioctl that retires the machine for the
+                        //      rest of the boot.
+                        host_fail("machine wait", failed);
+                        answer = HOST_MACHINE_FAILED;
                         break;
+                }
 
                 if (!control.event) {
                         host_machine_dirty(false);
@@ -2147,13 +2189,13 @@ static b32 host_machine_run(void)
                         shell_stop(log, stopping == SPARK_BIND_POWEROFF
                                             ? HOST_REBOOT_POWER_OFF
                                             : HOST_REBOOT_RESTART);
-                        return 1;
+                        return HOST_MACHINE_STOPPED;
                 }
         }
 
         host_machine_dirty(false);
         host_machine_close(device);
-        return 0;
+        return answer;
 }
 
 #endif /* MOONWATER_CLI */
