@@ -1710,6 +1710,11 @@ static fn gzip_block_deflate(gzip_encoder address_to e, p8 address_to data,
         starts or what history it sees.
 */
 #define GZIP_BATCH_BLOCKS 64
+/* Blocks a batch holds for each worker: enough that the last blocks of a
+   batch rarely leave workers waiting, with one worker holding one. A
+   single-core gzip held sixty four megabytes of input it had no second core
+   to hand. */
+#define GZIP_BATCH_PER_WORKER 4
 
 typedef struct
 {
@@ -1717,6 +1722,7 @@ typedef struct
         /* [0, GZIP_WINDOW) history tail, then the batch */
         p8 address_to input;
         positive input_room;
+        positive batch_blocks;
         positive history;
         positive n;
         gzip_encoder address_to address_to slots;
@@ -1782,7 +1788,7 @@ static fn gzip_writer_close(void)
                 }
         }
         memory_free(gzip_writer.slots, gzip_writer.slot_count * sizeof(gzip_encoder address_to));
-        memory_free(gzip_writer.done, GZIP_BATCH_BLOCKS);
+        memory_free(gzip_writer.done, gzip_writer.batch_blocks);
         memory_free(gzip_writer.input, gzip_writer.input_room);
         gzip_writer.slots = null;
         gzip_writer.slot_count = 0;
@@ -1877,8 +1883,15 @@ static bool gzip_encode_setup(p8 level)
         gzip_writer.slot_count = parallel_slots();
         gzip_writer.slots = (gzip_encoder address_to address_to)memory(
             gzip_writer.slot_count * sizeof(gzip_encoder address_to));
-        gzip_writer.done = (p8 address_to)memory(GZIP_BATCH_BLOCKS);
-        gzip_writer.input_room = GZIP_WINDOW + GZIP_BATCH_BLOCKS * GZIP_BLOCK;
+        {
+                positive width = parallel_width();
+
+                gzip_writer.batch_blocks =
+                    width == 1 ? 1
+                    : min(width * GZIP_BATCH_PER_WORKER, (positive)GZIP_BATCH_BLOCKS);
+        }
+        gzip_writer.done = (p8 address_to)memory(gzip_writer.batch_blocks);
+        gzip_writer.input_room = GZIP_WINDOW + gzip_writer.batch_blocks * GZIP_BLOCK;
         gzip_writer.input = (p8 address_to)memory(gzip_writer.input_room);
         if (!gzip_writer.slots || system_failed(gzip_writer.slots) || !gzip_writer.done ||
             system_failed(gzip_writer.done) || !gzip_writer.input ||
@@ -1912,7 +1925,7 @@ static bool gzip_encode_trailer(void)
 
 static bool gzip_stream_encode(void)
 {
-        positive capacity = GZIP_BATCH_BLOCKS * GZIP_BLOCK;
+        positive capacity = gzip_writer.batch_blocks * GZIP_BLOCK;
 
         for (;;)
         {
@@ -1944,7 +1957,7 @@ static bool gzip_encode_begin(bipolar out, p8 level)
 
 static bool gzip_encode_write(p8 address_to src, positive n)
 {
-        positive capacity = GZIP_BATCH_BLOCKS * GZIP_BLOCK;
+        positive capacity = gzip_writer.batch_blocks * GZIP_BLOCK;
 
         while (n)
         {
