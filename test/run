@@ -61,7 +61,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net waterlink bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format machine differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact text_asm known socket net waterlink bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format machine differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
 
 describe()
 {
@@ -1925,6 +1925,27 @@ lane_exact()
         target_lane exact_one
 }
 
+#       The branching assembly the text tools keep in their own source, lifted
+#       by the extractor and proven on all three machines: a tool binary cannot
+#       run under qemu-user, whose missing seccomp answer floodlight refuses.
+text_asm_one()
+{
+        python3 test/differential.py --harness native_extract --source \
+                src/sh/text.c join_blank_field > "$work/text_asm.h" || return 1
+        target_build freestanding_check text_asm "$work/text_asm.$target" "$target" \
+                "-I$work" || return 1
+        $target_runner "$work/text_asm.$target" > "$work/text_asm.$target.out" 2>&1
+        status=$?
+        sed -n '/FAIL/p' "$work/text_asm.$target.out"
+        line=$(sed -n 's/.*[^0-9]\([0-9][0-9]*\) checks, \([0-9][0-9]*\) failures.*/\1 \2/p' \
+                "$work/text_asm.$target.out" | tail -1)
+        [ -n "$line" ] || { note "$target: text_asm did not say how it went"; return 1; }
+        tally "text-asm-$target" "$((${line% *} - ${line#* }))" "${line% *}"
+        [ "$status" = 0 ]
+}
+
+lane_text_asm() { target_lane text_asm_one; }
+
 #
 #       The other things a call site may know: a set literal, a needle length,
 #       a bound, a base, a byte. Each file is the same shape as exact.c -- the
@@ -3184,6 +3205,8 @@ python3 test/differential.py --harness native_extract "$lib" memory_offsets_of_e
         > "$work/offsets.h" || exit 1
 python3 test/differential.py --harness native_extract "$lib" string_hash_33_length \
         > "$work/hash.h" || exit 1
+python3 test/differential.py --harness native_extract "$text" join_blank_field \
+        > "$work/join.h" || exit 1
 
 #       And one for the wide hunts, holding those eight and nothing else, so
 #       it never pulls in string_find and the routines that follow from it.
@@ -3245,7 +3268,7 @@ python3 test/differential.py --harness native_extract "$lib" memory_growth memor
         > "$work/reserve.h" || exit 1
 
 status=0
-for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets hash series wide bases base_field human human_nearest fields input_bases network reserve; do
+for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets hash join series wide bases base_field human human_nearest fields input_bases network reserve; do
         cc -O2 -w -I"$work" "-DCHECK_native_$case" test/checks.c -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done

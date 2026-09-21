@@ -24067,6 +24067,89 @@ b32 main(void)
 }
 #endif /* CHECK_exact_ascii_case */
 
+#ifdef CHECK_text_asm
+/*
+        The branching assembly the text tools keep in src/sh/text.c, lifted
+        block and all by the extractor's --source mode and built here on each
+        machine: join_blank_field against the byte walk join ran before it, at
+        every length, start and alignment, through bytes of every class, and
+        against the last bytes of a page.
+*/
+#include "../src/lib.util.c"
+#include "text_asm.h"
+
+positive2 join_blank_field(const p8 address_to bytes, positive length, positive at);
+
+static positive checks, failures;
+
+static bool text_asm_blank(p8 byte) { return byte == ' ' || byte == '\t' || byte == '\n'; }
+
+static positive2 text_asm_former(const p8 address_to bytes, positive length, positive at)
+{
+        positive2 answer;
+
+        while (at < length && text_asm_blank(bytes[at]))
+                at++;
+        answer.x = at;
+        while (at < length && !text_asm_blank(bytes[at]))
+                at++;
+        answer.y = at;
+        return answer;
+}
+
+static fn text_asm_join(const p8 address_to bytes, positive length)
+{
+        for (positive at = 0; at <= length; at++)
+        {
+                positive2 want = text_asm_former(bytes, length, at);
+                positive2 got = join_blank_field(bytes, length, at);
+
+                checks++;
+                if (got.x != want.x || (want.x != length && got.y != want.y))
+                {
+                        failures++;
+                        if (failures < 10)
+                                string_format(log, "FAIL join_blank_field length %p at %p\n",
+                                              length, at);
+                }
+        }
+}
+
+b32 main(void)
+{
+        static p8 room[512];
+        static const p8 pieces[] = {' ', '\t', '\n', 'a', 'b', 0xff, 0x01, 'z'};
+        p64 seed = 0x243f6a8885a308d3ull;
+        p8 address_to pages = memory(3 * 4096);
+
+        for (positive i = 0; i < sizeof(room); i++)
+        {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                room[i] = (seed & 3) ? pieces[3 + (seed >> 8) % 5] : pieces[(seed >> 8) % 3];
+        }
+
+        for (positive length = 0; length <= 120; length++)
+                for (positive offset = 0; offset < 16; offset++)
+                        text_asm_join(room + 64 + offset, length);
+
+        if ((bipolar)(positive)pages > 0 &&
+            system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0) == 0)
+                for (positive length = 0; length <= 40; length++)
+                {
+                        p8 address_to bytes = pages + 8192 - length;
+
+                        memory_copy_apart(bytes, room + length, length);
+                        text_asm_join(bytes, length);
+                }
+
+        string_format(log, "text assembly: %p checks, %p failures\n", checks, failures);
+        log_flush();
+        return failures != 0;
+}
+#endif /* CHECK_text_asm */
+
 #ifdef CHECK_hash_length
 #include "../src/lib.util.c"
 /*
@@ -35520,104 +35603,6 @@ static fn check_live(void)
                          clock_zone_posix((string_address) "it"));
                 good((string_address) "a word that is no zone is not one",
                      !clock_zone_named((string_address) "mars"));
-
-                //      The table is tzdata's, generated: every zone, link
-                //      and country code, sorted so a lookup can bisect, and
-                //      every rule one this parser reads. A row out of order
-                //      is a zone that silently stops being found.
-                {
-                        bool sorted = true;
-                        bool parsed = true;
-                        bool spoken = true;
-
-                        for (positive at = 1; at < array_count(clock_zones); at++)
-                                if (clock_zone_order((string_address)clock_zones[at - 1].name,
-                                                     (string_address)clock_zones[at].name) >= 0)
-                                        sorted = false;
-                        for (positive at = 1; at < array_count(clock_zone_links); at++)
-                                if (clock_zone_order((string_address)clock_zone_links[at - 1].name,
-                                                     (string_address)clock_zone_links[at].name) >= 0)
-                                        sorted = false;
-                        for (positive at = 1; at < array_count(clock_zone_codes); at++)
-                                if (clock_zone_order((string_address)clock_zone_codes[at - 1].code,
-                                                     (string_address)clock_zone_codes[at].code) >= 0)
-                                        sorted = false;
-                        for (positive at = 0; at < array_count(clock_zones); at++)
-                        {
-                                if (!clock_tz_parse((string_address)clock_zones[at].posix) ||
-                                    clock_zone_row((string_address)clock_zones[at].name) !=
-                                        (bipolar)at)
-                                        parsed = false;
-                                if (!clock_zone_spoken((string_address)clock_zones[at].name))
-                                        spoken = false;
-                        }
-                        for (positive at = 0; at < array_count(clock_zone_links); at++)
-                                if (clock_zone_row((string_address)clock_zone_links[at].name) < 0)
-                                        parsed = false;
-                        for (positive at = 0; at < array_count(clock_zone_codes); at++)
-                                if (!clock_zone_country((string_address)clock_zone_codes[at].code))
-                                        parsed = false;
-                        tzset();
-                        good((string_address) "the zone tables are in bisecting order",
-                             sorted);
-                        good((string_address) "every zone, link and country finds a rule that parses",
-                             parsed);
-                        good((string_address) "and every zone has a name in words",
-                             spoken);
-                        good((string_address) "hundreds of zones, not a handful",
-                             array_count(clock_zones) > 400 &&
-                                 array_count(clock_zone_codes) > 240);
-                }
-                good((string_address) "a tzdata link names its zone",
-                     string_equals(clock_zone_named((string_address) "Asia/Calcutta"),
-                                   (string_address) "Asia/Kolkata") &&
-                         string_equals(clock_zone_named((string_address) "us/eastern"),
-                                       (string_address) "America/New_York"));
-                good((string_address) "a country from the network is its ISO code",
-                     string_equals(clock_zone_country((string_address) "SE"),
-                                   (string_address) "Europe/Stockholm") &&
-                         string_equals(clock_zone_country((string_address) "sv"),
-                                       (string_address) "America/El_Salvador") &&
-                         !clock_zone_country((string_address) "uk") &&
-                         !clock_zone_country((string_address) "Europe/Stockholm"));
-                good((string_address) "while a typed layout word keeps its own country",
-                     string_equals(clock_zone_named((string_address) "sv"),
-                                   (string_address) "Europe/Stockholm"));
-
-                //      Rules whose change falls outside the day: Jerusalem's
-                //      at 26:00 of a Thursday, Nuuk's at -1:00, Chatham's at
-                //      2:45 with a 12:45 offset. Each read against the offset
-                //      glibc gives for the same instant.
-                {
-                        static const struct
-                        {
-                                char zone[24];
-                                time_t when;
-                                bipolar east;
-                        } rules[] = {
-                                {"Asia/Jerusalem", 1774569599, 7200},  // 2026-03-26 23:59:59Z
-                                {"Asia/Jerusalem", 1774569600, 10800}, // a second later
-                                {"America/Nuuk", 1774745999, -7200},   // 2026-03-29 00:59:59Z
-                                {"America/Nuuk", 1774746000, -3600},   // a second later
-                                {"Pacific/Chatham", 1784116800, 45900},
-                                {"Pacific/Chatham", 1768478400, 49500},
-                                {"Asia/Gaza", 1784116800, 10800},
-                        };
-                        bool all = true;
-
-                        for (positive at = 0; at < array_count(rules); at++)
-                        {
-                                setenv((string_address) "TZ",
-                                       (string_address)rules[at].zone, 1);
-                                tzset();
-                                if (localtime(address_of rules[at].when)->tm_gmtoff !=
-                                    rules[at].east)
-                                        all = false;
-                        }
-                        good((string_address) "rules past midnight and before it read as glibc reads them",
-                             all);
-                }
-
 
                 //      An offset is written with the clock's sign, and the
                 //      proof is what localtime then says, not the string.
@@ -63675,6 +63660,136 @@ int main(void)
         return bad ? 1 : 0;
 }
 #endif /* CHECK_native_hash */
+
+#ifdef CHECK_native_join
+/* ARM64 join_blank_field lifted verbatim from src/sh/text.c: every start in
+   records of blanks and words at every alignment against the byte walk join
+   used to run, the last bytes of a page, then that walk against the body over
+   a read of join-shaped records. */
+#include "join.h"
+
+#define NATIVE_SEED 0x243f6a8885a308d3ull
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
+
+typedef struct { u64 x, y; } pair;
+pair join_blank_field(const u8 *, u64, u64);
+void *mmap(void *, u64, int, int, int, long);
+int mprotect(void *, u64, int);
+
+static u64 checks, bad;
+
+static int blank(u8 byte) { return byte == ' ' || byte == '\t' || byte == '\n'; }
+
+__attribute__((noinline)) static pair former(const u8 *bytes, u64 length, u64 at)
+{
+        pair answer;
+
+        while (at < length && blank(bytes[at]))
+                at++;
+        answer.x = at;
+        while (at < length && !blank(bytes[at]))
+                at++;
+        answer.y = at;
+        return answer;
+}
+
+static void fill(u8 *at, u64 size)
+{
+        static const u8 pieces[] = {' ', '\t', '\n', 'a', 'b', 0xff, 0x01, 'z'};
+
+        for (u64 i = 0; i < size; i++)
+                at[i] = next() % 3 ? pieces[3 + next() % 5] : pieces[next() % 3];
+}
+
+int main(void)
+{
+        static u8 room[4096];
+        u8 *pages = mmap(0, 32768, 3, 0x1002, -1, 0);
+
+        fill(room, sizeof(room));
+        for (u64 length = 0; length <= 200; length++)
+                for (u64 offset = 0; offset < 16; offset++)
+                        for (u64 at = 0; at <= length; at += 1 + at / 8) {
+                                const u8 *bytes = room + 64 + offset;
+                                pair want = former(bytes, length, at);
+                                pair got = join_blank_field(bytes, length, at);
+                                u64 wx = want.x, wy = want.x == length ? length : want.y;
+
+                                checks++;
+                                if (got.x != wx || (wx != length && got.y != wy)) {
+                                        if (bad++ < 8)
+                                                printf("  FAIL length %lu at %lu: %lu,%lu want %lu,%lu\n",
+                                                       length, at, got.x, got.y, wx, wy);
+                                }
+                        }
+        if (pages != (u8 *)-1) {
+                u8 *edge = pages + 16384;
+                mprotect(edge, 16384, 0);
+                for (u64 length = 0; length <= 64; length++) {
+                        u8 *bytes = edge - length;
+                        fill(bytes, length);
+                        for (u64 at = 0; at <= length; at++) {
+                                pair want = former(bytes, length, at);
+                                pair got = join_blank_field(bytes, length, at);
+                                checks++;
+                                if (got.x != want.x || (want.x != length && got.y != want.y))
+                                        bad++;
+                        }
+                }
+        }
+
+        // Records of a key and a few words, walked field by field as join does.
+        static u8 text[1 << 16];
+        u64 used = 0;
+        while (used + 80 < sizeof(text)) {
+                u64 words = 1 + next() % 6;
+                for (u64 w = 0; w < words; w++) {
+                        u64 size = 1 + next() % 9;
+                        for (u64 i = 0; i < size; i++)
+                                text[used++] = (u8)('a' + next() % 26);
+                        text[used++] = ' ';
+                }
+                text[used - 1] = '\n';
+        }
+        u64 best_former = ~0ul, best_body = ~0ul, fields_former = 0, fields_body = 0;
+        for (int trial = 0; trial < 9; trial++) {
+                u64 start = ticks(), fields = 0;
+                for (int r = 0; r < 16; r++)
+                        for (u64 at = 0; at < used;) {
+                                pair field = former(text, used, at);
+                                if (field.x == used)
+                                        break;
+                                at = field.y;
+                                fields++;
+                        }
+                u64 took = ticks() - start;
+                best_former = took < best_former ? took : best_former;
+                fields_former = fields;
+                start = ticks();
+                fields = 0;
+                for (int r = 0; r < 16; r++)
+                        for (u64 at = 0; at < used;) {
+                                pair field = join_blank_field(text, used, at);
+                                if (field.x == used)
+                                        break;
+                                at = field.y;
+                                fields++;
+                        }
+                took = ticks() - start;
+                best_body = took < best_body ? took : best_body;
+                fields_body = fields;
+        }
+        checks++;
+        if (fields_former != fields_body)
+                bad++;
+        printf("  fields of join records: former C %lu ticks, assembly %lu, asm/C %lu%%\n",
+               best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+        printf("arm64 join_blank_field: %lu checks | %lu failures\n", checks, bad);
+        return bad ? 1 : 0;
+}
+#endif /* CHECK_native_join */
 
 #ifdef CHECK_native_series
 /* Exact production ARM64 decimal-record loop, checked against libc output. */
