@@ -2489,6 +2489,44 @@ static b32 text_paste()
                         if (cursor->reader.failed)
                                 continue;
 
+                        /*
+                                One delimiter: the file is its bytes with every
+                                line end but the last made that delimiter, which
+                                is the library's table translation of each read
+                                as it comes, the line end a read finishes on held
+                                back until the next read shows it was not the
+                                last. No line is looked for at all.
+                        */
+                        if (delimiter_count == 1 && delimiters[0] != PASTE_EMPTY)
+                        {
+                                p8 table[256];
+                                bool held = false;
+
+                                for (positive i = 0; i < 256; i++)
+                                        table[i] = (p8)i;
+
+                                table[text_delimiter] = (p8)delimiters[0];
+
+                                while (text_reader_fill(address_of cursor->reader))
+                                {
+                                        text_reader address_to reader = address_of cursor->reader;
+                                        p8 address_to at = reader->buffer + reader->position;
+                                        positive left = reader->filled - reader->position;
+                                        bool ends = at[left - 1] == text_delimiter;
+
+                                        if (held)
+                                                text_put_character((p8)delimiters[0]);
+
+                                        memory_translate(at, left, table);
+                                        text_put(at, left - ends);
+                                        held = ends;
+                                        reader->position = reader->filled;
+                                }
+
+                                text_put_character(text_delimiter);
+                                continue;
+                        }
+
                         while (text_record_next(cursor, text_delimiter,
                                                 null, 0, null))
                         {
