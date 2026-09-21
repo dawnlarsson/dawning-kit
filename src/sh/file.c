@@ -30474,12 +30474,7 @@ static b32 file_sleep()
         The query belongs on standard input.  In particular, stdout is a pipe
         in set -- $(stty size), while stdin is still the controlling terminal.
 */
-typedef struct
-{
-        p16 rows, columns, x_pixels, y_pixels;
-} file_window_size;
 
-#define FILE_TIOCGWINSZ 0x5413
 
 static b32 file_stty()
 {
@@ -30487,8 +30482,8 @@ static b32 file_stty()
             !string_equals(program_argument(1), "size"))
                 return string_report(log_error, 1, "stty: only 'size' is supported\n");
 
-        file_window_size size = {0, 0, 0, 0};
-        bipolar answer = system_control(0, FILE_TIOCGWINSZ,
+        winsize size = {0, 0, 0, 0};
+        bipolar answer = system_control(0, TIOCGWINSZ,
                                        address_of size);
 
         if (answer < 0)

@@ -34,15 +34,6 @@
 // Not the attribute that keeps a symbol: this one lets the compiler drop what
 // it finds no call to, and only quiets the warning about having found none.
 #define SPARE __attribute__((unused))
-// The kernel provides its own ioctl constants and window-size type.
-#ifndef KERNEL_MODE
-#define TIOCSWINSZ 0x5414u
-
-typedef struct
-{
-        unsigned short rows, columns, x_pixels, y_pixels;
-} winsize;
-#endif
 
 static struct window *window;
 

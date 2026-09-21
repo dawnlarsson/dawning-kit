@@ -1730,6 +1730,20 @@ failed:
            array_store_release(_byte_store->bytes, _byte_store->room,         \
                                _byte_store->used); })
 
+/* What TIOCGWINSZ fills and TIOCSWINSZ reads. A kernel build has the
+   kernel's own struct winsize and constants; a freestanding one has to
+   spell them, and three files each spelled their own name for the same
+   four shorts and the same two numbers. */
+#ifndef KERNEL_MODE
+#define TIOCGWINSZ 0x5413u
+#define TIOCSWINSZ 0x5414u
+
+typedef struct
+{
+        p16 rows, columns, x_pixels, y_pixels;
+} winsize;
+#endif
+
 #ifndef KERNEL_MODE
 /* A bounded input window, backed by a descriptor or a borrowed memory span.
    have is the end offset; at is the consumed prefix. Return available bytes

@@ -1596,8 +1596,6 @@ static b32 process_timeout()
 
 // script ----------------------------------------------------------
 /* The terminal recorder and graphical terminal share pty.c's open floor. */
-#define PROCESS_TIOCGWINSZ 0x5413u
-#define PROCESS_TIOCSWINSZ 0x5414u
 #define PROCESS_TERMINAL_ECHO 0x0008u
 #if ARM64 || RISCV64
 #define PROCESS_O_NOFOLLOW 0100000
@@ -1605,10 +1603,6 @@ static b32 process_timeout()
 #define PROCESS_O_NOFOLLOW 0400000
 #endif
 
-typedef struct
-{
-        p16 rows, columns, x_pixels, y_pixels;
-} process_terminal_size;
 
 typedef struct
 {
@@ -1943,9 +1937,9 @@ static b32 process_script_record(process_script_state address_to state,
                 return string_report(log_error, 1, "script: cannot open pseudo-terminal: %s\n",
                               file_reason(opened));
 
-        process_terminal_size size;
-        if (system_control(0, PROCESS_TIOCGWINSZ, address_of size) >= 0)
-                system_control(slave, PROCESS_TIOCSWINSZ, address_of size);
+        winsize size;
+        if (system_control(0, TIOCGWINSZ, address_of size) >= 0)
+                system_control(slave, TIOCSWINSZ, address_of size);
 
         if (state->echo)
         {
@@ -2520,8 +2514,8 @@ static b32 process_script()
 
         p8 stamp[64];
         process_script_stamp(stamp, sizeof(stamp));
-        bool terminal = system_control(0, PROCESS_TIOCGWINSZ,
-                                       address_of (process_terminal_size){0}) >= 0;
+        bool terminal = system_control(0, TIOCGWINSZ,
+                                       address_of (winsize){0}) >= 0;
         bool good = process_script_header_one(state.out, stamp, display,
                                               terminal);
         if (state.in != state.out)
