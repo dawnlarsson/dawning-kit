@@ -38,7 +38,12 @@ CONFIG_NVME_TCP=y
 CONFIG_NVME_TCP_TLS=y
 CONFIG_NVME_HOST_AUTH=y
 CONFIG_NVME_TARGET=y
-CONFIG_NVME_TARGET_DEBUGFS=y
+# Off because DEBUG_FS is: nvmet_init makes its debugfs directory before
+# anything else, gets -ENODEV from a kernel with no debugfs, and unwinds --
+# so the target never registered on any boot of this image, and tearing
+# down its four reclaim workqueues again cost 18 to 24 ms of initcalls on
+# the way to /init. Without the directory it initialises.
+CONFIG_NVME_TARGET_DEBUGFS=n
 CONFIG_NVME_TARGET_PASSTHRU=y
 CONFIG_NVME_TARGET_LOOP=y
 CONFIG_NVME_TARGET_RDMA=y
