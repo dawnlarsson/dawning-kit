@@ -76629,6 +76629,119 @@ static fn floor_codebook(void)
                 }
 }
 
+/* deflate_tokens_count and deflate_tokens_encode against a bit at a time
+   model: random blocks of literals and pairs over random code tables,
+   every pending width on entry, with the output guarded past its end. */
+static fn floor_deflate_tokens_put(p8 address_to out, positive address_to at, p64 value, positive n)
+{
+        for (positive i = 0; i < n; i++, (*at)++)
+                out[*at / 8] = (p8)((out[*at / 8] & ~(1u << (*at % 8))) | (((value >> i) & 1) << (*at % 8)));
+}
+
+static fn floor_deflate_tokens(void)
+{
+        static p8 src[4096], got[16384], want[16384];
+        static p32 mpos[1024];
+        static p16 mlen[1024], mdist[1024];
+        p32 lit[GZIP_MAXLIT], dist[GZIP_MAXDIST], count_lit[GZIP_MAXLIT], count_dist[GZIP_MAXDIST];
+        p32 want_lit[GZIP_MAXLIT], want_dist[GZIP_MAXDIST];
+        p32 random = 0x2545f491u;
+        bool same = true, counted = true;
+
+        for (positive trial = 0; trial < 3000; trial++)
+        {
+                positive length = 0, pairs = 0, extra = 0;
+#define FLOOR_RANDOM() (random ^= random << 13, random ^= random >> 17, random ^= random << 5, random)
+                positive room = 1 + FLOOR_RANDOM() % 4000;
+                for (positive i = 0; i < GZIP_MAXLIT; i++)
+                {
+                        positive len = 1 + FLOOR_RANDOM() % 15;
+                        lit[i] = (FLOOR_RANDOM() & ((1u << len) - 1)) | (p32)len << 16;
+                }
+                for (positive i = 0; i < GZIP_MAXDIST; i++)
+                {
+                        positive len = 1 + FLOOR_RANDOM() % 15;
+                        dist[i] = (FLOOR_RANDOM() & ((1u << len) - 1)) | (p32)len << 16;
+                }
+                for (positive i = 0; i < sizeof(src); i++)
+                        src[i] = (p8)FLOOR_RANDOM();
+                while (length < room)
+                {
+                        positive mode = FLOOR_RANDOM() % 4;
+                        if (mode == 0 && length + 3 <= room && pairs < 1024)
+                        {
+                                positive m = 3 + FLOOR_RANDOM() % 256;
+                                positive d = FLOOR_RANDOM() % 3 ? 1 + FLOOR_RANDOM() % 32768
+                                                                : 1 + FLOOR_RANDOM() % 8;
+                                if (FLOOR_RANDOM() % 8 == 0) m = 258;
+                                if (length + m > room) m = room - length < 3 ? 3 : room - length;
+                                mpos[pairs] = (p32)length;
+                                mlen[pairs] = (p16)m;
+                                mdist[pairs] = (p16)d;
+                                pairs++;
+                                length += m;
+                        }
+                        else
+                                length += 1 + FLOOR_RANDOM() % (mode == 1 ? 1 : 9);
+                }
+                if (length > room && (!pairs || mpos[pairs - 1] + mlen[pairs - 1] != length))
+                        length = room;
+
+                //      The model: the reference's walk, one bit at a time.
+                positive held = FLOOR_RANDOM() % 32;
+                p64 pending = FLOOR_RANDOM() & (((p64)1 << held) - 1);
+                positive bit = 0, at = 0, pair = 0;
+                memory_fill(want, 0xa5, sizeof(want));
+                memory_fill(got, 0xa5, sizeof(got));
+                memory_fill(want_lit, 0, sizeof(want_lit));
+                memory_fill(want_dist, 0, sizeof(want_dist));
+                floor_deflate_tokens_put(want, address_of bit, pending, held);
+                while (at < length)
+                {
+                        if (pair < pairs && mpos[pair] == at)
+                        {
+                                positive l = mlen[pair], d = mdist[pair], lc = 0, dc = 0;
+                                while (lc < 28 && gzip_len_base[lc + 1] <= l) lc++;
+                                while (dc < 29 && gzip_dist_base[dc + 1] <= d) dc++;
+                                floor_deflate_tokens_put(want, address_of bit, lit[257 + lc] & 0xffff, lit[257 + lc] >> 16);
+                                floor_deflate_tokens_put(want, address_of bit, l - gzip_len_base[lc], gzip_len_extra[lc]);
+                                floor_deflate_tokens_put(want, address_of bit, dist[dc] & 0xffff, dist[dc] >> 16);
+                                floor_deflate_tokens_put(want, address_of bit, d - gzip_dist_base[dc], gzip_dist_extra[dc]);
+                                want_lit[257 + lc]++;
+                                want_dist[dc]++;
+                                extra += gzip_len_extra[lc] + gzip_dist_extra[dc];
+                                at += l;
+                                pair++;
+                        }
+                        else
+                        {
+                                floor_deflate_tokens_put(want, address_of bit, lit[src[at]] & 0xffff, lit[src[at]] >> 16);
+                                want_lit[src[at]]++;
+                                at++;
+                        }
+                }
+                floor_deflate_tokens_put(want, address_of bit, lit[256] & 0xffff, lit[256] >> 16);
+
+                gzip_tokens j = {src, mpos, mlen, mdist, length, pairs, lit, dist, got, pending, held};
+                deflate_tokens_encode(address_of j);
+                positive whole = (positive)(j.out - got);
+                same = same && whole == bit / 8 && j.bitn == bit % 8 &&
+                       !memory_compare(got, want, whole) &&
+                       (j.bits == (bit % 8 ? want[whole] & ((1u << (bit % 8)) - 1) : 0)) &&
+                       got[whole + 8] == 0xa5;
+                memory_fill(count_lit, 0, sizeof(count_lit));
+                memory_fill(count_dist, 0, sizeof(count_dist));
+                gzip_tokens c = {src, mpos, mlen, mdist, length, pairs, count_lit, count_dist, null, 7, 0};
+                deflate_tokens_count(address_of c);
+                counted = counted && c.bits == 7 + extra &&
+                          !memory_compare(count_lit, want_lit, sizeof(want_lit)) &&
+                          !memory_compare(count_dist, want_dist, sizeof(want_dist));
+#undef FLOOR_RANDOM
+        }
+        check("deflate tokens written bit-exact from any pending width", same);
+        check("deflate tokens counted into both alphabets with their extra bits", counted);
+}
+
 #ifdef CHECK_compression_floor
 b32 main(void)
 {
@@ -76639,6 +76752,7 @@ b32 main(void)
         floor_huffman();
         floor_deflate();
         floor_deflate_codes();
+        floor_deflate_tokens();
         return test_report(null);
 }
 #endif

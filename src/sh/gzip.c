@@ -1217,37 +1217,31 @@ static bool gzip_used_coded(p32 address_to freq, p8 address_to length, positive 
         return true;
 }
 
-static const p8 gzip_length_codes[256] = {
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 9, 10, 10, 11, 11,
-        12, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 14, 15, 15, 15, 15,
-        16, 16, 16, 16, 16, 16, 16, 16, 17, 17, 17, 17, 17, 17, 17, 17,
-        18, 18, 18, 18, 18, 18, 18, 18, 19, 19, 19, 19, 19, 19, 19, 19,
-        20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20,
-        21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21,
-        22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22,
-        23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23,
-        24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
-        24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
-        25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
-        25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
-        26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,
-        26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,
-        27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27,
-        27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 28,
-};
-
-static positive gzip_length_code(positive length)
+/* The deflate_tokens job: a block's tokens for lib.c to count or write. */
+typedef struct
 {
-        return gzip_length_codes[length - 3];
-}
+        p8 address_to src;
+        p32 address_to mpos;
+        p16 address_to mlen;
+        p16 address_to mdist;
+        positive length;
+        positive pairs;
+        p32 address_to lit;
+        p32 address_to dist;
+        p8 address_to out;
+        p64 bits;
+        positive bitn;
+} gzip_tokens;
 
-static positive gzip_distance_code(positive dist)
+static fn gzip_tokens_open(gzip_tokens address_to j, gzip_encoder address_to e,
+                           p8 address_to src, positive length, positive pairs)
 {
-        if (dist <= 4)
-                return dist - 1;
-        positive v = dist - 1;
-        positive hb = 63 - bits_leading_zeros(v);
-        return (hb << 1) + ((v >> (hb - 1)) & 1);
+        j->src = src;
+        j->mpos = e->mpos;
+        j->mlen = e->mlen;
+        j->mdist = e->mdist;
+        j->length = length;
+        j->pairs = pairs;
 }
 
 /* Stored blocks of at most 65535 bytes; length zero is the byte-aligning
@@ -1298,41 +1292,29 @@ static fn gzip_fixed_init(void)
 }
 
 /* The tokens of one deflate block: literals from src, and pairs whose
-   positions are offsets into src, in order. */
+   positions are offsets into src, in order, then the end of block. */
 static fn gzip_write_tokens(gzip_encoder address_to e, p8 address_to src, positive length,
                             positive pairs, p16 address_to lit_code, p8 address_to lit_len,
                             p16 address_to dist_code, p8 address_to dist_len)
 {
-        positive at = 0;
-        positive pair = 0;
+        p32 lit[GZIP_MAXLIT];
+        p32 dist[GZIP_MAXDIST];
+        gzip_tokens j;
 
-        while (at < length)
-        {
-                if (pair < pairs && e->mpos[pair] == at)
-                {
-                        positive len = e->mlen[pair];
-                        positive dist = e->mdist[pair];
-                        positive lcode = gzip_length_code(len);
-                        positive dcode = gzip_distance_code(dist);
-
-                        gzip_put_bits(e, lit_code[257 + lcode], lit_len[257 + lcode]);
-                        if (gzip_len_extra[lcode])
-                                gzip_put_bits(e, (p32)(len - gzip_len_base[lcode]),
-                                          gzip_len_extra[lcode]);
-                        gzip_put_bits(e, dist_code[dcode], dist_len[dcode]);
-                        if (gzip_dist_extra[dcode])
-                                gzip_put_bits(e, (p32)(dist - gzip_dist_base[dcode]),
-                                          gzip_dist_extra[dcode]);
-                        at += len;
-                        pair++;
-                }
-                else
-                {
-                        gzip_put_bits(e, lit_code[src[at]], lit_len[src[at]]);
-                        at++;
-                }
-        }
-        gzip_put_bits(e, lit_code[256], lit_len[256]);
+        for (positive i = 0; i < GZIP_MAXLIT; i++)
+                lit[i] = lit_code[i] | (p32)lit_len[i] << 16;
+        for (positive i = 0; i < GZIP_MAXDIST; i++)
+                dist[i] = dist_code[i] | (p32)dist_len[i] << 16;
+        gzip_tokens_open(address_of j, e, src, length, pairs);
+        j.lit = lit;
+        j.dist = dist;
+        j.out = e->out + e->out_n;
+        j.bits = e->bits;
+        j.bitn = e->bitn;
+        deflate_tokens_encode(address_of j);
+        e->out_n = (positive)(j.out - e->out);
+        e->bits = j.bits;
+        e->bitn = (p32)j.bitn;
 }
 
 static fn gzip_write_fixed(gzip_encoder address_to e, p8 address_to src, positive length,
@@ -1354,8 +1336,6 @@ static fn gzip_block_emit(gzip_encoder address_to e, p8 address_to src, positive
         p8 dist_len[GZIP_MAXDIST];
         p16 lit_code[GZIP_MAXLIT];
         p16 dist_code[GZIP_MAXDIST];
-        positive at = 0;
-        positive pair = 0;
         positive bits = 0, extra_bits = 0, fixed_bits = 3;
         positive chunks = length ? (length + 65534) / 65535 : 1;
         positive stored_bits = length * 8 + chunks * 40 +
@@ -1364,24 +1344,15 @@ static fn gzip_block_emit(gzip_encoder address_to e, p8 address_to src, positive
         memory_fill(lit_freq, 0, sizeof(lit_freq));
         memory_fill(dist_freq, 0, sizeof(dist_freq));
         lit_freq[256] = 1;
-        while (at < length)
         {
-                if (pair < pairs && e->mpos[pair] == at)
-                {
-                        positive lcode = gzip_length_code(e->mlen[pair]);
-                        positive dcode = gzip_distance_code(e->mdist[pair]);
+                gzip_tokens j;
 
-                        lit_freq[257 + lcode]++;
-                        dist_freq[dcode]++;
-                        extra_bits += gzip_len_extra[lcode] + gzip_dist_extra[dcode];
-                        at += e->mlen[pair];
-                        pair++;
-                }
-                else
-                {
-                        lit_freq[src[at]]++;
-                        at++;
-                }
+                gzip_tokens_open(address_of j, e, src, length, pairs);
+                j.lit = lit_freq;
+                j.dist = dist_freq;
+                j.bits = 0;
+                deflate_tokens_count(address_of j);
+                extra_bits = j.bits;
         }
 
         fixed_bits += extra_bits;
