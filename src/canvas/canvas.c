@@ -4838,6 +4838,16 @@ retry:
         return ret;
 }
 
+/* Both cursor buffers gone and forgotten, which is how every path below
+   that could not put an arrow on a plane leaves the output. */
+static void cursor_buffers_drop(struct output *output)
+{
+        drm_client_buffer_delete(output->cursor_buffer);
+        drm_client_buffer_delete(output->cursor_back);
+        output->cursor_buffer = NULL;
+        output->cursor_back = NULL;
+}
+
 static void plane_drop(struct output *output)
 {
         int ret = 0;
@@ -4860,10 +4870,7 @@ static void plane_drop(struct output *output)
 
         if (!ret && !output->cursor_recovery)
         {
-                drm_client_buffer_delete(output->cursor_buffer);
-                drm_client_buffer_delete(output->cursor_back);
-                output->cursor_buffer = NULL;
-                output->cursor_back = NULL;
+                cursor_buffers_drop(output);
         }
 }
 
@@ -5062,10 +5069,7 @@ static void plane_claim(struct drm_client_dev *client, struct output *output)
         if (ret)
         {
                 plane_lost(client, output, "would not take the arrow", ret);
-                drm_client_buffer_delete(output->cursor_buffer);
-                drm_client_buffer_delete(output->cursor_back);
-                output->cursor_buffer = NULL;
-                output->cursor_back = NULL;
+                cursor_buffers_drop(output);
                 return;
         }
 
@@ -6668,10 +6672,7 @@ static void output_drop(struct output *output)
         // A failed disable leaves a client buffer that recovery can no longer
         // reach after this output is gone. RMFB drops the client ownership;
         // atomic plane state keeps scanout alive even if removal also fails.
-        drm_client_buffer_delete(output->cursor_buffer);
-        drm_client_buffer_delete(output->cursor_back);
-        output->cursor_buffer = NULL;
-        output->cursor_back = NULL;
+        cursor_buffers_drop(output);
 
         list_del(&output->link);
 
@@ -6828,10 +6829,7 @@ static void cursor_plane_recover(void)
                         continue;
                 }
 
-                drm_client_buffer_delete(output->cursor_buffer);
-                drm_client_buffer_delete(output->cursor_back);
-                output->cursor_buffer = NULL;
-                output->cursor_back = NULL;
+                cursor_buffers_drop(output);
 
                 output->cursor_recovery = 0;
         }
