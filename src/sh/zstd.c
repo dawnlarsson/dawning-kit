@@ -1255,16 +1255,17 @@ static bool zstd_sequences(p8 address_to src, positive src_len, p8 address_to li
         return true;
 }
 
+/* One frame's window, kept across the frames of a stream when the one in
+   hand is already big enough. Concatenated frames are ordinary zstd -- the
+   parallel encoder writes them -- and mapping, faulting in and unmapping the
+   same megabytes once per frame was most of what decoding them cost. Nothing
+   of the old frame survives that the new one can read: zstd_pos returns to
+   zero and zstd_sequences_run refuses any offset past what this frame has
+   written, so a larger mapping only means the slide in zstd_room happens
+   later. */
 static bool zstd_window_open(positive window)
 {
         positive cap;
-
-        if (zstd_window)
-        {
-                memory_free(zstd_window, zstd_window_cap);
-                zstd_window = null;
-                zstd_window_cap = 0;
-        }
 
         zstd_window_size = window;
         zstd_keep = window;
@@ -1273,6 +1274,15 @@ static bool zstd_window_open(positive window)
                 return true;
 
         cap = window * 2 + ZSTD_BLOCK_MAX + 64;
+        if (zstd_window && zstd_window_cap >= cap)
+                return true;
+        if (zstd_window)
+        {
+                memory_free(zstd_window, zstd_window_cap);
+                zstd_window = null;
+                zstd_window_cap = 0;
+        }
+
         zstd_window = (p8 address_to)memory(cap);
         if (!zstd_window || system_failed(zstd_window))
         {
