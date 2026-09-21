@@ -3137,6 +3137,8 @@ lane_writer()
 native_lifted()
 (
 lib=${1:-src/lib.c}
+# The assembly the text tools keep in their own source lifts the same way.
+text=${2:-src/sh/text.c}
 
 [ -f "$lib" ] || { echo "run: no such library: $lib" >&2; exit 1; }
 

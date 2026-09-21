@@ -20614,9 +20614,15 @@ def harness_edit_driver(argv):
 
 
 def harness_native_extract(argv):
-    """Lift an arm64 routine out of lib.c so it can be run here.
+    """Lift an arm64 routine out of lib.c, or out of a tool's source, so it
+    can be run here.
 
-        python3 test/differential.py --harness native_extract <lib.c> <routine> [more...]
+        python3 test/differential.py --harness native_extract <file.c> <routine> [more...]
+
+    Any file whose assembly is written as lib.c's is -- ASM_FUNC and ASM_END
+    between #if X64 / #elif ARM64 / #elif RISCV64 -- lifts the same way, so a
+    branching function that a tool keeps as assembly in its own source, such
+    as src/sh/text.c, is timed natively on an arm64 Mac by the same cases.
 
     Writes a C file to standard output holding each routine's body under a
     _<name> symbol, with the three prologue lines Darwin needs instead of
@@ -20638,6 +20644,31 @@ def harness_native_extract(argv):
     the three production architectures index without putting a second C form of
     the table here.
     """
+    # --source copies each named routine's whole #if X64 ... #endif block as
+    # it stands, for a freestanding check built on every architecture: the
+    # branching assembly a tool keeps in its own source is then proven on all
+    # three machines, riscv64 and x86_64 under qemu, by the same harness.
+    if argv and argv[0] == '--source':
+        lib, names = argv[1], list(argv[2:])
+        lines = open(lib).read().split('\n')
+        print(f'// Lifted from {lib} by test/differential.py --harness native_extract --source -- do not edit.')
+        for name in names:
+            at = next((i for i, l in enumerate(lines)
+                       if l.strip() == f'ASM_FUNC({name})'), None)
+            if at is None:
+                sys.exit(f"extract: no {name} in {lib}")
+            start = max(i for i in range(at) if lines[i].startswith('#if '))
+            depth = 0
+            for stop in range(start, len(lines)):
+                if lines[stop].startswith('#if'):
+                    depth += 1
+                elif lines[stop].startswith('#endif'):
+                    depth -= 1
+                    if not depth:
+                        break
+            print('\n'.join(lines[start:stop + 1]))
+        return 0
+
     lib, names = argv[0], list(argv[1:])
     lines = open(lib).read().split('\n')
 
