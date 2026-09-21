@@ -2074,6 +2074,14 @@ typedef struct
         p32 ml_base;
         p32 of_base;
         bool predefined;
+        //      Each symbol's weight, and each code's extra bits less its
+        //      weight, kept current as the counts move: a price asked once a
+        //      length at every position is then two loads, not a bit scan.
+        bool fractional;
+        p32 lit_w[256];
+        p32 ll_w[36];
+        p32 ml_w[53];
+        p32 of_w[32];
 } zstd_price;
 
 /* A position on the optimal path: its price, and the stretch that reaches
@@ -3705,6 +3713,22 @@ static fn zstd_price_bases(zstd_price address_to pr, bool fractional)
         pr->of_base = zstd_weight(pr->of_sum, fractional);
 }
 
+static fn zstd_price_ll_w(zstd_price address_to pr, positive c)
+{
+        pr->ll_w[c] = zstd_ll_extra[c] * 256 - zstd_weight(pr->ll[c], pr->fractional);
+}
+
+static fn zstd_price_ml_w(zstd_price address_to pr, positive c)
+{
+        pr->ml_w[c] = zstd_ml_extra[c] * 256 - zstd_weight(pr->ml[c], pr->fractional);
+}
+
+static fn zstd_price_of_w(zstd_price address_to pr, positive c)
+{
+        pr->of_w[c] = (p32)c * 256 - zstd_weight(pr->of[c], pr->fractional) +
+                      (!pr->fractional && c >= 20 ? ((p32)c - 19) * 2 * 256 : 0);
+}
+
 /* At a block's start.  The frame's first block counts its own bytes for
    literals and takes libzstd's guesses for lengths and offset codes (and
    fixed prices when it is tiny); later blocks keep what the chosen
@@ -3744,17 +3768,26 @@ static fn zstd_price_begin(zstd_price address_to pr, p8 address_to src,
                 pr->ml_sum = zstd_price_scale(pr->ml, 53, 11);
                 pr->of_sum = zstd_price_scale(pr->of, 32, 11);
         }
+        pr->fractional = fractional;
+        for (positive i = 0; i < 256; i++)
+                pr->lit_w[i] = zstd_weight(pr->lit[i], fractional);
+        for (positive i = 0; i < 36; i++)
+                zstd_price_ll_w(pr, i);
+        for (positive i = 0; i < 53; i++)
+                zstd_price_ml_w(pr, i);
+        for (positive i = 0; i < 32; i++)
+                zstd_price_of_w(pr, i);
         zstd_price_bases(pr, fractional);
 }
 
 static __attribute__((always_inline)) inline bipolar
-zstd_price_literal(const zstd_price address_to pr, p8 byte, bool fractional)
+zstd_price_literal(const zstd_price address_to pr, p8 byte)
 {
         p32 weight;
 
         if (pr->predefined)
                 return 6 * 256;
-        weight = zstd_weight(pr->lit[byte], fractional);
+        weight = pr->lit_w[byte];
         if (weight > pr->lit_base - 256)
                 weight = pr->lit_base - 256;
         return (bipolar)(pr->lit_base - weight);
@@ -3781,8 +3814,7 @@ zstd_price_litlen(const zstd_price address_to pr, positive length, bool fraction
         }
         code = length < 64 ? zstd_ll_codes[length]
                            : (p8)(19 + zstd_highbit32((p32)length));
-        return over + (bipolar)(zstd_ll_extra[code] * 256 + pr->ll_base -
-                                zstd_weight(pr->ll[code], fractional));
+        return over + (bipolar)(pr->ll_w[code] + pr->ll_base);
 }
 
 static __attribute__((always_inline)) inline bipolar
@@ -3795,26 +3827,34 @@ zstd_price_match(const zstd_price address_to pr, p32 off_base, positive length,
 
         if (pr->predefined)
                 return zstd_weight((p32)length - 3, fractional) + (16 + code) * 256;
-        price = code * 256 + pr->of_base - zstd_weight(pr->of[code], fractional);
-        if (!fractional && code >= 20)
-                price += (code - 19) * 2 * 256;
+        price = pr->of_w[code] + pr->of_base;
         ml = length < 131 ? zstd_ml_codes[length]
                           : (p8)(36 + zstd_highbit32((p32)length - 3));
-        price += zstd_ml_extra[ml] * 256 + pr->ml_base - zstd_weight(pr->ml[ml], fractional);
+        price += pr->ml_w[ml] + pr->ml_base;
         return (bipolar)price + 256 / 5;
 }
 
 static fn zstd_price_update(zstd_price address_to pr, p8 address_to literals,
                             positive run, p32 off_base, positive match)
 {
+        positive const ll = run < 64 ? zstd_ll_codes[run] : 19 + zstd_highbit32((p32)run);
+        positive const of = zstd_highbit32(off_base);
+        positive const ml = match < 131 ? zstd_ml_codes[match] : 36 + zstd_highbit32((p32)match - 3);
+
         for (positive u = 0; u < run; u++)
+        {
                 pr->lit[literals[u]] += 2;
+                pr->lit_w[literals[u]] = zstd_weight(pr->lit[literals[u]], pr->fractional);
+        }
         pr->lit_sum += (p32)run * 2;
-        pr->ll[run < 64 ? zstd_ll_codes[run] : 19 + zstd_highbit32((p32)run)]++;
+        pr->ll[ll]++;
+        zstd_price_ll_w(pr, ll);
         pr->ll_sum++;
-        pr->of[zstd_highbit32(off_base)]++;
+        pr->of[of]++;
+        zstd_price_of_w(pr, of);
         pr->of_sum++;
-        pr->ml[match < 131 ? zstd_ml_codes[match] : 36 + zstd_highbit32((p32)match - 3)]++;
+        pr->ml[ml]++;
+        zstd_price_ml_w(pr, ml);
         pr->ml_sum++;
 }
 
@@ -3945,7 +3985,7 @@ static p8 address_to zstd_parse_opt(zstd_encoder address_to e, p32 from, p32 to,
                         {
                                 positive const litlen = opt[cur - 1].litlen + 1;
                                 bipolar const price = opt[cur - 1].price +
-                                                      zstd_price_literal(pr, ip[cur - 1], ultra) +
+                                                      zstd_price_literal(pr, ip[cur - 1]) +
                                                       zstd_price_litlen(pr, litlen, ultra) -
                                                       zstd_price_litlen(pr, litlen - 1, ultra);
 
@@ -3961,11 +4001,11 @@ static p8 address_to zstd_parse_opt(zstd_encoder address_to e, p32 from, p32 to,
                                             inr < iend)
                                         {
                                                 bipolar const with1 = previous.price +
-                                                    zstd_price_literal(pr, ip[cur], ultra) +
+                                                    zstd_price_literal(pr, ip[cur]) +
                                                     zstd_price_litlen(pr, 1, ultra) -
                                                     zstd_price_litlen(pr, 0, ultra);
                                                 bipolar const more = price +
-                                                    zstd_price_literal(pr, ip[cur], ultra) +
+                                                    zstd_price_literal(pr, ip[cur]) +
                                                     zstd_price_litlen(pr, litlen + 1, ultra) -
                                                     zstd_price_litlen(pr, litlen, ultra);
 
