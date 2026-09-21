@@ -25772,6 +25772,73 @@ def harness_compression(argv):
                               (private_output.stat().st_mode & 0o777) == 0o640 and
                               not list(resolved.glob('.moonwater-stage-*')),
                               private_error.decode(errors='replace'))
+                # Where the output cannot be written, walked rather than
+                # listed.  Three axes -- the codec, the direction, and what
+                # stands between the codec and its output -- so a fourth
+                # codec or a fourth obstruction is a row here and not a case
+                # anywhere:
+                #
+                #   device     stdout is /dev/full, which takes the open and
+                #              answers every write ENOSPC
+                #   existing   the output name the codec derives is already
+                #              a file with bytes in it
+                #   symlink    that name is a symbolic link onto a file
+                #              outside the write, and -f is given: -f
+                #              overwrites a file, it does not follow a link
+                #
+                # Each file row asserts three things rather than a status:
+                # the run failed, the bytes in the way are unchanged, and the
+                # input is still there.  A codec that removed its input after
+                # refusing to write would pass a status-only check, and gzip
+                # removes its input on success.
+                refusals = root / ('refusals-' + label)
+                refusals.mkdir()
+                subject = bytes(range(256)) * 256
+                for codec, level, ext in cases:
+                    exe = str(farms[label] / codec)
+                    packed = call(command(refs[codec], codec, level=level,
+                                          reference=True), subject)
+                    check(label + '/' + codec + '/refusal-corpus',
+                          packed.returncode == 0 and packed.stdout,
+                          packed.stderr.decode(errors='replace'))
+                    for direction in ('encode', 'decode'):
+                        decoding = direction == 'decode'
+                        source = packed.stdout if decoding else subject
+                        row = label + '/' + codec + '/' + direction + '/refuse-'
+                        if os.path.exists('/dev/full'):
+                            with open('/dev/full', 'wb') as sink:
+                                full = subprocess.run(
+                                    runner + command(exe, codec, decode=decoding,
+                                                     level=level),
+                                    input=source, stdout=sink,
+                                    stderr=subprocess.PIPE, timeout=120)
+                            check(row + 'device-full', full.returncode != 0,
+                                  full.stderr.decode(errors='replace'))
+                        for obstruction in ('existing', 'symlink'):
+                            place = refusals / (codec + '-' + direction + '-' + obstruction)
+                            place.mkdir()
+                            if decoding:
+                                given, produced = place / ('subject' + ext), place / 'subject'
+                            else:
+                                given, produced = place / 'subject', place / ('subject' + ext)
+                            given.write_bytes(source)
+                            guard = b'the write must not reach this\n'
+                            args = ['-d'] if decoding else ['-' + level]
+                            if obstruction == 'existing':
+                                witness = produced
+                                witness.write_bytes(guard)
+                            else:
+                                witness = place / 'victim'
+                                witness.write_bytes(guard)
+                                produced.symlink_to(witness)
+                                args.append('-f')
+                            refused = call(runner + [exe] + args + [str(given)])
+                            check(row + obstruction + '-output',
+                                  refused.returncode != 0 and
+                                  witness.read_bytes() == guard and
+                                  given.is_file() and given.read_bytes() == source,
+                                  refused.stderr.decode(errors='replace'))
+
                 print(label + ': codec matrix checked', flush=True)
 
         # Exercise the pull/write adapters and compressed EOF through tar in both directions.
