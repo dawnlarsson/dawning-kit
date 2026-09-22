@@ -273,16 +273,11 @@ def main():
     canvas_names = {item[2] for item in canvas}
     kernel = marked_assembly(ROOT / 'kernel/replace')
 
-    if arguments.seal:
-        """
-                The seal is a hash of the production sources as well as a
-                count, so any edit moves it and every one of them has to be
-                rewritten by hand. Doing that by hand is how a wrong number
-                gets written down, so the writing is mechanical and the
-                deciding is not: this says what moved and leaves the reader
-                to say whether it should have.
-        """
-        counts = {
+    def sealed_counts():
+        """The eight numbers the seal carries, asked in one place so that the
+           branch which writes them and the branch which checks them cannot
+           come to disagree about what is being counted."""
+        return {
             'sha256': source_digest(),
             'c_functions': str(len(definitions)),
             'library_asm': str(len(library)),
@@ -292,6 +287,17 @@ def main():
             'canvas_arch_bodies': str(len(canvas)),
             'kernel_asm_bodies': str(len(kernel)),
         }
+
+    if arguments.seal:
+        """
+                The seal is a hash of the production sources as well as a
+                count, so any edit moves it and every one of them has to be
+                rewritten by hand. Doing that by hand is how a wrong number
+                gets written down, so the writing is mechanical and the
+                deciding is not: this says what moved and leaves the reader
+                to say whether it should have.
+        """
+        counts = sealed_counts()
         was = {}
         if SEAL.is_file():
             was = dict(line.split(None, 1)
@@ -319,16 +325,7 @@ def main():
             return 1
         sealed = dict(line.split(None, 1) for line in SEAL.read_text().splitlines()
                       if line and not line.startswith('#'))
-        current = {
-            'sha256': source_digest(),
-            'c_functions': str(len(definitions)),
-            'library_asm': str(len(library)),
-            'library_arch_bodies': str(library_bodies),
-            'library_aliases': str(len(library_aliases)),
-            'canvas_asm': str(len(canvas_names)),
-            'canvas_arch_bodies': str(len(canvas)),
-            'kernel_asm_bodies': str(len(kernel)),
-        }
+        current = sealed_counts()
         wrong = [key for key, value in current.items()
                  if sealed.get(key) != value]
         if wrong:
