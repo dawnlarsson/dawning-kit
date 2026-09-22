@@ -69,6 +69,7 @@ describe()
         standard) echo "the standard library, and that it still builds with no platform under it" ;;
         verify)   echo "the assembly in lib.c against the C it replaced, on three machines" ;;
         exact)    echo "every size that is known where the call is written, and both tiers" ;;
+        text_asm) echo "text.c's own assembly against its C, on three machines" ;;
         known)    echo "the rest of what folds when the call site knows it" ;;
         declare)  echo "the standard names, declared, compiled twice and diffed" ;;
         fold)     echo "the constant-size fold we put in the kernel string header" ;;
@@ -9140,23 +9141,30 @@ fi
 #
 #       Build, source-inventory, remote-host and firmware tooling checks.
 #
+#       Every harness runs even when one before it fails: core_state first
+#       with `|| exit 1` once kept twelve of them dark, the seal among them.
+#       objtool_shape stands in for the objtool pass of the kernel build,
+#       which no lane runs.
 lane_kit()
 (
-python3 test/differential.py --harness core_state || exit 1
-python3 test/differential.py --harness canvas_lifetime || exit 1
-python3 test/differential.py --harness canvas_view || exit 1
-python3 test/differential.py --harness audit_shell_functions || exit 1
-python3 test/differential.py --harness spark_entry || exit 1
+kit_failed=0
+python3 test/differential.py --harness core_state || kit_failed=1
+python3 test/differential.py --harness canvas_lifetime || kit_failed=1
+python3 test/differential.py --harness canvas_view || kit_failed=1
+python3 test/differential.py --harness audit_shell_functions || kit_failed=1
+python3 test/differential.py --harness spark_entry || kit_failed=1
+python3 test/differential.py --harness objtool_shape || kit_failed=1
 if [ "$(uname -s)" = Darwin ]; then
-        python3 test/differential.py --harness macos_read_retry || exit 1
+        python3 test/differential.py --harness macos_read_retry || kit_failed=1
 fi
-python3 test/function_audit.py --check || exit 1
-python3 test/differential.py --harness floodlight || exit 1
-python3 test/differential.py --harness surface_coreutils_gap || exit 1
-python3 test/differential.py --harness image_nodes || exit 1
-python3 test/differential.py --harness bowl_session || exit 1
-python3 test/differential.py --harness bowl_roots || exit 1
-python3 test/differential.py --harness riscv_builtins || exit 1
+python3 test/function_audit.py --check || kit_failed=1
+python3 test/differential.py --harness floodlight || kit_failed=1
+python3 test/differential.py --harness surface_coreutils_gap || kit_failed=1
+python3 test/differential.py --harness image_nodes || kit_failed=1
+python3 test/differential.py --harness bowl_session || kit_failed=1
+python3 test/differential.py --harness bowl_roots || kit_failed=1
+python3 test/differential.py --harness riscv_builtins || kit_failed=1
+[ "$kit_failed" = 0 ] || exit 1
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM

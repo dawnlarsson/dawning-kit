@@ -27759,6 +27759,224 @@ int main(void) {
         return 0
 
 
+def harness_objtool_shape(argv):
+    """The x86_64 bodies a kernel build assembles, held to what objtool asks.
+
+    objtool runs only inside `sh build.sh --host box`, and no lane builds the
+    kernel, so three of its refusals reached main in one day: a table after
+    ret in .text (285637fe), a jump from one ASM_FUNC to a label inside the
+    next (c6c80712), and a bare ret that skipped the return thunk and left
+    the ASM_RET after it unreachable (e9e1c2b1). Each is visible in the
+    source, so this reads lib.c the way the kernel build would see its x86_64
+    half -- every body outside a !KERNEL_MODE guard -- and refuses: data
+    directives in a text section, a ret not spelled ASM_RET, an instruction
+    after an unconditional transfer with no label to reach it, and a jump or
+    call to a label that lives inside another body. Given older copies of
+    lib.c it goes red on each of the three parents.
+    """
+    import ast
+    sys.path.insert(0, str(HARNESS_ROOT / "test/assembly"))
+    from inventory import lex, directive_parts, arch_transition
+    openers = {"ASM_FUNC", "ASM_LOCAL_FUNC"}
+    enders = {"ASM_END", "ASM_LOCAL_END"}
+    data = re.compile(r"\.(byte|2byte|4byte|8byte|word|short|hword|long|int|quad|octa|"
+                      r"ascii|asciz|string|zero|skip|space|fill|float|double|single|dc(\.\w)?)\b")
+    transfer = re.compile(r"(j[a-z]{1,4}|call[qlw]?|loop\w*)\s+([.\w$]+)\s*$")
+
+    def excluded_by(kind, rest, prior):
+        # Whether the active branch of one conditional excludes a kernel build.
+        text = re.sub(r"\s+", "", rest)
+        conjuncts = set(filter(None, re.split(r"&&", text)))
+        if kind == "ifndef" and text == "KERNEL_MODE":
+            return True
+        if conjuncts & {"!defined(KERNEL_MODE)", "!definedKERNEL_MODE"}:
+            return True
+        for before in prior:
+            left = set(filter(None, re.split(r"&&", before))) - {"X64", "defined(X64)"}
+            if left == {"defined(KERNEL_MODE)"}:
+                return True
+        return False
+
+    def lines_of(literal):
+        try:
+            value = ast.literal_eval(literal)
+        except (ValueError, SyntaxError):
+            return []
+        return [piece.split("#", 1)[0].strip() for chunk in value.split("\n")
+                for piece in chunk.split(";")]
+
+    def scan(text, where_name):
+        failures, bodies_seen = [], 0
+        tokens, directives = lex(text)
+        events = sorted([(d.start, 0, d) for d in directives] +
+                        [(t.start, 1, t) for t in tokens], key=lambda e: (e[0], e[1]))
+        arch, arch_stack = None, []
+        frames = []  # [kind, rest, prior-conditions, excluded]
+        active = {}
+        for _, is_token, item in events:
+            if not is_token:
+                kind, rest = directive_parts(item)
+                if kind in ("if", "ifdef", "ifndef"):
+                    frames.append([kind, rest, [], excluded_by(kind, rest, [])])
+                elif kind in ("elif", "else") and frames:
+                    frame = frames[-1]
+                    if frame[0] == "ifdef":
+                        frame[2].append("defined(%s)" % frame[1].strip())
+                    elif frame[0] == "ifndef":
+                        frame[2].append("!defined(%s)" % frame[1].strip())
+                    else:
+                        frame[2].append(re.sub(r"\s+", "", frame[1]))
+                    frame[0], frame[1] = kind, rest if kind == "elif" else ""
+                    frame[3] = excluded_by("if", frame[1], frame[2])
+                elif kind == "endif" and frames:
+                    frames.pop()
+                arch = arch_transition(arch, arch_stack, item)
+                continue
+            active[item.start] = arch == "X64" and not any(f[3] for f in frames)
+
+        body, bodies, index = None, [], 0
+        while index < len(tokens):
+            token = tokens[index]
+            index += 1
+            if not active[token.start]:
+                continue
+            if token.kind == "identifier" and token.value in openers | enders \
+                    and index + 2 < len(tokens) and tokens[index].value == "(" \
+                    and tokens[index + 2].value == ")":
+                name = tokens[index + 1].value
+                index += 3
+                if token.value in openers:
+                    body = {"name": name, "line": token.line, "items": []}
+                    bodies.append(body)
+                elif body is not None and body["name"] == name:
+                    body = None
+                continue
+            if body is None:
+                continue
+            if token.kind == "literal" and token.value.startswith('"'):
+                for line in lines_of(token.value):
+                    if line:
+                        body["items"].append((token.line, line))
+            elif token.kind == "identifier" and token.value == "ASM_RET":
+                body["items"].append((token.line, "ASM_RET"))
+            elif token.kind == "identifier":
+                # Another macro: what it expands to is not read here, so it
+                # may carry a label, and nothing after it is called unreachable.
+                if index < len(tokens) and tokens[index].value == "(":
+                    depth, index = 1, index + 1
+                    while index < len(tokens) and depth:
+                        depth += {"(": 1, ")": -1}.get(tokens[index].value, 0)
+                        index += 1
+                if token.value != "ASM_USERSPACE_WIDE":
+                    body["items"].append((token.line, "OPAQUE:"))
+
+        owner = {}
+        for body in bodies:
+            bodies_seen += 1
+            for line_number, line in body["items"]:
+                for label in re.findall(r"^([.\w$]+):", line):
+                    owner.setdefault(label, body["name"])
+        entries = {body["name"] for body in bodies}
+
+        for body in bodies:
+            sections = [".text"]
+            after = None
+            name = body["name"]
+            for line_number, line in body["items"]:
+                where = "%s:%d %s" % (where_name, line_number, name)
+                while True:
+                    found = re.match(r"^([.\w$]+):\s*(.*)$", line)
+                    if not found:
+                        break
+                    after = None
+                    line = found.group(2)
+                if not line:
+                    continue
+                word = line.split()[0]
+                if word in (".pushsection", ".section"):
+                    target = line.split()[1].rstrip(",").strip('"') if len(line.split()) > 1 else ""
+                    if word == ".pushsection":
+                        sections.append(target)
+                    else:
+                        sections[-1] = target
+                    continue
+                if word == ".popsection":
+                    if len(sections) > 1:
+                        sections.pop()
+                    continue
+                if word in (".text", ".previous"):
+                    continue
+                in_text = sections[-1].startswith((".text", ".noinstr"))
+                if not in_text:
+                    continue
+                if data.match(line):
+                    failures.append("%s: data in .text (%s); a table goes in "
+                                    ".pushsection .rodata" % (where, word))
+                    continue
+                if word.startswith("."):
+                    continue
+                if after:
+                    failures.append("%s: %s follows %s with no label to reach it"
+                                    % (where, line, after))
+                    after = None
+                if word in ("ret", "retq", "RET", "retl"):
+                    failures.append("%s: bare %s; a kernel return is ASM_RET"
+                                    % (where, word))
+                    after = word
+                    continue
+                if line == "ASM_RET":
+                    after = "ASM_RET"
+                    continue
+                if word in ("ud2", "jmp", "jmpq"):
+                    after = line
+                jumped = transfer.match(line)
+                if jumped and not jumped.group(2).startswith(("*", "%")):
+                    label = jumped.group(2)
+                    home = owner.get(label)
+                    if home and home != name and label not in entries:
+                        failures.append("%s: %s reaches %s inside %s, which objtool "
+                                        "reads as falling through to another function"
+                                        % (where, word, label, home))
+
+        return bodies_seen, failures
+
+    # Each refusal proves itself first, on the smallest source that earns it,
+    # so a reader that stopped reading the bodies cannot pass for a clean tree.
+    shape = '#if X64\n__asm__(ASM_FUNC(a) %s ASM_END(a)\nASM_FUNC(b) %s ASM_END(b));\n#endif\n'
+    planted = {
+        "data in .text": shape % ('"ret\\n" ".Lt: .byte 1\\n"', '"nop\\n"'),
+        "bare ret": shape % ('"xor %eax, %eax\\n ret\\n"', '"nop\\n"'),
+        "no label to reach it": shape % ('ASM_RET "nop\\n"', '"nop\\n"'),
+        "inside a": shape % ('".La_in: nop\\n" ASM_RET', '"jmp .La_in\\n"'),
+    }
+    for want, source in planted.items():
+        found = scan(source, "planted")[1]
+        if not any(want in failure for failure in found):
+            print("  FAIL the planted %r was not refused: %r" % (want, found))
+            return 1
+        if scan(source.replace("#if X64", "#if X64\n#ifndef KERNEL_MODE")
+                .replace("#endif", "#endif\n#endif"), "planted")[1]:
+            print("  FAIL a body under #ifndef KERNEL_MODE was read as kernel code")
+            return 1
+
+    paths = [Path(item) for item in argv] or [HARNESS_ROOT / "src/lib.c"]
+    bodies_seen, failures = 0, []
+    for path in paths:
+        seen, found = scan(path.read_text(errors="replace"), path.name)
+        bodies_seen += seen
+        failures += found
+    for failure in failures:
+        print("  FAIL " + failure)
+    print("objtool shape: %d kernel x86_64 bodies, %d planted refusals, %d refusals"
+          % (bodies_seen, len(planted), len(failures)))
+    refused = len({failure.split(":")[1].split()[1] for failure in failures})
+    write_tally("objtool-shape", bodies_seen - refused, bodies_seen)
+    if not bodies_seen:
+        print("  FAIL no kernel x86_64 body was found at all")
+        return 1
+    return 1 if failures else 0
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -27781,6 +27999,7 @@ HARNESS_CHECKS = {
     "bowl_session": harness_bowl_session,
     "bowl_roots": harness_bowl_roots,
     "riscv_builtins": harness_riscv_builtins,
+    "objtool_shape": harness_objtool_shape,
 }
 
 
