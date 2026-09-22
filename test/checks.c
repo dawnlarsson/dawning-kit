@@ -5936,6 +5936,28 @@ static fn bench_report(string_address name, bench_work work, positive tries,
                       fraction, unit);
 }
 
+/*
+        One paired trial's two runs, in the order that trial asks for: an odd
+        trial measures the assembly first and an even one the C, so neither
+        side always inherits the warm cache or the far end of a drifting
+        clock. The benchmark's own run(bool assembly, ...) does the timing;
+        everything after the flag is the same for both sides and is written
+        once here.
+*/
+#define BENCH_BOTH_ORDERS(trial, assembly, former, ...)                       \
+        do {                                                                  \
+                if ((trial) & 1)                                              \
+                {                                                             \
+                        (assembly) = run(true, __VA_ARGS__);                  \
+                        (former) = run(false, __VA_ARGS__);                   \
+                }                                                             \
+                else                                                          \
+                {                                                             \
+                        (former) = run(false, __VA_ARGS__);                   \
+                        (assembly) = run(true, __VA_ARGS__);                  \
+                }                                                             \
+        } while (0)
+
 static fn order(positive address_to values, positive count)
 {
         for (positive i = 1; i < count; i++)
@@ -69411,16 +69433,7 @@ static fn row(positive length)
                 p64 former;
                 p64 assembly;
 
-                if (trial & 1)
-                {
-                        assembly = run(true, length, rounds);
-                        former = run(false, length, rounds);
-                }
-                else
-                {
-                        former = run(false, length, rounds);
-                        assembly = run(true, length, rounds);
-                }
+                BENCH_BOTH_ORDERS(trial, assembly, former, length, rounds);
 
                 ratios[trial] = (positive)(assembly * 10000 /
                                             (former ? former : 1));
@@ -71811,16 +71824,7 @@ static bool row(positive length)
 
                 prepare(length);
 
-                if (trial & 1)
-                {
-                        assembly = run(true, length, rounds);
-                        former = run(false, length, rounds);
-                }
-                else
-                {
-                        former = run(false, length, rounds);
-                        assembly = run(true, length, rounds);
-                }
+                BENCH_BOTH_ORDERS(trial, assembly, former, length, rounds);
 
                 if (memory_compare(former_block, assembly_block, length))
                         return false;
@@ -72021,16 +72025,7 @@ static bool row(positive length, positive set)
                 p64 former;
                 p64 assembly;
 
-                if (trial & 1)
-                {
-                        assembly = run(true, length, rounds);
-                        former = run(false, length, rounds);
-                }
-                else
-                {
-                        former = run(false, length, rounds);
-                        assembly = run(true, length, rounds);
-                }
+                BENCH_BOTH_ORDERS(trial, assembly, former, length, rounds);
 
                 if (former_kept != assembly_kept ||
                     memory_compare(former_block, assembly_block, former_kept))
@@ -72242,16 +72237,7 @@ static bool row(positive length, positive set)
                 p64 former;
                 p64 assembly;
 
-                if (trial & 1)
-                {
-                        assembly = run(true, length, rounds);
-                        former = run(false, length, rounds);
-                }
-                else
-                {
-                        former = run(false, length, rounds);
-                        assembly = run(true, length, rounds);
-                }
+                BENCH_BOTH_ORDERS(trial, assembly, former, length, rounds);
 
                 if (former_kept != assembly_kept ||
                     memory_compare(former_block, assembly_block, former_kept))
@@ -72471,16 +72457,7 @@ static bool row(positive length)
                 p64 former;
                 p64 assembly;
 
-                if (trial & 1)
-                {
-                        assembly = run(true, length, rounds);
-                        former = run(false, length, rounds);
-                }
-                else
-                {
-                        former = run(false, length, rounds);
-                        assembly = run(true, length, rounds);
-                }
+                BENCH_BOTH_ORDERS(trial, assembly, former, length, rounds);
 
                 if (former_count != assembly_count ||
                     memory_compare(former_offsets, assembly_offsets,
@@ -72689,16 +72666,7 @@ static fn row(string_address name, positive length, bool late)
                 p64 former;
                 p64 assembly;
 
-                if (trial & 1)
-                {
-                        assembly = run(true, length, rounds);
-                        former = run(false, length, rounds);
-                }
-                else
-                {
-                        former = run(false, length, rounds);
-                        assembly = run(true, length, rounds);
-                }
+                BENCH_BOTH_ORDERS(trial, assembly, former, length, rounds);
 
                 ratios[trial] = (positive)(assembly * 10000 /
                                             (former ? former : 1));
@@ -74228,16 +74196,7 @@ static fn row(string_address name, positive length, positive hit)
                 p64 former;
                 p64 assembly;
 
-                if (trial & 1)
-                {
-                        assembly = run(true, length, rounds);
-                        former = run(false, length, rounds);
-                }
-                else
-                {
-                        former = run(false, length, rounds);
-                        assembly = run(true, length, rounds);
-                }
+                BENCH_BOTH_ORDERS(trial, assembly, former, length, rounds);
 
                 ratios[trial] = (positive)(assembly * 10000 /
                                             (former ? former : 1));
@@ -74422,16 +74381,7 @@ static fn row(string_address name, positive length, positive shape)
         {
                 p64 former;
                 p64 assembly;
-                if (trial & 1)
-                {
-                        assembly = run(true, length, rounds);
-                        former = run(false, length, rounds);
-                }
-                else
-                {
-                        former = run(false, length, rounds);
-                        assembly = run(true, length, rounds);
-                }
+                BENCH_BOTH_ORDERS(trial, assembly, former, length, rounds);
                 ratios[trial] = (positive)(assembly * 10000 /
                                             (former ? former : 1));
         }
