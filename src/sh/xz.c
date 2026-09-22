@@ -779,7 +779,17 @@ static bool xz_dec_pad4(xz_decoder address_to d, positive n)
 
 static bool xz_dec_check(xz_decoder address_to d)
 {
-        positive size = (positive)xz_check_size(d->check);
+        /*      xz_check_size answers -1 for a type it does not know, and
+                the cast made that the whole unsigned range: the loop below
+                would have written check_bytes, thirty two of them, until
+                the input ran out. Both writers of check validate it first,
+                so this is refused here rather than depended on there. */
+        bipolar width = xz_check_size(d->check);
+        positive size;
+
+        if (width < 0)
+                return xz_dec_fail(d, "xz check type");
+        size = (positive)width;
 
         memory_fill(d->check_bytes, 0, sizeof(d->check_bytes));
         for (positive at = 0; at < size; at++)

@@ -361,8 +361,17 @@ static bool zstd_seq_build(zstd_fse address_to table, const bipolar address_to n
         positive const size = (positive)1 << log;
         positive const mask = size - 1;
         positive const step = (size >> 1) + (size >> 3) + 3;
-        p16 next[64];
-        p64 template[64];
+        /*      Both tables are indexed by lib.c's zstd_fse_cells with a
+                whole byte out of symbol, and next is written through as
+                well, so they are the width of what can index them rather
+                than of what this builds -- sixty four entries and one
+                spread cell that was never written would have been a store
+                into this frame. Cleared for the same reason, and symbol
+                poisoned as zstd_fse_build already poisons its own: a cell
+                the spread missed then names a symbol whose row is zero
+                instead of naming whatever the stack held. */
+        p16 next[256];
+        p64 template[256];
         p8 symbol[ZSTD_FSE_MAX];
         p8 spread[ZSTD_FSE_MAX + 8];
         positive total = 0;
@@ -370,6 +379,9 @@ static bool zstd_seq_build(zstd_fse address_to table, const bipolar address_to n
 
         if (log < 5 || log > 9 || max_sym > 52)
                 return zstd_fail("zstd FSE table log");
+        memory_fill(next, 0, sizeof(next));
+        memory_fill(template, 0, sizeof(template));
+        memory_fill(symbol, 0xff, size);
         for (positive s = 0; s <= max_sym; s++)
         {
                 next[s] = (p16)(norm[s] < 0 ? 1 : norm[s]);
