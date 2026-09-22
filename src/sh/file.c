@@ -31873,6 +31873,22 @@ static bool env_split_put(p8 letter, positive address_to filled,
         return true;
 }
 
+//      A word begins where the last separator ended, wherever that turns out
+//      to be: a quote, an expansion or a plain letter. The vector has to have
+//      room for it and for the null the caller writes after the last word.
+static bool env_split_begin(bool address_to sep, positive address_to given,
+                            positive filled)
+{
+        if (!address_to sep)
+                return true;
+        if (!shell_array_room(env_words, env_words_room, address_to given + 2))
+                return string_report(log_error, false,
+                                     "env: split string is too large\n");
+        env_words[(address_to given)++] = env_split_store + filled;
+        address_to sep = false;
+        return true;
+}
+
 static bool env_split(string_address text, positive address_to have)
 {
         positive filled = 0;
@@ -31897,14 +31913,9 @@ static bool env_split(string_address text, positive address_to have)
                         if (dq)
                                 break;
                         sq = !sq;
-                        if (sep)
-                        {
-                                if (!shell_array_room(env_words, env_words_room, given + 2))
-                                        return string_report(log_error, false,
-                                                      "env: split string is too large\n");
-                                env_words[given++] = env_split_store + filled;
-                                sep = false;
-                        }
+                        if (!env_split_begin(address_of sep, address_of given,
+                                             filled))
+                                return false;
                         text++;
                         continue;
 
@@ -31912,14 +31923,9 @@ static bool env_split(string_address text, positive address_to have)
                         if (sq)
                                 break;
                         dq = !dq;
-                        if (sep)
-                        {
-                                if (!shell_array_room(env_words, env_words_room, given + 2))
-                                        return string_report(log_error, false,
-                                                      "env: split string is too large\n");
-                                env_words[given++] = env_split_store + filled;
-                                sep = false;
-                        }
+                        if (!env_split_begin(address_of sep, address_of given,
+                                             filled))
+                                return false;
                         text++;
                         continue;
 
@@ -32041,14 +32047,9 @@ static bool env_split(string_address text, positive address_to have)
 
                                 string_address value = file_environment(varname);
 
-                                if (sep)
-                                {
-                                        if (!shell_array_room(env_words, env_words_room, given + 2))
-                                                return string_report(log_error, false,
-                                                              "env: split string is too large\n");
-                                        env_words[given++] = env_split_store + filled;
-                                        sep = false;
-                                }
+                                if (!env_split_begin(address_of sep,
+                                                     address_of given, filled))
+                                        return false;
 
                                 if (value)
                                         while (string_get(value))
@@ -32063,13 +32064,8 @@ static bool env_split(string_address text, positive address_to have)
                         }
                 }
 
-                if (sep)
-                {
-                        if (!shell_array_room(env_words, env_words_room, given + 2))
-                                return string_report(log_error, false, "env: split string is too large\n");
-                        env_words[given++] = env_split_store + filled;
-                        sep = false;
-                }
+                if (!env_split_begin(address_of sep, address_of given, filled))
+                        return false;
 
                 if (!env_split_put(letter, address_of filled, origin, given))
                         return false;
