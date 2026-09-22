@@ -5245,13 +5245,22 @@ static bool radio_wifi_wanted(void)
         return wanted;
 }
 
+/*
+        The join the machine loop forks, and only that, reaped once it ends.
+        A wait4 on -1 here took every child of the machine process with it:
+        the NTP query's status (now on a pipe) and any job the machine
+        script put in the background, whose wait then found no such child.
+*/
+static bipolar radio_child;
+
 static fn radio_reap(void)
 {
         positive status = 0;
 
-        while (system_call_4(syscall(wait4), (positive)-1,
-                             (positive)address_of status, 1, 0) > 0)
-                ;
+        if (radio_child > 0 &&
+            system_call_4(syscall(wait4), (positive)radio_child,
+                          (positive)address_of status, 1, 0) != 0)
+                radio_child = 0;
 }
 
 static fn radio_wifi_keep(void)
@@ -5260,7 +5269,7 @@ static fn radio_wifi_keep(void)
         bipolar child;
 
         radio_rfkill(RADIO_RFKILL_WLAN, false);
-        if (nl80211_associated())
+        if (radio_child > 0 || nl80211_associated())
                 return;
 
         lock = radio_lock(false);
@@ -5276,6 +5285,7 @@ static fn radio_wifi_keep(void)
         if (child)
         {
                 system_close(lock);
+                radio_child = child;
                 return;
         }
 

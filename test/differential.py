@@ -27977,6 +27977,71 @@ def harness_objtool_shape(argv):
     return 1 if failures else 0
 
 
+def harness_machine_reap(argv):
+    """The machine loop reaps the radio's join and nothing else of its own.
+
+    radio_reap ran wait4(-1) on every pass of the machine loop, so any other
+    child of the machine process lost its status before whoever started it
+    asked: the NTP query's kiss-o-death read as success until it moved to a
+    pipe, and a job the machine script puts in the background still found
+    no child to wait for. This compiles radio_reap as src/sh/host.c has it,
+    starts one such job and one join, and holds the loop to leaving the job
+    to its owner while the join is reaped.
+    """
+    import subprocess
+    import tempfile
+    host = (HARNESS_ROOT / "src/sh/host.c").read_text()
+    first = host.index("static bipolar radio_child;")
+    body = host[first:host.index("static fn radio_wifi_keep(void)", first)]
+    source = r"""
+#include <signal.h>
+#include <stdio.h>
+#include <sys/wait.h>
+#include <unistd.h>
+typedef unsigned long positive;
+typedef long bipolar;
+#define fn void
+#define address_of &
+#define syscall(name) 0
+#define system_call_4(number, a, b, c, d) \
+        ((long)wait4((pid_t)(a), (int *)(b), (int)(c), 0))
+""" + body + r"""
+int main(void)
+{
+        int status = 0, passed = 0;
+        pid_t job = fork();
+        if (!job)
+                _exit(7);
+        pid_t join = fork();
+        if (!join)
+                _exit(0);
+        radio_child = join;
+        usleep(200000);
+        radio_reap();
+        passed += waitpid(job, &status, 0) == job && WIFEXITED(status) &&
+                  WEXITSTATUS(status) == 7;
+        passed += radio_child == 0 && waitpid(join, &status, WNOHANG) < 0;
+        printf("machine reap %d/2\n", passed);
+        return passed != 2;
+}
+"""
+    with tempfile.TemporaryDirectory(prefix="machine-reap-") as work:
+        unit = Path(work) / "reap.c"
+        unit.write_text(source)
+        built = subprocess.run([os.environ.get("CC", "cc"), "-O1", "-w", "-o",
+                                str(Path(work) / "reap"), str(unit)],
+                               capture_output=True, text=True)
+        if built.returncode:
+            print(built.stderr[-2000:])
+            write_tally("machine-reap", 0, 2)
+            return 1
+        ran = subprocess.run([str(Path(work) / "reap")], capture_output=True, text=True)
+        print(ran.stdout, end="")
+        found = re.search(r"(\d)/2", ran.stdout)
+        write_tally("machine-reap", int(found.group(1)) if found else 0, 2)
+        return ran.returncode
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -28000,6 +28065,7 @@ HARNESS_CHECKS = {
     "bowl_roots": harness_bowl_roots,
     "riscv_builtins": harness_riscv_builtins,
     "objtool_shape": harness_objtool_shape,
+    "machine_reap": harness_machine_reap,
 }
 
 
