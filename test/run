@@ -10791,7 +10791,25 @@ never transcript 'no missing command' 'failed with error: No such file or direct
 #
 #       Both this and the power button below are the x86 machine's.
 #
-if [ "$boot_emulator" != qemu-system-x86_64 ]; then
+#       riscv64's counterpart is QEMU's widest model, -cpu max: V, the vector
+#       crypto and Zbc on, which the rv64 boot above never reaches, so every
+#       extension path a Spark program or the kernel takes on a feature bit
+#       runs here. A program's illegal instruction is init's restart line.
+#       arm64's emulated boot above is already -cpu max.
+#
+if [ "$boot_emulator" = qemu-system-riscv64 ]; then
+        { sleep 15; cat "$work/commands"; } |
+                timeout 360 qemu-system-riscv64 -m 2G -smp 2 -machine virt -cpu max \
+                -kernel "$image" -no-reboot -display none -serial stdio \
+                -append "console=ttyS0 drm_client_lib.active=" \
+                > "$work/transcript" 2>&1 || true
+
+        says transcript 'init started on the widest'  'Run /init as init process'
+        says transcript 'powered down on the widest'  'reboot: Power down'
+        never transcript 'no illegal instruction'     'killed by signal 4'
+        never transcript 'no oops there'              'Oops:'
+        never transcript 'no panic there'             'Kernel panic'
+elif [ "$boot_emulator" != qemu-system-x86_64 ]; then
         printf '  %-24s not an x86 image, the x86 host passes did not run\n' 'this host'
 elif [ -r /dev/kvm ]; then
         timeout 180 qemu-system-x86_64 -m 2G -smp 2 -cpu host -enable-kvm \
@@ -10820,13 +10838,53 @@ fi
 #       reversed or counted so the command echo on this console cannot pass
 #       for one.
 #
-if [ "$boot_emulator" = qemu-system-x86_64 ] && [ -r /dev/kvm ] &&
-        command -v python3 > /dev/null 2>&1; then
-        MOONWATER_BOOT_WORK=$work python3 - "$image" > "$work/power-answers" 2> "$work/power-why" <<'PY'
+#       Each machine's own button: ACPI's on x86, the PL061 GPIO key QEMU's
+#       arm64 virt board presses, and whatever riscv64's virt board has. The
+#       helper is built by that machine's compiler, and an emulated machine
+#       gets longer to reach a shell.
+#
+power_machine=""
+power_button=yes
+case "$boot_emulator" in
+qemu-system-x86_64)
+        [ -r /dev/kvm ] && power_machine="-cpu host -enable-kvm -vga none"
+        power_console=ttyS0 power_cc=cc power_slow=1
+        ;;
+qemu-system-aarch64)
+        power_machine="-machine virt,gic-version=3 -cpu max,pauth-impdef=on"
+        case "$(uname -s):$(uname -m)" in
+        Darwin:arm64) power_machine="-machine virt,gic-version=3 -accel hvf -cpu host" ;;
+        Linux:aarch64) [ -w /dev/kvm ] && power_machine="-machine virt,gic-version=3 -enable-kvm -cpu host" ;;
+        esac
+        power_console=ttyAMA0 power_cc=aarch64-linux-gnu-gcc power_slow=4
+        ;;
+qemu-system-riscv64)
+        power_machine="-machine virt -cpu rv64"
+        power_console=ttyS0 power_cc=riscv64-linux-gnu-gcc power_slow=3
+        #       QEMU's riscv64 virt board wires system_powerdown to nothing:
+        #       no ACPI button and no GPIO key, so there is no button to
+        #       press. The script and bind rules still run; the presses are
+        #       said not to have.
+        power_button=no
+        ;;
+esac
+[ "$(uname -s):$(uname -m)" = Linux:aarch64 ] && [ "$boot_emulator" = qemu-system-aarch64 ] && power_cc=cc
+#       A Mac has no Linux compiler for the helper, and x86 wants KVM.
+[ "$(uname -s)" = Darwin ] && power_machine=""
+
+if [ -n "$power_machine" ] && command -v python3 > /dev/null 2>&1; then
+        MOONWATER_BOOT_WORK=$work MOONWATER_POWER_EMULATOR=$boot_emulator \
+                MOONWATER_POWER_MACHINE=$power_machine MOONWATER_POWER_CONSOLE=$power_console \
+                MOONWATER_POWER_CC=$power_cc MOONWATER_POWER_SLOW=$power_slow \
+                MOONWATER_POWER_BUTTON=$power_button \
+                python3 - "$image" > "$work/power-answers" 2> "$work/power-why" <<'PY'
 import json, os, socket, subprocess, sys, time
 
 image = sys.argv[1]
 work = os.environ["MOONWATER_BOOT_WORK"]
+tty = os.environ["MOONWATER_POWER_CONSOLE"]
+slow = int(os.environ["MOONWATER_POWER_SLOW"])
+button = os.environ["MOONWATER_POWER_BUTTON"] == "yes"
 qmp = work + "/power-qmp"
 console = work + "/power-console"
 out = []
@@ -10859,19 +10917,24 @@ int main(int argc, char **argv)
         return 127;
 }
 ''')
-capboot = subprocess.run(["cc", "-O2", "-static", "-o", stick + "/capboot", work + "/capboot.c"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+try:
+    capboot = subprocess.run([os.environ["MOONWATER_POWER_CC"], "-O2", "-static", "-o",
+                              stick + "/capboot", work + "/capboot.c"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+except OSError:
+    capboot = False
 
 guest = subprocess.Popen([
-    "qemu-system-x86_64", "-m", "1G", "-smp", "2", "-cpu", "host", "-enable-kvm",
-    "-kernel", image, "-vga", "none", "-no-reboot", "-display", "none",
+    os.environ["MOONWATER_POWER_EMULATOR"], "-m", "1G", "-smp", "2"] +
+    os.environ["MOONWATER_POWER_MACHINE"].split() + [
+    "-kernel", image, "-no-reboot", "-display", "none",
     "-device", "qemu-xhci,id=xhci",
     "-drive", "if=none,id=stick,format=raw,file=fat:ro:" + stick + ",readonly=on",
     "-device", "usb-storage,bus=xhci.0,drive=stick,removable=on",
     "-chardev", "socket,id=console,path=" + console + ",server=on,wait=off",
     "-serial", "chardev:console",
     "-qmp", "unix:" + qmp + ",server,nowait",
-    "-append", "console=ttyS0 drm_client_lib.active="],
+    "-append", "console=" + tty + " drm_client_lib.active="],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 for _ in range(200):
@@ -10933,9 +10996,9 @@ def press():
 
 #       A shell that answers before anything is typed at it for real: the UART
 #       drops what arrives while the kernel is still talking.
-wait_for(b"Run /init as init process", 60)
+wait_for(b"Run /init as init process", 60 * slow)
 ready = False
-for _ in range(30):
+for _ in range(30 * slow):
     say("printf 'rewop-ydaer\\n' | rev")
     if wait_for(b"ready-power", 2):
         ready = True
@@ -10996,41 +11059,43 @@ asked("a moonwater_mute function owns mute",
       "printf '%s\\n' 'function moonwater_mute {' '  :' '}' > /root/main.moonwater.sh; chmod 600 /root/main.moonwater.sh; moonwater bind mute | grep -c 'mute: /root/main.moonwater.sh:1' | sed 's/^/nf-/' | rev",
       b"1-fn")
 asked("the power button takes a command",
-      "printf '%s\\n' 'function moonwater_event {' '  :' '}' > /root/main.moonwater.sh; chmod 600 /root/main.moonwater.sh; moonwater bind mute >/dev/null; moonwater bind poweroff 'echo NOTTUB | rev > /dev/ttyS0' | grep -c NOTTUB | sed 's/^/tes-/' | rev",
+      "printf '%s\\n' 'function moonwater_event {' '  :' '}' > /root/main.moonwater.sh; chmod 600 /root/main.moonwater.sh; moonwater bind mute >/dev/null; moonwater bind poweroff 'echo NOTTUB | rev > /dev/" + tty + "' | grep -c NOTTUB | sed 's/^/tes-/' | rev",
       b"1-set")
 
-if ready:
-    press()
-    time.sleep(0.2)
-    press()
-    pump(4)
-out.append(("two presses inside a second run it once",
-            str(transcript.count(b"BUTTON")), "1"))
+if button:
+    if ready:
+        press()
+        time.sleep(0.2)
+        press()
+        pump(4)
+    out.append(("two presses inside a second run it once",
+                str(transcript.count(b"BUTTON")), "1"))
 
-if ready:
-    press()
-    pump(1.6)
-    press()
-    pump(4)
-out.append(("two presses apart run it twice more",
-            str(transcript.count(b"BUTTON")), "3"))
+    if ready:
+        press()
+        pump(1.6)
+        press()
+        pump(4)
+    out.append(("two presses apart run it twice more",
+                str(transcript.count(b"BUTTON")), "3"))
 
 asked("the power button runs poweroff again",
       "moonwater bind poweroff poweroff | grep -c 'poweroff: poweroff' | sed 's/^/niaga-/' | rev",
       b"1-again")
 
-powered = "no"
-if ready:
-    press()
-    try:
-        guest.wait(40)
-        powered = "yes"
-    except Exception:
-        pass
-pump(0.5)
-out.append(("a press powers the machine off", powered, "yes"))
-out.append(("and it went down the orderly way",
-            "yes" if b"reboot: Power down" in transcript else "no", "yes"))
+if button:
+    powered = "no"
+    if ready:
+        press()
+        try:
+            guest.wait(40 * slow)
+            powered = "yes"
+        except Exception:
+            pass
+    pump(0.5)
+    out.append(("a press powers the machine off", powered, "yes"))
+    out.append(("and it went down the orderly way",
+                "yes" if b"reboot: Power down" in transcript else "no", "yes"))
 
 if guest.poll() is None:
     guest.kill()
@@ -11046,10 +11111,10 @@ PY
         while IFS='|' read -r name got want; do
                 same "$name" "$want" "$got"
         done < "$work/power-answers"
-elif [ "$boot_emulator" != qemu-system-x86_64 ]; then
-        printf '  %-24s not an x86 image, the power button pass did not run\n' 'power button'
+        [ "$power_button" = yes ] ||
+                printf '  %-24s this board has no power button; the four presses did not run\n' 'power button'
 else
-        printf '  %-24s no /dev/kvm, the power button pass did not run\n' 'power button'
+        printf '  %-24s no KVM for x86 or no Linux compiler here, the power button pass did not run\n' 'power button'
 fi
 
 counted
