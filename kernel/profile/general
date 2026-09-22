@@ -137,6 +137,11 @@ CONFIG_SCSI_MOD=y
 CONFIG_BLK_DEV_NVME=y
 CONFIG_NVME_CORE=y
 CONFIG_BLK_DEV_LOOP=y
+# None made at boot. Eight idle loop devices were 512 KiB of request tags plus
+# their sysfs, about 630 KiB of an idle guest's used memory, and nothing in
+# the image opens one; losetup and mount -o loop ask /dev/loop-control for a
+# device, which makes it then.
+CONFIG_BLK_DEV_LOOP_MIN_COUNT=0
 CONFIG_MD=y
 CONFIG_BLK_DEV_DM=y
 
