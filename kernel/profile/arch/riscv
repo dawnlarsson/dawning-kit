@@ -19,12 +19,11 @@
 #> program_flags -ffunction-sections
 
 #
-#       Unlike arch/arm, which targets a Raspberry Pi and needs profile/arm_virt
-#       bolted on before it can be watched booting, this profile is the generic
-#       RISC-V platform: SBI firmware, a device tree, PLIC and CLINT. That is
-#       what QEMU's "virt" machine is and also what a VisionFive or an
-#       Unmatched is, so there is no second profile to compose. The console is
-#       in here for the same reason.
+#       Like arch/arm, this profile is the generic platform rather than one
+#       board: SBI firmware, a device tree, PLIC and CLINT. That is what QEMU's
+#       "virt" machine is and also what a VisionFive or an Unmatched is, so
+#       there is no second profile to compose. The console is in here for the
+#       same reason.
 #
 
 CONFIG_64BIT=y
