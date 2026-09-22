@@ -48073,8 +48073,16 @@ static fn tls_client_hello_bounds(void)
                   used == 290);
 }
 
-static bool tls_hello_offers_group(p8 address_to hello, positive length,
-                                   positive group)
+/*
+        Where one extension's body sits in a ClientHello, and how long it is.
+        The fixed fields in front of the extension list and the walk over it
+        are the same question whichever extension a check asks about, so they
+        are asked once here; false is a hello that is malformed anywhere
+        before the answer, or one that does not carry the extension at all.
+*/
+static bool tls_hello_extension(p8 address_to hello, positive length,
+                                positive id, positive address_to body,
+                                positive address_to body_length)
 {
         positive at;
         positive ext_end;
@@ -48114,37 +48122,50 @@ static bool tls_hello_offers_group(p8 address_to hello, positive length,
 
         while (at < ext_end)
         {
-                positive id;
+                positive found;
                 positive elen;
 
                 if (at + 4 > ext_end)
                         return false;
-                id = ((positive)hello[at] << 8) | hello[at + 1];
+                found = ((positive)hello[at] << 8) | hello[at + 1];
                 elen = ((positive)hello[at + 2] << 8) | hello[at + 3];
                 at += 4;
                 if (at + elen > ext_end)
                         return false;
-                if (id == 0x000a)
+                if (found == id)
                 {
-                        positive list;
-                        positive item;
-
-                        if (elen < 2)
-                                return false;
-                        list = ((positive)hello[at] << 8) | hello[at + 1];
-                        if (list + 2 != elen || (list & 1))
-                                return false;
-                        for (item = 0; item < list; item += 2)
-                        {
-                                positive offered =
-                                    ((positive)hello[at + 2 + item] << 8) |
-                                    hello[at + 3 + item];
-                                if (offered == group)
-                                        return true;
-                        }
-                        return false;
+                        address_to body = at;
+                        address_to body_length = elen;
+                        return true;
                 }
                 at += elen;
+        }
+
+        return false;
+}
+
+static bool tls_hello_offers_group(p8 address_to hello, positive length,
+                                   positive group)
+{
+        positive at;
+        positive elen;
+        positive list;
+        positive item;
+
+        if (!tls_hello_extension(hello, length, 0x000a, address_of at,
+                                 address_of elen))
+                return false;
+        if (elen < 2)
+                return false;
+        list = ((positive)hello[at] << 8) | hello[at + 1];
+        if (list + 2 != elen || (list & 1))
+                return false;
+        for (item = 0; item < list; item += 2)
+        {
+                positive offered = ((positive)hello[at + 2 + item] << 8) |
+                                   hello[at + 3 + item];
+                if (offered == group)
+                        return true;
         }
 
         return false;
@@ -48154,82 +48175,31 @@ static bool tls_hello_offers_share(p8 address_to hello, positive length,
                                    positive group, positive key_length)
 {
         positive at;
-        positive ext_end;
-        positive session;
-        positive cipher_len;
-        positive comp_len;
+        positive elen;
+        positive list;
+        positive item;
 
-        if (length < 44 || hello[0] != TLS_HS_CLIENT_HELLO)
+        if (!tls_hello_extension(hello, length, 0x0033, address_of at,
+                                 address_of elen))
                 return false;
+        if (elen < 2)
+                return false;
+        list = ((positive)hello[at] << 8) | hello[at + 1];
+        if (list + 2 != elen)
+                return false;
+        item = 2;
+        while (item + 4 <= 2 + list)
         {
-                positive hs = ((positive)hello[1] << 16) | ((positive)hello[2] << 8) |
-                              hello[3];
-                if (hs + 4 != length)
-                        return false;
-        }
+                positive offered = ((positive)hello[at + item] << 8) |
+                                   hello[at + item + 1];
+                positive klen = ((positive)hello[at + item + 2] << 8) |
+                                hello[at + item + 3];
 
-        at = 4 + 2 + 32;
-        session = hello[at++];
-        at += session;
-        if (at + 2 > length)
-                return false;
-        cipher_len = ((positive)hello[at] << 8) | hello[at + 1];
-        at += 2 + cipher_len;
-        if (at + 1 > length)
-                return false;
-        comp_len = hello[at++];
-        at += comp_len;
-        if (at + 2 > length)
-                return false;
-        {
-                positive ext_length = ((positive)hello[at] << 8) | hello[at + 1];
-                at += 2;
-                ext_end = at + ext_length;
-                if (ext_end != length)
+                if (item + 4 + klen > 2 + list)
                         return false;
-        }
-
-        while (at < ext_end)
-        {
-                positive id;
-                positive elen;
-
-                if (at + 4 > ext_end)
-                        return false;
-                id = ((positive)hello[at] << 8) | hello[at + 1];
-                elen = ((positive)hello[at + 2] << 8) | hello[at + 3];
-                at += 4;
-                if (at + elen > ext_end)
-                        return false;
-                if (id == 0x0033)
-                {
-                        positive list;
-                        positive item;
-
-                        if (elen < 2)
-                                return false;
-                        list = ((positive)hello[at] << 8) | hello[at + 1];
-                        if (list + 2 != elen)
-                                return false;
-                        item = 2;
-                        while (item + 4 <= 2 + list)
-                        {
-                                positive offered =
-                                    ((positive)hello[at + item] << 8) |
-                                    hello[at + item + 1];
-                                positive klen =
-                                    ((positive)hello[at + item + 2] << 8) |
-                                    hello[at + item + 3];
-
-                                if (item + 4 + klen > 2 + list)
-                                        return false;
-                                if (offered == group)
-                                        return klen == key_length;
-                                item += 4 + klen;
-                        }
-                        return false;
-                }
-                at += elen;
+                if (offered == group)
+                        return klen == key_length;
+                item += 4 + klen;
         }
 
         return false;
