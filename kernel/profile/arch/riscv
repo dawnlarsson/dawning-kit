@@ -69,6 +69,18 @@ CONFIG_RISCV_ISA_ZBB=y
 CONFIG_RISCV_ISA_ZICBOM=y
 CONFIG_RISCV_ISA_ZICBOZ=y
 
+#
+#       V, on the same terms: the kernel turns it on only for a hart that
+#       reports it, and saves and restores it per task. Canvas draws with it
+#       inside kernel_vector_begin (canvas_simd_begin) when the hart has it,
+#       and userspace gets it by default the way every other distribution
+#       ships it. Preemptive, so a long compose in vector registers can
+#       still be preempted rather than holding the hart.
+#
+CONFIG_RISCV_ISA_V=y
+CONFIG_RISCV_ISA_V_DEFAULT_ENABLE=y
+CONFIG_RISCV_ISA_V_PREEMPTIVE=y
+
 # Interrupts and time: the two controllers every SBI platform has.
 CONFIG_RISCV_INTC=y
 CONFIG_SIFIVE_PLIC=y
