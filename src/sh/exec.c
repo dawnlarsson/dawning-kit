@@ -8215,12 +8215,6 @@ b32 shell_call_slot(positive slot, string_address name,
         return status;
 }
 
-b32 shell_call_function(string_address name, string_address address_to arguments,
-                        positive count)
-{
-        return shell_call_slot(shell_function_slot(name), name, arguments, count);
-}
-
 /*
         set -x: the command about to run, written out.
 
