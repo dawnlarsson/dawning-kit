@@ -335,7 +335,11 @@ static b32 screen_term()
         // Centred, and published once below with its cursor already in it.
         window->region = WINDOW_CENTRED;
 
-        p8 from_shell[1024];
+        // As much as the far end's line discipline hands over in one read,
+        // which is its four kilobyte buffer: a quarter of that was four
+        // reads, four wakeups of the writer and four passes of the loop
+        // below for every one the pty needed.
+        p8 from_shell[4096];
         struct window_key typed[WINDOW_KEYS];
         timespec nap = {0, 4000000};
         unsigned int synchronized_wait = 0;
