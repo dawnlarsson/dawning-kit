@@ -3401,6 +3401,347 @@ static void format_differential_main(const char *first, const char *count,
                                 detail[0] == 'd', 0);
 }
 
+#elif defined(SHARED_scan_differential_body)
+/*
+        Experimental C standard library
+
+        scanf, generated, written once and compiled twice
+
+        Dawn Larsson - Apache-2.0 license
+        github.com/dawnlarsson/dawning-kit
+
+        www.dawning.dev
+*/
+
+/*
+        A grid of formats against inputs, walked in full. CHECK_scan pinned a
+        sample of a glibc run one case to a line; every one of those is a point
+        here, now compared with the machine's glibc on all three machines.
+
+        Three shapes. A number: one of d i u o x X p at every length modifier,
+        or one of f e g E F G a A plain and with l, at a width or none, then
+        %n, against every numeric input -- stored into a sixty four bit slot
+        filled with 0xA5, so a conversion that writes too many or too few
+        bytes shows in the bytes. Text: %s, %c or a scan set at a width or
+        none, then %n, against every text input, into a room filled with
+        0x7F. And formats that assign nothing, whose answer is the whole case.
+        %n starts at minus one, so a format that failed before reaching it
+        says so.
+*/
+typedef unsigned long long sd_word;
+
+static const char *const sd_numbers[] = {
+    "42", "-42", "+42", "  42", "42abc", "", "  ", "abc", "-", "+", "- 5",
+    "+-5", "0", "007", "-0", "-4", "017", "019", "0x1f", "0X1F", "0x", "0xz",
+    "-0x10", "+0", "0G", "0b101", "0b", "0b2", "-0b1", "9223372036854775807",
+    "9223372036854775808", "-9223372036854775808", "-9223372036854775809",
+    "99999999999999999999", "-99999999999999999999",
+    "0000000000000000000000005", "2147483648", "-2147483649", "-1", "-2",
+    "+7", "08", "0x0", "7", "8", "1f", "00", "0x1G", "x1", "-0x1", "abcdef",
+    "ABCDEF", "18446744073709551615", "18446744073709551616",
+    "0xFFFFFFFFFFFFFFFF", "0x10000000000000000", "ff", "300", "70000",
+    "1ffff", "1.5", "-1.5", "+1.5", ".5", "5.", "2.5", "0.25", "1e2", "1E2",
+    "1.5e2xyz", "1e", "1e+", "1e-", ".", "-.", "inf", "-inf", "INF",
+    "infinity", "INFINITY", "infinit", "infz", "in", "2inf", "0x1p3",
+    "0X1P-2", "0x1", "0x1p", "0x.8p1", "0x.", "3.14159", "1.5e", "-2.5",
+    "3.140000", "nan", "0x1234", "1234", "(nil)", "(NIL)x", "(ni", "-0x5",
+    "0x123456"};
+static const char *const sd_texts[] = {
+    "hello", "  hello", "hello world", "", "   ", "\t\nab", "abc", "  abc",
+    "ab", "a", "abcd", "dabc", "dab", "abcZ", "ABCa", "]]a", "ab]c", "-ab",
+    "a-b", "z-ab", "abz", "abcde", "123a", "1234", "  a", "ab c", "abc]d",
+    "a^b", "ab^", "abZ9", "19afg"};
+static const char *const sd_quiet_inputs[] = {"", "y", "x", "abc", "ab", " ",
+                                              "a b", "a", " a", "%", " %",
+                                              "12"};
+static const char *const sd_quiet_formats[] = {
+    "x", "abc", "a b", " a", "", " ", "%%", "%*d", "%*s", "%*c", "%*[ab]",
+    "%y", "%", "%[abc", "%[]", "%[^]"};
+static const char *const sd_sets[] = {
+    "s", "c", "[abc]", "[^abc]", "[a-z]", "[^a-z]", "[]]", "[^]]", "[-a]",
+    "[a-]", "[z-a]", "[a-c-e]", "[0-9]", "[ ]", "[^ ]", "[]abc]", "[a^]",
+    "[^^]", "[A-Za-z]", "[0-9a-f]"};
+static const char *const sd_lengths[] = {"hh", "h", "", "l", "ll", "j", "z", "t"};
+static const long sd_widths[] = {-1, 0, 1, 2, 3, 4, 5, 8, 10, 20};
+
+#define SD_COUNT(list) ((sd_word)(sizeof(list) / sizeof((list)[0])))
+#define SD_INTEGERS (7 * 8)  // d i u o x X at eight lengths, and p at one
+#define SD_REALS (8 * 2)
+
+static sd_word sd_number_cases(void)
+{
+        return (SD_INTEGERS + SD_REALS) * SD_COUNT(sd_widths) *
+               SD_COUNT(sd_numbers);
+}
+
+static sd_word sd_text_cases(void)
+{
+        return SD_COUNT(sd_sets) * SD_COUNT(sd_widths) * SD_COUNT(sd_texts);
+}
+
+static sd_word sd_grid_size(void)
+{
+        return sd_number_cases() + sd_text_cases() +
+               SD_COUNT(sd_quiet_formats) * SD_COUNT(sd_quiet_inputs);
+}
+
+static long sd_decimal(char *into, sd_word value)
+{
+        char scratch[24];
+        long length = 0;
+        long at = 0;
+
+        do
+        {
+                scratch[length++] = (char)('0' + value % 10);
+                value /= 10;
+        } while (value);
+
+        while (length)
+                into[at++] = scratch[--length];
+
+        return at;
+}
+
+static long sd_hex(char *into, const unsigned char *bytes, long count)
+{
+        long at;
+
+        for (at = 0; at < count; at++)
+        {
+                into[2 * at] = "0123456789abcdef"[bytes[at] >> 4];
+                into[2 * at + 1] = "0123456789abcdef"[bytes[at] & 15];
+        }
+
+        return 2 * count;
+}
+
+static long sd_copy(char *into, const char *text)
+{
+        long at = 0;
+
+        while (text[at])
+        {
+                into[at] = text[at];
+                at++;
+        }
+
+        return at;
+}
+
+static sd_word sd_parse(const char *text)
+{
+        sd_word value = 0;
+
+        while (*text >= '0' && *text <= '9')
+                value = value * 10 + (sd_word)(*text++ - '0');
+
+        return value;
+}
+
+//      One case from its index: the format, the input, and the shape --
+//      'v' for a number, 't' for text, 'q' for a format that assigns nothing.
+static char sd_case(sd_word index, char *format, const char **input)
+{
+        long at = 0;
+
+        if (index < sd_number_cases())
+        {
+                sd_word pick = index % SD_COUNT(sd_numbers);
+                sd_word spec = index / SD_COUNT(sd_numbers);
+                long width = sd_widths[spec % SD_COUNT(sd_widths)];
+                sd_word kind = spec / SD_COUNT(sd_widths);
+
+                *input = sd_numbers[pick];
+                format[at++] = '%';
+
+                if (width >= 0)
+                        at += sd_decimal(format + at, (sd_word)width);
+
+                if (kind < SD_INTEGERS - 8)
+                {
+                        at += sd_copy(format + at, sd_lengths[kind % 8]);
+                        format[at++] = "diuoxX"[kind / 8];
+                }
+                else if (kind < SD_INTEGERS)
+                {
+                        format[at++] = 'p';
+                }
+                else
+                {
+                        kind -= SD_INTEGERS;
+
+                        if (kind & 1)
+                                format[at++] = 'l';
+
+                        format[at++] = "feEgGaAF"[kind / 2];
+                }
+
+                at += sd_copy(format + at, "%n");
+                format[at] = 0;
+                return 'v';
+        }
+
+        index -= sd_number_cases();
+
+        if (index < sd_text_cases())
+        {
+                sd_word pick = index % SD_COUNT(sd_texts);
+                sd_word spec = index / SD_COUNT(sd_texts);
+                long width = sd_widths[spec % SD_COUNT(sd_widths)];
+
+                *input = sd_texts[pick];
+                format[at++] = '%';
+
+                if (width >= 0)
+                        at += sd_decimal(format + at, (sd_word)width);
+
+                at += sd_copy(format + at,
+                              sd_sets[spec / SD_COUNT(sd_widths)]);
+                at += sd_copy(format + at, "%n");
+                format[at] = 0;
+                return 't';
+        }
+
+        index -= sd_text_cases();
+        *input = sd_quiet_inputs[index % SD_COUNT(sd_quiet_inputs)];
+        at += sd_copy(format, sd_quiet_formats[index / SD_COUNT(sd_quiet_inputs)]);
+        format[at] = 0;
+        return 'q';
+}
+
+//      first, count and "detail": a digest per 65536 cases of every answer,
+//      every %n and every byte stored, or a line per case; the digests end
+//      with how many cases there were.
+static void scan_differential_main(const char *first_text,
+                                   const char *count_text, const char *detail)
+{
+        static char line[512];
+        static unsigned char room[64];
+        char format[48];
+        sd_word hash = 0xCBF29CE484222325ull;
+        sd_word first = first_text[0] ? sd_parse(first_text) : 0;
+        sd_word count = count_text[0] ? sd_parse(count_text) : sd_grid_size();
+        sd_word index;
+        long at;
+        long i;
+
+        if (first > sd_grid_size())
+                first = sd_grid_size();
+
+        if (count > sd_grid_size() - first)
+                count = sd_grid_size() - first;
+
+        for (index = first; index < first + count; index++)
+        {
+                const char *input;
+                char shape = sd_case(index, format, &input);
+                sd_word slot = 0xA5A5A5A5A5A5A5A5ull;
+                int used = -1;
+                int answer;
+                long stored = 0;
+                const unsigned char *bytes = room;
+
+                for (i = 0; i < (long)sizeof(room); i++)
+                        room[i] = 0x7F;
+
+                if (shape == 'v')
+                {
+                        answer = sscanf(input, format, &slot, &used);
+                        bytes = (const unsigned char *)&slot;
+                        stored = 8;
+                }
+                else if (shape == 't')
+                {
+                        answer = sscanf(input, format, room, &used);
+                        stored = sizeof(room);
+                }
+                else
+                {
+                        answer = sscanf(input, format);
+                }
+
+                if (detail[0] == 'd')
+                {
+                        at = sd_decimal(line, index);
+                        line[at++] = ' ';
+                        line[at++] = '[';
+                        at += sd_copy(line + at, format);
+                        line[at++] = ']';
+                        line[at++] = ' ';
+                        line[at++] = '[';
+
+                        for (i = 0; input[i]; i++)
+                        {
+                                unsigned char c = (unsigned char)input[i];
+
+                                if (c < ' ')
+                                {
+                                        line[at++] = '\\';
+                                        line[at++] = 'x';
+                                        at += sd_hex(line + at, &c, 1);
+                                }
+                                else
+                                {
+                                        line[at++] = (char)c;
+                                }
+                        }
+
+                        line[at++] = ']';
+                        line[at++] = ' ';
+
+                        if (answer < 0)
+                                line[at++] = '-';
+
+                        at += sd_decimal(line + at, (sd_word)(answer < 0 ? -answer
+                                                                         : answer));
+                        line[at++] = ' ';
+
+                        if (used < 0)
+                                line[at++] = '-';
+
+                        at += sd_decimal(line + at, (sd_word)(used < 0 ? -used : used));
+                        line[at++] = ' ';
+                        at += sd_hex(line + at, bytes, stored > 16 ? 16 : stored);
+                        line[at++] = '\n';
+                        line[at] = 0;
+                        sd_text(line);
+                        continue;
+                }
+
+                hash = (hash ^ (sd_word)(unsigned)answer) * 0x100000001B3ull;
+                hash = (hash ^ (sd_word)(unsigned)used) * 0x100000001B3ull;
+
+                for (i = 0; i < stored; i++)
+                        hash = (hash ^ bytes[i]) * 0x100000001B3ull;
+
+                if ((index + 1) % 65536 == 0 || index + 1 == first + count)
+                {
+                        at = sd_copy(line, "block ");
+                        at += sd_decimal(line + at, index / 65536);
+                        line[at++] = ' ';
+
+                        for (i = 0; i < 8; i++)
+                                room[i] = (unsigned char)(hash >> (56 - 8 * i));
+
+                        at += sd_hex(line + at, room, 8);
+                        line[at++] = '\n';
+                        line[at] = 0;
+                        sd_text(line);
+                        hash = 0xCBF29CE484222325ull;
+                }
+        }
+
+        if (detail[0] != 'd')
+        {
+                at = sd_copy(line, "cases ");
+                at += sd_decimal(line + at, count);
+                line[at++] = '\n';
+                line[at] = 0;
+                sd_text(line);
+        }
+}
+
 #elif defined(SHARED_spool_body) || defined(SHARED_stream_body) || \
       defined(SHARED_stream_buffering_body) || defined(SHARED_stream_standard_body)
 /* What each body measures a string with, so that neither side's C library is asked. */
@@ -39348,12 +39689,65 @@ int main(int argc, char **argv)
 }
 #endif /* CHECK_format_differential_reference */
 
+#ifdef CHECK_scan_differential
+/*
+        scanf's grid over this tree's own, digests through lib.c's log.
+*/
+#include "../src/lib.util.c"
+
+static void sd_text(const char *text)
+{
+        string_format(log, "%s", (string_address)text);
+}
+
+#define SHARED_scan_differential_body
+#include "checks.c"
+#undef SHARED_scan_differential_body
+
+b32 main(void)
+{
+        positive arguments = program_argument_count();
+
+        scan_differential_main(
+            arguments > 1 ? (const char *)program_argument(1) : "",
+            arguments > 2 ? (const char *)program_argument(2) : "",
+            arguments > 3 ? (const char *)program_argument(3) : "");
+        log_flush();
+        return 0;
+}
+#endif /* CHECK_scan_differential */
+
+#ifdef CHECK_scan_differential_reference
+/*
+        The same grid over the machine's glibc, built by the host compiler:
+        the answer key for CHECK_scan_differential.
+*/
+#include <stdio.h>
+
+static void sd_text(const char *text)
+{
+        fputs(text, stdout);
+}
+
+#define SHARED_scan_differential_body
+#include "checks.c"
+#undef SHARED_scan_differential_body
+
+int main(int argc, char **argv)
+{
+        scan_differential_main(argc > 1 ? argv[1] : "", argc > 2 ? argv[2] : "",
+                               argc > 3 ? argv[3] : "");
+        fflush(stdout);
+        return 0;
+}
+#endif /* CHECK_scan_differential_reference */
+
 #ifdef CHECK_scan
 #include "../src/lib.util.c"
 /*
         Experimental C standard library
 
-        scanf, pinned against the answers a real glibc gave
+        scanf, what a comparison with glibc cannot state
 
         Dawn Larsson - Apache-2.0 license
         github.com/dawnlarsson/dawning-kit
@@ -39362,635 +39756,29 @@ int main(int argc, char **argv)
 */
 
 /*
-        WHERE THE EXPECTED ANSWERS CAME FROM
+        Every single-conversion answer -- the value stored, how many bytes of
+        the object moved, where %n landed and what came back -- is compared
+        with the machine's glibc by CHECK_scan_differential, a grid of some
+        eighty thousand formats and inputs walked on all three machines. It
+        holds every case this section used to pin from a glibc 2.44 run,
+        the length modifiers' narrowing and %p's (nil) among them.
 
-        Every number in the generated block below was produced by GNU libc
-        2.44 on x86_64, by a second program built against the real header and
-        run on the same format and the same input, and copied here unchanged.
-
-        That comparison was much larger than what is kept here. 34,475 format
-        and input pairs were run through both libraries twice each -- once as
-        sscanf over a string and once as fscanf over a file, so that the
-        stream position, the end-of-file indicator, the error indicator and
-        errno could be compared as well as the answer and the values -- for
-        68,950 result lines. With numbers.c underneath, which is where strtof,
-        strtod and strtold come from, all 68,950 were identical. Not one pair
-        disagreed about the return value, about a converted value, about where
-        the stream was left, or about what feof, ferror and errno said
-        afterwards.
-
-        The same programs were built for arm64 and riscv64 and run under qemu.
-        arm64 against a glibc built for arm64 was identical on all 68,950
-        lines as well, and arm64 and riscv64 produced byte identical output to
-        each other and to x86_64 except on the 226 lines that print a long
-        double, where x86_64's eighty bit extended and the other two's
-        binary128 are different formats of the same value.
-
-        The riscv64 cross toolchain carries glibc 2.41 rather than 2.44 and
-        disagrees with BOTH of the others on about a thousand pairs. Every one
-        of them is an incomplete prefix -- "0x", "1e", "0x1p", "0x." -- which
-        2.44 consumes and calls a matching failure as C requires and 2.41 does
-        not. This follows 2.44, which follows the standard, and the note at the
-        top of src/standard/scan.c is about that rule and nothing else.
-
-        Before numbers.c landed the family was developed against a stand-in
-        strtod, and in that configuration thirty three pairs differed, all of
-        them a floating point VALUE and none of them a return value or a
-        position. Thirty of those are gone now. What remains is what the
-        fallback path in scan.c says it is: without numbers.c, "%f" is a
-        double narrowed rather than a float parsed and "%Lf" is a double
-        widened, and the two round differently at the last place.
-
-        What is kept below is a stratified sample of that run plus every
-        corner worth naming.
+        What stays here is what that grid cannot say: %Lf, whose object
+        differs between x86_64's eighty bits and the others' binary128,
+        several directives in one format, the stream entries with their
+        position and indicators, errno, and the v-forms. Two notes from the
+        run the pins came from still hold: the riscv64 cross toolchain's
+        glibc 2.41 consumes incomplete prefixes -- "0x", "1e", "0x1p" --
+        where 2.44 and the standard call them a matching failure, and this
+        follows 2.44; and without numbers.c, "%f" is a double narrowed rather
+        than a float parsed and "%Lf" a double widened.
 */
 
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
 
-/*
-        THE THREE SHAPES EVERY GENERATED CASE IS ONE OF
-
-        A conversion that writes a number writes it into a sixty four bit
-        slot filled with 0xA5, and the whole slot is compared afterwards. That
-        is deliberate and it is the only way to see the two mistakes that a
-        typed comparison hides: a "%d" that writes eight bytes where four were
-        asked for, and a "%hhd" that writes two. The pattern that comes back
-        says how many bytes moved as well as what they were, and the glibc
-        run that produced these numbers filled the same slot the same way.
-
-        A conversion that writes bytes writes them into a buffer filled with
-        0x7F, and the first eight are compared. Eight is past the end of every
-        string in the table, so the comparison covers the terminator, the byte
-        after it, and the bytes a width should not have reached.
-
-        A directive that assigns nothing is its answer and nothing else.
-
-        used is the "%n" every format ends with, sitting at minus one before
-        the call, so a format that failed before reaching it says so by
-        leaving it there -- which is itself a check, because %n is required
-        not to be reached and not to be counted.
-*/
-static positive slot;
-static p8 room[16];
 static b32 used;
-
-static fn value_case(string_address format, string_address input,
-                     b32 answer_wanted, positive value_wanted, b32 used_wanted)
-{
-        b32 answer;
-
-        slot = 0xA5A5A5A5A5A5A5A5ull;
-        used = -1;
-        answer = sscanf(input, format, address_of slot, address_of used);
-
-        checks++;
-
-        if (answer == answer_wanted && slot == value_wanted &&
-            used == used_wanted)
-                return;
-
-        failures++;
-        string_format(log,
-                      "  FAIL [%s] <- [%s] answered %b value %p used %b,"
-                      " wanted %b %p %b\n",
-                      format, input, answer, slot, used, answer_wanted,
-                      value_wanted, used_wanted);
-}
-
-static fn text_case(string_address format, string_address input,
-                    b32 answer_wanted, string_address room_wanted,
-                    b32 used_wanted)
-{
-        b32 answer;
-
-        memory_fill(room, 0x7F, sizeof(room));
-        used = -1;
-        answer = sscanf(input, format, room, address_of used);
-
-        checks++;
-
-        if (answer == answer_wanted && used == used_wanted &&
-            memory_compare(room, room_wanted, 8) == 0)
-                return;
-
-        failures++;
-        string_format(log, "  FAIL [%s] <- [%s] answered %b used %b,"
-                           " wanted %b %b\n",
-                      format, input, answer, used, answer_wanted, used_wanted);
-}
-
-static fn answer_case(string_address format, string_address input,
-                      b32 answer_wanted)
-{
-        b32 answer = sscanf(input, format);
-
-        checks++;
-
-        if (answer == answer_wanted)
-                return;
-
-        failures++;
-        string_format(log, "  FAIL [%s] <- [%s] answered %b, wanted %b\n",
-                      format, input, answer, answer_wanted);
-}
-
-static fn generated(void)
-{
-        //      the signed integer conversions
-        value_case((string_address) "%d%n", (string_address) "42",
-                   1, 0xA5A5A5A50000002AULL, 2);
-        value_case((string_address) "%d%n", (string_address) "-42",
-                   1, 0xA5A5A5A5FFFFFFD6ULL, 3);
-        value_case((string_address) "%d%n", (string_address) "+42",
-                   1, 0xA5A5A5A50000002AULL, 3);
-        value_case((string_address) "%d%n", (string_address) "  42",
-                   1, 0xA5A5A5A50000002AULL, 4);
-        value_case((string_address) "%d%n", (string_address) "42abc",
-                   1, 0xA5A5A5A50000002AULL, 2);
-        value_case((string_address) "%d%n", (string_address) "",
-                   -1, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%d%n", (string_address) "  ",
-                   -1, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%d%n", (string_address) "abc",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%d%n", (string_address) "-",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%d%n", (string_address) "+",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%d%n", (string_address) "- 5",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%d%n", (string_address) "+-5",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%d%n", (string_address) "0",
-                   1, 0xA5A5A5A500000000ULL, 1);
-        value_case((string_address) "%d%n", (string_address) "007",
-                   1, 0xA5A5A5A500000007ULL, 3);
-        value_case((string_address) "%d%n", (string_address) "-0",
-                   1, 0xA5A5A5A500000000ULL, 2);
-        value_case((string_address) "%1d%n", (string_address) "42",
-                   1, 0xA5A5A5A500000004ULL, 1);
-        value_case((string_address) "%2d%n", (string_address) "42",
-                   1, 0xA5A5A5A50000002AULL, 2);
-        value_case((string_address) "%3d%n", (string_address) "42",
-                   1, 0xA5A5A5A50000002AULL, 2);
-        value_case((string_address) "%1d%n", (string_address) "-4",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%2d%n", (string_address) "-4",
-                   1, 0xA5A5A5A5FFFFFFFCULL, 2);
-        value_case((string_address) "%0d%n", (string_address) "42",
-                   1, 0xA5A5A5A50000002AULL, 2);
-        value_case((string_address) "%20d%n", (string_address) "42",
-                   1, 0xA5A5A5A50000002AULL, 2);
-        value_case((string_address) "%i%n", (string_address) "42",
-                   1, 0xA5A5A5A50000002AULL, 2);
-        value_case((string_address) "%i%n", (string_address) "0",
-                   1, 0xA5A5A5A500000000ULL, 1);
-        value_case((string_address) "%i%n", (string_address) "017",
-                   1, 0xA5A5A5A50000000FULL, 3);
-        value_case((string_address) "%i%n", (string_address) "019",
-                   1, 0xA5A5A5A500000001ULL, 2);
-        value_case((string_address) "%i%n", (string_address) "0x1f",
-                   1, 0xA5A5A5A50000001FULL, 4);
-        value_case((string_address) "%i%n", (string_address) "0X1F",
-                   1, 0xA5A5A5A50000001FULL, 4);
-        value_case((string_address) "%i%n", (string_address) "0x",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%i%n", (string_address) "0xz",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%i%n", (string_address) "-0x10",
-                   1, 0xA5A5A5A5FFFFFFF0ULL, 5);
-        value_case((string_address) "%i%n", (string_address) "+0",
-                   1, 0xA5A5A5A500000000ULL, 2);
-        value_case((string_address) "%i%n", (string_address) "0G",
-                   1, 0xA5A5A5A500000000ULL, 1);
-        value_case((string_address) "%i%n", (string_address) "0b101",
-                   1, 0xA5A5A5A500000005ULL, 5);
-        value_case((string_address) "%i%n", (string_address) "0b",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%i%n", (string_address) "0b2",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%i%n", (string_address) "-0b1",
-                   1, 0xA5A5A5A5FFFFFFFFULL, 4);
-        value_case((string_address) "%2i%n", (string_address) "0x1f",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%3i%n", (string_address) "0x1f",
-                   1, 0xA5A5A5A500000001ULL, 3);
-        value_case((string_address) "%4i%n", (string_address) "0x1f",
-                   1, 0xA5A5A5A50000001FULL, 4);
-        value_case((string_address) "%2i%n", (string_address) "0b101",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%3i%n", (string_address) "0b101",
-                   1, 0xA5A5A5A500000001ULL, 3);
-        value_case((string_address) "%ld%n", (string_address) "42",
-                   1, 0x000000000000002AULL, 2);
-        value_case((string_address) "%lld%n", (string_address) "-42",
-                   1, 0xFFFFFFFFFFFFFFD6ULL, 3);
-        value_case((string_address) "%jd%n", (string_address) "42",
-                   1, 0x000000000000002AULL, 2);
-        value_case((string_address) "%td%n", (string_address) "42",
-                   1, 0x000000000000002AULL, 2);
-        value_case((string_address) "%ld%n", (string_address) "9223372036854775807",
-                   1, 0x7FFFFFFFFFFFFFFFULL, 19);
-        value_case((string_address) "%ld%n", (string_address) "9223372036854775808",
-                   1, 0x7FFFFFFFFFFFFFFFULL, 19);
-        value_case((string_address) "%ld%n", (string_address) "-9223372036854775808",
-                   1, 0x8000000000000000ULL, 20);
-        value_case((string_address) "%ld%n", (string_address) "-9223372036854775809",
-                   1, 0x8000000000000000ULL, 20);
-        value_case((string_address) "%ld%n", (string_address) "99999999999999999999",
-                   1, 0x7FFFFFFFFFFFFFFFULL, 20);
-        value_case((string_address) "%ld%n", (string_address) "-99999999999999999999",
-                   1, 0x8000000000000000ULL, 21);
-        value_case((string_address) "%ld%n", (string_address) "0000000000000000000000005",
-                   1, 0x0000000000000005ULL, 25);
-        value_case((string_address) "%d%n", (string_address) "99999999999999999999",
-                   1, 0xA5A5A5A5FFFFFFFFULL, 20);
-        value_case((string_address) "%d%n", (string_address) "2147483648",
-                   1, 0xA5A5A5A580000000ULL, 10);
-        value_case((string_address) "%d%n", (string_address) "-2147483649",
-                   1, 0xA5A5A5A57FFFFFFFULL, 11);
-
-        //      the unsigned integer conversions
-        value_case((string_address) "%u%n", (string_address) "42",
-                   1, 0xA5A5A5A50000002AULL, 2);
-        value_case((string_address) "%u%n", (string_address) "-1",
-                   1, 0xA5A5A5A5FFFFFFFFULL, 2);
-        value_case((string_address) "%u%n", (string_address) "-2",
-                   1, 0xA5A5A5A5FFFFFFFEULL, 2);
-        value_case((string_address) "%u%n", (string_address) "+7",
-                   1, 0xA5A5A5A500000007ULL, 2);
-        value_case((string_address) "%u%n", (string_address) "abc",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%o%n", (string_address) "017",
-                   1, 0xA5A5A5A50000000FULL, 3);
-        value_case((string_address) "%o%n", (string_address) "08",
-                   1, 0xA5A5A5A500000000ULL, 1);
-        value_case((string_address) "%o%n", (string_address) "0x0",
-                   1, 0xA5A5A5A500000000ULL, 1);
-        value_case((string_address) "%o%n", (string_address) "7",
-                   1, 0xA5A5A5A500000007ULL, 1);
-        value_case((string_address) "%o%n", (string_address) "8",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%x%n", (string_address) "1f",
-                   1, 0xA5A5A5A50000001FULL, 2);
-        value_case((string_address) "%x%n", (string_address) "0x1f",
-                   1, 0xA5A5A5A50000001FULL, 4);
-        value_case((string_address) "%x%n", (string_address) "0X1F",
-                   1, 0xA5A5A5A50000001FULL, 4);
-        value_case((string_address) "%x%n", (string_address) "0x",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%x%n", (string_address) "0",
-                   1, 0xA5A5A5A500000000ULL, 1);
-        value_case((string_address) "%x%n", (string_address) "00",
-                   1, 0xA5A5A5A500000000ULL, 2);
-        value_case((string_address) "%x%n", (string_address) "0x1G",
-                   1, 0xA5A5A5A500000001ULL, 3);
-        value_case((string_address) "%x%n", (string_address) "x1",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%x%n", (string_address) "-0x1",
-                   1, 0xA5A5A5A5FFFFFFFFULL, 4);
-        value_case((string_address) "%x%n", (string_address) "abcdef",
-                   1, 0xA5A5A5A500ABCDEFULL, 6);
-        value_case((string_address) "%X%n", (string_address) "ABCDEF",
-                   1, 0xA5A5A5A500ABCDEFULL, 6);
-        value_case((string_address) "%1x%n", (string_address) "0x1f",
-                   1, 0xA5A5A5A500000000ULL, 1);
-        value_case((string_address) "%2x%n", (string_address) "0x1f",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%3x%n", (string_address) "0x1f",
-                   1, 0xA5A5A5A500000001ULL, 3);
-        value_case((string_address) "%4x%n", (string_address) "0x1f",
-                   1, 0xA5A5A5A50000001FULL, 4);
-        value_case((string_address) "%lu%n", (string_address) "18446744073709551615",
-                   1, 0xFFFFFFFFFFFFFFFFULL, 20);
-        value_case((string_address) "%lu%n", (string_address) "18446744073709551616",
-                   1, 0xFFFFFFFFFFFFFFFFULL, 20);
-        value_case((string_address) "%lu%n", (string_address) "-1",
-                   1, 0xFFFFFFFFFFFFFFFFULL, 2);
-        value_case((string_address) "%lu%n", (string_address) "-2",
-                   1, 0xFFFFFFFFFFFFFFFEULL, 2);
-        value_case((string_address) "%lu%n", (string_address) "99999999999999999999",
-                   1, 0xFFFFFFFFFFFFFFFFULL, 20);
-        value_case((string_address) "%lu%n", (string_address) "-99999999999999999999",
-                   1, 0xFFFFFFFFFFFFFFFFULL, 21);
-        value_case((string_address) "%lx%n", (string_address) "0xFFFFFFFFFFFFFFFF",
-                   1, 0xFFFFFFFFFFFFFFFFULL, 18);
-        value_case((string_address) "%lx%n", (string_address) "0x10000000000000000",
-                   1, 0xFFFFFFFFFFFFFFFFULL, 19);
-        value_case((string_address) "%zu%n", (string_address) "42",
-                   1, 0x000000000000002AULL, 2);
-        value_case((string_address) "%llx%n", (string_address) "ff",
-                   1, 0x00000000000000FFULL, 2);
-
-        //      the float conversions, compared as the bytes they stored
-        value_case((string_address) "%f%n", (string_address) "1.5",
-                   1, 0xA5A5A5A53FC00000ULL, 3);
-        value_case((string_address) "%f%n", (string_address) "-1.5",
-                   1, 0xA5A5A5A5BFC00000ULL, 4);
-        value_case((string_address) "%f%n", (string_address) "+1.5",
-                   1, 0xA5A5A5A53FC00000ULL, 4);
-        value_case((string_address) "%f%n", (string_address) ".5",
-                   1, 0xA5A5A5A53F000000ULL, 2);
-        value_case((string_address) "%f%n", (string_address) "5.",
-                   1, 0xA5A5A5A540A00000ULL, 2);
-        value_case((string_address) "%f%n", (string_address) "0",
-                   1, 0xA5A5A5A500000000ULL, 1);
-        value_case((string_address) "%f%n", (string_address) "2.5",
-                   1, 0xA5A5A5A540200000ULL, 3);
-        value_case((string_address) "%f%n", (string_address) "0.25",
-                   1, 0xA5A5A5A53E800000ULL, 4);
-        value_case((string_address) "%f%n", (string_address) "1e2",
-                   1, 0xA5A5A5A542C80000ULL, 3);
-        value_case((string_address) "%f%n", (string_address) "1E2",
-                   1, 0xA5A5A5A542C80000ULL, 3);
-        value_case((string_address) "%f%n", (string_address) "1.5e2xyz",
-                   1, 0xA5A5A5A543160000ULL, 5);
-        value_case((string_address) "%f%n", (string_address) "1e",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "1e+",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "1e-",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) ".",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "-.",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "",
-                   -1, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "  ",
-                   -1, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "abc",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "+",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "inf",
-                   1, 0xA5A5A5A57F800000ULL, 3);
-        value_case((string_address) "%f%n", (string_address) "-inf",
-                   1, 0xA5A5A5A5FF800000ULL, 4);
-        value_case((string_address) "%f%n", (string_address) "INF",
-                   1, 0xA5A5A5A57F800000ULL, 3);
-        value_case((string_address) "%f%n", (string_address) "infinity",
-                   1, 0xA5A5A5A57F800000ULL, 8);
-        value_case((string_address) "%f%n", (string_address) "INFINITY",
-                   1, 0xA5A5A5A57F800000ULL, 8);
-        value_case((string_address) "%f%n", (string_address) "infinit",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "infz",
-                   1, 0xA5A5A5A57F800000ULL, 3);
-        value_case((string_address) "%f%n", (string_address) "in",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "2inf",
-                   1, 0xA5A5A5A540000000ULL, 1);
-        value_case((string_address) "%f%n", (string_address) "0x1p3",
-                   1, 0xA5A5A5A541000000ULL, 5);
-        value_case((string_address) "%f%n", (string_address) "0X1P-2",
-                   1, 0xA5A5A5A53E800000ULL, 6);
-        value_case((string_address) "%f%n", (string_address) "0x1",
-                   1, 0xA5A5A5A53F800000ULL, 3);
-        value_case((string_address) "%f%n", (string_address) "0x1p",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "0x.8p1",
-                   1, 0xA5A5A5A53F800000ULL, 6);
-        value_case((string_address) "%f%n", (string_address) "0x.",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "0x",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%f%n", (string_address) "0xz",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%3f%n", (string_address) "3.14159",
-                   1, 0xA5A5A5A540466666ULL, 3);
-        value_case((string_address) "%2f%n", (string_address) "1.5e",
-                   1, 0xA5A5A5A53F800000ULL, 2);
-        value_case((string_address) "%1f%n", (string_address) "-",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%4f%n", (string_address) "-inf",
-                   1, 0xA5A5A5A5FF800000ULL, 4);
-        value_case((string_address) "%e%n", (string_address) "1.5",
-                   1, 0xA5A5A5A53FC00000ULL, 3);
-        value_case((string_address) "%g%n", (string_address) "1.5",
-                   1, 0xA5A5A5A53FC00000ULL, 3);
-        value_case((string_address) "%a%n", (string_address) "1.5",
-                   1, 0xA5A5A5A53FC00000ULL, 3);
-        value_case((string_address) "%E%n", (string_address) "1.5",
-                   1, 0xA5A5A5A53FC00000ULL, 3);
-        value_case((string_address) "%G%n", (string_address) "1.5",
-                   1, 0xA5A5A5A53FC00000ULL, 3);
-        value_case((string_address) "%F%n", (string_address) "1.5",
-                   1, 0xA5A5A5A53FC00000ULL, 3);
-
-        //      and the same into a double
-        value_case((string_address) "%lf%n", (string_address) "1.5",
-                   1, 0x3FF8000000000000ULL, 3);
-        value_case((string_address) "%lf%n", (string_address) "1.5e2xyz",
-                   1, 0x4062C00000000000ULL, 5);
-        value_case((string_address) "%lf%n", (string_address) "0.25",
-                   1, 0x3FD0000000000000ULL, 4);
-        value_case((string_address) "%lf%n", (string_address) "-2.5",
-                   1, 0xC004000000000000ULL, 4);
-        value_case((string_address) "%8lf%n", (string_address) "3.140000",
-                   1, 0x40091EB851EB851FULL, 8);
-        value_case((string_address) "%lf%n", (string_address) "1e",
-                   0, 0xA5A5A5A5A5A5A5A5ULL, -1);
-        value_case((string_address) "%lf%n", (string_address) "nan",
-                   1, 0x7FF8000000000000ULL, 3);
-        value_case((string_address) "%lf%n", (string_address) "-inf",
-                   1, 0xFFF0000000000000ULL, 4);
-
-        //      the text conversions, with the eight bytes they left behind
-        text_case((string_address) "%s%n", (string_address) "hello",
-                  1, (string_address) "\150\145\154\154\157\000\177\177", 5);
-        text_case((string_address) "%s%n", (string_address) "  hello",
-                  1, (string_address) "\150\145\154\154\157\000\177\177", 7);
-        text_case((string_address) "%s%n", (string_address) "hello world",
-                  1, (string_address) "\150\145\154\154\157\000\177\177", 5);
-        text_case((string_address) "%s%n", (string_address) "",
-                  -1, (string_address) "\177\177\177\177\177\177\177\177", -1);
-        text_case((string_address) "%s%n", (string_address) "   ",
-                  -1, (string_address) "\177\177\177\177\177\177\177\177", -1);
-        text_case((string_address) "%s%n", (string_address) "\t\nab",
-                  1, (string_address) "\141\142\000\177\177\177\177\177", 4);
-        text_case((string_address) "%1s%n", (string_address) "hello",
-                  1, (string_address) "\150\000\177\177\177\177\177\177", 1);
-        text_case((string_address) "%2s%n", (string_address) "hello",
-                  1, (string_address) "\150\145\000\177\177\177\177\177", 2);
-        text_case((string_address) "%0s%n", (string_address) "abc",
-                  1, (string_address) "\141\142\143\000\177\177\177\177", 3);
-        text_case((string_address) "%10s%n", (string_address) "abc",
-                  1, (string_address) "\141\142\143\000\177\177\177\177", 3);
-        text_case((string_address) "%c%n", (string_address) "abc",
-                  1, (string_address) "\141\177\177\177\177\177\177\177", 1);
-        text_case((string_address) "%c%n", (string_address) "  abc",
-                  1, (string_address) "\040\177\177\177\177\177\177\177", 1);
-        text_case((string_address) "%c%n", (string_address) "",
-                  -1, (string_address) "\177\177\177\177\177\177\177\177", -1);
-        text_case((string_address) "%2c%n", (string_address) "abc",
-                  1, (string_address) "\141\142\177\177\177\177\177\177", 2);
-        text_case((string_address) "%3c%n", (string_address) "ab",
-                  -1, (string_address) "\141\142\177\177\177\177\177\177", -1);
-        text_case((string_address) "%5c%n", (string_address) "abc",
-                  -1, (string_address) "\141\142\143\177\177\177\177\177", -1);
-        text_case((string_address) "%0c%n", (string_address) "abc",
-                  1, (string_address) "\141\177\177\177\177\177\177\177", 1);
-        text_case((string_address) "%1c%n", (string_address) "a",
-                  1, (string_address) "\141\177\177\177\177\177\177\177", 1);
-        text_case((string_address) "%[abc]%n", (string_address) "abcd",
-                  1, (string_address) "\141\142\143\000\177\177\177\177", 3);
-        text_case((string_address) "%[abc]%n", (string_address) "dabc",
-                  0, (string_address) "\177\177\177\177\177\177\177\177", -1);
-        text_case((string_address) "%[abc]%n", (string_address) "",
-                  -1, (string_address) "\177\177\177\177\177\177\177\177", -1);
-        text_case((string_address) "%[^abc]%n", (string_address) "dab",
-                  1, (string_address) "\144\000\177\177\177\177\177\177", 1);
-        text_case((string_address) "%[^abc]%n", (string_address) "abc",
-                  0, (string_address) "\177\177\177\177\177\177\177\177", -1);
-        text_case((string_address) "%[a-z]%n", (string_address) "abcZ",
-                  1, (string_address) "\141\142\143\000\177\177\177\177", 3);
-        text_case((string_address) "%[^a-z]%n", (string_address) "ABCa",
-                  1, (string_address) "\101\102\103\000\177\177\177\177", 3);
-        text_case((string_address) "%[]]%n", (string_address) "]]a",
-                  1, (string_address) "\135\135\000\177\177\177\177\177", 2);
-        text_case((string_address) "%[^]]%n", (string_address) "ab]c",
-                  1, (string_address) "\141\142\000\177\177\177\177\177", 2);
-        text_case((string_address) "%[-a]%n", (string_address) "-ab",
-                  1, (string_address) "\055\141\000\177\177\177\177\177", 2);
-        text_case((string_address) "%[a-]%n", (string_address) "a-b",
-                  1, (string_address) "\141\055\000\177\177\177\177\177", 2);
-        text_case((string_address) "%[z-a]%n", (string_address) "z-ab",
-                  1, (string_address) "\172\055\141\000\177\177\177\177", 3);
-        text_case((string_address) "%[z-a]%n", (string_address) "abz",
-                  1, (string_address) "\141\000\177\177\177\177\177\177", 1);
-        text_case((string_address) "%[a-c-e]%n", (string_address) "abcde",
-                  1, (string_address) "\141\142\143\144\145\000\177\177", 5);
-        text_case((string_address) "%[0-9]%n", (string_address) "123a",
-                  1, (string_address) "\061\062\063\000\177\177\177\177", 3);
-        text_case((string_address) "%2[0-9]%n", (string_address) "1234",
-                  1, (string_address) "\061\062\000\177\177\177\177\177", 2);
-        text_case((string_address) "%[ ]%n", (string_address) "  a",
-                  1, (string_address) "\040\040\000\177\177\177\177\177", 2);
-        text_case((string_address) "%[^ ]%n", (string_address) "ab c",
-                  1, (string_address) "\141\142\000\177\177\177\177\177", 2);
-        text_case((string_address) "%[]abc]%n", (string_address) "abc]d",
-                  1, (string_address) "\141\142\143\135\000\177\177\177", 4);
-        text_case((string_address) "%[a^]%n", (string_address) "a^b",
-                  1, (string_address) "\141\136\000\177\177\177\177\177", 2);
-        text_case((string_address) "%[^^]%n", (string_address) "ab^",
-                  1, (string_address) "\141\142\000\177\177\177\177\177", 2);
-        text_case((string_address) "%[A-Za-z]%n", (string_address) "abZ9",
-                  1, (string_address) "\141\142\132\000\177\177\177\177", 3);
-        text_case((string_address) "%[0-9a-f]%n", (string_address) "19afg",
-                  1, (string_address) "\061\071\141\146\000\177\177\177", 4);
-
-        //      the formats that assign nothing, where the answer is the whole test
-        answer_case((string_address) "x", (string_address) "", -1);
-        answer_case((string_address) "x", (string_address) "y", 0);
-        answer_case((string_address) "x", (string_address) "x", 0);
-        answer_case((string_address) "abc", (string_address) "abc", 0);
-        answer_case((string_address) "abc", (string_address) "ab", -1);
-        answer_case((string_address) "abc", (string_address) "", -1);
-        answer_case((string_address) "abc", (string_address) " ", 0);
-        answer_case((string_address) "a b", (string_address) "ab", 0);
-        answer_case((string_address) "a b", (string_address) "a b", 0);
-        answer_case((string_address) " a", (string_address) "a", 0);
-        answer_case((string_address) " a", (string_address) " a", 0);
-        answer_case((string_address) "", (string_address) "", 0);
-        answer_case((string_address) "", (string_address) "a", 0);
-        answer_case((string_address) " ", (string_address) "", 0);
-        answer_case((string_address) "%%", (string_address) "%", 0);
-        answer_case((string_address) "%%", (string_address) "", -1);
-        answer_case((string_address) "%%", (string_address) "a", 0);
-        answer_case((string_address) "%%", (string_address) " %", 0);
-        answer_case((string_address) "%*d", (string_address) "", -1);
-        answer_case((string_address) "%*d", (string_address) "12", 0);
-        answer_case((string_address) "%*d", (string_address) "ab", 0);
-        answer_case((string_address) "%*s", (string_address) "ab", 0);
-        answer_case((string_address) "%*c", (string_address) "", -1);
-        answer_case((string_address) "%*[ab]", (string_address) "ab", 0);
-        answer_case((string_address) "%y", (string_address) "12", 0);
-        answer_case((string_address) "%", (string_address) "12", 0);
-        answer_case((string_address) "%[abc", (string_address) "abc", 0);
-        answer_case((string_address) "%[abc", (string_address) "", 0);
-        answer_case((string_address) "%[]", (string_address) "abc", 0);
-        answer_case((string_address) "%[^]", (string_address) "abc", 0);
-}
-
-/*
-        THE LENGTH MODIFIERS, WHICH ARE ABOUT THE OBJECT AND NOT THE VALUE
-
-        glibc converts at the full width of the machine word and then stores
-        into whatever the caller pointed at, so the narrowing is the store and
-        not the parse. 300 into a signed char is 44 and 70000 into a short is
-        4464, and a signed long's worth of overflow stored into an int is
-        minus one, because the saturated value was every bit of the low half
-        set. Each of these is a place a scanf that parsed at the target's
-        width instead would answer differently.
-*/
-static fn modifiers(void)
-{
-        b8 narrow = 0;
-        b16 shorter = 0;
-        b32 whole = 0;
-        bipolar wide = 0;
-        p8 narrow_unsigned = 0;
-        p16 shorter_unsigned = 0;
-        positive wide_unsigned = 0;
-
-        check("hh truncates to a byte",
-              sscanf((string_address) "300", (string_address) "%hhd",
-                     address_of narrow) == 1 &&
-                  narrow == 44);
-
-        check("h truncates to a halfword",
-              sscanf((string_address) "70000", (string_address) "%hd",
-                     address_of shorter) == 1 &&
-                  shorter == 4464);
-
-        check("hhu truncates the same way",
-              sscanf((string_address) "300", (string_address) "%hhu",
-                     address_of narrow_unsigned) == 1 &&
-                  narrow_unsigned == 44);
-
-        check("hx truncates the same way",
-              sscanf((string_address) "1ffff", (string_address) "%hx",
-                     address_of shorter_unsigned) == 1 &&
-                  shorter_unsigned == 0xFFFF);
-
-        check("an overflowing long stored into an int is every low bit",
-              sscanf((string_address) "99999999999999999999",
-                     (string_address) "%d", address_of whole) == 1 &&
-                  whole == -1);
-
-        check("l saturates at the signed limit",
-              sscanf((string_address) "99999999999999999999",
-                     (string_address) "%ld", address_of wide) == 1 &&
-                  wide == (bipolar)(~(positive)0 >> 1));
-
-        check("l saturates at the other end too",
-              sscanf((string_address) "-99999999999999999999",
-                     (string_address) "%ld", address_of wide) == 1 &&
-                  wide == (bipolar)((~(positive)0 >> 1) + 1));
-
-        check("the most negative long is not an overflow",
-              sscanf((string_address) "-9223372036854775808",
-                     (string_address) "%ld", address_of wide) == 1 &&
-                  wide == (bipolar)((~(positive)0 >> 1) + 1));
-
-        check("an unsigned saturates at every bit",
-              sscanf((string_address) "18446744073709551616",
-                     (string_address) "%lu", address_of wide_unsigned) == 1 &&
-                  wide_unsigned == ~(positive)0);
-
-        check("a negative unsigned wraps and is not an overflow",
-              sscanf((string_address) "-2", (string_address) "%lu",
-                     address_of wide_unsigned) == 1 &&
-                  wide_unsigned == ~(positive)0 - 1);
-
-        check("z, t and j are all the machine word",
-              sscanf((string_address) "-1", (string_address) "%zd",
-                     address_of wide) == 1 &&
-                  wide == -1);
-}
 
 /*
         %Lf, which is the one conversion whose object this tree has no
@@ -40050,76 +39838,6 @@ static fn wide_decimal(void)
                   ((p8 address_to)address_of got)[0] == 0xA5);
 }
 
-/*
-        %p, which is %x with one word of prose in front of it.
-
-        glibc prints a null pointer as "(nil)" and reads that back, and the
-        word is a prefix like every other word in this family: five bytes or
-        nothing. The one surprise is the width, which glibc tests BEFORE it
-        starts the word rather than while it reads it, so a "%4p" leaves the
-        bracket where it found it instead of eating four bytes it could never
-        finish.
-*/
-static fn pointers(void)
-{
-        address_any where = (address_any)1;
-
-        used = -1;
-        check("%p reads a hexadecimal pointer",
-              sscanf((string_address) "0x1234", (string_address) "%p%n",
-                     address_of where, address_of used) == 1 &&
-                  where == (address_any)0x1234 && used == 6);
-
-        used = -1;
-        check("%p does not need the prefix",
-              sscanf((string_address) "1234", (string_address) "%p%n",
-                     address_of where, address_of used) == 1 &&
-                  where == (address_any)0x1234 && used == 4);
-
-        where = (address_any)1;
-        used = -1;
-        check("%p reads (nil) back",
-              sscanf((string_address) "(nil)", (string_address) "%p%n",
-                     address_of where, address_of used) == 1 &&
-                  where == null && used == 5);
-
-        where = (address_any)1;
-        used = -1;
-        check("%p reads it in either case",
-              sscanf((string_address) "(NIL)x", (string_address) "%p%n",
-                     address_of where, address_of used) == 1 &&
-                  where == null && used == 5);
-
-        used = -1;
-        check("a partial (nil) is a matching failure",
-              sscanf((string_address) "(ni", (string_address) "%p%n",
-                     address_of where, address_of used) == 0 && used == -1);
-
-        used = -1;
-        check("%p takes a sign and wraps it",
-              sscanf((string_address) "-0x5", (string_address) "%p%n",
-                     address_of where, address_of used) == 1 &&
-                  where == (address_any)(positive)(0 - (bipolar)5) &&
-                  used == 4);
-
-        used = -1;
-        check("a width under five never starts (nil)",
-              sscanf((string_address) "(nil)", (string_address) "%4p%n",
-                     address_of where, address_of used) == 0 && used == -1);
-
-        where = (address_any)1;
-        used = -1;
-        check("a width of exactly five does",
-              sscanf((string_address) "(nil)", (string_address) "%5p%n",
-                     address_of where, address_of used) == 1 &&
-                  where == null && used == 5);
-
-        used = -1;
-        check("a width truncates a pointer like any other number",
-              sscanf((string_address) "0x123456", (string_address) "%4p%n",
-                     address_of where, address_of used) == 1 &&
-                  where == (address_any)0x12 && used == 4);
-}
 
 /*
         Several directives in one format, which is where the answer stops
@@ -40512,10 +40230,7 @@ static fn scan_set_ranges(void)
 b32 main(void)
 {
         scan_set_ranges();
-        generated();
-        modifiers();
         wide_decimal();
-        pointers();
         several();
         streams();
         reasons();

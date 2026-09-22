@@ -2164,7 +2164,52 @@ lane_numbers()
         *2*) return 2 ;;
         esac
 }
-lane_scan()      { freestanding_checks_lane scan scan; }
+#
+#       scanf: CHECK_scan for what a comparison cannot state, and
+#       CHECK_scan_differential's grid of formats against inputs compared with
+#       the machine's glibc, whose twin CHECK_scan_differential_reference is
+#       built by the host compiler. Digests are compared a block of 65536
+#       cases at a time and the first block that differs is shown case by case.
+#
+lane_scan()
+{
+        scan_outcome=0
+        freestanding_checks_lane scan scan || scan_outcome=$?
+
+        if ! ${CC:-gcc} -O2 -w -o "$work/scan_reference" \
+                -DCHECK_scan_differential_reference test/checks.c ||
+                ! "$work/scan_reference" > "$work/scan_reference.out"
+        then
+                note "scan_differential: the glibc reference did not build or finish"
+                return 1
+        fi
+
+        target_lane scan_differential_one || scan_outcome=1
+        return "$scan_outcome"
+}
+
+scan_differential_one()
+{
+        sd_binary=$work/scan_differential.$target
+        target_build freestanding_check scan_differential "$sd_binary" \
+                "$target" || return 1
+        $target_runner "$sd_binary" > "$sd_binary.out" 2>&1
+        sd_cases=$(sed -n 's/^cases //p' "$work/scan_reference.out")
+        sd_agreed=$(awk -v cases="$sd_cases" 'NR == FNR { want[FNR] = $0; next }
+                $0 == want[FNR] && $1 == "block" {
+                        same += ($2 + 1) * 65536 > cases ? cases - $2 * 65536 : 65536
+                } END { print same + 0 }' "$work/scan_reference.out" "$sd_binary.out")
+        tally "scan_differential-$target" "$sd_agreed" "$sd_cases"
+        cmp -s "$work/scan_reference.out" "$sd_binary.out" && return 0
+
+        sd_block=$(diff "$work/scan_reference.out" "$sd_binary.out" |
+                sed -n 's/^< block \([0-9]*\) .*/\1/p' | head -1)
+        note "scan_differential-$target: block ${sd_block:-?} differs from glibc:"
+        "$work/scan_reference" $((${sd_block:-0} * 65536)) 65536 detail > "$sd_binary.want"
+        $target_runner "$sd_binary" $((${sd_block:-0} * 65536)) 65536 detail > "$sd_binary.got" 2>&1
+        diff "$sd_binary.want" "$sd_binary.got" | head -20 | sed 's/^/    /'
+        return 1
+}
 lane_process()   { freestanding_checks_lane process process; }
 lane_signal()    { freestanding_checks_lane signal signal; }
 lane_lock()      { freestanding_checks_lane lock lock; }
