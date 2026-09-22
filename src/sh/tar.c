@@ -938,9 +938,26 @@ static fn tar_long_line(p8 address_to block, p8 type, p64 mode, p64 size,
         for (positive pad = widths; pad < tar_listing_width; pad++)
                 log(" ", 1);
         {
-                p8 when[24];
-                positive at = positive_into(when, (positive)year);
+                /*      The year with its sign, and room for every digit a
+                        stamp can make it. A pax mtime may be negative and
+                        the cast alone turned -70000000000000 into the
+                        twenty digit year 18446744073707335374, which wrote
+                        nine bytes past a buffer sized for the eleven an
+                        unsigned one needs. GNU tar prints the minus, so
+                        this prints it too rather than the wrap.
+                */
+                p8 when[40];
+                positive at = 0;
                 positive parts[4] = {month, day, hour, minute};
+
+                if (year < 0)
+                {
+                        when[at++] = '-';
+                        at += positive_into(when + at,
+                                            (positive)0 - (positive)year);
+                }
+                else
+                        at += positive_into(when + at, (positive)year);
 
                 for (positive part = 0; part < 4; part++)
                 {

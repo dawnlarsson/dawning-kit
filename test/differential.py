@@ -7466,7 +7466,25 @@ def files_tar_archives(rng, count):
             continue  # a name the format cannot hold
         archives.append((f"{number}-{form}", stream.getvalue(),
                          not any(build in unsettled for build in chosen)))
-    return archives
+
+    #   Times outside what a year fits in, each alone in its archive so that
+    #   nothing else shares the listing's date column: -tv laid the year out
+    #   in a buffer with room for the eleven digits an unsigned one needs,
+    #   and a pax mtime may be negative, which the cast to positive turned
+    #   into the twenty digit 18446744073707335374 and nine bytes past the
+    #   end of that buffer. GNU tar prints the minus. Only the listing is
+    #   asked of these: GNU clamps such a stamp on the way to a file and
+    #   says so, which is a separate answer from how it spells it.
+    moments = []
+    for number, moment in enumerate((-70000000000000, -1, 67767976233532799)):
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w",
+                          format=tarfile.PAX_FORMAT) as archive:
+            info, data = member("file", "ancient", mtime=moment, data=b"a")
+            archive.addfile(info, io.BytesIO(data))
+        moments.append((f"moment-{number}", stream.getvalue(), True))
+
+    return archives, moments
 
 
 def files_tar(farm):
@@ -7528,8 +7546,10 @@ def files_tar(farm):
                 (outside if outside != before else None, stray)
 
     rng = random.Random(0x7a52)
+    archives, moments = files_tar_archives(rng, 240)
     cases = [(name, data, command, settled)
-             for name, data, settled in files_tar_archives(rng, 240) for command in commands]
+             for name, data, settled in archives for command in commands] + \
+            [(name, data, ("tvf",), settled) for name, data, settled in moments]
 
     def compare(case):
         name, data, command, settled = case
