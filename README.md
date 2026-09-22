@@ -116,14 +116,17 @@ empties `/home` and everything under `/root` except the overlay
 (`/root/main.moonwater.sh`) and the radio files (`wifi`, `wifi.power`,
 `bluetooth`, `bluetooth.power`, `internet`) plus `timezone`, `timezone.mode`, `ntp`,
 `ntp.server`, `ntp.filter` and `keyboard`. `/bowls` is left alone, so
-pre-installed software survives. The builtin `moonwater_init` always wipes
-once the boot verdict is `live` or `disk`. Overlay the script and start
-whatever is already there after that line: Chromium, Weston, a bowl binary.
-Start it in the background. `moonwater_init` runs in the process that reads
-the event queue, and that process does not start reading until the function
-returns, so a kiosk command left in the foreground is a machine whose power
-button, lid and keys are queued and never run. A machine that should keep
-`/home` overlays a script without `moonwater_init`; bind init then still runs.
+pre-installed software survives. The builtin script defines no
+`moonwater_init`, so the list `moonwater bind init add` keeps is what runs at
+boot, and `/home` is kept. A kiosk overlays the script with a `moonwater_init`
+that wipes once the boot verdict is `live` or `disk` and then starts whatever
+is already there: Chromium, Weston, a bowl binary -- the builtin carries that
+function commented out. Start it in the background. `moonwater_init` runs in
+the process that reads the event queue, and that process does not start
+reading until the function returns, so a kiosk command left in the foreground
+is a machine whose power button, lid and keys are queued and never run.
+Defining `moonwater_init` takes the init row over: `bind init add` is refused
+and the stored list does not run.
 
 Canvas, the desktop, is part of the kernel: a compositor that draws with the CPU
 through DRM, so it works on any display the kernel can drive.

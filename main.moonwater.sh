@@ -22,11 +22,14 @@
 # inside functions -- a `weston &` written at the top level starts a second
 # one on every edit.
 #
-# The builtin init always forgets userspace. A kiosk is this file:
-# wipe, then one already-installed command. /bowls stays. A machine
-# that should keep /home omits moonwater_init, and bind init runs.
-# Wifi, bluetooth, the internet preference, timezone, ntp and keyboard
-# survive wipe on /root.
+# The builtin defines no moonwater_init, so the init list that
+# `moonwater bind init add` keeps is what runs at boot. Defining
+# moonwater_init here takes that row over: bind init is then refused
+# and the list does not run, so define it only for a machine that
+# should do exactly what this file says -- a kiosk: wipe, then one
+# already-installed command. /bowls stays through a wipe, and so do
+# wifi, bluetooth, the internet preference, timezone, ntp and keyboard
+# on /root. The example below is that kiosk, commented out.
 
 # Once, after boot has written a verdict. $1 is that line: live,
 # disk <name>, or ask ...
@@ -37,24 +40,24 @@
 # desktop, a kiosk browser, a player. One that holds the process here
 # is a machine whose power button, lid and keys are queued and never
 # read.
-function moonwater_init {
-  case $1 in
-  live|disk*)
-    # moonwater wipe
-    # After wipe, start whatever this machine is. A kiosk is one line
-    # of already-installed software, backgrounded, for example:
-    # chromium --kiosk --user-data-dir=/tmp/kiosk "$URL" &
-    # weston &
-    # /bowls/bin/exhibit &
-    # moonwater wifi add "ssid" "password"
-    # moonwater wifi on
-    # moonwater bluetooth on
-    # moonwater priority internet wired
-    # moonwater timezone Europe/Stockholm
-    # moonwater keyboard se
-    ;;
-  esac
-}
+# function moonwater_init {
+#   case $1 in
+#   live|disk*)
+#     # moonwater wipe
+#     # After wipe, start whatever this machine is. A kiosk is one line
+#     # of already-installed software, backgrounded, for example:
+#     # chromium --kiosk --user-data-dir=/tmp/kiosk "$URL" &
+#     # weston &
+#     # /bowls/bin/exhibit &
+#     # moonwater wifi add "ssid" "password"
+#     # moonwater wifi on
+#     # moonwater bluetooth on
+#     # moonwater priority internet wired
+#     # moonwater timezone Europe/Stockholm
+#     # moonwater keyboard se
+#     ;;
+#   esac
+# }
 
 function moonwater_poweroff {
   poweroff
