@@ -6682,7 +6682,7 @@ typedef struct
         p8 special_kind;
 } exec_function;
 
-static exec_function address_to exec_functions;
+KEEP __attribute__((externally_visible)) exec_function address_to exec_functions;
 
 /*
         The next live function at or beyond one slot.
@@ -6693,7 +6693,7 @@ static exec_function address_to exec_functions;
         255-byte function-name ceiling.
 */
 static positive exec_function_room;
-static positive exec_function_count;
+KEEP __attribute__((externally_visible)) positive exec_function_count;
 static positive exec_function_env_generation = 1;
 
 static fn exec_function_environment_changed()
@@ -6722,7 +6722,7 @@ string_address exec_function_next(positive address_to slot,
                 address_to readonly = exec_functions[at].readonly;
         return exec_functions[at].name;
 }
-static positive exec_function_recent = positive_max;
+KEEP __attribute__((externally_visible)) positive exec_function_recent = positive_max;
 
 // Whether a name is a function, which direct command substitution asks.
 bool exec_function_here_hashed(string_address name, positive2 named);
@@ -6735,31 +6735,152 @@ static PURE inline INLINE bool exec_function_matches(
                !memory_compare(exec_functions[index].name, name, length);
 }
 
-// The slot of a defined function, or positive_max when the name is not one.
-static positive exec_function_slot(string_address name, positive2 named)
-{
-        positive index;
+/*
+        The slot of a defined function, or positive_max when the name is not
+        one.
 
-        if (exec_function_recent < exec_function_count &&
-            exec_functions[exec_function_recent].body &&
-            exec_function_matches(exec_function_recent, name,
-                                  named.x, named.y))
-                return exec_function_recent;
+        Every command asks this before it looks for a builtin or a utility,
+        and nearly every command is neither a function nor the one found
+        last, so the answer is usually a walk of every slot: a hundred and
+        more in a script built on libtool's ltmain.sh. The walk asks the hash
+        first, which alone turns away nearly every slot, and only then the
+        length, whether the slot is live and whether it is the one already
+        asked; the name is compared in the body, eight bytes a turn and the
+        last eight again, and byte by byte under eight, where a word read
+        would straddle a name just stored. The slot found is the one asked
+        first next time.
+*/
+positive exec_function_slot(string_address name, positive2 named);
 
-        for (index = 0; index < exec_function_count; index++)
-        {
-                if (index == exec_function_recent || !exec_functions[index].body)
-                        continue;
+_Static_assert(sizeof(exec_function) == 80 && __builtin_offsetof(exec_function, name) == 0 &&
+               __builtin_offsetof(exec_function, name_hash) == 16 &&
+               __builtin_offsetof(exec_function, name_length) == 24 &&
+               __builtin_offsetof(exec_function, body) == 32,
+               "exec_function_slot reads a slot at these offsets");
 
-                if (exec_function_matches(index, name, named.x, named.y))
-                {
-                        exec_function_recent = index;
-                        return index;
-                }
-        }
+#if X64
+// The name at %rdi, length %rdx, against the name at held: on to fail
+// unless they agree. Scratch: off and tmp, whose low byte is tmpb.
+#define EXEC_NAME_SAME_X64(held, off, tmp, tmpb, fail)                       \
+    "cmp $8, %rdx\n   jb 61f\n   xor %" off ", %" off "\n"                   \
+    "60: mov (%" held ",%" off "), %" tmp "\n   cmp (%rdi,%" off "), %" tmp "\n"  \
+    "jne " fail "\n   add $8, %" off "\n   lea 8(%" off "), %" tmp "\n"       \
+    "cmp %rdx, %" tmp "\n   jbe 60b\n"                                      \
+    "mov -8(%" held ",%rdx), %" tmp "\n   cmp -8(%rdi,%rdx), %" tmp "\n"      \
+    "jne " fail "\n   jmp 63f\n"                                            \
+    "61: test %rdx, %rdx\n   jz 63f\n   xor %" off ", %" off "\n"           \
+    "64: movzbl (%" held ",%" off "), %" tmp "d\n   cmpb (%rdi,%" off "), %" tmpb "\n" \
+    "jne " fail "\n   inc %" off "\n   cmp %rdx, %" off "\n   jb 64b\n"        \
+    "63:\n"
 
-        return positive_max;
-}
+__asm__(
+    ASM_FUNC(exec_function_slot)
+    "mov exec_function_count(%rip), %r8\n   mov exec_functions(%rip), %r9\n"
+    // The one found last.
+    "mov exec_function_recent(%rip), %rax\n   cmp %r8, %rax\n   jae 10f\n"
+    "lea (%rax,%rax,4), %rcx\n   shl $4, %rcx\n   lea (%r9,%rcx), %r10\n"
+    "cmpl $0, 32(%r10)\n   je 10f\n   cmp 16(%r10), %rsi\n   jne 10f\n"
+    "cmp 24(%r10), %rdx\n   jne 10f\n   mov (%r10), %r10\n"
+    EXEC_NAME_SAME_X64("r10", "rcx", "r11", "r11b", "10f")
+    ASM_RET
+    // Every slot in turn, the hash asked first: one branch back a slot,
+    // and everything else out of the way below.
+    "10: lea (%r8,%r8,4), %r11\n   shl $4, %r11\n   add %r9, %r11\n   mov %r9, %r10\n"
+    "cmp %r11, %r10\n   jae 19f\n"
+    ".p2align 5\n"
+    "11: cmp 16(%r10), %rsi\n   je 14f\n"
+    "13: add $80, %r10\n   cmp %r11, %r10\n   jb 11b\n"
+    "19: mov $-1, %rax\n"
+    ASM_RET
+    // The hash agrees: the length, a live body, not the one already asked.
+    "14: cmp 24(%r10), %rdx\n   jne 13b\n   cmpl $0, 32(%r10)\n   je 13b\n"
+    "mov %r10, %rcx\n   sub %r9, %rcx\n   shr $4, %rcx\n   movabs $0xcccccccccccccccd, %r8\n"
+    "imul %r8, %rcx\n   cmp %rax, %rcx\n   je 13b\n"
+    "push %rcx\n   push %r10\n   mov (%r10), %r10\n"
+    EXEC_NAME_SAME_X64("r10", "rcx", "r8", "r8b", "15f")
+    "pop %r10\n   pop %rax\n   mov %rax, exec_function_recent(%rip)\n"
+    ASM_RET
+    "15: pop %r10\n   pop %rcx\n   jmp 13b\n"
+    ASM_END(exec_function_slot)
+);
+#elif ARM64
+// The name at x0, length x2, against the name at held: on to fail unless
+// they agree. Scratch: x3 to x6.
+#define EXEC_NAME_SAME_ARM64(held, fail)                                    \
+    "cmp x2, #8\n   b.lo 61f\n   mov x5, #0\n"                               \
+    "60: ldr x3, [" held ", x5]\n   ldr x4, [x0, x5]\n   cmp x3, x4\n   b.ne " fail "\n" \
+    "add x5, x5, #8\n   add x6, x5, #8\n   cmp x6, x2\n   b.ls 60b\n"          \
+    "sub x5, x2, #8\n   ldr x3, [" held ", x5]\n   ldr x4, [x0, x5]\n"        \
+    "cmp x3, x4\n   b.ne " fail "\n   b 63f\n"                               \
+    "61: cbz x2, 63f\n   mov x5, #0\n"                                      \
+    "64: ldrb w3, [" held ", x5]\n   ldrb w4, [x0, x5]\n   cmp w3, w4\n   b.ne " fail "\n" \
+    "add x5, x5, #1\n   cmp x5, x2\n   b.lo 64b\n"                          \
+    "63:\n"
+
+__asm__(
+    ASM_FUNC(exec_function_slot)
+    "adrp x8, exec_function_count\n   ldr x8, [x8, :lo12:exec_function_count]\n"
+    "adrp x9, exec_functions\n   ldr x9, [x9, :lo12:exec_functions]\n"
+    "adrp x10, exec_function_recent\n   add x10, x10, :lo12:exec_function_recent\n"
+    // The one found last.
+    "ldr x7, [x10]\n   cmp x7, x8\n   b.hs 10f\n   mov x11, #80\n   madd x12, x7, x11, x9\n"
+    "ldr w3, [x12, #32]\n   cbz w3, 10f\n   ldp x3, x4, [x12, #16]\n"
+    "cmp x3, x1\n   ccmp x4, x2, #0, eq\n   b.ne 10f\n   ldr x12, [x12]\n"
+    EXEC_NAME_SAME_ARM64("x12", "10f")
+    "mov x0, x7\n"
+    ASM_RET
+    // Every slot in turn, the hash asked first: one branch back a slot,
+    // and everything else out of the way below.
+    "10: mov x14, x9\n   mov x15, #80\n   madd x15, x8, x15, x9\n   cmp x14, x15\n   b.hs 19f\n"
+    ".p2align 4\n"
+    "11: ldr x3, [x14, #16]\n   cmp x3, x1\n   b.eq 14f\n"
+    "13: add x14, x14, #80\n   cmp x14, x15\n   b.lo 11b\n"
+    "19: mov x0, #-1\n"
+    ASM_RET
+    // The hash agrees: the length, a live body, not the one already asked.
+    "14: ldr x4, [x14, #24]\n   cmp x4, x2\n   b.ne 13b\n   ldr w3, [x14, #32]\n   cbz w3, 13b\n"
+    "sub x13, x14, x9\n   mov x16, #80\n   udiv x13, x13, x16\n   cmp x13, x7\n   b.eq 13b\n"
+    "ldr x12, [x14]\n"
+    EXEC_NAME_SAME_ARM64("x12", "13b")
+    "str x13, [x10]\n   mov x0, x13\n"
+    ASM_RET
+    ASM_END(exec_function_slot)
+);
+#elif RISCV64
+// The name at a0, length a2, against the name at held, byte by byte: on to
+// fail unless they agree. Scratch: t3 to t5.
+#define EXEC_NAME_SAME_RISCV(held, fail)                                    \
+    "li t5, 0\n   beqz a2, 63f\n"                                           \
+    "64: add t3, " held ", t5\n   lbu t3, 0(t3)\n   add t4, a0, t5\n   lbu t4, 0(t4)\n" \
+    "bne t3, t4, " fail "\n   addi t5, t5, 1\n   bltu t5, a2, 64b\n"          \
+    "63:\n"
+
+__asm__(
+    ASM_FUNC(exec_function_slot)
+    "lla t0, exec_function_count\n   ld a3, 0(t0)\n   lla t0, exec_functions\n   ld a4, 0(t0)\n"
+    "lla a5, exec_function_recent\n"
+    // The one found last.
+    "ld a6, 0(a5)\n   bgeu a6, a3, 10f\n   li t0, 80\n   mul t0, a6, t0\n   add t0, a4, t0\n"
+    "lw t1, 32(t0)\n   beqz t1, 10f\n   ld t1, 16(t0)\n   bne t1, a1, 10f\n   ld t1, 24(t0)\n   bne t1, a2, 10f\n"
+    "ld t2, 0(t0)\n"
+    EXEC_NAME_SAME_RISCV("t2", "10f")
+    "mv a0, a6\n"
+    ASM_RET
+    // Every slot in turn, the hash asked first.
+    "10: li a7, 0\n   mv t0, a4\n"
+    "11: bgeu a7, a3, 19f\n   ld t1, 16(t0)\n   beq t1, a1, 14f\n"
+    "13: addi a7, a7, 1\n   addi t0, t0, 80\n   j 11b\n"
+    "19: li a0, -1\n"
+    ASM_RET
+    // The hash agrees: the length, a live body, not the one already asked.
+    "14: ld t1, 24(t0)\n   bne t1, a2, 13b\n   lw t1, 32(t0)\n   beqz t1, 13b\n   beq a7, a6, 13b\n"
+    "ld t2, 0(t0)\n"
+    EXEC_NAME_SAME_RISCV("t2", "13b")
+    "sd a7, 0(a5)\n   mv a0, a7\n"
+    ASM_RET
+    ASM_END(exec_function_slot)
+);
+#endif
 
 static b32 exec_function_find(string_address name, positive2 named)
 {

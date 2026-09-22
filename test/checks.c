@@ -25838,6 +25838,143 @@ static fn shell_asm_variables(p8 address_to pages)
         }
 }
 
+/*
+        exec_function_slot from src/sh/exec.c against the walk it replaced,
+        which keeps its own copy of the slot found last: tables of up to two
+        hundred functions, some unset, names that collide on a weak hash,
+        the one found last valid, unset, gone or past the count, and names
+        that end on the last byte before a page nobody may read.
+*/
+typedef struct
+{
+        p8 address_to name;
+        positive name_room, name_hash, name_length;
+        b32 body;
+        positive active;
+        bool readonly, exported;
+        p8 address_to environment;
+        positive environment_room;
+        bool environment_valid;
+        p8 special_kind;
+} shell_asm_function;
+
+shell_asm_function address_to exec_functions;
+positive exec_function_count;
+positive exec_function_recent;
+
+positive exec_function_slot(string_address name, positive2 named);
+
+static positive shell_asm_slot_former(positive address_to recent, const p8 address_to name,
+                                      positive hash, positive length)
+{
+#define SHELL_ASM_MATCHES(index)                                                         (exec_functions[index].name_hash == hash &&                                     exec_functions[index].name_length == length &&                                 !memory_compare(exec_functions[index].name, name, length))
+        if (address_to recent < exec_function_count && exec_functions[address_to recent].body &&
+            SHELL_ASM_MATCHES(address_to recent))
+                return address_to recent;
+        for (positive index = 0; index < exec_function_count; index++)
+        {
+                if (index == address_to recent || !exec_functions[index].body)
+                        continue;
+                if (SHELL_ASM_MATCHES(index))
+                {
+                        address_to recent = index;
+                        return index;
+                }
+        }
+        return positive_max;
+#undef SHELL_ASM_MATCHES
+}
+
+static fn shell_asm_slot_one(const p8 address_to name, positive length, positive hash)
+{
+        positive recent = exec_function_recent;
+        positive want = shell_asm_slot_former(address_of recent, name, hash, length);
+        positive2 named = {hash, length};
+        positive got = exec_function_slot((string_address)name, named);
+
+        checks++;
+        if (want != got || recent != exec_function_recent)
+        {
+                failures++;
+                if (failures < 10)
+                        string_format(log, "FAIL exec_function_slot length %p count %p: %p want %p\n",
+                                      length, exec_function_count, got, want);
+                exec_function_recent = recent;
+        }
+}
+
+static fn shell_asm_functions(p8 address_to pages)
+{
+        static shell_asm_function functions[200];
+        static p8 names[200][48];
+        static p8 query[96];
+        static const p8 letters[] = "func_ab";
+
+        exec_functions = functions;
+        for (positive round = 0; round < 3000; round++)
+        {
+                positive count = shell_asm_next() % 200;
+
+                shell_asm_weak = shell_asm_next() % 3;
+                exec_function_count = count;
+                for (positive i = 0; i < count; i++)
+                {
+                        positive length = 1 + shell_asm_next() % (shell_asm_next() % 3 ? 10 : 40);
+                        p8 address_to name = names[i] + shell_asm_next() % 8;
+
+                        for (positive c = 0; c < length; c++)
+                                name[c] = letters[shell_asm_next() % 7];
+                        name[length] = 0;
+                        functions[i] = (shell_asm_function){name, 48, shell_asm_name_hash(name, length),
+                                                            length, shell_asm_next() % 6 ? 1 : 0};
+                }
+                for (positive q = 0; q < 24; q++)
+                {
+                        positive offset = shell_asm_next() % 16, length;
+                        p8 address_to name = query + offset;
+
+                        if (count && shell_asm_next() % 3)
+                        {
+                                shell_asm_function address_to held = functions + shell_asm_next() % count;
+
+                                length = held->name_length;
+                                memory_copy_apart(name, held->name, length);
+                                if (shell_asm_next() % 4 == 0)
+                                        name[shell_asm_next() % length] ^= 1;
+                        }
+                        else
+                        {
+                                length = shell_asm_next() % 24;
+                                for (positive c = 0; c < length; c++)
+                                        name[c] = letters[shell_asm_next() % 7];
+                        }
+                        name[length] = 0;
+                        exec_function_recent = shell_asm_next() % 4 ? (count ? shell_asm_next() % (count + 2) : 0)
+                                                                     : positive_max;
+                        shell_asm_slot_one(name, length, shell_asm_name_hash(name, length));
+                        shell_asm_slot_one(name, length, shell_asm_name_hash(name, length));
+                }
+                /* A name, and a function's own name, ending on the last byte
+                   before the page nobody may read. */
+                if (pages && count)
+                        for (positive length = 0; length < 12; length++)
+                        {
+                                shell_asm_function address_to held = functions + shell_asm_next() % count;
+                                p8 address_to name = pages + 8192 - held->name_length;
+                                p8 address_to kept = held->name;
+
+                                memory_copy_apart(name, kept, held->name_length);
+                                shell_asm_slot_one(name, held->name_length, held->name_hash);
+                                held->name = name;
+                                exec_function_recent = (positive)(held - functions);
+                                shell_asm_slot_one(kept, held->name_length, held->name_hash);
+                                exec_function_recent = positive_max;
+                                shell_asm_slot_one(kept, held->name_length, held->name_hash);
+                                held->name = kept;
+                        }
+        }
+}
+
 b32 main(void)
 {
         static p8 built[4096];
@@ -25889,6 +26026,7 @@ b32 main(void)
 
         shell_asm_keywords((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_variables((bipolar)(positive)pages > 0 ? pages : null);
+        shell_asm_functions((bipolar)(positive)pages > 0 ? pages : null);
 
         string_format(log, "shell assembly: %p checks, %p failures\n", checks, failures);
         log_flush();
@@ -63958,6 +64096,140 @@ int main(void)
         return bad ? 1 : 0;
 }
 #endif /* CHECK_native_envprobe */
+
+#ifdef CHECK_native_funcslot
+/* ARM64 exec_function_slot lifted verbatim from src/sh/exec.c, against the
+   walk it replaced calling memory_compare lifted from lib.c: a table the size
+   libtool's ltmain.sh defines, 118 functions, and lookups shaped like the
+   755 that ltmain.sh --help and a --mode=compile made -- eval, test, unset
+   and the rest, one in five a function -- then both timed over that stream. */
+#include "funcslot.h"
+#include "floodlight_lib.h"
+
+#define NATIVE_SEED 0x243f6a8885a308d3ull
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
+
+typedef struct { unsigned char *name; u64 name_room, name_hash, name_length; int body; u64 active;
+                 unsigned char readonly, exported; unsigned char *environment; u64 environment_room;
+                 unsigned char environment_valid, special_kind; } funcslot_function;
+typedef struct { u64 x, y; } funcslot_named;
+
+funcslot_function *exec_functions;
+u64 exec_function_count;
+u64 exec_function_recent = ~0ul;
+
+u64 exec_function_slot(const char *, funcslot_named);
+int memory_compare(const void *, const void *, u64);
+void *memcpy(void *, const void *, u64);
+
+static u64 checks, bad, former_recent = ~0ul;
+
+__attribute__((noinline)) static u64 former(const char *name, funcslot_named named)
+{
+#define MATCHES(index) (exec_functions[index].name_hash == named.x && \
+                        exec_functions[index].name_length == named.y && \
+                        !memory_compare(exec_functions[index].name, name, named.y))
+        if (former_recent < exec_function_count && exec_functions[former_recent].body && MATCHES(former_recent))
+                return former_recent;
+        for (u64 index = 0; index < exec_function_count; index++) {
+                if (index == former_recent || !exec_functions[index].body)
+                        continue;
+                if (MATCHES(index)) {
+                        former_recent = index;
+                        return index;
+                }
+        }
+        return ~0ul;
+#undef MATCHES
+}
+
+static u64 hash_of(const char *p, u64 n)
+{
+        u64 h = 5381;
+
+        for (u64 i = 0; i < n; i++)
+                h = h * 33 + (unsigned char)p[i];
+        return h;
+}
+
+static const struct { const char *name; u64 weight; } commands[] = {
+        {"eval", 232}, {"test", 166}, {"unset", 50}, {"shift", 36}, {"continue", 32}, {"set", 17},
+        {"printf", 12}, {"case", 8}, {"exit", 6}, {"return", 6}, {"echo", 5}, {":", 5},
+};
+
+#define STREAM 65536
+
+int main(void)
+{
+        static funcslot_function functions[118];
+        static char names[118][32], queries[STREAM][32];
+        static funcslot_named named[STREAM];
+        u64 total = 0;
+
+        for (u64 i = 0; i < 118; i++) {
+                u64 length = 5 + next() % 14;
+
+                memcpy(names[i], "func_", 5);
+                for (u64 c = 5; c < length; c++)
+                        names[i][c] = "abcdefghilmnoprstu_"[next() % 19];
+                functions[i] = (funcslot_function){(unsigned char *)names[i], 32,
+                                                   hash_of(names[i], length), length, 1};
+        }
+        exec_functions = functions;
+        exec_function_count = 118;
+        for (u64 i = 0; i < sizeof(commands) / sizeof(commands[0]); i++)
+                total += commands[i].weight;
+        for (u64 i = 0; i < STREAM; i++) {
+                const char *from;
+                u64 length = 0;
+
+                if (next() % 5 == 0) {
+                        from = names[next() % 118];
+                } else {
+                        u64 pick = next() % total, c = 0;
+
+                        while (pick >= commands[c].weight)
+                                pick -= commands[c++].weight;
+                        from = commands[c].name;
+                }
+                while (from[length])
+                        length++;
+                memcpy(queries[i], from, length + 1);
+                named[i] = (funcslot_named){hash_of(queries[i], length), length};
+        }
+
+        for (u64 i = 0; i < STREAM; i++) {
+                u64 want = former(queries[i], named[i]), got = exec_function_slot(queries[i], named[i]);
+
+                checks++;
+                if ((want != got || former_recent != exec_function_recent) && bad++ < 8)
+                        printf("  FAIL query %lu: %lu want %lu\n", i, got, want);
+        }
+
+        u64 best_former = ~0ul, best_body = ~0ul, sink = 0, sink_body = 0;
+        for (int trial = 0; trial < 9; trial++) {
+                u64 start = ticks();
+                for (u64 i = 0; i < STREAM; i++)
+                        sink += former(queries[i], named[i]);
+                u64 took = ticks() - start;
+                best_former = took < best_former ? took : best_former;
+                start = ticks();
+                for (u64 i = 0; i < STREAM; i++)
+                        sink_body += exec_function_slot(queries[i], named[i]);
+                took = ticks() - start;
+                best_body = took < best_body ? took : best_body;
+        }
+        checks++;
+        if (sink != sink_body)
+                bad++;
+        printf("  %d lookups against 118 functions, as ltmain.sh makes them: C walk %lu ticks, assembly %lu, asm/C %lu%%\n",
+               STREAM, best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+        printf("arm64 exec_function_slot: %lu checks | %lu failures\n", checks, bad);
+        return bad ? 1 : 0;
+}
+#endif /* CHECK_native_funcslot */
 
 #ifdef CHECK_native_floodlight
 /* ARM64 floodlight_status_clear lifted verbatim from src/sh/builtin.c,
