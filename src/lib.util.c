@@ -1570,11 +1570,10 @@ static bipolar system_path_file_finish(system_path_file address_to input,
    mask, and there is no mask parameter for a caller to hand it one through.
    What is left is the restorer, so the restorer is what is guarded: on an
    architecture with no restorer slot the word stays zero rather than being
-   installed as a signal mask nobody asked for. Today every caller already
-   passes zero there off x86_64 (SIGNAL_CATCH_RESTORER is the trampoline on
-   x86_64 and zero on the other two), so this changes no instruction on any
-   machine that builds now; it is what keeps the next caller from writing a
-   mask into riscv64's sa_mask by handing this a restorer. */
+   installed as a signal mask nobody asked for. SIGNAL_CATCH_RESTORER is the
+   trampoline on x86_64 and arm64 and zero on riscv64; this guard is what
+   keeps a caller from writing a mask into riscv64's sa_mask by handing this
+   a restorer. */
 #if defined(LINUX) && !defined(KERNEL_MODE) && \
     !defined(STANDARD_NO_PLATFORM)
 static inline INLINE bool system_signal_install(
@@ -23782,7 +23781,8 @@ typedef char signal_action_is_the_size_a_caller_believes
         one of the top thirty two bits in the word the kernel reads. That is
         the kind of thing that works on a test that never uses the flag.
 
-        On the way out the restorer is filled in on x86_64 only and the flag
+        On the way out the restorer is filled in on x86_64 and arm64 -- arm64
+        because a Spark image has no vDSO for the kernel's default -- and the flag
         that announces it is set at the same moment, so the two can never
         disagree. On the way back that same flag is cleared from what the
         caller is told, along with the restorer field, because neither was
@@ -23811,7 +23811,7 @@ b32 signal_action_change(b32 number, const signal_action address_to wanted,
                 asked.flags = (positive)(p32)wanted->flags;
                 asked.mask = wanted->mask.words[0];
 
-#if X64
+#if X64 || ARM64
                 asked.flags |= (positive)SIGNAL_KERNEL_RESTORER;
                 asked.restorer = signal_return_trampoline;
 #endif

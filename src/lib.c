@@ -51614,7 +51614,8 @@ __asm__(
     "adrp x1, thread_main\n   add x1, x1, :lo12:thread_main\n"
     "str x1, [x1]\n   msr tpidr_el0, x1\n"
     "adrp x1, program_stack_base\n   str x0, [x1, :lo12:program_stack_base]\n"
-    "movz x1, #0x4152\n   movk x1, #0x5354, lsl #16\n"
+    /* SPARK_START_MAGIC, "SPRKSTA2", sixteen bits at a time. */
+    "movz x1, #0x4132\n   movk x1, #0x5354, lsl #16\n"
     "movk x1, #0x524b, lsl #32\n   movk x1, #0x5350, lsl #48\n"
     "cmp x19, x1\n   b.ne .Lstart_arm64_detect\n"
     "adrp x1, program_entry_identity\n"
@@ -58089,11 +58090,11 @@ __asm__(
 #elif ARM64
 
 /*
-        arm64 needs none: setup_rt_frame points x30 at the vDSO's sigreturn
-        unless SA_RESTORER is set, and nothing here sets it. The same two
-        instructions are here anyway, because arm64 honours the flag when a
-        caller does set it and one name on every machine keeps the address
-        something C can take without an #if of its own.
+        setup_rt_frame points x30 at the vDSO's sigreturn unless SA_RESTORER
+        is set, and a Spark image is mapped with no vDSO: the default return
+        address is then the trampoline's offset from zero, 0x83c, and every
+        handler that returned took SIGSEGV. So arm64 sets the flag and hands
+        the kernel this, the way x86_64 must.
 */
 __asm__(
     ASM_SECTION

@@ -109,17 +109,20 @@ fn shell_signals_start()
 // was already in the middle of.
 fn trap_signal_caught(b32 number);
 
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__)
 
 /*
         Where the handler goes when it is done.
 
-        x86_64 is the one machine with no return trampoline of its own: the
-        kernel jumps to sa_restorer, and what is there has to call
-        rt_sigreturn. arm64 and riscv64 have one and are given none, which is
-        the whole of the difference and the reason the flag below is set on
-        one architecture and not the other two. The trampoline is the
-        platform's, the one sigaction hands the kernel too.
+        x86_64 has no return trampoline of its own: the kernel jumps to
+        sa_restorer, and what is there has to call rt_sigreturn. arm64 has
+        one only in the vDSO, and a Spark image is mapped without a vDSO, so
+        the kernel's default return address there is the trampoline's offset
+        from zero: every handler the shell ran on arm64 returned to 0x83c and
+        died of SIGSEGV, which killed the shell after every command that had a
+        child. arm64 honours SA_RESTORER the way x86_64 requires it, so both
+        are handed the platform's trampoline, the one sigaction hands the
+        kernel too. riscv64 has no restorer field at all.
 */
 #define SIGNAL_CATCH_RESTORER ((positive)signal_return_trampoline)
 #define SIGNAL_CATCH_FLAGS (SIGNAL_RESTART | SIGNAL_RESTORER)
