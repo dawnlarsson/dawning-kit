@@ -75,6 +75,12 @@ struct pane
         unsigned int state;
         int edge;
         unsigned int sequence;
+
+        // When a commit of this window last composed, and whether a key has
+        // gone to it since. See window_ioctl_commit.
+        u64 composed_ns;
+        _Bool keyed;
+
         char title[WINDOW_TITLE_MAX];
         unsigned int title_length;
 
@@ -472,6 +478,7 @@ static void desktop_recompose(void);
 static void desktop_repaint(void);
 static void cursor_plane_recover(void);
 static void desktop_watch(void);
+static u64 canvas_frame_ns(void);
 static void cursor_move(int x, int y);
 static _Bool desktop_taken(void);
 
@@ -2679,6 +2686,41 @@ static long window_ioctl_commit(struct file *file)
         }
 
         desktop_watch();
+
+        /*
+                At most once a frame per window, and the frame does the rest.
+
+                A terminal commits every time it drains its pty, and under a
+                stream that is thousands of times a second: a cat of UTF-8
+                text through a guest's terminal composed its whole window
+                5,800 times a second for a display that shows sixty. The
+                sequence the program bumped before calling is what the next
+                frame looks for, and the damage rows stay in its page until a
+                compose takes them, so a commit arriving within a frame of the
+                last one that composed is left to that frame.
+
+                Not the first commit after a key has gone to the window: that
+                is the echo window_flush exists for, and it composes here and
+                now whatever the window was doing, as does any commit after a
+                quiet frame. The frame timer runs while the desktop is awake,
+                which desktop_watch has just made sure of; without a thread to
+                take the frame, awake stays false and every commit composes.
+        */
+        {
+                struct pane *pane = context->pane;
+                u64 now = ktime_get_ns();
+
+                if (desktop.awake && !READ_ONCE(pane->keyed) &&
+                    now - pane->composed_ns < canvas_frame_ns())
+                {
+                        rt_mutex_unlock(&desktop.lock);
+                        return 0;
+                }
+
+                pane->composed_ns = now;
+                WRITE_ONCE(pane->keyed, false);
+        }
+
         desktop_refresh_panes();
         desktop_repaint();
         rt_mutex_unlock(&desktop.lock);
@@ -7777,6 +7819,8 @@ static void keys_deliver(void)
 
                 if (!key_typed(key->code, key->flags))
                         continue;
+
+                WRITE_ONCE(pane->keyed, true);
 
                 // Focus rather than what the pointer is over, which is where
                 // the wheel goes: reading one window while typing into
