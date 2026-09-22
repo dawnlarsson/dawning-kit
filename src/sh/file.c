@@ -29296,6 +29296,29 @@ static fn rm_batch_replay(walk_batch address_to batch)
         }
 }
 
+//      The root of a tree rm that would not open, or that is no longer the
+//      directory the caller looked at: -f swallows one that is simply gone, a
+//      moved identity (-ERROR_AGAIN) is not retried, and anything else is
+//      still worth one rmdir. Both walks refuse alike and differ only in how
+//      they give the descriptor back, so each closes before asking.
+static COLD fn rm_tree_root_refused(string_address root,
+                                    file_facts address_to facts, bipolar looked)
+{
+        if (rm_force && looked == -ERROR_NO_ENTRY)
+                return;
+        if (looked != -ERROR_AGAIN &&
+            file_remove_same(AT_FDCWD, root, AT_REMOVEDIR, facts) == 0)
+        {
+                if (rm_loud)
+                        string_format(log, "removed directory '%w'\n",
+                                      writer_terminal_quoted_name, root);
+                return;
+        }
+        string_format(log_error, "rm: cannot remove '%w': %s\n",
+                      writer_terminal_quoted_name, root, file_reason(looked));
+        rm_status = 1;
+}
+
 #if defined(LIBRARY_THREAD_RUNTIME)
 /*
         rm -r over parallel_tree.  A directory's plain names are unlinked in
@@ -29707,20 +29730,7 @@ static fn rm_tree_parallel(string_address root, file_facts address_to facts)
         {
                 if (opened >= 0)
                         system_close(opened);
-                if (rm_force && looked == -ERROR_NO_ENTRY)
-                        return;
-                if (looked != -ERROR_AGAIN &&
-                    file_remove_same(AT_FDCWD, root, AT_REMOVEDIR, facts) == 0)
-                {
-                        if (rm_loud)
-                                string_format(log, "removed directory '%w'\n",
-                                              writer_terminal_quoted_name, root);
-                        return;
-                }
-                string_format(log_error, "rm: cannot remove '%w': %s\n",
-                              writer_terminal_quoted_name, root,
-                              file_reason(looked));
-                rm_status = 1;
+                rm_tree_root_refused(root, facts, looked);
                 return;
         }
 
@@ -29805,20 +29815,7 @@ static fn rm_batched(string_address root, file_facts address_to facts)
         {
                 if (opened >= 0)
                         walk_abandon(walker);
-                if (rm_force && looked == -ERROR_NO_ENTRY)
-                        return;
-                if (looked != -ERROR_AGAIN &&
-                    file_remove_same(AT_FDCWD, root, AT_REMOVEDIR, facts) == 0)
-                {
-                        if (rm_loud)
-                                string_format(log, "removed directory '%w'\n",
-                                              writer_terminal_quoted_name, root);
-                        return;
-                }
-                string_format(log_error, "rm: cannot remove '%w': %s\n",
-                              writer_terminal_quoted_name, root,
-                              file_reason(looked));
-                rm_status = 1;
+                rm_tree_root_refused(root, facts, looked);
                 return;
         }
 
