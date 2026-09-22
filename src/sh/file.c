@@ -2252,9 +2252,9 @@ static bipolar file_name_among(string_address text, positive length,
         return -1;
 }
 
-static bool file_moment_read_from(string_address text, b64 now, positive fraction,
-                                   b64 address_to out,
-                                   positive address_to nanoseconds)
+static bool file_moment_read_local(string_address text, b64 now, positive fraction,
+                                    b64 address_to out,
+                                    positive address_to nanoseconds)
 {
         positive at = 0;
 
@@ -2929,6 +2929,56 @@ static bool file_moment_read_from(string_address text, b64 now, positive fractio
                          shift;
 
         return true;
+}
+
+/*
+        A date may name its own zone first -- TZ="Asia/Tokyo" 2001-09-09 12:00
+        -- as GNU date reads it: what follows is read in that zone, and the
+        answer is shown in the caller's. It was refused as an invalid date.
+*/
+static bool file_moment_read_from(string_address text, b64 now, positive fraction,
+                                  b64 address_to out,
+                                  positive address_to nanoseconds)
+{
+        positive at = string_span(text, string_set_blanks);
+        string_address from = text + at + 4;
+        string_address was;
+        p8 zone[128];
+        p8 saved[256];
+        positive length = 0;
+        bool read;
+
+        if (string_compare_max(text + at, (string_address) "TZ=\"", 4))
+                return file_moment_read_local(text, now, fraction, out, nanoseconds);
+
+        while (from[length] && from[length] != '"' && length + 1 < sizeof(zone))
+        {
+                zone[length] = from[length];
+                length++;
+        }
+
+        if (from[length] != '"')
+                return false;
+
+        zone[length] = end;
+        was = getenv((string_address) "TZ");
+
+        if (was && string_length(was) >= sizeof(saved))
+                return false;
+        if (was)
+                string_copy(saved, was);
+
+        setenv((string_address) "TZ", zone, 1);
+        tzset();
+        read = file_moment_read_local(from + length + 1, now, fraction, out, nanoseconds);
+
+        if (was)
+                setenv((string_address) "TZ", saved, 1);
+        else
+                unsetenv((string_address) "TZ");
+        tzset();
+
+        return read;
 }
 
 bool file_moment_read_exact(string_address text, b64 now, b64 address_to out,

@@ -7304,11 +7304,12 @@ def files_zones(farm):
     import tempfile
     from concurrent.futures import ThreadPoolExecutor
 
-    tools = ("date", "touch", "stat", "ls")
+    #       du is left out: --time is a column it has not got (ledger r98).
+    tools = ("date", "touch", "stat", "ls", "find", "pr", "tar", "truncate", "ps", "who", "last")
     reference = {tool: shutil.which(tool, path=os.defpath) for tool in tools}
     candidate = {tool: Path(farm) / tool for tool in tools}
     if not all(reference.values()) or not all(p.exists() for p in candidate.values()):
-        return 0, 1, ["zone checks need date, touch, stat and ls on both sides"]
+        return 0, 1, ["zone checks need " + ", ".join(tools) + " on both sides"]
     if not Path("/usr/share/zoneinfo/Europe/Stockholm").exists():
         return 0, 1, ["zone checks need the reference's tzdata in /usr/share/zoneinfo"]
 
@@ -7316,6 +7317,10 @@ def files_zones(farm):
     cases = []
     for zone in FILES_ZONES:
         instants, civil = files_zone_instants(zone)
+        #       And the clocks that read the running machine: when pid 1
+        #       started, when the system booted and the wtmp record of it.
+        cases.append((zone, [["ps", "-o", "lstart=,stime=,start=", "-p", "1"], ["who", "-b"],
+                             ["last", "-n", "2", "-F", "reboot"], ["last", "-n", "2", "reboot"]]))
         for t in instants:
             cases.append((zone, [["date", "-d", f"@{t}", shown]]))
             cases.append((zone, [["date", "-u", "-d", f"@{t}", shown]]))
@@ -7324,9 +7329,25 @@ def files_zones(farm):
                                  ["stat", "-c", "%y %Y", "f"],
                                  ["ls", "-l", "--time-style=full-iso", "f"],
                                  ["date", "-r", "f", shown]]))
+            #       Every other tool that shows a file's time shows it local.
+            cases.append((zone, [["truncate", "-s", "4", "f"],
+                                 ["touch", "-d", f"@{t}", "f"],
+                                 ["ls", "-l", "f"],
+                                 ["ls", "-l", "--time-style=long-iso", "f"],
+                                 ["ls", "-l", "--time-style=+%c %z %Z", "f"],
+                                 ["find", ".", "-name", "f", "-printf",
+                                  "%t|%TY-%Tm-%Td %TT %Tz %TZ|%T@|%A+|%Ta %Tb %Tp\\n"],
+                                 ["pr", "f"],
+                                 ["tar", "cf", "f.tar", "f"],
+                                 ["tar", "tvf", "f.tar"]]))
         for when in civil:
             cases.append((zone, [["date", "-d", when, shown]]))
             cases.append((zone, [["touch", "-d", when, "f"], ["stat", "-c", "%Y", "f"]]))
+            digits = when.replace("-", "").replace(" ", "").replace(":", "")
+            cases.append((zone, [["touch", "-t", digits[:12] + "." + digits[12:], "f"],
+                                 ["stat", "-c", "%Y", "f"]]))
+            #       A zone named inside the date string outranks TZ.
+            cases.append((zone, [["date", "-d", f'TZ="Asia/Kolkata" {when}', shown]]))
 
     def run(case, side):
         zone, commands = case
@@ -7343,6 +7364,8 @@ def files_zones(farm):
                 # The owner, group and link count of a scratch file are not the zone.
                 if command[0] == "ls":
                     output = b" ".join(output.split()[5:])
+                elif command[0] == "tar":
+                    output = b" ".join(output.split()[3:])
                 answers.append((result.returncode, output, bool(result.stderr)))
         return answers
 
@@ -7356,8 +7379,10 @@ def files_zones(farm):
                 passed += 1
             elif len(notes) < 40:
                 zone, commands = case
-                notes.append(f"TZ={zone} {' ; '.join(' '.join(c) for c in commands)}: "
-                             f"GNU {want!r} ours {got!r}")
+                for command, one, two in zip(commands, want, got):
+                    if one != two:
+                        notes.append(f"TZ={zone} {' '.join(command)}: GNU {one!r} ours {two!r}")
+                        break
     return passed, len(cases), notes
 
 
@@ -31517,7 +31542,6 @@ PINNED = r"""
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-d","2001-09-09 third month","+%Y-%m-%d %H:%M:%S"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_dates","utility":"date"},"domain":"files","id":"698e45fbe1fd393c","kind":"bug","list":"ledger","reason_id":"r92","utility":"date"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"e3cbf3c89f64ef48467fe506582155b7939e258518febb4c30eb872c568d61d0"},"case":{"argv":["-d","0001-01-01","+%Y-%m-%d %H:%M:%S"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_dates","utility":"date"},"domain":"files","id":"7d78ecdf96aeebc8","kind":"bug","list":"ledger","reason_id":"r92","utility":"date"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"ac27f0a19c6dcc210687994bc217e7644bffa9158eb94d98885e00baa5d0aa1e"},"case":{"argv":["-d","2001-09-09 23:59:60","+%Y-%m-%d %H:%M:%S"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_dates","utility":"date"},"domain":"files","id":"a5d74ff50f7990a6","kind":"bug","list":"ledger","reason_id":"r92","utility":"date"},
-{"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-d","TZ=\"Asia/Tokyo\" 2001-09-09 12:00","+%Y-%m-%d %H:%M:%S"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_dates","utility":"date"},"domain":"files","id":"aeefe441cf06fd9d","kind":"bug","list":"ledger","reason_id":"r92","utility":"date"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-d","@-9223372036854775808","+%Y-%m-%d %H:%M:%S"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_dates","utility":"date"},"domain":"files","id":"c6db97f2549f59a7","kind":"bug","list":"ledger","reason_id":"r92","utility":"date"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-d","2001-09-09 EST","+%Y-%m-%d %H:%M:%S"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_dates","utility":"date"},"domain":"files","id":"dc8e4f8a145d06a4","kind":"bug","list":"ledger","reason_id":"r92","utility":"date"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-d","@9223372036854775807","+%Y-%m-%d"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_dates","utility":"date"},"domain":"files","id":"dffd332edf6579f9","kind":"bug","list":"ledger","reason_id":"r92","utility":"date"},
