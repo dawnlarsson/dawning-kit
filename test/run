@@ -2337,28 +2337,32 @@ lane_format()
 }
 
 #
-#       The decimal float conversions against the machine's glibc, generated.
+#       printf against the machine's glibc, generated.
 #
-#       CHECK_format_differential draws every case from its index alone -- a
+#       CHECK_format_differential has two index spaces. The drawn one takes a
 #       double from one of the families its body names, one of %f %F %e %E
-#       %g %G, flags, a width and a precision up to 1100 -- and prints one
-#       digest per 65536 cases of every byte snprintf wrote and every length
-#       it answered. CHECK_format_differential_reference is the same body over
-#       glibc, built by the host compiler and run once. Each target's digests
-#       are compared line for line, and the first block that disagrees is run
-#       again on both sides with one line per case so the cases themselves are
-#       shown.
+#       %g %G, flags, a width and a precision up to 1100, from its index
+#       alone. The grid walks every flag spelling against every width,
+#       precision, length modifier, conversion and value of each kind in full
+#       -- integers, strings, characters, pointers and doubles -- and holds
+#       every case CHECK_format used to pin one line at a time. Each prints
+#       one digest per 65536 cases of every byte snprintf wrote and every
+#       length it answered; CHECK_format_differential_reference is the same
+#       body over glibc, built by the host compiler and run once. Each
+#       target's digests are compared line for line, and the first block that
+#       disagrees is run again on both sides with one line per case.
 #
-#       Each target is built twice: as it ships, and with
+#       Each target is built three times: as it ships; with
 #       FORMAT_ESTIMATE_ALWAYS, which sends every scaling through the 128 bit
-#       estimate that otherwise only the extremes of the range reach, so the
-#       estimate is compared against glibc at every magnitude and its refusals
-#       against the exact road they fall back to.
+#       estimate that otherwise only the extremes of the range reach; and in
+#       CHECK_format's standalone arrangement, lib.c and lib.util.c alone.
 #
-#       FORMAT_DIFFERENTIAL_BLOCKS is how many blocks run natively (default
-#       64, which is 4194304 cases) and FORMAT_DIFFERENTIAL_EMULATED_BLOCKS
-#       how many run under qemu (default 8). A change to the float digits
-#       deserves a run with thousands of the first.
+#       FORMAT_DIFFERENTIAL_BLOCKS is how many drawn blocks run natively
+#       (default 64, which is 4194304 cases) and
+#       FORMAT_DIFFERENTIAL_EMULATED_BLOCKS how many run under qemu (default
+#       8). The grid always runs whole. A reference that will not build where
+#       the host compiler exists is a failure, not a lane that did not run:
+#       the pinned cases it replaced needed no glibc.
 #
 format_differential()
 {
@@ -2375,23 +2379,19 @@ format_differential()
 
         if ! $fd_host -O2 -w -o "$work/format_reference" \
                 -DCHECK_format_differential_reference test/checks.c \
-                2> "$work/format_reference.err"
+                2> "$work/format_reference.err" ||
+                ! "$work/format_reference" 0 $((fd_most * 65536)) \
+                        > "$work/format_reference.out" ||
+                ! "$work/format_reference" grid > "$work/format_reference.grid"
         then
-                note "format_differential: the glibc reference did not build -- not run"
+                note "format_differential: the glibc reference did not build or finish"
                 sed 's/^/    /' "$work/format_reference.err" | head -10
-                return 2
-        fi
-
-        if ! "$work/format_reference" 0 $((fd_most * 65536)) \
-                > "$work/format_reference.out"
-        then
-                note "format_differential: the glibc reference did not finish -- not run"
-                return 2
+                return 1
         fi
 
         fd_outcome=0
 
-        for fd_variant in shipped estimate; do
+        for fd_variant in shipped estimate standalone; do
                 target_lane format_differential_one "$fd_variant" && continue
                 case $? in
                 2) [ "$fd_outcome" != 0 ] || fd_outcome=2 ;;
@@ -2411,10 +2411,10 @@ format_differential_one()
         fd_flags=
         [ -z "$fd_runner" ] || fd_count=$fd_emulated
 
-        if [ "$1" = estimate ]; then
-                fd_suite=format_differential_estimate
-                fd_flags=-DFORMAT_ESTIMATE_ALWAYS
-        fi
+        case $1 in
+        estimate) fd_suite=format_differential_estimate fd_flags=-DFORMAT_ESTIMATE_ALWAYS ;;
+        standalone) fd_suite=format_differential_standalone fd_flags=-DFORMAT_STANDALONE ;;
+        esac
 
         fd_binary=$work/$fd_suite.$fd_name
 
@@ -2424,28 +2424,40 @@ format_differential_one()
 
         $fd_runner "$fd_binary" 0 $((fd_count * 65536)) > "$fd_binary.out" 2>&1
         fd_status=$?
+        $fd_runner "$fd_binary" grid >> "$fd_binary.out" 2>&1 || fd_status=$?
 
         head -n "$fd_count" "$work/format_reference.out" > "$fd_binary.want"
+        cat "$work/format_reference.grid" >> "$fd_binary.want"
+        fd_grid=$(sed -n 's/^cases //p' "$work/format_reference.grid")
+        fd_total=$((fd_count * 65536 + fd_grid))
 
-        fd_agreed=$(awk 'NR == FNR { want[FNR] = $0; next }
-                $0 == want[FNR] { same++ } END { print same + 0 }' \
-                "$fd_binary.want" "$fd_binary.out")
+        #       A block is 65536 cases, the grid's last one what is left, and
+        #       the grid's closing count line is worth nothing.
+        fd_agreed=$(awk -v grid="$fd_grid" 'NR == FNR { want[FNR] = $0; next }
+                $0 == want[FNR] && $1 != "cases" {
+                        same += ($1 == "grid" && ($2 + 1) * 65536 > grid) ?
+                                grid - $2 * 65536 : 65536
+                } END { print same + 0 }' "$fd_binary.want" "$fd_binary.out")
 
-        tally "$fd_suite-$fd_name" "$((fd_agreed * 65536))" \
-                "$((fd_count * 65536))"
+        tally "$fd_suite-$fd_name" "$fd_agreed" "$fd_total"
 
-        [ "$fd_status" = 0 ] && [ "$fd_agreed" = "$fd_count" ] && return 0
+        [ "$fd_status" = 0 ] && [ "$fd_agreed" = "$fd_total" ] &&
+                cmp -s "$fd_binary.want" "$fd_binary.out" && return 0
 
         fd_line=$(diff "$fd_binary.want" "$fd_binary.out" |
                 sed -n 's/^\([0-9][0-9]*\)[acd,].*/\1/p' | head -1)
-        fd_line=${fd_line:-1}
-        fd_first=$(((fd_line - 1) * 65536))
+        fd_line=$(sed -n "${fd_line:-1}p" "$fd_binary.want")
+        fd_block=$(echo "$fd_line" | awk '{ print $2 }')
+        case $fd_line in
+        grid*) fd_space="grid $((fd_block * 65536)) 65536 detail" ;;
+        *) fd_space="$((fd_block * 65536)) 65536 detail" ;;
+        esac
 
-        note "$fd_suite-$fd_name: status $fd_status, block $((fd_line - 1)) differs from glibc:"
-        "$work/format_reference" "$fd_first" 65536 detail \
-                > "$fd_binary.want.detail"
-        $fd_runner "$fd_binary" "$fd_first" 65536 detail \
-                > "$fd_binary.detail" 2>&1
+        note "$fd_suite-$fd_name: status $fd_status, ${fd_line%% *} $fd_block differs from glibc:"
+        # shellcheck disable=SC2086 # the space is several arguments
+        "$work/format_reference" $fd_space > "$fd_binary.want.detail"
+        # shellcheck disable=SC2086
+        $fd_runner "$fd_binary" $fd_space > "$fd_binary.detail" 2>&1
         diff "$fd_binary.want.detail" "$fd_binary.detail" | head -20 |
                 sed 's/^/    /'
         return 1

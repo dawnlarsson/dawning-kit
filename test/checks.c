@@ -2741,6 +2741,11 @@ typedef struct
         long width;      // -1 for none
         long precision;  // -1 for none, -2 for a bare point
         char conversion;
+        char length[3];  // the grid's length modifier, empty for the floats
+        char width_star; // the grid's * and .*, whose values are arguments
+        char precision_star;
+        int width_argument;
+        int precision_argument;
 } fd_spec;
 
 static void fd_render(const fd_spec *spec, char *format)
@@ -2753,10 +2758,17 @@ static void fd_render(const fd_spec *spec, char *format)
         for (i = 0; spec->flags[i]; i++)
                 format[at++] = spec->flags[i];
 
-        if (spec->width >= 0)
+        if (spec->width_star)
+                format[at++] = '*';
+        else if (spec->width >= 0)
                 at += fd_decimal(format + at, (fd_word)spec->width);
 
-        if (spec->precision == -2)
+        if (spec->precision_star)
+        {
+                format[at++] = '.';
+                format[at++] = '*';
+        }
+        else if (spec->precision == -2)
         {
                 format[at++] = '.';
         }
@@ -2765,6 +2777,9 @@ static void fd_render(const fd_spec *spec, char *format)
                 format[at++] = '.';
                 at += fd_decimal(format + at, (fd_word)spec->precision);
         }
+
+        for (i = 0; spec->length[i]; i++)
+                format[at++] = spec->length[i];
 
         format[at++] = spec->conversion;
         format[at] = 0;
@@ -2781,6 +2796,9 @@ static fd_word fd_case(fd_word index, fd_spec *spec)
         fd_word b = fd_next(&state);
         long at = 0;
         long i;
+
+        spec->length[0] = 0;
+        spec->width_star = spec->precision_star = 0;
 
         for (i = 0; i < 5; i++)
                 if (((a >> (i * 2)) & 3) == 0)
@@ -2830,21 +2848,88 @@ static fd_word fd_case(fd_word index, fd_spec *spec)
         gets right. Applied to this tree's side it could hide the same bug
         arriving here, so it is not.
 */
-static int fd_format(char *out, long room, fd_spec *spec, double value)
+/*
+        The grid's arguments: a double, a 64 bit integer the length modifier
+        narrows, a string or a pointer, and the values the stars take.
+*/
+typedef struct
+{
+        char kind; // d i u(unsigned int) l(the length modifier's) s p c
+        double real;
+        long long whole;
+        const char *text;
+} fd_argument;
+
+static int fd_call(char *out, long room, const char *format,
+                   const fd_spec *spec, const fd_argument *value)
+{
+        int w = spec->width_argument;
+        int p = spec->precision_argument;
+        int stars = (spec->width_star ? 2 : 0) | (spec->precision_star ? 1 : 0);
+
+#define FD_CALL(v)                                                            \
+        (stars == 3 ? snprintf(out, room, format, w, p, v)                    \
+         : stars == 2 ? snprintf(out, room, format, w, v)                     \
+         : stars == 1 ? snprintf(out, room, format, p, v)                     \
+                      : snprintf(out, room, format, v))
+
+        switch (value->kind)
+        {
+        case 'i':
+                return FD_CALL((int)value->whole);
+        case 'u':
+                return FD_CALL((unsigned)value->whole);
+        case 'l':
+                if (spec->length[0] == 'h' || !spec->length[0])
+                        return FD_CALL((int)value->whole);
+                return FD_CALL(value->whole);
+        case 's':
+                return FD_CALL(value->text);
+        case 'p':
+                return FD_CALL((void *)(unsigned long)value->whole);
+        case 'c':
+                return FD_CALL((int)value->whole);
+        default:
+                return FD_CALL(value->real);
+        }
+#undef FD_CALL
+}
+
+/*
+        The one glibc bug the reference is corrected for, which src/lib.util.c
+        names beside format_run. When %g with the # flag first settles on
+        the fixed shape with no places left after the point, and rounding then
+        carries into a new power of ten, glibc switches to the exponent shape
+        but keeps the fixed shape's count of zero places: "%#.6g" of
+        999999.9999 is "1.e+06" where C asks for "1.00000e+06". The two agree
+        whenever the precision is one. So on the reference side, and only
+        there, a %#g answer with a point directly before its exponent and
+        more than one significant digit asked for is written again as %#e at
+        one place fewer, which is the answer C gives and which glibc's %e
+        gets right. Applied to this tree's side it could hide the same bug
+        arriving here, so it is not.
+*/
+static int fd_format_argument(char *out, long room, const fd_spec *spec,
+                              const fd_argument *value)
 {
         char format[48];
         int answer;
 
         fd_render(spec, format);
-        answer = snprintf(out, room, format, value);
+        answer = fd_call(out, room, format, spec, value);
 
 #ifdef FD_REFERENCE
         if ((spec->conversion == 'g' || spec->conversion == 'G') &&
             answer > 0 && answer < room)
         {
-                long significant = spec->precision == -1 ? 6
-                                   : spec->precision <= 0 ? 1
-                                                          : spec->precision;
+                long precision = spec->precision_star
+                                     ? (spec->precision_argument < 0
+                                            ? -1
+                                            : spec->precision_argument)
+                                     : spec->precision;
+                long significant = precision == -1 ? 6
+                                   : precision <= 0 ? 1
+                                                    : precision;
                 int alternate = 0;
                 int point = 0;
                 long i;
@@ -2860,9 +2945,10 @@ static int fd_format(char *out, long room, fd_spec *spec, double value)
                         fd_spec standard = *spec;
 
                         standard.conversion = spec->conversion == 'g' ? 'e' : 'E';
+                        standard.precision_star = 0;
                         standard.precision = significant - 1;
                         fd_render(&standard, format);
-                        answer = snprintf(out, room, format, value);
+                        answer = fd_call(out, room, format, &standard, value);
                 }
         }
 #endif
@@ -2870,20 +2956,354 @@ static int fd_format(char *out, long room, fd_spec *spec, double value)
         return answer;
 }
 
-static void format_differential_run(fd_word first, fd_word count, int detail)
+static int fd_format(char *out, long room, fd_spec *spec, double value)
+{
+        fd_argument argument;
+
+        argument.kind = 'd';
+        argument.real = value;
+        return fd_format_argument(out, room, spec, &argument);
+}
+
+/*
+        The grid: every flag spelling against every width, every precision,
+        every conversion and every value of its kind, walked in full rather
+        than drawn. It replaced some nine hundred cases CHECK_format pinned
+        one line each from a glibc run, and every one of those is a point on
+        it: the same format, the same arguments, now compared with the
+        machine's glibc instead of with a copy of its answer.
+
+        A flag spelling is one of the 32 subsets of "-+ #0" in that order, or
+        one of the ten pairs the other way round. A width or precision is
+        none, a literal, a bare point, or a star whose argument is on the
+        list, negative ones included. Each kind carries its own axes.
+*/
+#define FD_STAR (1L << 20)
+#define FD_END (1L << 30)
+
+static const long fd_int_widths[] = {-1, 1, 5, 8, 10, 12, 20, FD_STAR - 20,
+                                     FD_STAR - 8, FD_STAR - 5, FD_STAR,
+                                     FD_STAR + 5, FD_END};
+static const long fd_int_precisions[] = {-1, -2, 0, 1, 3, 4, 8, 20,
+                                         FD_STAR - 3, FD_STAR - 1, FD_STAR,
+                                         FD_STAR + 2, FD_STAR + 6, FD_END};
+static const long fd_real_widths[] = {-1, 10, 15, 20, 25, FD_STAR - 8,
+                                      FD_STAR + 1, FD_STAR + 20, FD_END};
+static const long fd_real_precisions[] = {
+    -1, -2, 0, 1, 2, 3, 5, 6, 7, 10, 11, 12, 13, 17, 20, 30, 40, 55, 56, 60,
+    FD_STAR - 1, FD_STAR + 6, FD_END};
+static const long fd_text_widths[] = {-1, 1, 5, 10, 20, FD_STAR - 8, FD_STAR,
+                                      FD_STAR + 6, FD_END};
+static const long fd_text_precisions[] = {-1, -2, 0, 1, 3, 6, 10, FD_STAR - 1,
+                                          FD_STAR + 6, FD_END};
+static const long fd_length_widths[] = {-1, 20, FD_END};
+static const long fd_no_precision[] = {-1, FD_END};
+static const long fd_length_precisions[] = {-1, 20, FD_END};
+
+static const long long fd_ints[] = {0, 1, 7, 42, -42, -1, 1234, 12345,
+                                    2147483647, -2147483647 - 1};
+static const long long fd_unsigneds[] = {0, 1, 7, 8, 42, 255, 300, 4294967295u};
+static const long long fd_wides[] = {0, 300, 70000, -1234567890123LL,
+                                     123456789, 0xdeadbeefcafeLL,
+                                     -9223372036854775807LL - 1,
+                                     9223372036854775807LL, -1};
+static const long long fd_pointers[] = {0, 1, 0xdeadbeef};
+static const long long fd_characters[] = {'a', ' ', '%'};
+static const char *const fd_texts[] = {"", "a", "hello", "abcdefgh", 0};
+static const double fd_reals[] = {
+    0.0, -0.0, 1.0, -1.0, 2.0, 1.5, -2.5, 2.5, 3.5, 4.5, 5.5, 0.5, 0.1, 0.2,
+    0.3, 0.05, 0.15, 0.25, 0.35, 0.45, 0.375, 1.4375, 1e-1, 1e-2, 1e-3, 1e-4,
+    1e-5, 1e-6, 1e-10, 1e-100, 1e-300, 1e-310, 1e-320, 5e-320, -5e-320,
+    5e-324, 4.9406564584124654e-324, 1e1, 1e2, 1e5, 1e15, 1e16, 1e17, 1e20,
+    1e100, 1e300, 1e308, 100000.0, 1000000.0, 9999999.0, 9.999, 999999.5,
+    999999.95, 999999.4999999, 0.0001, 0.00001, 0.000123456,
+    0.049999999999999996, 0.25000000000000006, 0.9999999999,
+    0.9999999999999999, 1.0 / 3.0, 2.0 / 3.0, 1.0000000000000002,
+    1.0000000298023224, 1.9999999999999991, 1.9999999999999998,
+    1.1125369292536007e-308, 2.2250738585072009e-308, 2.2250738585072014e-308,
+    2.225073858507201e-308, 1.7976931348623157e308, 123456789.123456789,
+    1234567890123456789.0, 2.718281828459045, 3.14159, 3.14159265358979,
+    3.141592653589793, __builtin_inf(), -__builtin_inf(), __builtin_nan(""),
+    -__builtin_nan("")};
+
+typedef struct
+{
+        char kind;
+        const char *conversions;
+        long flag_spellings; // 32 in order, or 42 with the pairs reversed
+        const char *const *lengths;
+        const long *widths;
+        const long *precisions;
+        long values;
+} fd_kind;
+
+static const char *const fd_no_length[] = {"", 0};
+static const char *const fd_every_length[] = {"hh", "h", "", "l", "ll",
+                                              "j", "z", "t", 0};
+
+static const fd_kind fd_kinds[] = {
+    {'i', "di", 42, fd_no_length, fd_int_widths, fd_int_precisions,
+     sizeof(fd_ints) / sizeof(fd_ints[0])},
+    {'u', "uoxXbB", 42, fd_no_length, fd_int_widths, fd_int_precisions,
+     sizeof(fd_unsigneds) / sizeof(fd_unsigneds[0])},
+    {'l', "diuoxX", 16, fd_every_length, fd_length_widths, fd_length_precisions,
+     sizeof(fd_wides) / sizeof(fd_wides[0])},
+    {'s', "s", 2, fd_no_length, fd_text_widths, fd_text_precisions,
+     sizeof(fd_texts) / sizeof(fd_texts[0])},
+    {'c', "c", 2, fd_no_length, fd_text_widths, fd_no_precision,
+     sizeof(fd_characters) / sizeof(fd_characters[0])},
+    {'p', "p", 2, fd_no_length, fd_text_widths, fd_no_precision,
+     sizeof(fd_pointers) / sizeof(fd_pointers[0])},
+    {'d', "fFeEgGaA", 32, fd_no_length, fd_real_widths, fd_real_precisions,
+     sizeof(fd_reals) / sizeof(fd_reals[0])},
+};
+
+static long fd_count_of(const long *list)
+{
+        long n = 0;
+
+        while (list[n] != FD_END)
+                n++;
+
+        return n;
+}
+
+static long fd_strings(const char *const *list)
+{
+        long n = 0;
+
+        while (list[n])
+                n++;
+
+        return n;
+}
+
+static fd_word fd_kind_size(const fd_kind *kind)
+{
+        fd_word conversions = 0;
+
+        while (kind->conversions[conversions])
+                conversions++;
+
+        return (fd_word)kind->flag_spellings * (fd_word)fd_strings(kind->lengths) *
+               (fd_word)fd_count_of(kind->widths) *
+               (fd_word)fd_count_of(kind->precisions) * conversions *
+               (fd_word)kind->values;
+}
+
+static fd_word fd_grid_size(void)
+{
+        fd_word total = 0;
+        unsigned long k;
+
+        for (k = 0; k < sizeof(fd_kinds) / sizeof(fd_kinds[0]); k++)
+                total += fd_kind_size(&fd_kinds[k]);
+
+        return total;
+}
+
+//      The spelling of flag set n: the subset of "-+ #0" whose bits n names,
+//      in that order for n below 32, and the ten pairs reversed after it.
+static void fd_flag_spelling(long n, char *into)
+{
+        static const char flags[5] = {'-', '+', ' ', '#', '0'};
+        long at = 0;
+        long i;
+        long j;
+
+        if (n < 32)
+        {
+                for (i = 0; i < 5; i++)
+                        if (n & (1L << i))
+                                into[at++] = flags[i];
+        }
+        else
+        {
+                n -= 32;
+
+                for (i = 0; i < 5; i++)
+                        for (j = i + 1; j < 5; j++)
+                                if (n-- == 0)
+                                {
+                                        into[at++] = flags[j];
+                                        into[at++] = flags[i];
+                                }
+        }
+
+        into[at] = 0;
+}
+
+static void fd_axis(long code, long *plain, char *star, int *argument)
+{
+        *star = code >= FD_STAR / 2;
+        *argument = *star ? (int)(code - FD_STAR) : 0;
+        *plain = *star ? -1 : code;
+}
+
+//      Grid case index, as a specification and its argument.
+static void fd_grid_case(fd_word index, fd_spec *spec, fd_argument *value)
+{
+        const fd_kind *kind = fd_kinds;
+        fd_word size;
+        long pick;
+        long i;
+
+        while ((size = fd_kind_size(kind)) <= index)
+        {
+                index -= size;
+                kind++;
+        }
+
+        pick = (long)(index % (fd_word)kind->values);
+        index /= (fd_word)kind->values;
+
+        for (i = 0; kind->conversions[i]; i++)
+                ;
+        spec->conversion = kind->conversions[index % (fd_word)i];
+        index /= (fd_word)i;
+
+        i = fd_count_of(kind->precisions);
+        fd_axis(kind->precisions[index % (fd_word)i], &spec->precision,
+                &spec->precision_star, &spec->precision_argument);
+        index /= (fd_word)i;
+
+        i = fd_count_of(kind->widths);
+        fd_axis(kind->widths[index % (fd_word)i], &spec->width,
+                &spec->width_star, &spec->width_argument);
+        index /= (fd_word)i;
+
+        i = fd_strings(kind->lengths);
+        {
+                const char *length = kind->lengths[index % (fd_word)i];
+
+                spec->length[0] = length[0];
+                spec->length[1] = length[0] ? length[1] : 0;
+                spec->length[2] = 0;
+        }
+        index /= (fd_word)i;
+
+        fd_flag_spelling((long)index, spec->flags);
+
+        value->kind = kind->kind;
+        value->real = 0;
+        value->whole = 0;
+        value->text = 0;
+
+        switch (kind->kind)
+        {
+        case 'i':
+                value->whole = fd_ints[pick];
+                break;
+        case 'u':
+                value->whole = fd_unsigneds[pick];
+                break;
+        case 'l':
+                value->whole = fd_wides[pick];
+                break;
+        case 's':
+                value->text = fd_texts[pick];
+                break;
+        case 'c':
+                value->whole = fd_characters[pick];
+                break;
+        case 'p':
+                value->whole = fd_pointers[pick];
+                break;
+        default:
+                value->real = fd_reals[pick];
+        }
+}
+
+static long fd_signed(char *into, long long value)
+{
+        long at = 0;
+
+        if (value < 0)
+                into[at++] = '-';
+
+        return at + fd_decimal(into + at, value < 0 ? 0 - (fd_word)value
+                                                    : (fd_word)value);
+}
+
+//      The arguments of one case as a detail line shows them: w= and p= for
+//      the stars, then the value -- a double's bits, an integer in decimal,
+//      a string in quotes or null.
+static long fd_describe(char *into, const fd_spec *spec,
+                        const fd_argument *value)
+{
+        long at = 0;
+        long i;
+
+        if (spec->width_star)
+        {
+                into[at++] = 'w';
+                into[at++] = '=';
+                at += fd_signed(into + at, spec->width_argument);
+                into[at++] = ' ';
+        }
+
+        if (spec->precision_star)
+        {
+                into[at++] = 'p';
+                into[at++] = '=';
+                at += fd_signed(into + at, spec->precision_argument);
+                into[at++] = ' ';
+        }
+
+        if (value->kind == 'd')
+                return at + fd_hex(into + at, fd_bits(value->real));
+
+        if (value->kind == 's')
+        {
+                if (!value->text)
+                        return at + (into[at] = 'n', into[at + 1] = 'u',
+                                     into[at + 2] = 'l', into[at + 3] = 'l', 4);
+
+                into[at++] = '"';
+
+                for (i = 0; value->text[i]; i++)
+                        into[at++] = value->text[i];
+
+                into[at++] = '"';
+                return at;
+        }
+
+        return at + fd_signed(into + at, value->whole);
+}
+
+//      grid is zero for the drawn floats and one for the grid, whose digest
+//      lines say grid rather than block and whose run ends by saying how many
+//      cases it has.
+static void format_differential_run(fd_word first, fd_word count, int detail,
+                                    int grid)
 {
         static char out[2048];
         static char line[2600];
         char format[48];
         fd_spec spec;
+        fd_argument value;
         fd_word hash = 0xCBF29CE484222325ull;
         fd_word index;
+        const char *label = grid ? "grid " : "block ";
+
+        if (grid && first + count > fd_grid_size())
+                count = first < fd_grid_size() ? fd_grid_size() - first : 0;
 
         for (index = first; index < first + count; index++)
         {
-                fd_word bits = fd_case(index, &spec);
-                int answer = fd_format(out, sizeof(out), &spec, fd_double(bits));
+                int answer;
 
+                if (grid)
+                {
+                        fd_grid_case(index, &spec, &value);
+                }
+                else
+                {
+                        value.kind = 'd';
+                        value.real = fd_double(fd_case(index, &spec));
+                }
+
+                answer = fd_format_argument(out, sizeof(out), &spec, &value);
                 fd_render(&spec, format);
                 long length = answer < 0                   ? 0
                               : answer >= (int)sizeof(out) ? (long)sizeof(out) - 1
@@ -2900,7 +3320,7 @@ static void format_differential_run(fd_word first, fd_word count, int detail)
                                 line[at++] = format[i];
 
                         line[at++] = ' ';
-                        at += fd_hex(line + at, bits);
+                        at += fd_describe(line + at, &spec, &value);
                         line[at++] = ' ';
 
                         if (answer < 0)
@@ -2930,12 +3350,10 @@ static void format_differential_run(fd_word first, fd_word count, int detail)
                 if ((index + 1) % 65536 == 0 || index + 1 == first + count)
                 {
                         at = 0;
-                        line[at++] = 'b';
-                        line[at++] = 'l';
-                        line[at++] = 'o';
-                        line[at++] = 'c';
-                        line[at++] = 'k';
-                        line[at++] = ' ';
+
+                        for (i = 0; label[i]; i++)
+                                line[at++] = label[i];
+
                         at += fd_decimal(line + at, index / 65536);
                         line[at++] = ' ';
                         at += fd_hex(line + at, hash);
@@ -2945,14 +3363,42 @@ static void format_differential_run(fd_word first, fd_word count, int detail)
                         hash = 0xCBF29CE484222325ull;
                 }
         }
+
+        if (grid && !detail)
+        {
+                {
+                        long at = 0;
+                        const char *said = "cases ";
+
+                        for (; said[at]; at++)
+                                line[at] = said[at];
+
+                        at += fd_decimal(line + at, count);
+                        line[at++] = '\n';
+                        line[at] = 0;
+                        fd_text(line);
+                }
+        }
 }
 
-//      first, count, and "detail" for a line per case instead of digests.
+//      first, count, and "detail" for a line per case instead of digests;
+//      a first argument of "grid" walks the grid instead, from the next
+//      two arguments (all of it when they are absent).
 static void format_differential_main(const char *first, const char *count,
-                                     const char *detail)
+                                     const char *detail, const char *more)
 {
-        format_differential_run(fd_parse(first), fd_parse(count),
-                                detail[0] == 'd');
+        if (first[0] == 'g')
+        {
+                format_differential_run(fd_parse(count),
+                                        detail[0] ? fd_parse(detail)
+                                                  : fd_grid_size(),
+                                        more[0] == 'd', 1);
+                return;
+        }
+
+        format_differential_run(fd_parse(first),
+                                count[0] ? fd_parse(count) : 65536,
+                                detail[0] == 'd', 0);
 }
 
 #elif defined(SHARED_spool_body) || defined(SHARED_stream_body) || \
@@ -38102,8 +38548,8 @@ b32 main(void)
 #define FORMAT_STANDALONE
 #define CHECK_format
 #endif
-#ifdef CHECK_format
-#ifdef FORMAT_STANDALONE
+#if defined(FORMAT_STANDALONE) && \
+    (defined(CHECK_format) || defined(CHECK_format_differential))
 /*
         printf on lib.c and lib.util.c alone, with none of the
         families it normally sits among. They live in one file now, so the
@@ -38111,7 +38557,8 @@ b32 main(void)
         claiming their include guards: format.c carries its own minimal FILE
         and errno for exactly this configuration, guarded on stream.c's and
         error.c's guards, so claiming those would take the fallback away with
-        the family.
+        the family. CHECK_format_differential takes the same arrangement when
+        the format lane builds it with FORMAT_STANDALONE.
 
         The allocator is the reason this matters rather than being tidy. It
         reaches for top_bit_known and memory_give, which the umbrella
@@ -38131,10 +38578,9 @@ b32 main(void)
 #define STANDARD_SKIP_SPOOL
 #define STANDARD_SKIP_PROCESS
 #define LIB_SKIP_UMBRELLA
-#include "../src/lib.util.c"
-#else
-#include "../src/lib.util.c"
 #endif
+#ifdef CHECK_format
+#include "../src/lib.util.c"
 /*
         Experimental C standard library
 
@@ -38147,20 +38593,13 @@ b32 main(void)
 */
 
 /*
-        Where the expected strings came from.
-
-        Every literal in the table below was produced by GNU libc 2.44 on
-        x86_64, by a second program built against the real header and run on
-        the same inputs, and copied here unchanged. That comparison covered
-        45,225 format-and-argument pairs across three programs -- 18,816 in a
-        written-out table of every flag against every width against every
-        precision against every conversion, 26,373 through random bit patterns
-        reinterpreted as doubles and as integers, and 36 lines of stream output
-        compared whole -- of which this file keeps a stratified sample and
-        every corner worth naming. Eleven of those pairs disagreed, all eleven
-        named in the file this tests, and none of them are in here: a pinned
-        expectation is a place where the two agree, and the disagreements are
-        documented divergences rather than aspirations.
+        What printf answers is compared with the machine's glibc, not pinned
+        here: CHECK_format_differential walks a grid of every flag spelling,
+        width, precision, length modifier, conversion and value kind, some
+        four million cases, and draws four million floats besides, on all
+        three machines and in this section's standalone arrangement too. What
+        stays below is what a comparison cannot state: the bounded write, the
+        entry points against each other, the messages and the streams.
 
         The stream entries -- printf, fprintf, puts, putchar, fputs and fputc
         -- are checked by putting a pipe on the standard output and reading
@@ -38207,947 +38646,24 @@ static fn pinned(string_address want, string_address format, bipolar answered)
         pinned((string_address)(want), (string_address)(fmt),                 \
                snprintf(room, sizeof(room), (string_address)(fmt)))
 
-//      The sample: flags, widths, precisions, length modifiers and every
-//      conversion, against what glibc answered for each.
-static fn conversions(void)
+/*
+        What the grid in CHECK_format_differential cannot say: several
+        conversions in one format, a star on a percent, and formats with no
+        conversion in them at all. A percent is a percent, a literal is a
+        literal, and a conversion nobody knows keeps its percent. Every
+        single-conversion case this section once pinned is a point on that
+        grid, compared with glibc on all three machines.
+*/
+static fn shapes(void)
 {
         CASE("007   |ab|9", "%*.*d|%.*s|%d", -6, 3, 7, 2, "abcd", 9);
         CASE("%|7", "%*.*%|%d", 5, 2, 7);
-        CASE("7", "%.*d", -3, 7);
-        CASE("0", "%d", 0);
-        CASE("00000000", "%5.8d", 0);
-        CASE("000", "%-1.3d", 0);
-        CASE("-2147483648", "%-10.0d", (-2147483647-1));
-        CASE("-42", "%+.0d", -42);
-        CASE("+0", "%+.1d", 0);
-        CASE("+", "%+1.0d", 0);
-        CASE("         +", "%+10.0d", 0);
-        CASE("    0", "% 5d", 0);
-        CASE("00000000", "%0.8d", 0);
-        CASE("2147483647", "%010.0d", 2147483647);
-        CASE("       000", "%010.3d", 0);
-        CASE("42", "%#.0d", 42);
-        CASE("-2147483648", "%#1d", (-2147483647-1));
-        CASE("  -42", "%#5d", -42);
-        CASE("    0", "%#5.1d", 0);
-        CASE("         0", "%#10d", 0);
-        CASE("2147483647", "%#10.8d", 2147483647);
-        CASE(" ", "%-01.0d", 0);
-        CASE("+0", "%+0d", 0);
-        CASE("-2147483648", "%+05.0d", (-2147483647-1));
-        CASE("+00000000", "%+05.8d", 0);
-        CASE("       -42", "%+010.0d", -42);
-        CASE(" ", "% 0.0d", 0);
-        CASE(" 000", "% 01.3d", 0);
-        CASE("0", "%#0.1d", 0);
-        CASE("00000000", "%#0.8d", 0);
-        CASE("2147483647", "%#01.3d", 2147483647);
-        CASE("  042", "%#05.3d", 42);
-        CASE("          ", "%#010.0d", 0);
-        CASE("-2147483648", "%#010.1d", (-2147483647-1));
-        CASE("-42", "%#-.1d", -42);
-        CASE("0", "%#-1.1d", 0);
-        CASE("0    ", "%#-5d", 0);
-        CASE("2147483647", "%#-5.0d", 2147483647);
-        CASE("42        ", "%#-10.0d", 42);
-        CASE("+00000000", "%+-.8d", 0);
-        CASE("+000      ", "%+-10.3d", 0);
-        CASE("    0", "%5.1i", 0);
-        CASE(" ", "%-1.0i", 0);
-        CASE("-2147483648", "%-1.0i", (-2147483647-1));
-        CASE("-42  ", "%-5.0i", -42);
-        CASE("          ", "%-10.0i", 0);
-        CASE("+0", "%+i", 0);
-        CASE("+00000000", "%+5.8i", 0);
-        CASE(" 000", "% 1.3i", 0);
-        CASE("0", "%0.1i", 0);
-        CASE("2147483647", "%01.0i", 2147483647);
-        CASE("   42", "%05.0i", 42);
-        CASE("          ", "%010.0i", 0);
-        CASE("-42", "%#i", -42);
-        CASE("0", "%#1i", 0);
-        CASE("2147483647", "%#1.8i", 2147483647);
-        CASE("    0", "%#5i", 0);
-        CASE("00000042", "%#5.8i", 42);
-        CASE("-2147483648", "%#10.3i", (-2147483647-1));
-        CASE("00000000", "%-0.8i", 0);
-        CASE("000       ", "%-010.3i", 0);
-        CASE("-2147483648", "%+0.0i", (-2147483647-1));
-        CASE("-42", "%+01.0i", -42);
-        CASE("    +", "%+05.0i", 0);
-        CASE("   +0", "%+05.1i", 0);
-        CASE(" ", "% 01.0i", 0);
-        CASE("0", "%#0i", 0);
-        CASE("042", "%#0.3i", 42);
-        CASE("-2147483648", "%#01.1i", (-2147483647-1));
-        CASE("  -42", "%#05.1i", -42);
-        CASE("00000000", "%#05.8i", 0);
-        CASE("         0", "%#010.1i", 0);
-        CASE("2147483647", "%#-.0i", 2147483647);
-        CASE("42", "%#-1.0i", 42);
-        CASE("000", "%#-1.3i", 0);
-        CASE("-2147483648", "%#-5i", (-2147483647-1));
-        CASE("-42       ", "%#-10i", -42);
-        CASE("+0", "%+-.1i", 0);
-        CASE("+         ", "%+-10.0i", 0);
-        CASE("  255", "%5.1u", 255u);
-        CASE("", "%-.0u", 0u);
-        CASE("4294967295", "%-1.0u", 4294967295u);
-        CASE("0    ", "%-5u", 0u);
-        CASE("255", "%+1.1u", 255u);
-        CASE("8", "% .0u", 8u);
-        CASE("0", "% 1u", 0u);
-        CASE("255", "%0.1u", 255u);
-        CASE("0", "%#u", 0u);
-        CASE("255", "%#.0u", 255u);
-        CASE("8", "%#1.1u", 8u);
-        CASE("  000", "%#5.3u", 0u);
-        CASE("       255", "%#10.1u", 255u);
-        CASE("4294967295", "%#10.3u", 4294967295u);
-        CASE("0         ", "%-010u", 0u);
-        CASE("          ", "%-010.0u", 0u);
-        CASE("4294967295", "%+0.0u", 4294967295u);
-        CASE("  255", "%+05.1u", 255u);
-        CASE("00000", "% 05u", 0u);
-        CASE("         8", "% 010.0u", 8u);
-        CASE("0", "%#0.1u", 0u);
-        CASE("255", "%#01.1u", 255u);
-        CASE("4294967295", "%#01.1u", 4294967295u);
-        CASE("  255", "%#05.3u", 255u);
-        CASE("  00000008", "%#010.8u", 8u);
-        CASE("0", "%#-1u", 0u);
-        CASE("4294967295", "%#-5u", 4294967295u);
-        CASE("255       ", "%#-10.0u", 255u);
-        CASE("255", "%+-.1u", 255u);
-        CASE("0", "%o", 0u);
-        CASE("     ", "%5.0o", 0u);
-        CASE("37777777777", "%10.0o", 4294967295u);
-        CASE("       377", "%10.1o", 255u);
-        CASE("0         ", "%-10o", 0u);
-        CASE("   10", "%+5.0o", 8u);
-        CASE("  377", "%+5.1o", 255u);
-        CASE("    0", "% 5o", 0u);
-        CASE("377", "%01.1o", 255u);
-        CASE("  377", "%05.0o", 255u);
-        CASE("000", "%#.3o", 0u);
-        CASE("0", "%#1o", 0u);
-        CASE("037777777777", "%#1.3o", 4294967295u);
-        CASE("00000377", "%#5.8o", 255u);
-        CASE("377", "%-0.1o", 255u);
-        CASE(" ", "%-01.0o", 0u);
-        CASE("37777777777", "%-05.0o", 4294967295u);
-        CASE("0", "%+0o", 0u);
-        CASE("       377", "%+010.1o", 255u);
-        CASE("10", "% 01.0o", 8u);
-        CASE("0000000000", "% 010o", 0u);
-        CASE("0377", "%#0.3o", 255u);
-        CASE("00000010", "%#01.8o", 8u);
-        CASE(" 0377", "%#05.1o", 255u);
-        CASE("0000000000", "%#010o", 0u);
-        CASE("037777777777", "%#-o", 4294967295u);
-        CASE("0377", "%#-1.0o", 255u);
-        CASE("0    ", "%#-5o", 0u);
-        CASE("010  ", "%#-5.1o", 8u);
-        CASE("000       ", "%#-10.3o", 0u);
-        CASE("377", "%+-1.1o", 255u);
-        CASE("", "%.0x", 0u);
-        CASE("0", "%1x", 0u);
-        CASE("ffffffff", "%1.0x", 4294967295u);
-        CASE("ff", "%-.1x", 255u);
-        CASE("0", "%+x", 0u);
-        CASE("8", "%+.0x", 8u);
-        CASE("        ff", "%+10.1x", 255u);
-        CASE("         0", "% 10x", 0u);
-        CASE("ff", "%0.0x", 255u);
-        CASE("   ff", "%05.1x", 255u);
-        CASE("0x000000ff", "%#.8x", 255u);
-        CASE("    0", "%#5x", 0u);
-        CASE("  0x8", "%#5x", 8u);
-        CASE("          ", "%#10.0x", 0u);
-        CASE("ffffffff", "%-0.0x", 4294967295u);
-        CASE("ff", "%-01.1x", 255u);
-        CASE("0", "%+01x", 0u);
-        CASE("         8", "%+010.0x", 8u);
-        CASE("ff", "% 0.1x", 255u);
-        CASE("0", "%#0x", 0u);
-        CASE("0", "%#01x", 0u);
-        CASE("0xffffffff", "%#05x", 4294967295u);
-        CASE("      0xff", "%#010.0x", 255u);
-        CASE("      0xff", "%#010.1x", 255u);
-        CASE("0x8", "%#-.1x", 8u);
-        CASE("000", "%#-1.3x", 0u);
-        CASE("0xffffffff", "%#-5.3x", 4294967295u);
-        CASE("0         ", "%#-10x", 0u);
-        CASE("0x000000ff", "%#-10.8x", 255u);
-        CASE("     ", "%+-5.0x", 0u);
-        CASE("ff   ", "%+-5.1x", 255u);
-        CASE("ffffffff  ", "%+-10.0x", 4294967295u);
-        CASE("    0", "%5X", 0u);
-        CASE("FF", "%-1.1X", 255u);
-        CASE("8    ", "%-5.0X", 8u);
-        CASE("0", "%+1X", 0u);
-        CASE("FF", "% .1X", 255u);
-        CASE("   FF", "% 5.0X", 255u);
-        CASE("0", "%0X", 0u);
-        CASE("        FF", "%010.1X", 255u);
-        CASE("0X8", "%#X", 8u);
-        CASE(" ", "%#1.0X", 0u);
-        CASE("0XFFFFFFFF", "%#5.0X", 4294967295u);
-        CASE("         0", "%#10X", 0u);
-        CASE("      0XFF", "%#10.1X", 255u);
-        CASE("FF   ", "%-05.1X", 255u);
-        CASE("8", "%+01.0X", 8u);
-        CASE("00000", "%+05X", 0u);
-        CASE("FF", "% 01.1X", 255u);
-        CASE("0XFFFFFFFF", "%#0X", 4294967295u);
-        CASE("0", "%#01X", 0u);
-        CASE("0XFF", "%#01.0X", 255u);
-        CASE("  0X8", "%#05.1X", 8u);
-        CASE("       000", "%#010.3X", 0u);
-        CASE("0XFF", "%#-.1X", 255u);
-        CASE("0XFFFFFFFF", "%#-.3X", 4294967295u);
-        CASE("0X000000FF", "%#-1.8X", 255u);
-        CASE("0X8       ", "%#-10X", 8u);
-        CASE("0", "%+-X", 0u);
-        CASE("", "%+-.0X", 0u);
-        CASE("FFFFFFFF", "%+-1.0X", 4294967295u);
-        CASE("FF        ", "%+-10.1X", 255u);
-        CASE("         0", "%10b", 0u);
-        CASE("1000", "%-.0b", 8u);
-        CASE("11111111", "%-5.1b", 255u);
-        CASE("    0", "%+5b", 0u);
-        CASE("11111111", "% .0b", 255u);
-        CASE("11111111", "% 1.1b", 255u);
-        CASE("0", "%01b", 0u);
-        CASE("          ", "%010.0b", 0u);
-        CASE("0b11111111111111111111111111111111", "%#.0b", 4294967295u);
-        CASE("0b11111111", "%#.1b", 255u);
-        CASE("0b11111111", "%#1.1b", 255u);
-        CASE("0b1000", "%#5.3b", 8u);
-        CASE("  00000000", "%#10.8b", 0u);
-        CASE("0", "%-0b", 0u);
-        CASE("1000      ", "%-010.0b", 8u);
-        CASE("11111111  ", "%-010.1b", 255u);
-        CASE("0000000000", "%+010b", 0u);
-        CASE("11111111", "% 05.1b", 255u);
-        CASE("  11111111", "% 010.0b", 255u);
-        CASE("0b1000", "%#0.1b", 8u);
-        CASE("000", "%#01.3b", 0u);
-        CASE("00000", "%#05b", 0u);
-        CASE("0b11111111111111111111111111111111", "%#05.3b", 4294967295u);
-        CASE("0b11111111", "%#010.8b", 255u);
-        CASE("0b1000", "%#-1b", 8u);
-        CASE("0b11111111", "%#-1.1b", 255u);
-        CASE("     ", "%#-5.0b", 0u);
-        CASE("0b11111111111111111111111111111111", "%#-10.0b", 4294967295u);
-        CASE("0", "%+-1b", 0u);
-        CASE("           1", "%#12d", 1);
-        CASE("           7", "%#12d", 7);
-        CASE("12345       ", "%-12d", 12345);
-        CASE("0", "%o", 0u);
-        CASE("          01", "%#12o", 1u);
-        CASE("           0", "%#12x", 0u);
-        CASE("1           ", "%-12X", 1u);
-        CASE("         0X7", "%#12X", 7u);
-        CASE("44", "%hhu", (unsigned)300);
-        CASE("           123456789", "%#20zu", (unsigned long)123456789UL);
-        CASE("00000000deadbeefcafe", "%.20lx", (unsigned long)0xdeadbeefcafeUL);
-        CASE("0000ffffffffffffffff", "%.20llx", (unsigned long long)0xffffffffffffffffULL);
-        CASE("", "%.0s", "hello");
-        CASE("", "%.0s", "a");
-        CASE("1234", "%*.*d", 0, -1, 1234);
-        CASE("3.141590", "%*.*f", 1, 6, 3.14159);
-        CASE("1234    ", "%*.*d", -8, 2, 1234);
-        CASE("abcdef  ", "%*.*s", -8, 6, "abcdefgh");
-        CASE("001234              ", "%*.*d", -20, 6, 1234);
-        CASE("0", "%.6g", 0.0);
-        CASE("0", "%G", 0.0);
-        CASE("0", "%.2G", 0.0);
-        CASE("0.000000", "%0f", 0.0);
-        CASE("000000000000000000000.000", "%#025.3f", 0.0);
-        CASE("   0.000000e+00", "% 15e", 0.0);
-        CASE("             0.000000e+00", "% 25e", 0.0);
-        CASE("0000000.000e+00", "%#015.3e", 0.0);
-        CASE("              0", "% 15g", 0.0);
-        CASE("0.00000", "%#0g", 0.0);
-        CASE("0.00", "%#0.3g", 0.0);
-        CASE("-0.000000", "%f", -0.0);
-        CASE("-0", "%.20g", -0.0);
-        CASE("-0", "%.17G", -0.0);
-        CASE("-0000000000.000", "%015.3f", -0.0);
-        CASE("-0.000000      ", "%-#15f", -0.0);
-        CASE("-0.000e+00", "%0.3e", -0.0);
-        CASE("-000.000000e+00", "%015e", -0.0);
-        CASE("-0.000000e+00", "%-#e", -0.0);
-        CASE("                       -0", "% 25.3g", -0.0);
-        CASE("-000000000000000000.00000", "%#025g", -0.0);
-        CASE("-0.00000", "%-#g", -0.0);
-        CASE("1.00", "%.2f", 1.0);
-        CASE("1.0", "%.1F", 1.0);
-        CASE("1.000", "%-.3f", 1.0);
-        CASE("1.000000                 ", "%-25f", 1.0);
-        CASE("1.000000", "%#f", 1.0);
-        CASE("1.000                    ", "%-#25.3f", 1.0);
-        CASE("00000000000001.000000e+00", "%025e", 1.0);
-        CASE("   1.000000e+00", "%#15e", 1.0);
-        CASE("1.000e+00      ", "%-#15.3e", 1.0);
-        CASE("000000000000001", "%015g", 1.0);
-        CASE("1.00", "%-#.3g", 1.0);
-        CASE("1.000000000000000000000000000000", "%.30f", 1.0);
-        CASE("-1.00000000000000000", "%.17f", -1.0);
-        CASE("-1.0000000000", "%.10F", -1.0);
-        CASE("-1.000000                ", "%-25f", -1.0);
-        CASE("                -1.000000", "%+25f", -1.0);
-        CASE("         -1.000", "%#15.3f", -1.0);
-        CASE("-1.000000e+00  ", "%-15e", -1.0);
-        CASE("-1.000e+00", "%#.3e", -1.0);
-        CASE("-001.000000e+00", "%+015e", -1.0);
-        CASE("-1", "%-g", -1.0);
-        CASE("-000000000000000000000001", "%025.3g", -1.0);
-        CASE("-1.00000                 ", "%-#25g", -1.0);
-        CASE("-1.0000000000000000000000000000000000000000000000000000000e+00", "%.55e", -1.0);
-        CASE("5e-01", "%.0e", 0.5);
-        CASE("5.000000E-01", "%E", 0.5);
-        CASE("+0.500", "%+.3f", 0.5);
-        CASE("                 0.500000", "% 25f", 0.5);
-        CASE("+0.500000", "%+0f", 0.5);
-        CASE("5.000e-01                ", "%-25.3e", 0.5);
-        CASE("             5.000000e-01", "%#25e", 0.5);
-        CASE("0005.000000e-01", "%#015e", 0.5);
-        CASE("0.5            ", "%-15.3g", 0.5);
-        CASE("       0.500000", "%#15g", 0.5);
-        CASE("0.5000000000000000000000000000000000000000", "%.40f", 0.5);
-        CASE("1.500000", "%f", 1.5);
-        CASE("000000000000000001.500000", "%025f", 1.5);
-        CASE("1.500000e+00   ", "%-#15e", 1.5);
-        CASE("                     1.50", "%#25.3g", 1.5);
-        CASE("2.50000000000000000", "%.17f", 2.5);
-        CASE("2.50000000000000000000e+00", "%.20e", 2.5);
-        CASE("2.50000000000000000E+00", "%.17E", 2.5);
-        CASE(" 2.500", "% .3f", 2.5);
-        CASE("                 2.500000", "%#25f", 2.5);
-        CASE("2.500000", "%#0f", 2.5);
-        CASE("               +2.500e+00", "%+25.3e", 2.5);
-        CASE("+0000000000002.500000e+00", "%+025e", 2.5);
-        CASE("2.5            ", "%-15g", 2.5);
-        CASE("           +2.5", "%+15.3g", 2.5);
-        CASE("+000000000002.5", "%+015g", 2.5);
-        CASE("2.500000000000000000000000000000000000000000000000000000000000e+00", "%.60e", 2.5);
-        CASE("-2.500000e+00", "%.6e", -2.5);
-        CASE("-2", "%.1g", -2.5);
-        CASE("-2", "%.0G", -2.5);
-        CASE("                -2.500000", "% 25f", -2.5);
-        CASE("-00000000000000002.500000", "%+025f", -2.5);
-        CASE("-0000000002.500", "%#015.3f", -2.5);
-        CASE("  -2.500000e+00", "% 15e", -2.5);
-        CASE("-2.500e+00", "%#0.3e", -2.5);
-        CASE("           -2.5", "%+15g", -2.5);
-        CASE("-2.5", "% g", -2.5);
-        CASE("-0000000000000000000002.5", "%+025.3g", -2.5);
-        CASE("-2.5", "%.55g", -2.5);
-        CASE("4", "%.1g", 3.5);
-        CASE("000000000000000003.500000", "%#025f", 3.5);
-        CASE("3.500000", "%-#f", 3.5);
-        CASE("00000000000003.500000e+00", "%#025e", 3.5);
-        CASE("            3.5", "% 15g", 3.5);
-        CASE("000000003.50000", "%#015g", 3.5);
-        CASE("0", "%.0f", 0.1);
-        CASE("0.100000", "%F", 0.1);
-        CASE("0.10000000000000000555", "%.20G", 0.1);
-        CASE("0.100          ", "%-#15.3f", 0.1);
-        CASE("0.100000                 ", "%-#25f", 0.1);
-        CASE("1.000e-01", "%-#.3e", 0.1);
-        CASE("0000000000000.1", "%015g", 0.1);
-        CASE("000000000000000000000.100", "%#025.3g", 0.1);
-        CASE("0.20000000000000001", "%.17F", 0.2);
-        CASE("0.200", "%#.3f", 0.2);
-        CASE("2.000000e-01             ", "%-25e", 0.2);
-        CASE("2.000000e-01             ", "%-#25e", 0.2);
-        CASE("       0.200000", "%#15g", 0.2);
-        CASE("0.200000       ", "%-#15g", 0.2);
-        CASE("0.29999999999999998890", "%.20f", 0.3);
-        CASE("0.29999999999999999", "%.17F", 0.3);
-        CASE("3.000000E-01", "%.6E", 0.3);
-        CASE("                 0.300000", "%#25f", 0.3);
-        CASE("            +3.000000e-01", "%+25e", 0.3);
-        CASE("   3.000000e-01", "%#15e", 0.3);
-        CASE("0.300000", "%#g", 0.3);
-        CASE("+000000000000.3", "%+015g", 0.3);
-        CASE("0.300                    ", "%-#25.3g", 0.3);
-        CASE("3.3e-01", "%.1e", 1.0/3.0);
-        CASE("3E-01", "%.0E", 1.0/3.0);
-        CASE("0.3", "%.1G", 1.0/3.0);
-        CASE("      +0.333333", "%+15f", 1.0/3.0);
-        CASE("+0.333", "%+0.3f", 1.0/3.0);
-        CASE("+3.333333e-01", "%+e", 1.0/3.0);
-        CASE("             3.333333e-01", "% 25e", 1.0/3.0);
-        CASE("                3.333e-01", "%#25.3e", 1.0/3.0);
-        CASE("0.333333                 ", "%-25g", 1.0/3.0);
-        CASE("          0.333", "%#15.3g", 1.0/3.0);
-        CASE("00000000.333333", "%#015g", 1.0/3.0);
-        CASE("0.3333333333333333148296162562473909929394721984863281250", "%.55f", 1.0/3.0);
-        CASE("6.6666666667e-01", "%.10e", 2.0/3.0);
-        CASE("6.666667E-01", "%.6E", 2.0/3.0);
-        CASE("0.666667", "%-f", 2.0/3.0);
-        CASE("                   +0.667", "%+25.3f", 2.0/3.0);
-        CASE("+00000000000000000.666667", "%+025f", 2.0/3.0);
-        CASE("     +6.667e-01", "%+15.3e", 2.0/3.0);
-        CASE("00000000000006.666667e-01", "%025e", 2.0/3.0);
-        CASE("+006.666667e-01", "%+015e", 2.0/3.0);
-        CASE("+0.667", "%+.3g", 2.0/3.0);
-        CASE("+0.666667", "%+0g", 2.0/3.0);
-        CASE("0.666667       ", "%-#15g", 2.0/3.0);
-        CASE("6.6666666666666662965923251249478198587894e-01", "%.40e", 2.0/3.0);
-        CASE("3.14159265358979311600E+00", "%.20E", 3.141592653589793);
-        CASE("+3.141593", "%+f", 3.141592653589793);
-        CASE("3.142", "%#0.3f", 3.141592653589793);
-        CASE("             3.141593e+00", "%#25e", 3.141592653589793);
-        CASE("3.1415926535897931159979634685441851615905761718750000000", "%.55f", 3.141592653589793);
-        CASE(" 2.718282", "% f", 2.718281828459045);
-        CASE("000000000000000002.718282", "%#025f", 2.718281828459045);
-        CASE("+0000000000002.718282e+00", "%+025e", 2.718281828459045);
-        CASE("0002.718282e+00", "%#015e", 2.718281828459045);
-        CASE("2.71828", "%#0g", 2.718281828459045);
-        CASE("2.71828182845904509079559829843", "%.30g", 2.718281828459045);
-        CASE("2.718281828459045090795598298427648842334747314453125", "%.60g", 2.718281828459045);
-        CASE("0.10000000000000001", "%.17g", 1e-1);
-        CASE("0.100000", "%0f", 1e-1);
-        CASE("0.100", "%-#.3f", 1e-1);
-        CASE("00000000000001.000000e-01", "%#025e", 1e-1);
-        CASE("00000000000000001.000e-01", "%#025.3e", 1e-1);
-        CASE("00000000000.100", "%#015.3g", 1e-1);
-        CASE("0.0", "%.1f", 1e-2);
-        CASE("0", "%.0F", 1e-2);
-        CASE("0.010000", "%#f", 1e-2);
-        CASE("0.010000                 ", "%-#25f", 1e-2);
-        CASE("1.000000e-02   ", "%-#15e", 1e-2);
-        CASE("1.000000e-02             ", "%-#25e", 1e-2);
-        CASE("0.0100000", "%-#g", 1e-2);
-        CASE("1.000000e-03", "%e", 1e-3);
-        CASE("       0.001000", "%#15f", 1e-3);
-        CASE("+0.001000", "%+0f", 1e-3);
-        CASE("1.000000e-03", "%#e", 1e-3);
-        CASE("1.000e-03                ", "%-#25.3e", 1e-3);
-        CASE("0.001                    ", "%-25g", 1e-3);
-        CASE("0.00100        ", "%-#15.3g", 1e-3);
-        CASE("1.00000000000000005e-04", "%.17e", 1e-4);
-        CASE("0.00010000000000000000", "%.20F", 1e-4);
-        CASE("                    0.000", "%#25.3f", 1e-4);
-        CASE("0.000100", "%#0f", 1e-4);
-        CASE("      1.000e-04", "%#15.3e", 1e-4);
-        CASE("                  +0.0001", "%+25g", 1e-4);
-        CASE("0.000100", "%#.3g", 1e-4);
-        CASE("1e-05", "%.6g", 1e-5);
-        CASE("0.000010", "%-#f", 1e-5);
-        CASE("                    1e-05", "% 25g", 1e-5);
-        CASE("              1.00000e-05", "%#25g", 1e-5);
-        CASE("0.000010000000000000000818030539140313095458623138256371021271", "%.60f", 1e-5);
-        CASE("9.99999999999999955e-07", "%.17e", 1e-6);
-        CASE("0.0", "%.1F", 1e-6);
-        CASE("1.000000e-06", "%-e", 1e-6);
-        CASE("000000000000000000001e-06", "%025g", 1e-6);
-        CASE("9.9999999999999995474811182588625868561393872369080781937e-07", "%.55e", 1e-6);
-        CASE("1e-10", "%.0g", 1e-10);
-        CASE("1.000000E-10", "%E", 1e-10);
-        CASE("00000000.000000", "%#015f", 1e-10);
-        CASE("+1.000000e-10", "%+e", 1e-10);
-        CASE("1.000000e-10", "%#0e", 1e-10);
-        CASE("              1.00000e-10", "%#25g", 1e-10);
-        CASE("1.00000000000000000E+01", "%.17E", 1e1);
-        CASE("000000000000000000010.000", "%#025.3f", 1e1);
-        CASE(" 1.000000e+01", "% e", 1e1);
-        CASE("0000001.000e+01", "%#015.3e", 1e1);
-        CASE("+000000000000000000000010", "%+025g", 1e1);
-        CASE("10.0", "%#0.3g", 1e1);
-        CASE("100", "%.20g", 1e2);
-        CASE("100", "%.6G", 1e2);
-        CASE("100", "%.17G", 1e2);
-        CASE("100.000000     ", "%-#15f", 1e2);
-        CASE("1.000000e+02", "%0e", 1e2);
-        CASE("1.000000e+02", "%-#e", 1e2);
-        CASE("000000000000000000100.000", "%#025g", 1e2);
-        CASE("100000.000000  ", "%-15f", 1e5);
-        CASE("100000.000000", "%#f", 1e5);
-        CASE("100000.000               ", "%-#25.3f", 1e5);
-        CASE("1.000000e+05", "%#e", 1e5);
-        CASE("1.000e+05      ", "%-#15.3e", 1e5);
-        CASE("1.00e+05", "%-#.3g", 1e5);
-        CASE("100000.                  ", "%-#25g", 1e5);
-        CASE("1000000000000000.00000000000000000", "%.17f", 1e15);
-        CASE("+1000000000000000.000000", "%+15f", 1e15);
-        CASE("1000000000000000.000", "%#15.3f", 1e15);
-        CASE("1.000e+15", "%#.3e", 1e15);
-        CASE("+1.000000e+15", "%+0e", 1e15);
-        CASE("1.00000e+15              ", "%-#25g", 1e15);
-        CASE("1.000000000000000000000000000000e+15", "%.30e", 1e15);
-        CASE("1e+16", "%.0e", 1e16);
-        CASE(" 10000000000000000.000000", "% 15f", 1e16);
-        CASE("             1.000000e+16", "%#25e", 1e16);
-        CASE("1.000000e+16", "%#0e", 1e16);
-        CASE("    1.00000e+16", "%#15g", 1e16);
-        CASE("10000000000000000", "%.55g", 1e16);
-        CASE("100000000000000000.000000", "%015f", 1e17);
-        CASE("1.000000e+17", "%-#e", 1e17);
-        CASE("                 1.00e+17", "%#25.3g", 1e17);
-        CASE("100000000000000000000.000000", "%.6f", 1e20);
-        CASE("1.00000000000000000000e+20", "%.20e", 1e20);
-        CASE("1.00000000000000000E+20", "%.17E", 1e20);
-        CASE("100000000000000000000.000000", "%#15f", 1e20);
-        CASE("100000000000000000000.000000", "%#0f", 1e20);
-        CASE("1e+20", "%-g", 1e20);
-        CASE("1.000000000000000000000000000000000000000000000000000000000000e+20", "%.60e", 1e20);
-        CASE("1.0e+100", "%.1e", 1e100);
-        CASE("1E+100", "%.0G", 1e100);
-        CASE("+10000000000000000159028911097599180468360808563945281389781327557747838772170381060813469985856815104.000000", "%+015f", 1e100);
-        CASE("10000000000000000159028911097599180468360808563945281389781327557747838772170381060813469985856815104.000", "%#015.3f", 1e100);
-        CASE("1.000e+100", "%#0.3e", 1e100);
-        CASE("+1e+100", "%+g", 1e100);
-        CASE("1.000000000000000015902891109759918046836080856394528139e+100", "%.55g", 1e100);
-        CASE("1e+300", "%g", 1e300);
-        CASE("0000000000001.000000e+300", "%#025e", 1e300);
-        CASE(" 1e+300", "% g", 1e300);
-        CASE("0001.00000e+300", "%#015g", 1e300);
-        CASE("0", "%.0f", 1e-100);
-        CASE("1e-100", "%.17g", 1e-100);
-        CASE("1.00000000000000002E-100", "%.20G", 1e-100);
-        CASE("0.000000       ", "%-#15f", 1e-100);
-        CASE("0.000          ", "%-#15.3f", 1e-100);
-        CASE("1.000e-100", "%-#.3e", 1e-100);
-        CASE("1e-100", "%0g", 1e-100);
-        CASE("00000000000000001.00e-100", "%#025.3g", 1e-100);
-        CASE("0.000000", "%.6F", 1e-300);
-        CASE("0.000", "%#.3f", 1e-300);
-        CASE("1.000000e-300  ", "%-15e", 1e-300);
-        CASE("1.000000e-300            ", "%-#25e", 1e-300);
-        CASE("1.00000e-300", "%#g", 1e-300);
-        CASE("1.00000e-300   ", "%-#15g", 1e-300);
-        CASE("0.00000000000000000000", "%.20f", 1e-320);
-        CASE("0.00000000000000000", "%.17F", 1e-320);
-        CASE("1.0E-320", "%.1E", 1e-320);
-        CASE("0.000                    ", "%-25.3f", 1e-320);
-        CASE("                 0.000000", "%#25f", 1e-320);
-        CASE("1.000e-320     ", "%-15.3e", 1e-320);
-        CASE(" +9.999889e-321", "%+15e", 1e-320);
-        CASE("  9.999889e-321", "%#15e", 1e-320);
-        CASE("1e-320", "%-.3g", 1e-320);
-        CASE("9.99989e-321", "%#g", 1e-320);
-        CASE("+9.99989e-321", "%+0g", 1e-320);
-        CASE("1.00e-320                ", "%-#25.3g", 1e-320);
-        CASE("1E+08", "%.0E", 123456789.123456789);
-        CASE("1.23457E+08", "%G", 123456789.123456789);
-        CASE("   1.234568e+08", "% 15e", 123456789.123456789);
-        CASE("                1.235e+08", "%#25.3e", 123456789.123456789);
-        CASE("       1.23e+08", "%#15.3g", 123456789.123456789);
-        CASE("1.23457e+08", "%#0g", 123456789.123456789);
-        CASE("123456789.1234567910432815551757812500000000000000000000000000000", "%.55f", 123456789.123456789);
-        CASE("9.9999950000e+05", "%.10e", 999999.5);
-        CASE("9.999995E+05", "%.6E", 999999.5);
-        CASE("999999.5", "%.17G", 999999.5);
-        CASE("              +999999.500", "%+25.3f", 999999.5);
-        CASE("+00000000000999999.500000", "%+025f", 999999.5);
-        CASE("     +1.000e+06", "%+15.3e", 999999.5);
-        CASE("0009.999995e+05", "%015e", 999999.5);
-        CASE("+009.999995e+05", "%+015e", 999999.5);
-        CASE("+1e+06", "%+.3g", 999999.5);
-        CASE("+1e+06", "%+0g", 999999.5);
-        CASE("9.9999950000000000000000000000000000000000e+05", "%.40e", 999999.5);
-        CASE("999999", "%g", 999999.4999999);
-        CASE("9.99999499999899999239E+05", "%.20E", 999999.4999999);
-        CASE("999999.500000            ", "%-25f", 999999.4999999);
-        CASE("  999999.500000", "% 15f", 999999.4999999);
-        CASE("999999.500", "%#0.3f", 999999.4999999);
-        CASE(" 9.999995e+05", "% e", 999999.4999999);
-        CASE("   9.999995e+05", "%#15e", 999999.4999999);
-        CASE("+0000000000000001.000e+06", "%+025.3e", 999999.4999999);
-        CASE("                  +999999", "%+25g", 999999.4999999);
-        CASE("+0000000001e+06", "%+015.3g", 999999.4999999);
-        CASE("999999.499999899999238550662994384766", "%.30f", 999999.4999999);
-        CASE("999999.499999899999238550662994", "%.30g", 999999.4999999);
-        CASE("1e+07", "%.2g", 9999999.0);
-        CASE("1E+07", "%.1G", 9999999.0);
-        CASE("          +9999999.000000", "%+25f", 9999999.0);
-        CASE("              9999999.000", "% 25.3f", 9999999.0);
-        CASE("000000000009999999.000000", "%#025f", 9999999.0);
-        CASE("      1.000e+07", "% 15.3e", 9999999.0);
-        CASE("+009.999999e+06", "%+015e", 9999999.0);
-        CASE("0009.999999e+06", "%#015e", 9999999.0);
-        CASE(" 1e+07", "% .3g", 9999999.0);
-        CASE("1.00000e+07", "%#0g", 9999999.0);
-        CASE("9.9999990000000000000000000000000000000000000000000000000e+06", "%.55e", 9999999.0);
-        CASE("9999999", "%.60g", 9999999.0);
-        CASE("0.00012345600000000001", "%.17g", 0.000123456);
-        CASE("0.000123456", "%.10G", 0.000123456);
-        CASE("                 0.000123", "% 25f", 0.000123456);
-        CASE("00000000.000123", "%015f", 0.000123456);
-        CASE("0.000", "%-#.3f", 0.000123456);
-        CASE("1.234560e-04", "%0e", 0.000123456);
-        CASE("0001.234560e-04", "%#015e", 0.000123456);
-        CASE("00000000000000001.235e-04", "%#025.3e", 0.000123456);
-        CASE("              0.000123456", "% 25g", 0.000123456);
-        CASE("00000000.000123", "%#015.3g", 0.000123456);
-        CASE("1234567890123456768.000000", "%f", 1234567890123456789.0);
-        CASE("1234567890123456768.0", "%.1f", 1234567890123456789.0);
-        CASE("1234567890123456768", "%.0F", 1234567890123456789.0);
-        CASE("1234567890123456768.000000", "%-f", 1234567890123456789.0);
-        CASE("1234567890123456768.000000", "%025f", 1234567890123456789.0);
-        CASE("001234567890123456768.000", "%025.3f", 1234567890123456789.0);
-        CASE("1234567890123456768.000000", "%-#25f", 1234567890123456789.0);
-        CASE("0000001.235e+18", "%015.3e", 1234567890123456789.0);
-        CASE("1.234568e+18   ", "%-#15e", 1234567890123456789.0);
-        CASE("1.23e+18", "%0.3g", 1234567890123456789.0);
-        CASE("1.23457e+18", "%-#g", 1234567890123456789.0);
-        CASE("1.798e+308", "%-.3e", 1.7976931348623157e308);
-        CASE("1.797693e+308", "%#e", 1.7976931348623157e308);
-        CASE("1.798e+308               ", "%-#25.3e", 1.7976931348623157e308);
-        CASE("1.79769e+308   ", "%-15g", 1.7976931348623157e308);
-        CASE("00000000000001.79769e+308", "%025g", 1.7976931348623157e308);
-        CASE("1.80e+308      ", "%-#15.3g", 1.7976931348623157e308);
-        CASE("2.225074e-308", "%e", 2.2250738585072014e-308);
-        CASE("2.225074e-308", "%.6e", 2.2250738585072014e-308);
-        CASE("0.00000000000000000000", "%.20F", 2.2250738585072014e-308);
-        CASE("+0.000000", "%+f", 2.2250738585072014e-308);
-        CASE("                    0.000", "%#25.3f", 2.2250738585072014e-308);
-        CASE("+00000000000000000.000000", "%+025f", 2.2250738585072014e-308);
-        CASE("2.225074e-308            ", "%-25e", 2.2250738585072014e-308);
-        CASE("     2.225e-308", "%#15.3e", 2.2250738585072014e-308);
-        CASE("2.22507e-308   ", "%-15g", 2.2250738585072014e-308);
-        CASE("  +2.22507e-308", "%+15g", 2.2250738585072014e-308);
-        CASE("2.23e-308", "%#.3g", 2.2250738585072014e-308);
-        CASE("0.000000000000000000000000000000", "%.30f", 2.2250738585072014e-308);
-        CASE("5e-324", "%.1g", 4.9406564584124654e-324);
-        CASE("000000000000000000.000000", "%#025f", 4.9406564584124654e-324);
-        CASE("   4.94066e-324", "% 15g", 4.9406564584124654e-324);
-        CASE("             4.94066e-324", "%#25g", 4.9406564584124654e-324);
-        CASE("0.000000000000000000000000000000000000000000000000000000000000", "%.60f", 4.9406564584124654e-324);
-        CASE("4.94065645841246544e-324", "%.17e", 5e-324);
-        CASE("0.000000", "%F", 5e-324);
-        CASE("4.9406564584E-324", "%.10E", 5e-324);
-        CASE(" 0.000000", "% f", 5e-324);
-        CASE("+00000000000000000000.000", "%+025.3f", 5e-324);
-        CASE("0.000000                 ", "%-#25f", 5e-324);
-        CASE("           +4.940656e-324", "%+25e", 5e-324);
-        CASE("+00004.941e-324", "%+015.3e", 5e-324);
-        CASE("  +4.94066e-324", "%+15g", 5e-324);
-        CASE("0004.94066e-324", "%015g", 5e-324);
-        CASE("+4.94e-324", "%+0.3g", 5e-324);
-        CASE("4.9406564584124654417656879286822137236505980261432476443e-324", "%.55e", 5e-324);
-        CASE("0.05", "%.0g", 0.049999999999999996);
-        CASE("0.05000000000000000", "%.17F", 0.049999999999999996);
-        CASE("0.05", "%G", 0.049999999999999996);
-        CASE("          0.050", "% 15.3f", 0.049999999999999996);
-        CASE("00000000.050000", "%#015f", 0.049999999999999996);
-        CASE("5.000000e-02             ", "%-25e", 0.049999999999999996);
-        CASE(" 5.000e-02", "% .3e", 0.049999999999999996);
-        CASE("5.000000e-02", "%#0e", 0.049999999999999996);
-        CASE("                    +0.05", "%+25.3g", 0.049999999999999996);
-        CASE("      0.0500000", "%#15g", 0.049999999999999996);
-        CASE("+000000000000000000000.05", "%+025g", 0.049999999999999996);
-        CASE("0.04999999999999999583666365765566297341138", "%.40g", 0.049999999999999996);
-        CASE("1", "%.6g", 1.0000000000000002);
-        CASE("1.000000E+00", "%.6E", 1.0000000000000002);
-        CASE("1", "%.2G", 1.0000000000000002);
-        CASE("1.000000", "%0f", 1.0000000000000002);
-        CASE("000000000000000000001.000", "%#025.3f", 1.0000000000000002);
-        CASE("            +1.000000e+00", "%+25e", 1.0000000000000002);
-        CASE("             1.000000e+00", "% 25e", 1.0000000000000002);
-        CASE("0000001.000e+00", "%#015.3e", 1.0000000000000002);
-        CASE("              1", "% 15g", 1.0000000000000002);
-        CASE("+00000000000001", "%+015g", 1.0000000000000002);
-        CASE("1.00", "%#0.3g", 1.0000000000000002);
-        CASE("inf", "%f", __builtin_inf());
-        CASE("inf", "%.20g", __builtin_inf());
-        CASE("INF", "%.1G", __builtin_inf());
-        CASE("INF", "%.17G", __builtin_inf());
-        CASE("            inf", "%015.3f", __builtin_inf());
-        CASE("inf            ", "%-#15f", __builtin_inf());
-        CASE("                      inf", "% 25e", __builtin_inf());
-        CASE("inf", "%0.3e", __builtin_inf());
-        CASE("inf", "%-#e", __builtin_inf());
-        CASE("                      inf", "% 25.3g", __builtin_inf());
-        CASE("            inf", "%#015g", __builtin_inf());
-        CASE("                      inf", "%#025g", __builtin_inf());
-        CASE("-inf", "%.2f", -__builtin_inf());
-        CASE("-INF", "%.1F", -__builtin_inf());
-        CASE("-inf", "%-f", -__builtin_inf());
-        CASE("-inf", "%-.3f", -__builtin_inf());
-        CASE("-inf", "%#f", -__builtin_inf());
-        CASE("-inf                     ", "%-#25.3f", -__builtin_inf());
-        CASE("                     -inf", "%025e", -__builtin_inf());
-        CASE("-inf           ", "%-#15.3e", -__builtin_inf());
-        CASE("           -inf", "%015g", -__builtin_inf());
-        CASE("-inf", "%-#.3g", -__builtin_inf());
-        CASE("-inf           ", "%-#15g", -__builtin_inf());
-        CASE("nan", "%.17f", __builtin_nan(""));
-        CASE("NAN", "%.10F", __builtin_nan(""));
-        CASE("nan                      ", "%-25f", __builtin_nan(""));
-        CASE("+nan", "%+f", __builtin_nan(""));
-        CASE("            nan", "%#15.3f", __builtin_nan(""));
-        CASE("nan            ", "%-15e", __builtin_nan(""));
-        CASE("nan", "%#.3e", __builtin_nan(""));
-        CASE("                      nan", "%#25e", __builtin_nan(""));
-        CASE("nan", "%-g", __builtin_nan(""));
-        CASE("                      nan", "%025.3g", __builtin_nan(""));
-        CASE("nan                      ", "%-#25g", __builtin_nan(""));
-        CASE("nan", "%.55f", __builtin_nan(""));
-        CASE("-nan", "%.0e", -__builtin_nan(""));
-        CASE("-NAN", "%E", -__builtin_nan(""));
-        CASE("-nan", "%+.3f", -__builtin_nan(""));
-        CASE("-nan", "% f", -__builtin_nan(""));
-        CASE("-nan", "%+0f", -__builtin_nan(""));
-        CASE("-nan                     ", "%-25.3e", -__builtin_nan(""));
-        CASE("                     -nan", "%#25e", -__builtin_nan(""));
-        CASE("                     -nan", "%+025e", -__builtin_nan(""));
-        CASE("-nan           ", "%-15.3g", -__builtin_nan(""));
-        CASE("           -nan", "%#15g", -__builtin_nan(""));
-        CASE("-nan", "%.40f", -__builtin_nan(""));
-        CASE("-nan", "%.30g", -__builtin_nan(""));
-        CASE("-0X0P+0", "%A", -0.0);
-        CASE("0x1p+1", "%.0a", 2.0);
-        CASE("0x1.921fb54442d11p+1", "%a", 3.14159265358979);
-        CASE("0x0.0000000000001p-1022", "%.13a", 5e-324);
-        CASE("inf", "%.20a", __builtin_inf());
-        CASE("nan", "%.3a", __builtin_nan(""));
-        CASE("0x2p+0", "%.0a", 1.9999999999999998);
-        CASE("0x2.000p-1", "%.3a", 0.9999999999999999);
-        CASE("0x2.00000000000p+0", "%.11a", 1.9999999999999991);
-        CASE("+0x2p+0", "%+.0a", 1.9999999999999991);
-        CASE("0x0.fffffffffffffp-1022", "%#a", 2.225073858507201e-308);
-        CASE("0x0.80000000000p-1022", "%.11a", 1.1125369292536007e-308);
-        CASE("0x0.0000000000001p-1022", "%a", 4.9406564584124654e-324);
-        CASE("+0x0p-1022", "%+.0a", 1e-310);
-        CASE("0x1.00000000000010000000p+0", "%.20a", 1.0000000000000002);
-        CASE("           0x1.00p+0", "%20.2a", 1.0000000298023224);
-        CASE("0x1.70000000000p+0", "%.11a", 1.4375);
-        CASE("+0x1p+0", "%+.0a", 1.4375);
-        CASE("-0X0.0000000002788P-1022", "%A", -5e-320);
-        CASE("2", "%g", 1.9999999999999998);
-        CASE("1.9999999999999991", "%.17g", 1.9999999999999991);
-        CASE("1.5", "%.17g", 1.5);
-        CASE("4.99994433591341502707e-320", "%.20e", 5e-320);
-        CASE("1e-310", "%.0e", 1e-310);
-        CASE("-5e-320", "%.0e", -5e-320);
-}
-
-/*
-        The rules the sample above only happens to cover, stated once each so
-        that a regression in one of them is a named failure rather than a
-        surprising diff in a table.
-*/
-static fn rules(void)
-{
-        //      A precision turns the zero flag off.
-        CASE("     042", "%08.3d", 42);
-        CASE("00000042", "%08d", 42);
-
-        //      A zero at a precision of zero is no characters, and a sign or
-        //      a forced octal zero still is.
-        CASE("", "%.0d", 0);
-        CASE("+", "%+.0d", 0);
-        CASE("0", "%#.0o", 0u);
-        CASE("     ", "%5.0d", 0);
-
-        //      The alternate flag on octal is a precision bump and not a
-        //      prefix, so it never doubles a zero that is already there and
-        //      never turns the zero flag off.
-        CASE("0", "%#o", 0u);
-        CASE("010", "%#o", 8u);
-        CASE("010", "%#.0o", 8u);
-        CASE("010", "%#.1o", 8u);
-        CASE("010", "%#.3o", 8u);
-        CASE("0010", "%#.4o", 8u);
-        CASE("00010", "%#05o", 8u);
-        CASE("       010", "%#10.1o", 8u);
-
-        //      The plus and space flags belong to the signed conversions.
-        CASE("42", "%+u", 42u);
-        CASE("42", "% u", 42u);
-        CASE("+42", "%+d", 42);
-        CASE(" 42", "% d", 42);
-        CASE("2a", "%+x", 42u);
-
-        //      A negative star width is a left flag with the magnitude.
-        CASE("42   ", "%*d", -5, 42);
-        CASE("   42", "%*d", 5, 42);
-
-        //      A negative star precision is no precision at all.
-        CASE("42", "%.*d", -1, 42);
-        CASE("", "%.*d", 0, 0);
-
-        //      The most negative value negates without overflowing, because
-        //      it is negated as an unsigned.
-        CASE("-9223372036854775808", "%lld", (long long)(-9223372036854775807LL - 1));
-        CASE("-2147483648", "%d", (int)(-2147483647 - 1));
-
-        //      A null string is a word, and a precision that cannot hold the
-        //      whole word prints nothing rather than a piece of it.
-        CASE("(null)", "%s", (string_address)null);
-        CASE("(null)", "%.6s", (string_address)null);
-        CASE("", "%.3s", (string_address)null);
-        CASE("", "%.0s", (string_address)null);
-        CASE("    (null)", "%10s", (string_address)null);
-
-        //      A null pointer is its own word and a real one is prefixed hex.
-        CASE("(nil)", "%p", (address_any)null);
-        CASE("0xdeadbeef", "%p", (address_any)0xdeadbeefULL);
-        CASE("     (nil)", "%10p", (address_any)null);
-
-        //      A percent is a percent, a literal is a literal, and a
-        //      conversion nobody knows keeps its percent.
         CASE0("%", "%%");
         CASE0("100% sure", "100%% sure");
         CASE0("%y", "%y");
         CASE0("a%zzb", "a%zzb");
         CASE0("ends with ", "ends with %");
         CASE0("", "");
-
-        //      The length modifiers narrow before they print.
-        CASE("44", "%hhd", 300);
-        CASE("4464", "%hd", 70000);
-        CASE("-1234567890123", "%ld", -1234567890123L);
-        CASE("18446744073709551615", "%llu", 18446744073709551615ULL);
-        CASE("ffffffffffffffff", "%llx", 18446744073709551615ULL);
-
-        //      Bases, upper and lower, with and without the prefix.
-        CASE("ff", "%x", 255u);
-        CASE("FF", "%X", 255u);
-        CASE("0xff", "%#x", 255u);
-        CASE("0XFF", "%#X", 255u);
-        CASE("377", "%o", 255u);
-        CASE("11111111", "%b", 255u);
-        CASE("0b11111111", "%#b", 255u);
-        CASE("0", "%#x", 0u);
-        CASE("0", "%#b", 0u);
-}
-
-/*
-        Exactness, which is the whole reason the float path carries a big
-        integer instead of an estimate. Every one of these is the decimal the
-        double actually is, digit for digit, as far out as it was asked for.
-*/
-static fn floats(void)
-{
-        CASE("0.1000000000000000055511151231257827021181583404541015625",
-             "%.55f", 0.1);
-        CASE("0.20000000000000001110223024625156540423631668090820312500",
-             "%.56f", 0.2);
-        CASE("0.5", "%.1f", 0.5);
-        CASE("0.333333", "%f", 1.0 / 3.0);
-        CASE("3.141593", "%f", 3.141592653589793);
-        CASE("3.14159265358979311600", "%.20f", 3.141592653589793);
-
-        //      An exact tie goes to the even neighbour, which is what a glibc
-        //      in its default rounding mode does.
-        CASE("0", "%.0f", 0.5);
-        CASE("2", "%.0f", 1.5);
-        CASE("2", "%.0f", 2.5);
-        CASE("4", "%.0f", 3.5);
-        CASE("4", "%.0f", 4.5);
-        CASE("6", "%.0f", 5.5);
-        CASE("0.2", "%.1f", 0.25);
-        CASE("0.4", "%.1f", 0.375);
-
-        //      And a value that only looks like a tie does not, because
-        //      the decimal it actually is falls on one side of the tie: a
-        //      fifteen hundredth is stored as 0.1499999999999999944 and a
-        //      forty five hundredth as 0.450000000000000011.
-        CASE("0.1", "%.1f", 0.05);
-        CASE("0.1", "%.1f", 0.15);
-        CASE("0.3", "%.1f", 0.35);
-        CASE("0.5", "%.1f", 0.45);
-        CASE("0.3", "%.1f", 0.25000000000000006);
-
-        //      A carry that runs off the front moves the exponent.
-        CASE("1e+06", "%g", 999999.5);
-        CASE("1.000000e+00", "%e", 0.9999999999);
-        CASE("10.00", "%.2f", 9.999);
-        CASE("999999.9", "%.7g", 999999.95);
-        CASE("1e+06", "%.6g", 999999.95);
-
-        //      The two ends of the range, exactly.
-        CASE("179769313486231570814527423731704356798070567525844996598917476803"
-             "157260780028538760589558632766878171540458953514382464234321326889"
-             "464182768467546703537516986049910576551282076245490090389328944075"
-             "868508455133942304583236903222948165808559332123348274797826204144"
-             "723168738177180919299881250404026184124858368",
-             "%.0f", 1.7976931348623157e308);
-        CASE("0.000000", "%f", 4.9406564584124654e-324);
-        CASE("4.940656e-324", "%e", 4.9406564584124654e-324);
-        CASE("4.94066e-324", "%g", 4.9406564584124654e-324);
-        CASE("5e-324", "%.1g", 4.9406564584124654e-324);
-        CASE("2.225074e-308", "%e", 2.2250738585072014e-308);
-
-        //      Zero, negative zero, and the words.
-        CASE("0.000000", "%f", 0.0);
-        CASE("-0.000000", "%f", -0.0);
-        CASE("0.000000e+00", "%e", 0.0);
-        CASE("0", "%g", 0.0);
-        CASE("inf", "%f", __builtin_inf());
-        CASE("-inf", "%f", -__builtin_inf());
-        CASE("INF", "%F", __builtin_inf());
-        CASE("nan", "%f", __builtin_nan(""));
-        CASE("NAN", "%E", __builtin_nan(""));
-        CASE("       inf", "%10f", __builtin_inf());
-        CASE("       inf", "%010f", __builtin_inf());
-
-        //      %g picks its shape after rounding, strips trailing zeros
-        //      without the alternate flag, and keeps them with it.
-        CASE("0.0001", "%g", 0.0001);
-        CASE("1e-05", "%g", 0.00001);
-        CASE("100000", "%g", 100000.0);
-        CASE("1e+06", "%g", 1000000.0);
-        CASE("1.5", "%g", 1.5);
-        CASE("1.50000", "%#g", 1.5);
-        CASE("1.00000", "%#g", 1.0);
-        CASE("1", "%g", 1.0);
-        CASE("0.00010000", "%#.5g", 0.0001);
-        CASE("0.000100000", "%#g", 0.0001);
-
-        //      The exponent is two digits at least and as many as it needs.
-        CASE("1.000000e+00", "%e", 1.0);
-        CASE("1.000000e+100", "%e", 1e100);
-        CASE("1.000000e-300", "%e", 1e-300);
-        CASE("1.000000e+308", "%e", 1e308);
-
-        //      Hexadecimal floats print what is stored and do not
-        //      renormalise a subnormal.
-        CASE("0x1p+0", "%a", 1.0);
-        CASE("0x1.8p+0", "%a", 1.5);
-        CASE("0x1p+1", "%a", 2.0);
-        CASE("0x1p-1", "%a", 0.5);
-        CASE("0x0p+0", "%a", 0.0);
-        CASE("-0x0p+0", "%a", -0.0);
-        CASE("0x1.921fb54442d18p+1", "%a", 3.141592653589793);
-        CASE("0X1.921FB54442D18P+1", "%A", 3.141592653589793);
-        CASE("0x1.p+0", "%#a", 1.0);
-        CASE("0x2p+0", "%.0a", 1.5);
-        CASE("0x1.9p+1", "%.1a", 3.141592653589793);
-        CASE("0x0.0000000000001p-1022", "%a", 4.9406564584124654e-324);
-        CASE("0x1p-1022", "%a", 2.2250738585072014e-308);
-        CASE("0x1.0000000000000p+0", "%.13a", 1.0);
-
-        //      A hexadecimal carry that runs out of nibbles lands on the digit
-        //      in front of the point, and nothing renormalises after it. These
-        //      are the lines the random sweep almost never reaches: a normal
-        //      whose every stored bit is one, and a subnormal whose carry
-        //      turns its leading zero into a one.
-        CASE("0x2p+0", "%.0a", 1.9999999999999998);
-        CASE("0x2.000p+0", "%.3a", 1.9999999999999998);
-        CASE("0x2.000000000000p+0", "%.12a", 1.9999999999999998);
-        CASE("0x1.fffffffffffffp+0", "%.13a", 1.9999999999999998);
-        CASE("0x2p-1", "%.0a", 0.9999999999999999);
-        CASE("0x0.fffffffffffffp-1022", "%a", 2.2250738585072009e-308);
-        CASE("0x1p-1022", "%.0a", 2.2250738585072009e-308);
-        CASE("0x1.000p-1022", "%.3a", 2.2250738585072009e-308);
-        CASE("0x0p-1022", "%.0a", 1.1125369292536007e-308);
-        CASE("0x0.0000000002788p-1022", "%a", 5e-320);
-        CASE("0x0.00p-1022", "%.2a", 5e-320);
-        CASE("0x0p-1022", "%.0a", 5e-320);
-
-        //      And the same values through the exact decimal engine, since
-        //      the subnormal boundary is where its shift and its five-power
-        //      meet.
-        CASE("2.2250738585072009e-308", "%.17g", 2.2250738585072009e-308);
-        CASE("4.99994433591341502707e-320", "%.20e", 5e-320);
 }
 
 /*
@@ -39741,9 +39257,7 @@ b32 main(void)
         lexical_fields();
         shared_sticky_tails();
         estimate_tables();
-        conversions();
-        rules();
-        floats();
+        shapes();
         bounded();
         entries();
         reasons();
@@ -39787,8 +39301,9 @@ b32 main(void)
 
         format_differential_main(
             arguments > 1 ? (const char *)program_argument(1) : "0",
-            arguments > 2 ? (const char *)program_argument(2) : "65536",
-            arguments > 3 ? (const char *)program_argument(3) : "");
+            arguments > 2 ? (const char *)program_argument(2) : "",
+            arguments > 3 ? (const char *)program_argument(3) : "",
+            arguments > 4 ? (const char *)program_argument(4) : "");
         log_flush();
         return 0;
 }
@@ -39825,8 +39340,9 @@ static void fd_text(const char *text)
 int main(int argc, char **argv)
 {
         format_differential_main(argc > 1 ? argv[1] : "0",
-                                 argc > 2 ? argv[2] : "65536",
-                                 argc > 3 ? argv[3] : "");
+                                 argc > 2 ? argv[2] : "",
+                                 argc > 3 ? argv[3] : "",
+                                 argc > 4 ? argv[4] : "");
         fflush(stdout);
         return 0;
 }
