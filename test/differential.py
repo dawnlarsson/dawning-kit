@@ -27977,6 +27977,209 @@ def harness_objtool_shape(argv):
     return 1 if failures else 0
 
 
+def harness_moonwater_cli(argv):
+    """The moonwater command, which no lane but boot reached, in a sandbox.
+
+    A user and mount namespace with no network and a chroot of scratch
+    directories stands in for the machine: /root, /etc, /run, /home and two
+    bowls are empty directories the run owns, /usr is the host's. Every verb
+    is walked with good, bad and surplus arguments and must answer without a
+    signal or a hang. Every zone `timezone list` names is set in turn, and
+    the TZif it wrote for this system and each bowl is read back by the
+    host's glibc date and compared with the host's tzdata for the same name
+    at instants across this year's changes; offsets and codes the same way.
+    The settings a verb writes are read back from /root, the zone's mode
+    follows the rules of 5082cccc (a zone with no mode beside it is manual,
+    neither file is auto), and wipe empties /home and /root but what it
+    promises to keep.
+    """
+    import platform
+    import shutil
+    import subprocess
+    import tempfile
+    parser = argparse.ArgumentParser(prog="differential.py --harness moonwater_cli")
+    parser.add_argument("--shell", required=True)
+    args = parser.parse_args(argv)
+    if platform.system() != "Linux":
+        print("moonwater cli: NOT RUN -- Linux namespaces")
+        return 2
+    probe = subprocess.run(["unshare", "-Urmn", "--fork", "true"], capture_output=True)
+    if probe.returncode:
+        print("moonwater cli: NOT RUN -- no unprivileged user namespaces here")
+        return 2
+
+    checks = Checks()
+
+    def check(ok, what, detail):
+        checks(ok, what + ("" if ok else " -- " + str(detail)[:400]))
+    #       Both seasons of 2027 and one far instant, and nothing before
+    #       November 2026: the command carries each zone's current rule and
+    #       not its history, and tzdata 2026c changes Morocco to +00 on 20
+    #       September 2026 and Alberta and British Columbia to permanent
+    #       summer time on 1 November, so earlier instants in those zones are
+    #       history this tree deliberately leaves out.
+    instants = (1798000000, 1805000000, 1809000000, 1820000000, 1830000000, 2000000000)
+    shown = "+%F %T %Z %z"
+
+    with tempfile.TemporaryDirectory(prefix="moonwater-cli-") as temporary:
+        top = Path(temporary)
+        sandbox = top / "root"
+        for name in ("usr", "dev", "proc", "root", "run", "etc", "home", "tmp",
+                     "bowls/one/etc", "bowls/two/etc"):
+            (sandbox / name).mkdir(parents=True, exist_ok=True)
+        for name, target in (("bin", "usr/bin"), ("lib", "usr/lib"), ("lib64", "usr/lib"),
+                             ("sbin", "usr/bin")):
+            (sandbox / name).symlink_to(target)
+        for name in ("passwd", "group", "hosts"):
+            if Path("/etc", name).exists():
+                shutil.copy(Path("/etc", name), sandbox / "etc" / name)
+        (sandbox / "bowls/one/etc/localtime").symlink_to("/usr/share/zoneinfo/UTC")
+        shutil.copy(args.shell, sandbox / "tmp/moonwater")
+
+        def session(script):
+            """Run a script in the sandbox; its lines, and whether it finished."""
+            wrapper = (f"mount --rbind /usr {sandbox}/usr && mount --rbind /dev {sandbox}/dev && "
+                       f"mount --rbind /proc {sandbox}/proc && "
+                       f"exec chroot {sandbox} /usr/bin/sh -c 'cd / && . /tmp/script'")
+            (sandbox / "tmp/script").write_text(script)
+            try:
+                ran = subprocess.run(["unshare", "-Urmn", "--fork", "sh", "-c", wrapper],
+                                     stdin=subprocess.DEVNULL, capture_output=True,
+                                     timeout=600, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+            except subprocess.TimeoutExpired:
+                return [], False
+            text = re.sub(r"\x1b\[[0-9;]*m", "", ran.stdout.decode(errors="replace"))
+            return text.splitlines(), ran.returncode == 0
+
+        def say(command):
+            # One invocation, fenced so its answer can be found again.
+            return (f"echo '@@ {command}'; timeout 20 /tmp/moonwater {command} 2>&1; "
+                    f"echo \"@@status $?\"\n")
+
+        def answers(lines):
+            found, current = {}, None
+            for line in lines:
+                if line.startswith("@@status "):
+                    found[current]["status"] = int(line.split()[1])
+                elif line.startswith("@@ "):
+                    current = line[3:]
+                    found.setdefault(current, {"out": [], "status": None})
+                elif current is not None:
+                    found[current]["out"].append(line)
+            return found
+
+        # What the command offers, asked of the command.
+        lines, finished = session(say("timezone list") + say("keyboard list"))
+        offered = answers(lines)
+        zones = [m.group(1) for m in (re.match(r"^    (\S+)  ", line)
+                                       for line in offered.get("timezone list", {}).get("out", []))
+                 if m]
+        codes = re.findall(r"\b[a-z]{2}\b", " ".join(
+            line for line in offered.get("timezone list", {}).get("out", [])
+            if line.startswith(("  codes", "        "))))
+        layouts = re.findall(r"\b[a-z]{2}\b", " ".join(
+            line.split("layouts", 1)[1] for line in offered.get("keyboard list", {}).get("out", [])
+            if "layouts" in line))
+        check(finished and len(zones) > 300 and len(codes) > 100 and layouts,
+                     "timezone list and keyboard list name what can be set",
+                     f"{len(zones)} zones, {len(codes)} codes, layouts {layouts}")
+
+        # Every verb with good, bad and surplus arguments: an answer, never a signal.
+        walk = ["", "status", "status extra", "-h", "--help", "-h extra", "bogus",
+                "timezone", "timezone list extra", "timezone Mars/Olympus", "timezone +99",
+                'timezone ""', "timezone a b", "time", "time sync", "time bogus",
+                "time sync extra", "ntp", "ntp on", "ntp off", "ntp filter", "ntp filter on",
+                "ntp filter off", "ntp filter maybe", "ntp filter on extra", "ntp a b",
+                "keyboard", "keyboard xx", "keyboard a b", "canvas", "canvas on", "canvas off",
+                "canvas bogus", "bind", "bind init", "bind exit", "bind bogus", "wifi",
+                "wifi off", "wifi on", "wifi add", "bluetooth", "bluetooth off",
+                "bluetooth on", "priority internet", "priority internet wired",
+                "priority internet wifi", "priority internet cable", "wipe extra",
+                "install", "use", "update", "live extra", "boot", "ask", "machine extra"]
+        # State the mode rules act on: neither file, then a zone with no mode.
+        script = ("rm -f /root/timezone /root/timezone.mode\n" + say("timezone") +
+                  "printf 'Europe/London\\n' > /root/timezone\n" + say("timezone") +
+                  "echo '@@ settings'; cat /root/timezone.mode 2>/dev/null; echo '@@status 0'\n")
+        script += "".join(say(command) for command in walk)
+        lines, finished = session(script)
+        walked = answers(lines)
+        check(finished, "the walk of every verb finished", "")
+        for command in ["timezone"] + walk:
+            got = walked.get(command)
+            status = got and got["status"]
+            check(got is not None and status is not None and status < 124,
+                         f"moonwater {command} answers", repr(got)[:300])
+        joined = "\n".join(lines)
+        check("auto" in joined.split("@@ timezone", 2)[1].split("@@status")[0],
+                     "neither zone file is auto", joined[:400])
+        check("(manual)" in joined.split("@@ timezone", 3)[2].split("@@status")[0],
+                     "a zone with no mode beside it is manual", joined[:400])
+
+        # Every zone, code and offset: set it, then read what it wrote with
+        # the host's glibc and hold it to the host's tzdata.
+        wanted = [z for z in zones if z != "UTC"] + codes + ["+1", "-5", "+5:30", "-3:30",
+                                                              "+5:45", "UTC+2", "+13", "-12"]
+        script = ""
+        for zone in wanted:
+            script += say(f"timezone {zone}") + "echo \"@@stored $(cat /root/timezone) $(cat /root/timezone.mode)\"\n"
+            for t in instants:
+                script += (f"echo \"@@t {t} $(date -d @{t} '{shown}')|"
+                           f"$(TZ=:/bowls/one/etc/localtime date -d @{t} '{shown}')|"
+                           f"$(TZ=:/bowls/two/etc/localtime date -d @{t} '{shown}')|"
+                           f"$(TZ=\"$(cat /root/timezone)\" date -d @{t} '{shown}')\"\n")
+        lines, finished = session(script)
+        check(finished, "setting every zone finished", "")
+        current, stored = None, None
+        for line in lines:
+            if line.startswith("@@ timezone "):
+                current = line[len("@@ timezone "):]
+            elif line.startswith("@@status "):
+                check(line == "@@status 0", f"timezone {current} is taken", line)
+            elif line.startswith("@@stored "):
+                stored = line.split()[1:]
+                check(len(stored) == 2 and stored[1] == "manual" and
+                             (current in zones and stored[0] == current or current not in zones),
+                             f"timezone {current} is stored as manual", line)
+            elif line.startswith("@@t "):
+                seen = line.split(" ", 2)[2].split("|")
+                check(len(seen) == 4 and len(set(seen)) == 1,
+                             f"timezone {current} ({stored and stored[0]}) at {line.split()[1]}: "
+                             "this system, both bowls and tzdata agree", line)
+
+        # What the other settings write, and what wipe keeps.
+        script = "".join(say(f"keyboard {layout}") + "echo \"@@kept $(cat /root/keyboard)\"\n"
+                         for layout in layouts)
+        script += say("keyboard xx") + "echo \"@@kept $(cat /root/keyboard)\"\n"
+        script += say("ntp off") + "echo \"@@ntp $(cat /root/ntp)\"\n"
+        script += say("ntp on") + "echo \"@@ntp $(cat /root/ntp)\"\n"
+        script += ("mkdir -p /home/u/deep && echo x > /home/u/deep/f && echo y > /root/junk && "
+                   "mkdir -p /root/dir && echo z > /bowls/one/kept\n" + say("wipe") +
+                   "echo \"@@after $(ls -A /home | wc -l) $(ls /root | tr '\\n' ,) "
+                   "$(cat /bowls/one/kept)\"\n")
+        lines, finished = session(script)
+        current = None
+        for line in lines:
+            if line.startswith("@@ "):
+                current = line[3:]
+            elif line.startswith("@@kept "):
+                layout = current.split()[1]
+                want = (layouts or [None])[-1] if layout == "xx" else layout
+                check(line.split()[1:] == [want] or (layout == "xx" and line.split()[1:]),
+                             f"keyboard {layout} leaves /root/keyboard right", line)
+            elif line.startswith("@@status ") and current == "keyboard xx":
+                check(line != "@@status 0", "an unknown layout is refused", line)
+            elif line.startswith("@@ntp "):
+                check(line.split()[1] == current.split()[1], f"{current} is written", line)
+            elif line.startswith("@@after "):
+                parts = line.split()
+                kept = set(filter(None, parts[2].split(",")))
+                check(parts[1] == "0" and "junk" not in kept and "dir" not in kept and
+                             {"keyboard", "ntp", "timezone"} <= kept and parts[3] == "z",
+                             "wipe empties /home and /root and keeps the settings and the bowls",
+                             line)
+    return checks.verdict("moonwater cli", "moonwater-cli")
+
+
 def harness_machine_reap(argv):
     """The machine loop reaps the radio's join and nothing else of its own.
 
@@ -28065,6 +28268,7 @@ HARNESS_CHECKS = {
     "bowl_roots": harness_bowl_roots,
     "riscv_builtins": harness_riscv_builtins,
     "objtool_shape": harness_objtool_shape,
+    "moonwater_cli": harness_moonwater_cli,
     "machine_reap": harness_machine_reap,
 }
 

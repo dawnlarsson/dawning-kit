@@ -61,7 +61,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact text_asm known socket net waterlink bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format machine differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact text_asm known socket net waterlink bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format machine cli differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
 
 describe()
 {
@@ -125,6 +125,7 @@ describe()
         storage_io) echo "positional-read retries, exact bounds, zero padding and ELF table handoff" ;;
         storage_format) echo "GPT, FAT32 and ext4 as an install writes them, checked by sfdisk and e2fsck" ;;
         machine) echo "the machine script: hooks, functions, case arms, overlay lines and file policy" ;;
+        cli)      echo "the moonwater command in a namespace: every verb, every zone it names, what it writes" ;;
         term)     echo "the emulator driven a byte and a read at a time, and the line being edited" ;;
         edit)     echo "the full-screen editor, its key protocol, buffer, undo and redraws" ;;
         kit)      echo "build, source-inventory, remote-host and firmware tooling" ;;
@@ -2100,6 +2101,18 @@ lane_storage_format()
 }
 
 lane_machine() { freestanding_checks_lane machine machine; }
+
+#
+#       The moonwater command, which only the boot lane reached before: run
+#       in a user and mount namespace with no network, chrooted into scratch
+#       directories standing for /root, /etc, /run, /home and two bowls.
+#       differential.py --harness moonwater_cli says what it holds it to.
+#
+lane_cli()
+{
+        need_shell || return 1
+        python3 test/differential.py --harness moonwater_cli --shell "$shell_binary"
+}
 lane_leaving()   { freestanding_checks_lane leaving leaving; }
 #       strtod and strtof against glibc, over generated text.
 #
