@@ -12686,6 +12686,15 @@ out.append(("terminal ring is cut for the ceiling",
             "yes" if ring and min(int(w) for w, _ in ring) >= 400
             else str([(int(w), int(h)) for w, h in ring]), "yes"))
 
+#       And paid for only as it is written. The ring above is about two
+#       megabytes, of which a terminal that ran a command or two has written a
+#       few lines, so the terminal the X closes reports holding a small part
+#       of it. A ring allocated whole, as every one was before, holds all of
+#       it; this is the idle-memory ratchet for the lazily held ring.
+held = [(int(a), int(b)) for a, b in re.findall(rb"ring held (\d+) of (\d+) kib", serial)]
+out.append(("a closed terminal held a small part of its ring",
+            "yes" if held and all(a * 4 <= b for a, b in held) else str(held), "yes"))
+
 for name, marker in (("no protection fault", b"general protection fault"),
                      ("no oops", b"oops:"),
                      ("no kernel panic", b"kernel panic")):

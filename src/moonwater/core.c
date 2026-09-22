@@ -161,6 +161,7 @@ struct device_context
 #include <linux/list_sort.h>
 #include <linux/hrtimer.h>
 #include <linux/font.h>
+#include <linux/cacheflush.h>
 #include <drm/drm_file.h>
 #include <drm/drm_rect.h>
 #include "canvas.c"

@@ -123,6 +123,19 @@ struct pane
         void *mapping;
 
         /*
+                A program's ring of cells is reserved whole and paid for a
+                page at a time as it is written. area is the reservation;
+                pages says which of its pages have memory behind them, and a
+                null entry is a page nothing is mapped at, here or in the
+                program. Null pages for every other window, whose mapping is
+                an ordinary vmalloc.
+        */
+        struct vm_struct *area;
+        struct page **pages;
+        unsigned long page_count;
+        struct mutex pages_lock;
+
+        /*
                 Where it was before something other than its program decided
                 its shape, and which of those decided.
 
@@ -1473,6 +1486,167 @@ static unsigned long canvas_pane_budget(void)
 }
 
 /*
+        A program's ring, held a page at a time.
+
+        A ring is cut for the largest the window could ever become (see
+        pane_ring), so a terminal eighty columns wide sits in lines four
+        hundred and seventy eight wide, five hundred and twelve of them: about
+        two megabytes, of which an idle prompt had written eight pages. Every
+        page of that was allocated, zeroed and kept for the window's life.
+
+        So a program's window of cells is only reserved. The page the program
+        reads its geometry from and the page the line lengths are in are
+        there from the start, because the compositor writes the one and reads
+        the other on every compose; a page of cells gets memory the first time
+        the program touches it, from window_fault, and in the same step is
+        mapped at its place in the compositor's reservation. Until then that
+        place maps nothing, and pane_cells_held is what keeps compose off it.
+
+        A page once held stays held until the window closes: a ring that has
+        wrapped holds all of it, which is what every window paid before.
+
+        Not in a module: the compositor's reservation is a kernel mapping this
+        edits, and the calls that reserve one and flush it are the kernel's
+        own. A modular build keeps the whole ring, as it always did.
+*/
+#define PANE_LAZY IS_BUILTIN(CONFIG_MOONWATER_CORE)
+
+static int pane_pte_set(pte_t *pte, unsigned long address, void *data)
+{
+        set_pte_at(&init_mm, address, pte, mk_pte((struct page *)data, PAGE_KERNEL));
+        return 0;
+}
+
+/*
+        One page of a held ring, given memory if it has none yet. Under
+        pages_lock, or before anything else can see the pane. The page is
+        zeroed and mapped before the entry says so: whoever reads the entry
+        without the lock may go straight to the mapping.
+*/
+static struct page *pane_page_hold(struct pane *pane, unsigned long index)
+{
+        struct page *page = pane->pages[index];
+        unsigned long address;
+
+        if (page)
+                return page;
+
+        page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+        if (!page)
+                return NULL;
+
+        address = (unsigned long)pane->mapping + (index << PAGE_SHIFT);
+        if (apply_to_page_range(&init_mm, address, PAGE_SIZE, pane_pte_set, page))
+        {
+                __free_page(page);
+                return NULL;
+        }
+
+        // Nothing to flush where an empty entry is never cached; the
+        // architectures that may cache one flush here.
+        flush_cache_vmap(address, address + PAGE_SIZE);
+        smp_store_release(&pane->pages[index], page);
+        return page;
+}
+
+// Every page from first up to, not including, last.
+static _Bool pane_pages_hold(struct pane *pane, unsigned long first,
+                             unsigned long last)
+{
+        for (; first < last; first++)
+                if (!pane_page_hold(pane, first))
+                        return false;
+
+        return true;
+}
+
+/*
+        Whether a line of a ring has memory behind every cell compose would
+        read of it. A program that wrote a length without the cells has
+        written nothing to draw, and its line is drawn empty.
+*/
+static _Bool pane_cells_held(struct pane *pane, unsigned int slot,
+                             unsigned int length)
+{
+        unsigned long first, last;
+
+        if (!pane->pages || !length)
+                return true;
+
+        first = WINDOW_PIXELS + (unsigned long)slot * pane->stride *
+                                    sizeof(struct window_cell);
+        last = (first + (unsigned long)length * sizeof(struct window_cell) - 1) >>
+               PAGE_SHIFT;
+
+        for (first >>= PAGE_SHIFT; first <= last; first++)
+                if (!smp_load_acquire(&pane->pages[first]))
+                        return false;
+
+        return true;
+}
+
+static void pane_mapping_free(struct pane *pane)
+{
+        unsigned long i, held = 0;
+
+        if (!pane->pages)
+        {
+                vfree(pane->mapping);
+                return;
+        }
+
+        for (i = 0; i < pane->page_count; i++)
+                held += pane->pages[i] != NULL;
+
+        // What a window of cells cost by the end, against what it reserved:
+        // the canvas lane reads this back for the terminal it closes.
+        if (pane->area)
+                pr_info("[moonwater canvas] " "window closed, ring held %lu of %lu KiB\n",
+                        (held << PAGE_SHIFT) >> 10, (pane->page_count << PAGE_SHIFT) >> 10);
+
+        // Unmapped before the pages go back, as vfree does.
+        if (pane->area)
+                free_vm_area(pane->area);
+
+        for (i = 0; i < pane->page_count; i++)
+                if (pane->pages[i])
+                        __free_page(pane->pages[i]);
+
+        kvfree(pane->pages);
+}
+
+/*
+        A reservation for a program's ring, with the pages below head_end and
+        from tail_start on held. Null when there is no room, with nothing left
+        behind.
+*/
+static void *pane_mapping_reserve(struct pane *pane, unsigned long bytes,
+                                  unsigned long head_end, unsigned long tail_start)
+{
+        pane->page_count = bytes >> PAGE_SHIFT;
+        pane->pages = kvcalloc(pane->page_count, sizeof(*pane->pages), GFP_KERNEL);
+        if (!pane->pages)
+                return NULL;
+
+        mutex_init(&pane->pages_lock);
+        pane->area = get_vm_area(bytes, VM_MAP);
+        if (pane->area)
+        {
+                pane->mapping = pane->area->addr;
+
+                if (pane_pages_hold(pane, 0, PAGE_ALIGN(head_end) >> PAGE_SHIFT) &&
+                    pane_pages_hold(pane, tail_start >> PAGE_SHIFT, pane->page_count))
+                        return pane->mapping;
+        }
+
+        pane_mapping_free(pane);
+        pane->pages = NULL;
+        pane->area = NULL;
+        pane->mapping = NULL;
+        return NULL;
+}
+
+/*
         A pane going away, and everything that was still pointing at it.
 
         The desktop remembers a particular window between events -- what a
@@ -1503,7 +1677,7 @@ static void pane_free(struct pane *pane)
 
         list_del(&pane->link);
         canvas_pane_bytes -= pane->bytes;
-        vfree(pane->mapping);
+        pane_mapping_free(pane);
         kfree(pane);
 }
 
@@ -1915,8 +2089,23 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
 
         init_waitqueue_head(&pane->wait);
 
-        // Not vmalloc_user when it is the compositor's own: nothing maps it.
-        pane->mapping = owned ? vzalloc(bytes) : vmalloc_user(bytes);
+        /*
+                A program's cells are held as they are written; the page it
+                reads its geometry from and the line lengths at the end are
+                there from the start. Not vmalloc_user when it is the
+                compositor's own: nothing maps it. The compositor's own
+                console is written from here, by the emulator, and from a
+                dying kernel that cannot wait for a page, so it keeps all of
+                its ring; so does a window of pixels, which is drawn whole.
+        */
+        if (PANE_LAZY && columns && !owned)
+                pane_mapping_reserve(pane, bytes, WINDOW_PIXELS,
+                                     WINDOW_PIXELS + (unsigned long)history *
+                                                         stride *
+                                                         sizeof(struct window_cell));
+        else
+                pane->mapping = owned ? vzalloc(bytes) : vmalloc_user(bytes);
+
         if (!pane->mapping)
         {
                 kfree(pane);
@@ -2834,6 +3023,40 @@ static long window_ioctl_commit(struct file *file)
         return 0;
 }
 
+/*
+        A program touching a page of its ring for the first time: the page is
+        given memory, mapped where the compositor reads it, and handed to the
+        program. One lock per window, taken only on a first touch, which a
+        window pays at most once for each page it has.
+*/
+static vm_fault_t window_fault(struct vm_fault *vmf)
+{
+        struct pane *pane = vmf->vma->vm_private_data;
+        struct page *page;
+
+        if (vmf->pgoff >= pane->page_count)
+                return VM_FAULT_SIGBUS;
+
+        page = smp_load_acquire(&pane->pages[vmf->pgoff]);
+        if (!page)
+        {
+                mutex_lock(&pane->pages_lock);
+                page = pane_page_hold(pane, vmf->pgoff);
+                mutex_unlock(&pane->pages_lock);
+
+                if (!page)
+                        return VM_FAULT_OOM;
+        }
+
+        get_page(page);
+        vmf->page = page;
+        return 0;
+}
+
+static const struct vm_operations_struct window_vm_ops = {
+        .fault = window_fault,
+};
+
 static int window_mmap(struct file *file, struct vm_area_struct *vma)
 {
         struct device_context *context = file->private_data;
@@ -2848,7 +3071,15 @@ static int window_mmap(struct file *file, struct vm_area_struct *vma)
         if (vma->vm_end - vma->vm_start > pane->bytes)
                 return -EINVAL;
 
-        return remap_vmalloc_range(vma, pane->mapping, 0);
+        if (!pane->pages)
+                return remap_vmalloc_range(vma, pane->mapping, 0);
+
+        // A held ring is mapped as it is touched, by window_fault. The
+        // file outlives every mapping of it, so the pane does as well.
+        vma->vm_ops = &window_vm_ops;
+        vma->vm_private_data = pane;
+        vm_flags_set(vma, VM_DONTEXPAND | VM_DONTDUMP);
+        return 0;
 }
 
 static void window_release(struct file *file)
@@ -4612,6 +4843,9 @@ static void compose_cells(struct pane *pane, const struct target *t,
                 const struct window_cell *cells =
                     pane->cells + (size_t)slot * pane->stride;
                 unsigned int fold = skip;
+                // A line whose cells have no memory behind them keeps its
+                // rows, and they are drawn empty.
+                unsigned int drawn = pane_cells_held(pane, slot, length) ? length : 0;
 
                 if (row < first_row && folds > skip)
                 {
@@ -4623,7 +4857,7 @@ static void compose_cells(struct pane *pane, const struct target *t,
                 for (; fold < folds && row < last_row; fold++, row++)
                 {
                         unsigned int from = fold * width;
-                        int used = (int)min(length > from ? length - from : 0, width);
+                        int used = (int)min(drawn > from ? drawn - from : 0, width);
 
                         compose_row(t, shape, x, y + row * canvas_cell_h,
                                     cells + from,

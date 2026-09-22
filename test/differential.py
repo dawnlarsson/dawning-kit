@@ -18078,6 +18078,7 @@ static void console_vfree(void *mapping) {
 #define desktop console_desktop
 #define list_del console_list_del
 #define vfree console_vfree
+#define pane_mapping_free(p) vfree((p)->mapping)
 '''
     source += section(pane, "static void pane_free", "static void desktop_grid(")
     source += console[console.index("static void console_stop(void)"): ]
@@ -18086,6 +18087,7 @@ static void console_vfree(void *mapping) {
 #undef desktop
 #undef list_del
 #undef vfree
+#undef pane_mapping_free
 static void check_console_teardown(void) {
     for (unsigned run=0;run<2;run++) {
         console_pane=malloc(sizeof(*console_pane));assert(console_pane);

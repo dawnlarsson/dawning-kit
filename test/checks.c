@@ -61119,6 +61119,8 @@ struct pane {unsigned grid_columns,grid_rows,columns,rows,view,head,history,stri
     const char *title;u32 *pixels;};
 static unsigned pane_rows(struct pane *p) {return p->rows;}
 static unsigned pane_view_at(struct pane *p,unsigned view,unsigned *skip) {*skip=p->skip;return view;}
+// Every line of these rings has memory behind it; holding is the kernel's.
+static _Bool pane_cells_held(struct pane *p,unsigned slot,unsigned length) {(void)p;(void)slot;(void)length;return 1;}
 struct row_call {int y,used,first,last;const struct window_cell *cells;};
 static struct row_call calls[32];
 static unsigned call_count;
