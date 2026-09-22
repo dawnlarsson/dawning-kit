@@ -305,6 +305,16 @@ NON_NAMES = DECORATORS | {
 } | set(ASM_DECLARERS) | set(ASM_ENDERS) | set(ASM_ALIASES)
 
 
+NESTING_STEP = {'(': (1, 0, 0), ')': (-1, 0, 0), '[': (0, 1, 0),
+                ']': (0, -1, 0), '{': (0, 0, 1), '}': (0, 0, -1)}
+
+
+def nested(token, paren, bracket, brace=0):
+    """The three nesting depths after this token; a closer never goes below zero."""
+    one, two, three = NESTING_STEP.get(token.value, (0, 0, 0))
+    return (max(paren + one, 0), max(bracket + two, 0), max(brace + three, 0))
+
+
 def strip_trailing_decorators(header):
     header = list(header)
     while header:
@@ -349,16 +359,9 @@ def function_header(header):
 
     paren = bracket = 0
     for token in header:
-        if token.value == '(':
-            paren += 1
-        elif token.value == ')':
-            paren = max(paren - 1, 0)
-        elif token.value == '[':
-            bracket += 1
-        elif token.value == ']':
-            bracket = max(bracket - 1, 0)
-        elif token.value == '=' and paren == 0 and bracket == 0:
+        if token.value == '=' and paren == 0 and bracket == 0:
             return None
+        paren, bracket, _ = nested(token, paren, bracket)
 
     candidates = []
     paren = bracket = 0
@@ -366,14 +369,7 @@ def function_header(header):
         if token.kind == 'identifier' and token.value not in NON_NAMES \
                 and header[index + 1].value == '(':
             candidates.append((paren + bracket, index, token))
-        if token.value == '(':
-            paren += 1
-        elif token.value == ')':
-            paren = max(paren - 1, 0)
-        elif token.value == '[':
-            bracket += 1
-        elif token.value == ']':
-            bracket = max(bracket - 1, 0)
+        paren, bracket, _ = nested(token, paren, bracket)
 
     if not candidates:
         return None
@@ -391,14 +387,7 @@ def old_style_function_header(header):
             close = matching_close(header, index + 1)
             if close is not None:
                 candidates.append((paren + bracket, index, close, token))
-        if token.value == '(':
-            paren += 1
-        elif token.value == ')':
-            paren = max(paren - 1, 0)
-        elif token.value == '[':
-            bracket += 1
-        elif token.value == ']':
-            bracket = max(bracket - 1, 0)
+        paren, bracket, _ = nested(token, paren, bracket)
     if not candidates:
         return None
     shallowest = min(item[0] for item in candidates)
@@ -589,21 +578,11 @@ def split_top_level(tokens, separator):
     pieces, start = [], 0
     paren = bracket = brace = 0
     for index, token in enumerate(tokens):
-        if token.value == '(':
-            paren += 1
-        elif token.value == ')':
-            paren = max(paren - 1, 0)
-        elif token.value == '[':
-            bracket += 1
-        elif token.value == ']':
-            bracket = max(bracket - 1, 0)
-        elif token.value == '{':
-            brace += 1
-        elif token.value == '}':
-            brace = max(brace - 1, 0)
-        elif token.value == separator and not (paren or bracket or brace):
+        if token.value == separator and not (paren or bracket or brace):
             pieces.append(tokens[start:index])
             start = index + 1
+            continue
+        paren, bracket, brace = nested(token, paren, bracket, brace)
     pieces.append(tokens[start:])
     return pieces
 
