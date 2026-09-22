@@ -4648,46 +4648,69 @@ lane_shell()
                         { IFS= read -r -N1 x; printf "%s:%s\n" "$?" "$x"; } &
                         wait'
         )
-        monitor_input_result=$(
-                printf X | "$farm/bash" -c '
-                        set -m
-                        { IFS= read -r -N1 x; printf "%s:%s\n" "$?" "$x"; } &
-                        wait' 2>/dev/null
-        )
-        monitor_signal_result=$(
-                "$farm/bash" -c '
-                        set -m
-                        sleep 5 & p=$!
-                        /bin/sleep 0.1
-                        kill -INT "$p"
-                        wait "$p"
-                        printf "%s\n" "$?"' 2>/dev/null
-        )
-        coproc_signal_result=$(
-                "$farm/bash" -c '
-                        set -m
-                        coproc C { sleep 5; }
-                        p=$C_PID
-                        /bin/sleep 0.1
-                        kill -INT "$p"
-                        wait "$p"
-                        printf "%s\n" "$?"' 2>/dev/null
-        )
-        coproc_job_result=$(
-                "$farm/bash" -c '
-                        set -m
-                        coproc C { sleep 5; }
-                        p=$C_PID
-                        listed=$(jobs -p)
-                        set -- $(/bin/ps -o pgid= -p "$p")
-                        pg=$1
-                        ok=1
-                        [ "$listed" = "$p" ] && [ "$pg" = "$p" ] && ok=0
-                        kill -TERM "$p"
-                        wait "$p"
-                        printf "%s\n" "$ok"' 2>/dev/null
-        )
-        if [ "$async_null_result" = 1: ] &&
+        # The other four need job control, which set -m only turns on for a
+        # shell with a controlling terminal. Without one -- a lane under
+        # nohup or ssh -n -- they answered 0 of 5 and read as a regression,
+        # so they get a terminal of their own from script(1), and say NOT
+        # RUN when there is none to be had.
+        cat > "$work/monitor-probes.sh" <<'PROBES'
+farm=$1
+printf X | "$farm/bash" -c '
+        set -m
+        { IFS= read -r -N1 x; printf "%s:%s\n" "$?" "$x"; } &
+        wait' 2>/dev/null
+"$farm/bash" -c '
+        set -m
+        sleep 5 & p=$!
+        /bin/sleep 0.1
+        kill -INT "$p"
+        wait "$p"
+        printf "%s\n" "$?"' 2>/dev/null
+"$farm/bash" -c '
+        set -m
+        coproc C { sleep 5; }
+        p=$C_PID
+        /bin/sleep 0.1
+        kill -INT "$p"
+        wait "$p"
+        printf "%s\n" "$?"' 2>/dev/null
+"$farm/bash" -c '
+        set -m
+        coproc C { sleep 5; }
+        p=$C_PID
+        listed=$(jobs -p)
+        set -- $(/bin/ps -o pgid= -p "$p")
+        pg=$1
+        ok=1
+        [ "$listed" = "$p" ] && [ "$pg" = "$p" ] && ok=0
+        kill -TERM "$p"
+        wait "$p"
+        printf "%s\n" "$ok"' 2>/dev/null
+PROBES
+        # A subshell: a redirection that fails on the special builtin :
+        # ends a POSIX shell, and this one is the whole of test/run.
+        if ( : < /dev/tty ) 2>/dev/null; then
+                monitor_results=$(sh "$work/monitor-probes.sh" "$farm")
+        elif command -v script > /dev/null 2>&1; then
+                monitor_results=$(script -qfec \
+                        "sh '$work/monitor-probes.sh' '$farm'" /dev/null |
+                        tr -d '\r')
+        else
+                monitor_results=
+        fi
+        monitor_input_result=$(echo "$monitor_results" | sed -n 1p)
+        monitor_signal_result=$(echo "$monitor_results" | sed -n 2p)
+        coproc_signal_result=$(echo "$monitor_results" | sed -n 3p)
+        coproc_job_result=$(echo "$monitor_results" | sed -n 4p)
+        if [ -z "$monitor_results" ]; then
+                note "background input policy under job control: NOT RUN -- needs a tty and there is no script(1)"
+                if [ "$async_null_result" = 1: ]; then
+                        tally shell-background-input-policy 1 1
+                else
+                        tally shell-background-input-policy 0 1
+                        shell_failed=1
+                fi
+        elif [ "$async_null_result" = 1: ] &&
                 [ "$monitor_input_result" = 0:X ] &&
                 [ "$monitor_signal_result" = 130 ] &&
                 [ "$coproc_signal_result" = 130 ] &&
