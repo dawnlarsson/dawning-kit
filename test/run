@@ -1992,7 +1992,32 @@ known_one()
         [ "$bad" = 0 ]
 }
 
-lane_declare()   { freestanding_checks_lane declare declare; }
+#       A section's _reference twin: the same cases built by the host compiler
+#       over the machine's glibc, whose verdict must be clean too, since an
+#       expectation only this tree's code meets is one that agrees with a bug.
+#       Each twin said "compare the verdicts" and no lane built it.
+glibc_twin()
+{
+        twin_name=$1
+        shift
+        if ! ${CC:-gcc} -O2 -w "$@" -DCHECK_${twin_name}_reference \
+                -o "$work/$twin_name.reference" test/checks.c -lm 2> "$work/$twin_name.reference.err"
+        then
+                note "$twin_name-glibc: the reference did not build"
+                sed 's/^/    /' "$work/$twin_name.reference.err" | head -10
+                return 1
+        fi
+        "$work/$twin_name.reference" > "$work/$twin_name.reference.out" 2>&1
+        twin_status=$?
+        twin_line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
+                "$work/$twin_name.reference.out")
+        [ -n "$twin_line" ] || { note "$twin_name-glibc printed no verdict"; return 1; }
+        tally "$twin_name-glibc" "$((${twin_line% *} - ${twin_line#* }))" "${twin_line% *}"
+        sed -n '/FAIL/p' "$work/$twin_name.reference.out" | head -10
+        [ "$twin_status" = 0 ] && [ "${twin_line#* }" = 0 ]
+}
+
+lane_declare()   { freestanding_checks_lane declare declare && glibc_twin declare; }
 lane_fold()      { freestanding_checks_lane fold fold; }
 lane_reserve()   { freestanding_checks_lane reserve reserve; }
 lane_waterlink() { freestanding_checks_lane waterlink waterlink; }
@@ -2211,7 +2236,7 @@ scan_differential_one()
         return 1
 }
 lane_process()   { freestanding_checks_lane process process; }
-lane_signal()    { freestanding_checks_lane signal signal; }
+lane_signal()    { freestanding_checks_lane signal signal && glibc_twin signal -no-pie; }
 lane_lock()      { freestanding_checks_lane lock lock; }
 #
 #       errno and strerror. CHECK_error's TRANSCRIPT lines are the half a
@@ -2248,7 +2273,7 @@ lane_error()
         done
         return "$error_outcome"
 }
-lane_strings()   { freestanding_checks_lane strings strings; }
+lane_strings()   { freestanding_checks_lane strings strings && glibc_twin strings -no-pie; }
 #
 #       The environment against glibc's. CHECK_environment walks seeded
 #       sequences of setenv, unsetenv, putenv, clearenv and getenv and prints
