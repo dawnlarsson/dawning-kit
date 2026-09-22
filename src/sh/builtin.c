@@ -15206,53 +15206,138 @@ publish:
         "Seccomp_filters:", each at most 32 bytes long and holding nothing
         after its name but spaces or tabs and then a single 0. Any other line
         is passed over whatever it holds, NULs included.
+
+        Every applet asks this once as it starts, and the byte walk that read
+        it was most of what an applet spent before its own work: the whole
+        file is now one pass that marks each S just after a newline, thirty
+        two bytes a turn on x86_64 and sixteen on arm64, eight in a word on
+        riscv64. A marked line is only ever a name when its first eight bytes
+        say so, and there are a dozen such lines. Loads are aligned, so none
+        leaves the page the file's last byte is on; what is read before the
+        first byte or after the last is masked or never a line.
 */
-static PURE bool floodlight_status_clear(const p8 address_to text, positive length)
-{
-        bool saw_mode = false;
-        bool saw_count = false;
-        positive at = 0;
+bool floodlight_status_clear(const p8 address_to text, positive length);
 
-        while (at < length)
-        {
-                const p8 address_to line = text + at;
-                const p8 address_to stop = memory_first_of(line, '\n', length - at);
-                positive used;
-                positive name;
-                positive value;
-                bool address_to seen;
-
-                if (!stop)
-                        return false;
-
-                used = (positive)(stop - line);
-                at += used + 1;
-
-                if (used >= 8 && !memory_compare(line, "Seccomp:", 8))
-                {
-                        name = 8;
-                        seen = address_of saw_mode;
-                }
-                else if (used >= 16 && !memory_compare(line, "Seccomp_filters:", 16))
-                {
-                        name = 16;
-                        seen = address_of saw_count;
-                }
-                else
-                        continue;
-
-                if (used > 32 || address_to seen)
-                        return false;
-                value = name;
-                while (value < used && (line[value] == ' ' || line[value] == '\t'))
-                        value++;
-                if (value + 1 != used || line[value] != '0')
-                        return false;
-                address_to seen = true;
-        }
-
-        return saw_mode && saw_count;
-}
+#if X64
+__asm__(
+    ASM_FUNC(floodlight_status_clear)
+    "test %rsi, %rsi\n   jz 8f\n   cmpb $10, -1(%rdi,%rsi)\n   jne 8f\n"
+    "lea (%rdi,%rsi), %r10\n   mov %rdi, %r9\n   and $-32, %r9\n"
+    "mov %edi, %ecx\n   and $31, %ecx\n"
+    // An S is kept from the first byte on, and the first byte starts a line.
+    "mov $-1, %r11d\n   shl %cl, %r11d\n   mov $1, %edx\n   shl %cl, %edx\n"
+    "xor %r8d, %r8d\n"
+    "mov $0x0a0a0a0a, %eax\n   movd %eax, %xmm6\n   pshufd $0, %xmm6, %xmm6\n"
+    "mov $0x53535353, %eax\n   movd %eax, %xmm7\n   pshufd $0, %xmm7, %xmm7\n"
+    "1:  movdqa (%r9), %xmm0\n   movdqa 16(%r9), %xmm1\n"
+    "movdqa %xmm0, %xmm2\n   movdqa %xmm1, %xmm3\n"
+    "pcmpeqb %xmm6, %xmm0\n   pcmpeqb %xmm6, %xmm1\n   pcmpeqb %xmm7, %xmm2\n   pcmpeqb %xmm7, %xmm3\n"
+    "pmovmskb %xmm0, %eax\n   pmovmskb %xmm1, %ecx\n   shl $16, %ecx\n   or %ecx, %eax\n"
+    "pmovmskb %xmm2, %esi\n   pmovmskb %xmm3, %ecx\n   shl $16, %ecx\n   or %esi, %ecx\n"
+    // Bit i of the lea is a newline at byte i - 1, the last one carried on;
+    // one in front of the first byte is dropped, or the add would carry.
+    "and %r11d, %ecx\n   and %r11d, %eax\n   lea (%rdx,%rax,2), %rsi\n"
+    "shr $31, %eax\n   mov %eax, %edx\n"
+    "and %esi, %ecx\n   jnz 3f\n"
+    "2:  mov $-1, %r11d\n   add $32, %r9\n   cmp %r10, %r9\n   jb 1b\n"
+    "xor %eax, %eax\n   cmp $3, %r8d\n   sete %al\n"
+    ASM_RET
+    // A line that starts with S: a name only if eight bytes say so.
+    "3:  bsf %ecx, %eax\n   lea -1(%rcx), %esi\n   and %esi, %ecx\n   lea (%r9,%rax), %rdi\n"
+    "lea 8(%rdi), %rsi\n   cmp %r10, %rsi\n   ja 7f\n   mov (%rdi), %rax\n"
+    "movabs $0x3a706d6f63636553, %rsi\n   cmp %rsi, %rax\n   je 4f\n"
+    "movabs $0x5f706d6f63636553, %rsi\n   cmp %rsi, %rax\n   jne 7f\n"
+    "lea 16(%rdi), %rsi\n   cmp %r10, %rsi\n   ja 7f\n   mov 8(%rdi), %rax\n"
+    "movabs $0x3a737265746c6966, %rsi\n   cmp %rsi, %rax\n   jne 7f\n"
+    "bts $1, %r8d\n   jc 8f\n   lea 16(%rdi), %rsi\n   jmp 5f\n"
+    "4:  bts $0, %r8d\n   jc 8f\n   lea 8(%rdi), %rsi\n"
+    // Blanks, one 0 and the newline, the newline no more than 32 bytes in.
+    "5:  cmp %r10, %rsi\n   jae 8f\n   movzbl (%rsi), %eax\n"
+    "cmp $32, %eax\n   je 6f\n   cmp $9, %eax\n   je 6f\n   cmp $48, %eax\n   jne 8f\n"
+    "lea 1(%rsi), %rax\n   cmp %r10, %rax\n   jae 8f\n   cmpb $10, (%rax)\n   jne 8f\n"
+    "sub %rdi, %rax\n   cmp $32, %rax\n   ja 8f\n"
+    "7:  test %ecx, %ecx\n   jnz 3b\n   jmp 2b\n"
+    "6:  inc %rsi\n   jmp 5b\n"
+    "8:  xor %eax, %eax\n"
+    ASM_RET
+    ASM_END(floodlight_status_clear)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(floodlight_status_clear)
+    "cbz x1, 8f\n   add x10, x0, x1\n   ldurb w2, [x10, #-1]\n   cmp w2, #10\n   b.ne 8f\n"
+    "and x9, x0, #-16\n   and x2, x0, #15\n   lsl x2, x2, #2\n"
+    // Four bits a byte: an S is kept from the first byte on, and the first
+    // byte starts a line.
+    "mov x11, #-1\n   lsl x11, x11, x2\n   mov x12, #15\n   lsl x12, x12, x2\n"
+    "mov w8, #0\n   movi v6.16b, #10\n   movi v7.16b, #83\n"
+    "1:  ldr q0, [x9]\n   cmeq v1.16b, v0.16b, v6.16b\n   cmeq v2.16b, v0.16b, v7.16b\n"
+    "shrn v1.8b, v1.8h, #4\n   shrn v2.8b, v2.8h, #4\n   fmov x3, d1\n   fmov x4, d2\n"
+    "and x4, x4, x11\n   orr x5, x12, x3, lsl #4\n   lsr x12, x3, #60\n"
+    "ands x4, x4, x5\n   b.ne 3f\n"
+    "2:  mov x11, #-1\n   add x9, x9, #16\n   cmp x9, x10\n   b.lo 1b\n"
+    "cmp w8, #3\n   cset w0, eq\n"
+    ASM_RET
+    // A line that starts with S: a name only if eight bytes say so.
+    "3:  and x4, x4, #0x1111111111111111\n"
+    "4:  rbit x5, x4\n   clz x5, x5\n   sub x6, x4, #1\n   and x4, x4, x6\n   add x7, x9, x5, lsr #2\n"
+    "add x5, x7, #8\n   cmp x5, x10\n   b.hi 7f\n   ldr x5, [x7]\n"
+    "mov x6, #0x6553\n   movk x6, #0x6363, lsl #16\n   movk x6, #0x6d6f, lsl #32\n   movk x6, #0x3a70, lsl #48\n"
+    "cmp x5, x6\n   b.eq 5f\n   movk x6, #0x5f70, lsl #48\n   cmp x5, x6\n   b.ne 7f\n"
+    "add x5, x7, #16\n   cmp x5, x10\n   b.hi 7f\n   ldr x5, [x7, #8]\n"
+    "mov x6, #0x6966\n   movk x6, #0x746c, lsl #16\n   movk x6, #0x7265, lsl #32\n   movk x6, #0x3a73, lsl #48\n"
+    "cmp x5, x6\n   b.ne 7f\n"
+    "tbnz w8, #1, 8f\n   orr w8, w8, #2\n   add x5, x7, #16\n   b 6f\n"
+    "5:  tbnz w8, #0, 8f\n   orr w8, w8, #1\n   add x5, x7, #8\n"
+    // Blanks, one 0 and the newline, the newline no more than 32 bytes in.
+    "6:  cmp x5, x10\n   b.hs 8f\n   ldrb w6, [x5]\n   cmp w6, #32\n   ccmp w6, #9, #4, ne\n"
+    "b.ne 9f\n   add x5, x5, #1\n   b 6b\n"
+    "9:  cmp w6, #48\n   b.ne 8f\n   add x5, x5, #1\n   cmp x5, x10\n   b.hs 8f\n"
+    "ldrb w6, [x5]\n   cmp w6, #10\n   b.ne 8f\n   sub x5, x5, x7\n   cmp x5, #32\n   b.hi 8f\n"
+    "7:  cbnz x4, 4b\n   b 2b\n"
+    "8:  mov w0, #0\n"
+    ASM_RET
+    ASM_END(floodlight_status_clear)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(floodlight_status_clear)
+    "beqz a1, 8f\n   add a4, a0, a1\n   lbu t0, -1(a4)\n   li t1, 10\n   bne t0, t1, 8f\n"
+    "andi a5, a0, -8\n   andi t2, a0, 7\n   slli t2, t2, 3\n"
+    // A byte's top bit: an S is kept from the first byte on, and the first
+    // byte starts a line.
+    "li a6, -1\n   sll a6, a6, t2\n   li a7, 0x80\n   sll a7, a7, t2\n   li a3, 0\n"
+    "li t3, 0x0a0a0a0a0a0a0a0a\n   li t4, 0x5353535353535353\n   li t5, 0x7f7f7f7f7f7f7f7f\n"
+    // The exact zero-byte test, so no byte borrows from the one beside it.
+    "1:  ld t0, 0(a5)\n"
+    "xor t1, t0, t3\n   and t6, t1, t5\n   add t6, t6, t5\n   or t6, t6, t1\n   or t6, t6, t5\n   not t6, t6\n"
+    "xor t1, t0, t4\n   and t2, t1, t5\n   add t2, t2, t5\n   or t2, t2, t1\n   or t2, t2, t5\n   not t2, t2\n"
+    "and t2, t2, a6\n   slli t1, t6, 8\n   or t1, t1, a7\n   srli a7, t6, 56\n"
+    "and t2, t2, t1\n   bnez t2, 3f\n"
+    "2:  li a6, -1\n   addi a5, a5, 8\n   bltu a5, a4, 1b\n"
+    "addi a3, a3, -3\n   seqz a0, a3\n"
+    ASM_RET
+    // A line that starts with S, byte by byte: Seccomp, then : or _filters:.
+    "3:  mv a0, a5\n"
+    "4:  andi t1, t2, 0x80\n   srli t2, t2, 8\n   bnez t1, 5f\n   addi a0, a0, 1\n   j 4b\n"
+    "5:  addi t1, a0, 8\n   bgtu t1, a4, 7f\n   li t6, 0x00706d6f63636553\n   mv a1, a0\n"
+    "6:  lbu t1, 0(a1)\n   andi t0, t6, 0xff\n   bne t1, t0, 7f\n   srli t6, t6, 8\n   addi a1, a1, 1\n   bnez t6, 6b\n"
+    "lbu t1, 0(a1)\n   li t0, 58\n   beq t1, t0, 9f\n   li t0, 95\n   bne t1, t0, 7f\n"
+    "addi t1, a0, 16\n   bgtu t1, a4, 7f\n   li t6, 0x3a737265746c6966\n   addi a1, a0, 8\n"
+    "10: lbu t1, 0(a1)\n   andi t0, t6, 0xff\n   bne t1, t0, 7f\n   srli t6, t6, 8\n   addi a1, a1, 1\n   bnez t6, 10b\n"
+    "andi t1, a3, 2\n   bnez t1, 8f\n   ori a3, a3, 2\n   j 11f\n"
+    "9:  andi t1, a3, 1\n   bnez t1, 8f\n   ori a3, a3, 1\n   addi a1, a0, 8\n"
+    // Blanks, one 0 and the newline, the newline no more than 32 bytes in.
+    "11: bgeu a1, a4, 8f\n   lbu t1, 0(a1)\n   li t0, 32\n   beq t1, t0, 12f\n   li t0, 9\n   beq t1, t0, 12f\n"
+    "li t0, 48\n   bne t1, t0, 8f\n   addi a1, a1, 1\n   bgeu a1, a4, 8f\n"
+    "lbu t1, 0(a1)\n   li t0, 10\n   bne t1, t0, 8f\n   sub a1, a1, a0\n   li t0, 32\n   bgtu a1, t0, 8f\n"
+    "7:  addi a0, a0, 1\n   bnez t2, 4b\n   j 2b\n"
+    "12: addi a1, a1, 1\n   j 11b\n"
+    "8:  li a0, 0\n"
+    ASM_RET
+    ASM_END(floodlight_status_clear)
+);
+#endif
 
 /* Authenticate /proc first, then require the complete status file to contain
    exactly one zero-valued Seccomp and Seccomp_filters row.  Ordinary cBPF

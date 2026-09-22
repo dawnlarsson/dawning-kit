@@ -61,7 +61,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact text_asm known socket net waterlink bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format machine cli differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact text_asm shell_asm known socket net waterlink bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format machine cli differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
 
 describe()
 {
@@ -70,6 +70,7 @@ describe()
         verify)   echo "the assembly in lib.c against the C it replaced, on three machines" ;;
         exact)    echo "every size that is known where the call is written, and both tiers" ;;
         text_asm) echo "text.c's own assembly against its C, on three machines" ;;
+        shell_asm) echo "the shell's own assembly against its C, on three machines" ;;
         known)    echo "the rest of what folds when the call site knows it" ;;
         declare)  echo "the standard names, declared, compiled twice and diffed" ;;
         fold)     echo "the constant-size fold we put in the kernel string header" ;;
@@ -2121,6 +2122,25 @@ text_asm_one()
 
 lane_text_asm() { target_lane text_asm_one; }
 
+#       The same for the branching assembly the shell keeps in its own source.
+shell_asm_one()
+{
+        python3 test/differential.py --harness native_extract --source \
+                src/sh/builtin.c floodlight_status_clear > "$work/shell_asm.h" || return 1
+        target_build freestanding_check shell_asm "$work/shell_asm.$target" "$target" \
+                "-I$work" || return 1
+        $target_runner "$work/shell_asm.$target" > "$work/shell_asm.$target.out" 2>&1
+        status=$?
+        sed -n '/FAIL/p' "$work/shell_asm.$target.out"
+        line=$(sed -n 's/.*[^0-9]\([0-9][0-9]*\) checks, \([0-9][0-9]*\) failures.*/\1 \2/p' \
+                "$work/shell_asm.$target.out" | tail -1)
+        [ -n "$line" ] || { note "$target: shell_asm did not say how it went"; return 1; }
+        tally "shell-asm-$target" "$((${line% *} - ${line#* }))" "${line% *}"
+        [ "$status" = 0 ]
+}
+
+lane_shell_asm() { target_lane shell_asm_one; }
+
 #
 #       The other things a call site may know: a set literal, a needle length,
 #       a bound, a base, a byte. Each file is the same shape as exact.c -- the
@@ -3436,9 +3456,14 @@ trap 'rm -rf "$work"' EXIT INT TERM
 #       hunts are kept from string_find's followers; and where a case supplies
 #       a reference itself -- the decimal tail of positive_into_base, human.c's
 #       buffer adapters, fields.c's positive_into, reserve.c's allocator calls
-#       -- it is left out. text_blank_field comes from the tool's own source.
+#       -- it is left out. text_blank_field comes from the tool's own source,
+#       floodlight_status_clear from the shell's.
 while read -r lifted_header lifted_source lifted_routines; do
-        [ "$lifted_source" = text ] && lifted_source=$text || lifted_source=$lib
+        case $lifted_source in
+        text) lifted_source=$text ;;
+        builtin) lifted_source=src/sh/builtin.c ;;
+        *) lifted_source=$lib ;;
+        esac
         # shellcheck disable=SC2086 # the routines are separate arguments
         python3 test/differential.py --harness native_extract "$lifted_source" \
                 $lifted_routines > "$work/$lifted_header.h" || exit 1
@@ -3451,6 +3476,8 @@ squeeze lib memory_squeeze_bytes
 offsets lib memory_offsets_of_either memory_offsets_between memory_offsets_outside memory_offsets_in_set
 hash lib string_hash_33_length
 join text text_blank_field
+floodlight builtin floodlight_status_clear
+floodlight_lib lib memory_first_of memory_compare
 wide lib string_length string_length_max string_first_of string_first_of_or_end string_first_of_max string_last_of string_last_of_or_end memory_first_of
 bases lib positive_into_base
 base_field lib positive_into_base writer_fill positive_to_base_field
@@ -3463,7 +3490,7 @@ reserve lib memory_growth memory_reserve memory_release
 LIFTED
 
 status=0
-for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets hash join series wide bases base_field human human_nearest fields input_bases network reserve; do
+for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets hash join floodlight series wide bases base_field human human_nearest fields input_bases network reserve; do
         cc -O2 -w -I"$work" "-DCHECK_native_$case" test/checks.c -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done

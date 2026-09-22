@@ -25216,6 +25216,244 @@ b32 main(void)
 }
 #endif /* CHECK_text_asm */
 
+#ifdef CHECK_shell_asm
+/*
+        The branching assembly the shell keeps in src/sh/builtin.c, lifted
+        block and all by the extractor's --source mode and built here on each
+        machine: floodlight_status_clear against the byte walk that read
+        /proc/self/status before it, over status files built line by line,
+        every name the scan could mistake, each one cut, doubled and
+        stretched, then random edits of those, at every alignment and against
+        the last bytes of a page.
+*/
+#include "../src/lib.util.c"
+#include "shell_asm.h"
+
+bool floodlight_status_clear(const p8 address_to text, positive length);
+
+static positive checks, failures;
+
+/* The walk as it stood, whole file in one chunk: each line copied into 32
+   bytes, the long ones marked, the two names judged at their newline. */
+static bool shell_asm_former(const p8 address_to text, positive length)
+{
+        p8 line[32];
+        positive used = 0;
+        bool long_line = false, ended = true, mode = false, count = false;
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 byte = text[at];
+                positive name = 0, value;
+                bool address_to seen = null;
+
+                if (byte != '\n')
+                {
+                        ended = false;
+                        if (used < sizeof(line))
+                                line[used++] = byte;
+                        else
+                                long_line = true;
+                        continue;
+                }
+                if (used >= 8 && !memory_compare(line, "Seccomp:", 8))
+                        name = 8, seen = &mode;
+                else if (used >= 16 && !memory_compare(line, "Seccomp_filters:", 16))
+                        name = 16, seen = &count;
+                if (seen)
+                {
+                        if (long_line || *seen)
+                                return false;
+                        value = name;
+                        while (value < used && (line[value] == ' ' || line[value] == '\t'))
+                                value++;
+                        if (value + 1 != used || line[value] != '0')
+                                return false;
+                        *seen = true;
+                }
+                used = 0;
+                long_line = false;
+                ended = true;
+        }
+        return ended && mode && count;
+}
+
+static p64 shell_asm_seed = 0x243f6a8885a308d3ull;
+
+static p64 shell_asm_next(void)
+{
+        shell_asm_seed ^= shell_asm_seed << 13;
+        shell_asm_seed ^= shell_asm_seed >> 7;
+        shell_asm_seed ^= shell_asm_seed << 17;
+        return shell_asm_seed;
+}
+
+static fn shell_asm_one(const p8 address_to text, positive length, positive what)
+{
+        bool want = shell_asm_former(text, length);
+        bool got = floodlight_status_clear(text, length);
+
+        checks++;
+        if (want != got)
+        {
+                failures++;
+                if (failures < 10)
+                        string_format(log, "FAIL floodlight_status_clear case %p length %p: %p want %p\n",
+                                      what, length, (positive)got, (positive)want);
+        }
+}
+
+/* The lines a real status has, with the two that matter where the kernel
+   puts them, and the names the scan must not take for them. */
+static const char address_to shell_asm_lines[] = {
+        "Name:\tbasename", "Umask:\t0022", "State:\tR (running)", "Tgid:\t4242",
+        "Pid:\t4242", "PPid:\t1", "Uid:\t1000\t1000\t1000\t1000", "FDSize:\t64",
+        "Groups:\t998 1000 ", "VmPeak:\t    1024 kB", "SigQ:\t0/255445",
+        "SigPnd:\t0000000000000000", "ShdPnd:\t0000000000000000",
+        "SigBlk:\t0000000000000000", "SigIgn:\t0000000000000000",
+        "CapEff:\t0000000000000000", "NoNewPrivs:\t0", "SECCOMP", "Seccomp",
+        "Seccomp_", "Seccompx:\t0", "Seccomp_filter:\t0", "SSeccomp:\t0",
+        "Speculation_Store_Bypass:\tthread vulnerable",
+        "SpeculationIndirectBranch:\tconditional enabled",
+        "Cpus_allowed_list:\t0-31", "voluntary_ctxt_switches:\t0", "S", "",
+};
+
+static const char address_to shell_asm_mode[] = {
+        "Seccomp:\t0", "Seccomp: 0", "Seccomp:0", "Seccomp:\t2", "Seccomp:\t0 ",
+        "Seccomp:\t00", "Seccomp:", "Seccomp:\t",
+        "Seccomp: \t \t \t \t \t \t \t \t \t \t \t 0",
+        "Seccomp: \t \t \t \t \t \t \t \t \t \t \t \t0", "Seccomp:\t\x00", "Seccomp:\t 0\t",
+};
+
+static const char address_to shell_asm_count[] = {
+        "Seccomp_filters:\t0", "Seccomp_filters: 0", "Seccomp_filters:0",
+        "Seccomp_filters:\t1", "Seccomp_filters:\t0 ", "Seccomp_filters:",
+        "Seccomp_filters: \t \t \t \t \t \t \t 0",
+        "Seccomp_filters: \t \t \t \t \t \t \t \t0",
+        "Seccomp_filters:\t10",
+};
+
+static positive shell_asm_put(p8 address_to into, positive used, const char address_to line, bool newline)
+{
+        positive length = string_length((string_address)line);
+
+        if (line == shell_asm_mode[10])
+                length = 10;
+        memory_copy_apart(into + used, line, length);
+        used += length;
+        if (newline)
+                into[used++] = '\n';
+        return used;
+}
+
+/* A status file: most of the common lines, one of each name wherever the
+   draw puts it, sometimes a second one or none, sometimes no last newline. */
+static positive shell_asm_build(p8 address_to into)
+{
+        positive used = 0;
+        positive lines = 4 + shell_asm_next() % 40;
+        positive mode_at = shell_asm_next() % (lines + 2);
+        positive count_at = shell_asm_next() % (lines + 2);
+        positive twice = shell_asm_next() % 8;
+
+        for (positive i = 0; i <= lines; i++)
+        {
+                if (i == mode_at || (twice == 0 && i == lines / 2))
+                        used = shell_asm_put(into, used, shell_asm_mode[
+                                shell_asm_next() % 3 ? 0 : shell_asm_next() % array_count(shell_asm_mode)], true);
+                if (i == count_at || (twice == 1 && i == lines / 3))
+                        used = shell_asm_put(into, used, shell_asm_count[
+                                shell_asm_next() % 3 ? 0 : shell_asm_next() % array_count(shell_asm_count)], true);
+                if (i < lines)
+                        used = shell_asm_put(into, used,
+                                             shell_asm_lines[shell_asm_next() % array_count(shell_asm_lines)],
+                                             i + 1 < lines || shell_asm_next() % 8);
+        }
+        return used;
+}
+
+/* An edit drawn from the bytes the scan cares about. */
+static positive shell_asm_edit(p8 address_to text, positive length, positive room)
+{
+        static const p8 bytes[] = "\nSeccomp:_filters0 \t\x00x";
+        positive at = length ? shell_asm_next() % length : 0;
+        p8 byte = bytes[shell_asm_next() % (sizeof(bytes) - 1)];
+
+        switch (shell_asm_next() % 3)
+        {
+        case 0:
+                if (length)
+                        text[at] = byte;
+                return length;
+        case 1:
+                if (length + 1 >= room)
+                        return length;
+                memory_copy(text + at + 1, text + at, length - at);
+                text[at] = byte;
+                return length + 1;
+        default:
+                if (!length)
+                        return 0;
+                memory_copy(text + at, text + at + 1, length - at - 1);
+                return length - 1;
+        }
+}
+
+b32 main(void)
+{
+        static p8 built[4096];
+        static p8 room[4096 + 128];
+        p8 address_to pages = memory(3 * 4096);
+        positive valid = 0;
+
+        for (positive round = 0; round < 3000; round++)
+        {
+                positive length = shell_asm_build(built);
+
+                if (shell_asm_former(built, length))
+                        valid++;
+                for (positive offset = 0; offset < 64; offset += round % 4 ? 17 : 1)
+                {
+                        memory_copy_apart(room + offset, built, length);
+                        shell_asm_one(room + offset, length, round);
+                }
+                for (positive edits = 0; edits < 6; edits++)
+                {
+                        length = shell_asm_edit(built, length, sizeof(built));
+                        memory_copy_apart(room + (edits & 31), built, length);
+                        shell_asm_one(room + (edits & 31), length, round);
+                }
+        }
+
+        /* A file that ends on the last byte of a page, and one that starts on
+           the first, against a page nobody may read. */
+        if ((bipolar)(positive)pages > 0 &&
+            system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0) == 0)
+                for (positive round = 0; round < 400; round++)
+                {
+                        positive length = shell_asm_build(built);
+
+                        if (length > 4096)
+                                continue;
+                        memory_copy_apart(pages + 8192 - length, built, length);
+                        shell_asm_one(pages + 8192 - length, length, round);
+                        memory_copy_apart(pages + 4096, built, length);
+                        shell_asm_one(pages + 4096, length, round);
+                }
+
+        checks++;
+        if (valid < 300)
+        {
+                failures++;
+                string_format(log, "FAIL only %p of the built files were clear\n", valid);
+        }
+
+        string_format(log, "shell assembly: %p checks, %p failures\n", checks, failures);
+        log_flush();
+        return failures != 0;
+}
+#endif /* CHECK_shell_asm */
+
 #ifdef CHECK_hash_length
 #include "../src/lib.util.c"
 /*
@@ -62867,6 +63105,182 @@ int main(void)
         return bad ? 1 : 0;
 }
 #endif /* CHECK_native_join */
+
+#ifdef CHECK_native_floodlight
+/* ARM64 floodlight_status_clear lifted verbatim from src/sh/builtin.c,
+   against the line walk it replaced -- memory_first_of to each newline and
+   memory_compare on the two names, both lifted from lib.c -- over a real
+   /proc/self/status and random edits of it at every alignment, then both
+   timed over that file, which every applet reads once as it starts. */
+#include "floodlight.h"
+#include "floodlight_lib.h"
+
+#define NATIVE_SEED 0x243f6a8885a308d3ull
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
+
+int floodlight_status_clear(const u8 *, u64);
+void *memory_first_of(const void *, int, u64);
+int memory_compare(const void *, const void *, u64);
+void *memcpy(void *, const void *, u64);
+void *memmove(void *, const void *, u64);
+
+static u64 checks, bad;
+
+static const char status[] =
+        "Name:\tcat\n"
+        "Umask:\t0022\n"
+        "State:\tR (running)\n"
+        "Tgid:\t2112676\n"
+        "Ngid:\t0\n"
+        "Pid:\t2112676\n"
+        "PPid:\t2112672\n"
+        "TracerPid:\t0\n"
+        "Uid:\t1000\t1000\t1000\t1000\n"
+        "Gid:\t1000\t1000\t1000\t1000\n"
+        "FDSize:\t64\n"
+        "Groups:\t98 963 983 985 988 989 992 995 998 1000 \n"
+        "NStgid:\t2112676\n"
+        "NSpid:\t2112676\n"
+        "NSpgid:\t2112676\n"
+        "NSsid:\t2112676\n"
+        "Kthread:\t0\n"
+        "VmPeak:\t    3244 kB\n"
+        "VmSize:\t    3244 kB\n"
+        "VmLck:\t       0 kB\n"
+        "VmPin:\t       0 kB\n"
+        "VmHWM:\t    1804 kB\n"
+        "VmRSS:\t    1804 kB\n"
+        "RssAnon:\t     100 kB\n"
+        "RssFile:\t    1704 kB\n"
+        "RssShmem:\t       0 kB\n"
+        "VmData:\t     468 kB\n"
+        "VmStk:\t     132 kB\n"
+        "VmExe:\t      28 kB\n"
+        "VmLib:\t    1704 kB\n"
+        "VmPTE:\t      44 kB\n"
+        "VmSwap:\t       0 kB\n"
+        "HugetlbPages:\t       0 kB\n"
+        "CoreDumping:\t0\n"
+        "THP_enabled:\t1\n"
+        "untag_mask:\t0xffffffffffffffff\n"
+        "Threads:\t1\n"
+        "SigQ:\t2/239201\n"
+        "SigPnd:\t0000000000000000\n"
+        "ShdPnd:\t0000000000000000\n"
+        "SigBlk:\t0000000000000000\n"
+        "SigIgn:\t0000000000000000\n"
+        "SigCgt:\t0000000000000000\n"
+        "CapInh:\t0000000000000000\n"
+        "CapPrm:\t0000000000000000\n"
+        "CapEff:\t0000000000000000\n"
+        "CapBnd:\t000001ffffffffff\n"
+        "CapAmb:\t0000000000000000\n"
+        "NoNewPrivs:\t0\n"
+        "Seccomp:\t0\n"
+        "Seccomp_filters:\t0\n"
+        "Speculation_Store_Bypass:\tthread vulnerable\n"
+        "SpeculationIndirectBranch:\tconditional enabled\n"
+        "Cpus_allowed:\tffffffff\n"
+        "Cpus_allowed_list:\t0-31\n"
+        "Mems_allowed:\t00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000001\n"
+        "Mems_allowed_list:\t0\n"
+        "voluntary_ctxt_switches:\t0\n"
+        "nonvoluntary_ctxt_switches:\t0\n"
+        "x86_Thread_features:\t\n"
+        "x86_Thread_features_locked:\t\n";
+
+__attribute__((noinline)) static int former(const u8 *text, u64 length)
+{
+        int mode = 0, count = 0;
+        u64 at = 0;
+
+        while (at < length) {
+                const u8 *line = text + at, *stop = memory_first_of(line, '\n', length - at);
+                u64 used, name, value;
+                int *seen;
+
+                if (!stop)
+                        return 0;
+                used = (u64)(stop - line);
+                at += used + 1;
+                if (used >= 8 && !memory_compare(line, "Seccomp:", 8))
+                        name = 8, seen = &mode;
+                else if (used >= 16 && !memory_compare(line, "Seccomp_filters:", 16))
+                        name = 16, seen = &count;
+                else
+                        continue;
+                if (used > 32 || *seen)
+                        return 0;
+                value = name;
+                while (value < used && (line[value] == ' ' || line[value] == '\t'))
+                        value++;
+                if (value + 1 != used || line[value] != '0')
+                        return 0;
+                *seen = 1;
+        }
+        return mode && count;
+}
+
+int main(void)
+{
+        static u8 text[4096], room[4096 + 64];
+        static const u8 edits[] = "\nSeccomp:_filters0 \tx";
+        u64 length = sizeof(status) - 1, valid = 0;
+
+        for (int round = 0; round < 4000; round++) {
+                u64 used = length;
+
+                memcpy(text, status, length);
+                for (u64 e = 0, n = next() % 4; e < n; e++) {
+                        u64 at = next() % used;
+                        u8 byte = edits[next() % (sizeof(edits) - 1)];
+
+                        switch (next() % 3) {
+                        case 0: text[at] = byte; break;
+                        case 1: memmove(text + at + 1, text + at, used - at); text[at] = byte; used++; break;
+                        default: memmove(text + at, text + at + 1, used - at - 1); used--; break;
+                        }
+                }
+                for (u64 offset = 0; offset < 32; offset += 1 + round % 7) {
+                        memcpy(room + offset, text, used);
+                        int want = former(room + offset, used), got = floodlight_status_clear(room + offset, used);
+
+                        checks++;
+                        valid += want;
+                        if (want != got && bad++ < 8)
+                                printf("  FAIL round %d offset %lu length %lu: %d want %d\n",
+                                       round, offset, used, got, want);
+                }
+        }
+        checks++;
+        if (valid < 1000)
+                bad++;
+
+        u64 best_former = ~0ul, best_body = ~0ul, sink = 0;
+        memcpy(room + 8, status, length);
+        for (int trial = 0; trial < 9; trial++) {
+                u64 start = ticks();
+                for (int r = 0; r < 20000; r++)
+                        sink += former(room + 8, length);
+                u64 took = ticks() - start;
+                best_former = took < best_former ? took : best_former;
+                start = ticks();
+                for (int r = 0; r < 20000; r++)
+                        sink += floodlight_status_clear(room + 8, length);
+                took = ticks() - start;
+                best_body = took < best_body ? took : best_body;
+        }
+        checks++;
+        if (sink != 9 * 2 * 20000)
+                bad++;
+        printf("  a %lu-byte status, 20000 times: line walk %lu ticks, assembly %lu, asm/C %lu%%\n",
+               length, best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+        printf("arm64 floodlight_status_clear: %lu checks | %lu failures\n", checks, bad);
+        return bad ? 1 : 0;
+}
+#endif /* CHECK_native_floodlight */
 
 #ifdef CHECK_native_series
 /* Exact production ARM64 decimal-record loop, checked against libc output. */
