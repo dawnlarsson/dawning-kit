@@ -61352,6 +61352,10 @@ void canvas_cell(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
 void canvas_cell2(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
 void canvas_row_blit(u32 *,const u32 *,unsigned long,u32);
 void canvas_cells(u32 *,unsigned long,const u8 *,const struct window_cell *,unsigned long,u32,u32);
+void canvas_cell_wide(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
+void canvas_cell2_wide(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
+void canvas_row_blit_wide(u32 *,const u32 *,unsigned long,u32);
+void canvas_cells_wide(u32 *,unsigned long,const u8 *,const struct window_cell *,unsigned long,u32,u32);
 // The ring reads the program's line lengths through the kernel's single-load
 // spelling; hosted, one load is all there is.
 #define READ_ONCE(a) (a)
@@ -61513,10 +61517,70 @@ static void check_pane_focus_policy(void) {
     free(text);
 }
 
+/* The wide bodies want what the kernel's dispatch asks for before it calls
+   them: AVX2 here, V on riscv64. Advanced SIMD is every arm64. */
+#if defined(__riscv)
+#include <sys/auxv.h>
+#endif
+static int simd_usable(void) {
+#if defined(__x86_64__)
+    return __builtin_cpu_supports("avx2");
+#elif defined(__riscv)
+    return (getauxval(AT_HWCAP) & (1ul<<('V'-'A')))!=0;
+#else
+    return 1;
+#endif
+}
+
+/* Every wide body against its narrow one, on the same inputs: the same
+   pixels, and nothing written outside the cell, row or run. */
+static void check_wide_bodies(void) {
+    const u32 colors[]={0,1,0x80000000,0xffffffff,0xaabbccdd,0x10203040};
+    static u32 got[4096],want[4096];
+    for(unsigned a=0;a<6;a++)for(unsigned b=0;b<6;b++)for(unsigned pattern=0;pattern<256;pattern++) {
+        unsigned rows=1+pattern%17,pitch=8+(pattern%10),align=(pattern/10)%4;
+        u8 bits[17];for(unsigned r=0;r<rows;r++)bits[r]=(pattern+r*17)&255;
+        memset(got,0xa5,sizeof(got));memset(want,0xa5,sizeof(want));
+        canvas_cell(want+align,pitch,bits,rows,colors[a],colors[b]);
+        canvas_cell_wide(got+align,pitch,bits,rows,colors[a],colors[b]);
+        check(!memcmp(got,want,sizeof(got)));
+        pitch=16+2*(pattern%5);
+        memset(got,0xa5,sizeof(got));memset(want,0xa5,sizeof(want));
+        canvas_cell2(want+align,pitch,bits,rows,colors[a],colors[b]);
+        canvas_cell2_wide(got+align,pitch,bits,rows,colors[a],colors[b]);
+        check(!memcmp(got,want,sizeof(got)));
+    }
+    static u8 face[256*16];
+    for(unsigned trial=0;trial<4096;trial++) {
+        unsigned count=1+trial%23,pitch=count*8+(trial/23)%5,align=(trial/115)%4;
+        struct window_cell run[23];
+        u32 ink=colors[trial%6],paper=colors[(trial/6)%6];
+        for(unsigned i=0;i<sizeof(face);i++)face[i]=(i*131+trial*7)&255;
+        for(unsigned i=0;i<count;i++)
+            run[i]=(struct window_cell){(trial*13+i*29)%256,(u8)i,(u8)trial,(unsigned short)i};
+        memset(got,0xa5,sizeof(got));memset(want,0xa5,sizeof(want));
+        canvas_cells(want+align,pitch,face,run,count,ink,paper);
+        canvas_cells_wide(got+align,pitch,face,run,count,ink,paper);
+        check(!memcmp(got,want,sizeof(got)));
+    }
+    static u32 source[1100];
+    for(unsigned i=0;i<1100;i++)source[i]=i*0x9e3779b9u;
+    for(unsigned count=0;count<=1030;count+=count<40?1:97)
+    for(unsigned mask=0;mask<3;mask++)for(unsigned align=0;align<4;align++) {
+        u32 opaque=mask==0?0:mask==1?0xff000000:0x00ff00ff;
+        memset(got,0xa5,sizeof(got));memset(want,0xa5,sizeof(want));
+        canvas_row_blit(want+align,source+align,count,opaque);
+        canvas_row_blit_wide(got+align,source+align,count,opaque);
+        check(!memcmp(got,want,sizeof(got)));
+    }
+}
+
 int main(void) {
     const u32 palette[]={0x1b2733,0x2f3f52,0x2b3a4c,0x4c6785,
                          0x101820,0xdfe7ef,0xffffff,0x000000};
     check_pane_focus_policy();
+    const int wide=simd_usable();
+    if(wide)check_wide_bodies();
     const u32 formats[]={0,DRM_FORMAT_ARGB8888,0x34325258,0xffffffff};
     for(unsigned f=0;f<4;f++)for(unsigned a=0;a<4;a++) {
         memset(pixels,0xa5,16*sizeof(*pixels));
@@ -61626,6 +61690,7 @@ int main(void) {
         for(unsigned i=0;i<96;i++) {seed=seed*1664525+1013904223;
             cells[i]=(struct window_cell){trial%7?32+(seed>>16)%97:' ',trial%3?(seed>>8)&255:7,trial%3?(seed>>24)&255:0,0};}
         memset(pixels,0xa5,sizeof(pixels));memset(expected,0xa5,sizeof(expected));
+        t.simd=wide&&(trial&8);  // the vector bodies, through the dispatch
         compose_row(&t,&s,x,y,cells,used,first,last);
         t.pixels=expected;reference_row(&t,&s,x,y,cells,used,first,last);
         check(!memcmp(pixels,expected,sizeof(pixels)));

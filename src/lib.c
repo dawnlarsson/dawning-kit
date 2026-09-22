@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        346 routines (332 public, 14 local), 344 of them on all three and 2 local to one.
+        350 routines (336 public, 14 local), 348 of them on all three and 2 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -112,11 +112,15 @@
           bytes_reverse_32               public  yes     yes     yes
           canvas_cell                    public  yes     yes     yes
           canvas_cell2                   public  yes     yes     yes
+          canvas_cell2_wide              public  yes     yes     yes
+          canvas_cell_wide               public  yes     yes     yes
           canvas_cells                   public  yes     yes     yes
+          canvas_cells_wide              public  yes     yes     yes
           canvas_glyph                   public  yes     yes     yes
           canvas_glyph2                  public  yes     yes     yes
           canvas_rect_fill               public  yes     yes     yes
           canvas_row_blit                public  yes     yes     yes
+          canvas_row_blit_wide           public  yes     yes     yes
           cells_from_ascii               public  yes     yes     yes
           cpu_hash_detect                local   yes     yes     yes
           decimal_ceiling                public  yes     yes     yes
@@ -1545,8 +1549,10 @@ typedef union matrix4
 //      above is kept because the mechanism is right and the reason it is not
 //      used here is worth having next to it.
 //
-//      A kernel build takes the narrow body and keeps it. Not because the
-//      wide one is wrong, but because memcpy is called on device memory --
+//      A kernel build takes the narrow body of every routine here and keeps
+//      it. The kernel may use the vector registers (see ASM_SIMD_SECTION,
+//      where its wide bodies live under names of their own), but not from
+//      these: memcpy is called on device memory --
 //      the framebuffer, through a plain memcpy in the fbdev path, not through
 //      memcpy_toio -- and a device mapping is trapped and emulated. KVM's
 //      emulator has no EVEX, so a displaced memcpy with an AVX-512 body took
@@ -1561,11 +1567,10 @@ typedef union matrix4
 //      why every emulator handles it, and matching that is a guarantee rather
 //      than a bet.
 //
-//      It settles the other open question at the same time. Nothing here
-//      called kernel_fpu_begin and nothing saves the vector registers on
-//      syscall entry, so whether a userspace ymm could come back changed from
-//      a kernel memcpy was reasoned about and never measured. A kernel build
-//      with no vector instruction in it cannot have the problem.
+//      It settles the other open question at the same time. Nothing saves
+//      the vector registers on syscall entry, so a general routine that used
+//      them would hand a program back a changed ymm. The wide bodies that do
+//      use them run only inside the kernel's bracket, which saves them.
 //
 #if defined(KERNEL_MODE) && X64
 #define ASM_PICK(feature, narrow_label) "   jmp " narrow_label "\n"
@@ -1655,6 +1660,37 @@ typedef union matrix4
 #else
 #define ASM_SECTION ".text\n"
 #endif
+
+/*
+        Where a kernel build keeps its vector bodies, and the only place.
+
+        Ring 0 may use the vector registers, on two conditions that are facts
+        about the machine and not taste. The registers are the interrupted
+        task's, so a body that touches them runs inside the kernel's bracket
+        -- kernel_fpu_begin, kernel_neon_begin, kernel_vector_begin -- taken
+        when may_use_simd says this context can have them. And a vector load
+        or store never meets device memory: MMIO is trapped and emulated, and
+        KVM's emulator has no vector instructions, which is how an AVX-512
+        memcpy onto an ioremapped framebuffer killed every guest it ran in.
+
+        Neither can be seen from in here, so neither is decided in here. A
+        wide body has a name of its own ending in _wide, is never jumped to
+        from a narrow one, and is called only by the kernel's own dispatch,
+        which holds the bracket for a whole pass and knows the buffer is RAM.
+        They sit in this section so the standard lane can check exactly that:
+        no vector instruction in a kernel object outside it, and nothing
+        outside it that branches into it. A block opens it with
+        ASM_SIMD_SECTION and closes it with ASM_SIMD_SECTION_END, so the
+        blocks after it land where they always did. Not .noinstr.text: noinstr code is
+        what early boot and the entry paths call, which is where the register
+        file is least the kernel's to take.
+*/
+#ifdef KERNEL_MODE
+#define ASM_SIMD_SECTION ".pushsection .text.moonwater_simd, \"ax\"\n"
+#else
+#define ASM_SIMD_SECTION ".pushsection .text\n"
+#endif
+#define ASM_SIMD_SECTION_END ".popsection\n"
 
 /*
         Every routine in its own section, so --gc-sections drops the ones a
@@ -2846,7 +2882,8 @@ __asm__(
     "test %rax, %rax\n   jnz 22f\n"                                    \
     "vptestnmb %zmm6, %zmm6, %k0\n   kmovq %k0, %rax\n   jmp 23f\n"
 
-// The kernel never owns the vector register file here. Its implementations
+// A general routine in the kernel never owns the vector register file: its
+// callers hold no bracket and may hand it device memory. Its implementations
 // are the scalar paths below, so emitting the userspace-only alternatives in
 // a kernel object merely leaves dead AVX instructions behind unconditional
 // branches. Besides wasting text, that makes objtool report every first dead
@@ -44880,6 +44917,161 @@ __asm__(
     "9:      " ASM_RET
     ASM_END(canvas_cells)
 );
+
+//
+//       The same four loops a vector at a time, for the kernel's dispatch
+//       to call inside its bracket on a buffer it knows is RAM -- see
+//       ASM_SIMD_SECTION. Same arguments, same pixels.
+//
+//       A glyph row is one byte and a cell row is eight pixels, which is one
+//       ymm: the byte broadcast to every lane, each lane keeping its own bit
+//       (0x80 in the leftmost, 1 in the rightmost), compared, and the two
+//       colours blended on the answer. No table to build and no per nibble
+//       loads. AVX2 is what the dispatch asks for; the bit masks are made
+//       from an immediate rather than kept in .rodata.
+//
+__asm__(
+    ASM_SIMD_SECTION
+    ASM_FUNC(canvas_cells_wide)
+    "        test    %r8, %r8\n"
+    "        jz      9f\n"
+    "        push    %rbx\n"
+    "        shl     $2, %rsi                # pitch, pixels to bytes\n"
+    "        vmovd   %r9d, %xmm0\n"
+    "        vpbroadcastd %xmm0, %ymm0       # ink in every lane\n"
+    "        vpbroadcastd 16(%rsp), %ymm1    # paper, the seventh argument\n"
+    "        mov     $0x0102040810204080, %rax\n"
+    "        vmovq   %rax, %xmm2\n"
+    "        vpmovzxbd %xmm2, %ymm2          # each lane's own bit\n"
+
+    "        mov     $16, %r10d              # rows\n"
+    "1:      mov     %rdi, %r11              # this scanline\n"
+    "        mov     %rcx, %rax              # the first cell\n"
+    "        mov     %r8, %r9                # cells left\n"
+    "2:      mov     (%rax), %ebx            # the character\n"
+    "        add     $8, %rax\n"
+    "        shl     $4, %ebx\n"
+    "        vpbroadcastb (%rdx,%rbx,1), %ymm3   # its bits on this row\n"
+    "        vpand   %ymm2, %ymm3, %ymm3\n"
+    "        vpcmpeqd %ymm2, %ymm3, %ymm3\n"
+    "        vpblendvb %ymm3, %ymm0, %ymm1, %ymm3\n"
+    "        vmovdqu %ymm3, (%r11)\n"
+    "        add     $32, %r11\n"
+    "        dec     %r9\n"
+    "        jnz     2b\n"
+    "        add     %rsi, %rdi\n"
+    "        inc     %rdx                    # the font's next row\n"
+    "        dec     %r10d\n"
+    "        jnz     1b\n"
+
+    "        vzeroupper\n"
+    "        pop     %rbx\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cells_wide)
+
+    ASM_FUNC(canvas_cell_wide)
+    "        test    %rcx, %rcx\n"
+    "        jz      9f\n"
+    "        shl     $2, %rsi                # pitch, pixels to bytes\n"
+    "        vmovd   %r8d, %xmm0\n"
+    "        vpbroadcastd %xmm0, %ymm0       # ink\n"
+    "        vmovd   %r9d, %xmm1\n"
+    "        vpbroadcastd %xmm1, %ymm1       # paper\n"
+    "        mov     $0x0102040810204080, %rax\n"
+    "        vmovq   %rax, %xmm2\n"
+    "        vpmovzxbd %xmm2, %ymm2\n"
+
+    "1:      vpbroadcastb (%rdx), %ymm3\n"
+    "        inc     %rdx\n"
+    "        vpand   %ymm2, %ymm3, %ymm3\n"
+    "        vpcmpeqd %ymm2, %ymm3, %ymm3\n"
+    "        vpblendvb %ymm3, %ymm0, %ymm1, %ymm3\n"
+    "        vmovdqu %ymm3, (%rdi)\n"
+    "        add     %rsi, %rdi\n"
+    "        dec     %rcx\n"
+    "        jnz     1b\n"
+
+    "        vzeroupper\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell_wide)
+
+        //
+        //       Scale two: a source bit is two pixels across and two rows
+        //       down, so a glyph row is sixteen pixels, two ymm, each lane
+        //       pair sharing a bit, stored on both scanlines.
+        //
+    ASM_FUNC(canvas_cell2_wide)
+    "        test    %rcx, %rcx\n"
+    "        jz      9f\n"
+    "        shl     $2, %rsi                # pitch, pixels to bytes\n"
+    "        vmovd   %r8d, %xmm0\n"
+    "        vpbroadcastd %xmm0, %ymm0       # ink\n"
+    "        vmovd   %r9d, %xmm1\n"
+    "        vpbroadcastd %xmm1, %ymm1       # paper\n"
+    "        mov     $0x1010202040408080, %rax\n"
+    "        vmovq   %rax, %xmm2\n"
+    "        vpmovzxbd %xmm2, %ymm2          # the left half's bits, twice each\n"
+    "        mov     $0x0101020204040808, %rax\n"
+    "        vmovq   %rax, %xmm3\n"
+    "        vpmovzxbd %xmm3, %ymm3          # the right half's\n"
+
+    "1:      vpbroadcastb (%rdx), %ymm4\n"
+    "        inc     %rdx\n"
+    "        vpand   %ymm2, %ymm4, %ymm5\n"
+    "        vpcmpeqd %ymm2, %ymm5, %ymm5\n"
+    "        vpblendvb %ymm5, %ymm0, %ymm1, %ymm5\n"
+    "        vpand   %ymm3, %ymm4, %ymm4\n"
+    "        vpcmpeqd %ymm3, %ymm4, %ymm4\n"
+    "        vpblendvb %ymm4, %ymm0, %ymm1, %ymm4\n"
+    "        vmovdqu %ymm5, (%rdi)\n"
+    "        vmovdqu %ymm4, 32(%rdi)\n"
+    "        vmovdqu %ymm5, (%rdi,%rsi)\n"
+    "        vmovdqu %ymm4, 32(%rdi,%rsi)\n"
+    "        lea     (%rdi,%rsi,2), %rdi\n"
+    "        dec     %rcx\n"
+    "        jnz     1b\n"
+
+    "        vzeroupper\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell2_wide)
+
+        //
+        //       A pane's own pixels onto the screen with the alpha forced on,
+        //       eight an iteration. XRGB needs nothing done to it and goes
+        //       to the copy, which is RAM to RAM here but is not the dispatch's
+        //       to widen: memory_copy_apart is the memcpy fbdev calls on
+        //       device memory.
+        //
+    ASM_FUNC(canvas_row_blit_wide)
+    "        test    %ecx, %ecx\n"
+    "        jnz     5f\n"
+    "        shl     $2, %rdx\n"
+    "        jmp     memory_copy_apart\n"
+
+    "5:      vmovd   %ecx, %xmm0\n"
+    "        vpbroadcastd %xmm0, %ymm0       # the mask in every lane\n"
+    "        sub     $8, %rdx\n"
+    "        jb      7f\n"
+    "6:      vpor    (%rsi), %ymm0, %ymm1\n"
+    "        vmovdqu %ymm1, (%rdi)\n"
+    "        add     $32, %rsi\n"
+    "        add     $32, %rdi\n"
+    "        sub     $8, %rdx\n"
+    "        jae     6b\n"
+    "7:      add     $8, %rdx\n"
+    "        jz      8f\n"
+    "3:      mov     (%rsi), %eax\n"
+    "        or      %ecx, %eax\n"
+    "        mov     %eax, (%rdi)\n"
+    "        add     $4, %rsi\n"
+    "        add     $4, %rdi\n"
+    "        dec     %rdx\n"
+    "        jnz     3b\n"
+    "8:      vzeroupper\n"
+    "        " ASM_RET
+    ASM_END(canvas_row_blit_wide)
+    ASM_SIMD_SECTION_END
+);
 #elif ARM64
 __asm__(
     ASM_SECTION
@@ -45132,6 +45324,152 @@ __asm__(
     "        b.ne    1b\n"
     "9:      " ASM_RET
     ASM_END(canvas_glyph2)
+);
+
+//
+//       The four loops with Advanced SIMD, for the kernel's dispatch inside
+//       kernel_neon_begin on a RAM buffer -- see ASM_SIMD_SECTION and the
+//       x86_64 block above. A cell row is two q registers: the glyph byte
+//       broadcast, each lane tested against its own bit, and the two colours
+//       selected on the answer.
+//
+__asm__(
+    ASM_SIMD_SECTION
+    ASM_FUNC(canvas_cells_wide)
+    "        cbz     x4, 9f\n"
+    "        lsl     x1, x1, #2\n"
+    "        dup     v0.4s, w5               // ink\n"
+    "        dup     v1.4s, w6               // paper\n"
+    "        mov     w7, #0x4080\n"
+    "        movk    w7, #0x1020, lsl #16\n"
+    "        fmov    s2, w7\n"
+    "        uxtl    v2.8h, v2.8b\n"
+    "        uxtl    v2.4s, v2.4h            // 0x80 0x40 0x20 0x10\n"
+    "        mov     w7, #0x0408\n"
+    "        movk    w7, #0x0102, lsl #16\n"
+    "        fmov    s3, w7\n"
+    "        uxtl    v3.8h, v3.8b\n"
+    "        uxtl    v3.4s, v3.4h            // 8 4 2 1\n"
+
+    "        mov     x11, #16                // rows\n"
+    "1:      mov     x12, x0                 // this scanline\n"
+    "        mov     x13, x3                 // the first cell\n"
+    "        mov     x14, x4                 // cells left\n"
+    "2:      ldr     w15, [x13], #8          // the character\n"
+    "        add     x15, x2, x15, lsl #4\n"
+    "        ld1r    {v4.16b}, [x15]         // its bits on this row\n"
+    "        cmtst   v5.4s, v4.4s, v2.4s\n"
+    "        cmtst   v6.4s, v4.4s, v3.4s\n"
+    "        bsl     v5.16b, v0.16b, v1.16b\n"
+    "        bsl     v6.16b, v0.16b, v1.16b\n"
+    "        stp     q5, q6, [x12], #32\n"
+    "        subs    x14, x14, #1\n"
+    "        b.ne    2b\n"
+    "        add     x0, x0, x1\n"
+    "        add     x2, x2, #1              // the font's next row\n"
+    "        subs    x11, x11, #1\n"
+    "        b.ne    1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cells_wide)
+
+    ASM_FUNC(canvas_cell_wide)
+    "        cbz     x3, 9f\n"
+    "        lsl     x1, x1, #2\n"
+    "        dup     v0.4s, w4               // ink\n"
+    "        dup     v1.4s, w5               // paper\n"
+    "        mov     w7, #0x4080\n"
+    "        movk    w7, #0x1020, lsl #16\n"
+    "        fmov    s2, w7\n"
+    "        uxtl    v2.8h, v2.8b\n"
+    "        uxtl    v2.4s, v2.4h\n"
+    "        mov     w7, #0x0408\n"
+    "        movk    w7, #0x0102, lsl #16\n"
+    "        fmov    s3, w7\n"
+    "        uxtl    v3.8h, v3.8b\n"
+    "        uxtl    v3.4s, v3.4h\n"
+
+    "1:      ld1r    {v4.16b}, [x2], #1\n"
+    "        cmtst   v5.4s, v4.4s, v2.4s\n"
+    "        cmtst   v6.4s, v4.4s, v3.4s\n"
+    "        bsl     v5.16b, v0.16b, v1.16b\n"
+    "        bsl     v6.16b, v0.16b, v1.16b\n"
+    "        stp     q5, q6, [x0]\n"
+    "        add     x0, x0, x1\n"
+    "        subs    x3, x3, #1\n"
+    "        b.ne    1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell_wide)
+
+    ASM_FUNC(canvas_cell2_wide)
+    "        cbz     x3, 9f\n"
+    "        lsl     x1, x1, #2\n"
+    "        dup     v0.4s, w4               // ink\n"
+    "        dup     v1.4s, w5               // paper\n"
+    "        mov     w7, #0x8080\n"
+    "        movk    w7, #0x4040, lsl #16\n"
+    "        fmov    s2, w7\n"
+    "        uxtl    v2.8h, v2.8b\n"
+    "        uxtl    v2.4s, v2.4h            // each bit twice, left to right\n"
+    "        mov     w7, #0x2020\n"
+    "        movk    w7, #0x1010, lsl #16\n"
+    "        fmov    s3, w7\n"
+    "        uxtl    v3.8h, v3.8b\n"
+    "        uxtl    v3.4s, v3.4h\n"
+    "        mov     w7, #0x0808\n"
+    "        movk    w7, #0x0404, lsl #16\n"
+    "        fmov    s16, w7\n"
+    "        uxtl    v16.8h, v16.8b\n"
+    "        uxtl    v16.4s, v16.4h\n"
+    "        mov     w7, #0x0202\n"
+    "        movk    w7, #0x0101, lsl #16\n"
+    "        fmov    s17, w7\n"
+    "        uxtl    v17.8h, v17.8b\n"
+    "        uxtl    v17.4s, v17.4h\n"
+
+    "1:      ld1r    {v4.16b}, [x2], #1\n"
+    "        cmtst   v5.4s, v4.4s, v2.4s\n"
+    "        cmtst   v6.4s, v4.4s, v3.4s\n"
+    "        cmtst   v7.4s, v4.4s, v16.4s\n"
+    "        cmtst   v18.4s, v4.4s, v17.4s\n"
+    "        bsl     v5.16b, v0.16b, v1.16b\n"
+    "        bsl     v6.16b, v0.16b, v1.16b\n"
+    "        bsl     v7.16b, v0.16b, v1.16b\n"
+    "        bsl     v18.16b, v0.16b, v1.16b\n"
+    "        add     x8, x0, x1              // the duplicated row\n"
+    "        stp     q5, q6, [x0]\n"
+    "        stp     q7, q18, [x0, #32]\n"
+    "        stp     q5, q6, [x8]\n"
+    "        stp     q7, q18, [x8, #32]\n"
+    "        add     x0, x8, x1\n"
+    "        subs    x3, x3, #1\n"
+    "        b.ne    1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell2_wide)
+
+    ASM_FUNC(canvas_row_blit_wide)
+    "        cbnz    w3, 4f\n"
+    "        lsl     x2, x2, #2\n"
+    "        b       memory_copy_apart\n"
+
+    "4:      dup     v0.4s, w3               // the mask in every lane\n"
+    "        cmp     x2, #8\n"
+    "        b.lo    2f\n"
+    "1:      ldp     q1, q2, [x1], #32       // eight pixels\n"
+    "        orr     v1.16b, v1.16b, v0.16b\n"
+    "        orr     v2.16b, v2.16b, v0.16b\n"
+    "        stp     q1, q2, [x0], #32\n"
+    "        sub     x2, x2, #8\n"
+    "        cmp     x2, #8\n"
+    "        b.hs    1b\n"
+    "2:      cbz     x2, 3f\n"
+    "5:      ldr     w5, [x1], #4\n"
+    "        orr     w5, w5, w3\n"
+    "        str     w5, [x0], #4\n"
+    "        subs    x2, x2, #1\n"
+    "        b.ne    5b\n"
+    "3:      " ASM_RET
+    ASM_END(canvas_row_blit_wide)
+    ASM_SIMD_SECTION_END
 );
 #elif RISCV64
 __asm__(
@@ -45629,6 +45967,120 @@ __asm__(
     "        bnez    a4, 1b\n"
     "9:      " ASM_RET
     ASM_END(canvas_glyph2)
+);
+
+//
+//       The four loops with the V extension, for the kernel's dispatch
+//       inside kernel_vector_begin on a RAM buffer -- see ASM_SIMD_SECTION
+//       and the x86_64 block above. Eight 32-bit lanes are a cell row, which
+//       is two registers at the smallest VLEN V allows, so LMUL is two: each
+//       lane ands the glyph byte with its own bit and the colours merge on
+//       the mask that leaves.
+//
+__asm__(
+    ASM_SIMD_SECTION
+    ".option push\n"
+    ".option arch, +v\n"
+    ASM_FUNC(canvas_cells_wide)
+    "        beqz    a4, 9f\n"
+    "        slli    a1, a1, 2\n"
+    "        vsetivli zero, 8, e32, m2, ta, ma\n"
+    "        vid.v   v2\n"
+    "        li      t0, 0x80\n"
+    "        vmv.v.x v4, t0\n"
+    "        vsrl.vv v2, v4, v2              # 0x80 >> lane\n"
+    "        vmv.v.x v8, a6                  # paper\n"
+
+    "        li      t5, 16                  # rows\n"
+    "1:      mv      t3, a0                  # this scanline\n"
+    "        mv      t2, a3                  # the first cell\n"
+    "        mv      t4, a4                  # cells left\n"
+    "2:      lwu     t1, 0(t2)               # the character\n"
+    "        addi    t2, t2, 8\n"
+    "        slli    t1, t1, 4\n"
+    "        add     t1, t1, a2\n"
+    "        lbu     t1, 0(t1)               # its bits on this row\n"
+    "        vand.vx v4, v2, t1\n"
+    "        vmsne.vi v0, v4, 0\n"
+    "        vmerge.vxm v6, v8, a5, v0\n"
+    "        vse32.v v6, (t3)\n"
+    "        addi    t3, t3, 32\n"
+    "        addi    t4, t4, -1\n"
+    "        bnez    t4, 2b\n"
+    "        add     a0, a0, a1\n"
+    "        addi    a2, a2, 1               # the font's next row\n"
+    "        addi    t5, t5, -1\n"
+    "        bnez    t5, 1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cells_wide)
+
+    ASM_FUNC(canvas_cell_wide)
+    "        beqz    a3, 9f\n"
+    "        slli    a1, a1, 2\n"
+    "        vsetivli zero, 8, e32, m2, ta, ma\n"
+    "        vid.v   v2\n"
+    "        li      t0, 0x80\n"
+    "        vmv.v.x v4, t0\n"
+    "        vsrl.vv v2, v4, v2\n"
+    "        vmv.v.x v8, a5                  # paper\n"
+    "1:      lbu     t1, 0(a2)\n"
+    "        addi    a2, a2, 1\n"
+    "        vand.vx v4, v2, t1\n"
+    "        vmsne.vi v0, v4, 0\n"
+    "        vmerge.vxm v6, v8, a4, v0\n"
+    "        vse32.v v6, (a0)\n"
+    "        add     a0, a0, a1\n"
+    "        addi    a3, a3, -1\n"
+    "        bnez    a3, 1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell_wide)
+
+        //
+        //       Scale two: sixteen lanes, lane i on bit 0x80 >> i/2, stored
+        //       on both scanlines.
+        //
+    ASM_FUNC(canvas_cell2_wide)
+    "        beqz    a3, 9f\n"
+    "        slli    a1, a1, 2\n"
+    "        vsetivli zero, 16, e32, m4, ta, ma\n"
+    "        vid.v   v4\n"
+    "        vsrl.vi v4, v4, 1\n"
+    "        li      t0, 0x80\n"
+    "        vmv.v.x v8, t0\n"
+    "        vsrl.vv v4, v8, v4              # 0x80 >> lane / 2\n"
+    "        vmv.v.x v16, a5                 # paper\n"
+    "1:      lbu     t1, 0(a2)\n"
+    "        addi    a2, a2, 1\n"
+    "        vand.vx v8, v4, t1\n"
+    "        vmsne.vi v0, v8, 0\n"
+    "        vmerge.vxm v12, v16, a4, v0\n"
+    "        vse32.v v12, (a0)\n"
+    "        add     t2, a0, a1\n"
+    "        vse32.v v12, (t2)\n"
+    "        add     a0, t2, a1\n"
+    "        addi    a3, a3, -1\n"
+    "        bnez    a3, 1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell2_wide)
+
+    ASM_FUNC(canvas_row_blit_wide)
+    "        bnez    a3, 4f\n"
+    "        slli    a2, a2, 2\n"
+    "        tail    memory_copy_apart\n"
+    "4:      beqz    a2, 9f\n"
+    "1:      vsetvli t0, a2, e32, m8, ta, ma\n"
+    "        vle32.v v8, (a1)\n"
+    "        vor.vx  v8, v8, a3\n"
+    "        vse32.v v8, (a0)\n"
+    "        slli    t1, t0, 2\n"
+    "        add     a1, a1, t1\n"
+    "        add     a0, a0, t1\n"
+    "        sub     a2, a2, t0\n"
+    "        bnez    a2, 1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_row_blit_wide)
+    ".option pop\n"
+    ASM_SIMD_SECTION_END
 );
 #endif
 #endif // KERNEL_MODE && CONFIG_MOONWATER_CANVAS

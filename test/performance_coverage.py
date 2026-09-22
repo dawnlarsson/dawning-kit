@@ -120,12 +120,16 @@ signal_jump_mark signal_jump_to_mark
 cover('correctness_only', 'test/checks.c#CHECK_canvas_cells', '''
 canvas_cell canvas_cell2 canvas_cells canvas_glyph canvas_glyph2
 canvas_rect_fill canvas_row_blit
+canvas_cell_wide canvas_cell2_wide canvas_cells_wide canvas_row_blit_wide
 ''', 'the kernel-only Canvas pixel loops, lifted out of lib.c and linked '
      'into the canvas cells check, which compares what the compositor draws '
      'with them against a per-pixel reference; canvas_cell and canvas_cell2 '
      'are also driven directly over 36 colour pairs and 256 bit patterns, '
      'and canvas_cells against canvas_cell once a cell over 4,096 runs. '
-     'No timing row here')
+     'The _wide bodies are held to their narrow ones on the same inputs and '
+     'drawn through the dispatch on every eighth compose row. '
+     'No timing row here: they are timed by whole composes in the commit '
+     'that made them')
 
 cover('correctness_only', 'test/checks.c#CHECK_number', 'string_to_decimal_short',
       'the short-decimal reader is held to the general path by name on '

@@ -16874,7 +16874,9 @@ HARNESS_COREUTILS_9_11 = {
 
 
 CANVAS_ROUTINES = ("canvas_rect_fill", "canvas_row_blit", "canvas_glyph",
-                   "canvas_glyph2", "canvas_cell", "canvas_cell2", "canvas_cells")
+                   "canvas_glyph2", "canvas_cell", "canvas_cell2", "canvas_cells",
+                   "canvas_cell_wide", "canvas_cell2_wide", "canvas_row_blit_wide",
+                   "canvas_cells_wide")
 
 
 def canvas_assembly(library, arch):
@@ -16927,8 +16929,13 @@ def canvas_assembly(library, arch):
                 elif token.startswith('"'):
                     body.append(ast.literal_eval(token))
                 at = found.end()
-        out += [".globl %s" % name, ".type %s, %%function" % name, ".balign 16",
-                "%s:" % name, "".join(body).rstrip("\n"), ".size %s, .-%s" % (name, name)]
+        # A wide body's section carries the V extension on riscv64; the lift
+        # says so around the body instead.
+        vector = block == "RISCV64" and name.endswith("_wide")
+        out += ([".option push", ".option arch, +v"] if vector else []) + [
+                ".globl %s" % name, ".type %s, %%function" % name, ".balign 16",
+                "%s:" % name, "".join(body).rstrip("\n"), ".size %s, .-%s" % (name, name)] + (
+                [".option pop"] if vector else [])
     return "\n".join(out) + "\n"
 
 

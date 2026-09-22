@@ -65,9 +65,11 @@
 
 #ifdef CONFIG_X86_64
 #include <asm/cpufeature.h>
+#include <asm/fpu/api.h>
 #include <asm/fpu/xcr.h>
 #elif defined(CONFIG_ARM64)
 #include <asm/cpufeature.h>
+#include <asm/neon.h>
 #elif defined(CONFIG_RISCV)
 #include <asm/cpufeature.h>
 #include <asm/vector.h>
@@ -78,6 +80,9 @@
 #error "on riscv64 the Moonwater core maps each program's vDSO and must be built in (CONFIG_MOONWATER_CORE=y)"
 #endif
 #endif
+
+// may_use_simd, for Canvas's vector bracket (canvas_simd_begin).
+#include <asm/simd.h>
 
 // The graphics headers must precede lib.c: it defines "end" as a macro
 // and asm/io.h, reached through drm_client.h, uses that word as a variable.

@@ -516,9 +516,9 @@ static u64 canvas_text_ns;
         The loops every pixel goes through, all assembly in lib.c: the
         reusable 32-bit span, and under KERNEL_MODE the strided rectangles,
         alpha blits and bitmap expansion. They are assembly because a full
-        compose is four megabytes of stores and the kernel is built with no
-        vector instructions on x86, so what the C turned into was two four
-        byte stores an iteration.
+        compose is four megabytes of stores and the kernel is compiled with
+        no vector instructions, so what the C turned into was two four byte
+        stores an iteration. The vector forms are below them.
 */
 void memory_fill_u32(void *at, unsigned long long count, unsigned int value);
 void memory_fill_u64_aligned(void *at, unsigned long long count,
@@ -537,6 +537,101 @@ void canvas_row_blit(u32 *at, const u32 *from, unsigned long count, u32 opaque);
 void canvas_cells(u32 *at, unsigned long pitch, const u8 *font,
                   const struct window_cell *cells, unsigned long count,
                   u32 ink, u32 paper);
+
+/*
+        The same loops a vector register at a time: AVX2, NEON, RVV. They
+        are lib.c's too, in the one section a kernel object may hold vector
+        instructions in, and they are called from nowhere but TARGET_PICK
+        below, on a target whose simd says both conditions hold.
+*/
+void canvas_cell_wide(u32 *at, unsigned long pitch, const u8 *bits,
+                      unsigned long rows, u32 ink, u32 paper);
+void canvas_cell2_wide(u32 *at, unsigned long pitch, const u8 *bits,
+                       unsigned long rows, u32 ink, u32 paper);
+void canvas_row_blit_wide(u32 *at, const u32 *from, unsigned long count,
+                          u32 opaque);
+void canvas_cells_wide(u32 *at, unsigned long pitch, const u8 *font,
+                       const struct window_cell *cells, unsigned long count,
+                       u32 ink, u32 paper);
+
+/*
+        The vector registers, for a whole pass of drawing.
+
+        They belong to whatever task the kernel interrupted, so using them
+        means the kernel's bracket around the use -- kernel_fpu_begin,
+        kernel_neon_begin, kernel_vector_begin -- which saves that task's
+        state the first time and hands the registers back at the end, and
+        only where may_use_simd says this context may have them at all. The
+        first begin after a switch pays the save, so it is taken once for a
+        compose and never per cell.
+
+        The bracket is half of it. The other half is the buffer: a vector
+        store onto device memory is emulated if it is trapped at all, and
+        KVM's emulator has none, so a framebuffer that is iomem is drawn by
+        the general register bodies whatever this answers. The caller asks
+        with the mapping in hand.
+
+        moonwater.simd=0 turns it off, for a machine where it misbehaves and
+        for timing one against the other.
+*/
+static bool canvas_simd = true;
+module_param_named(simd, canvas_simd, bool, 0644);
+
+struct canvas_simd_hold
+{
+        _Bool on;
+#ifdef CONFIG_ARM64
+        struct user_fpsimd_state state;
+#endif
+};
+
+// AVX2 on x86, which the kernel clears when the OS does not save ymm;
+// Advanced SIMD on arm64; V on riscv64. Each is a static branch.
+static _Bool canvas_simd_present(void)
+{
+#if defined(CONFIG_X86_64)
+        return boot_cpu_has(X86_FEATURE_AVX2);
+#elif defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
+        return cpu_has_neon();
+#elif defined(CONFIG_RISCV) && defined(CONFIG_RISCV_ISA_V)
+        return has_vector();
+#else
+        return false;
+#endif
+}
+
+static _Bool canvas_simd_begin(struct canvas_simd_hold *hold, _Bool iomem)
+{
+        hold->on = false;
+        if (iomem || !READ_ONCE(canvas_simd) || !canvas_simd_present() ||
+            !may_use_simd())
+                return false;
+#if defined(CONFIG_X86_64)
+        kernel_fpu_begin();
+        hold->on = true;
+#elif defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
+        kernel_neon_begin(&hold->state);
+        hold->on = true;
+#elif defined(CONFIG_RISCV) && defined(CONFIG_RISCV_ISA_V)
+        kernel_vector_begin();
+        hold->on = true;
+#endif
+        return hold->on;
+}
+
+static void canvas_simd_end(struct canvas_simd_hold *hold)
+{
+        if (!hold->on)
+                return;
+#if defined(CONFIG_X86_64)
+        kernel_fpu_end();
+#elif defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
+        kernel_neon_end(&hold->state);
+#elif defined(CONFIG_RISCV) && defined(CONFIG_RISCV_ISA_V)
+        kernel_vector_end();
+#endif
+        hold->on = false;
+}
 
 /*
         Somewhere to draw, and the only thing the drawing code is given.
@@ -561,7 +656,11 @@ struct target
         u32 opaque;
         const u32 *ink;
         struct drm_rect clip;
+        _Bool simd;             // inside canvas_simd_begin, and pixels is RAM
 };
+
+// A pixel loop's body for this target: the vector one only when simd says so.
+#define TARGET_PICK(t, name) ((t)->simd ? name##_wide : name)
 
 static void target_row(const struct target *t, int y, int x1, int x2, u32 colour);
 static PURE _Bool output_touched(struct output *output, const struct drm_rect *damage,
@@ -3430,10 +3529,10 @@ static void shape_blit(const struct target *t, const struct shape *shape,
                         continue;
 
                 target_mark((unsigned long)(x2 - x1));
-                canvas_row_blit(t->pixels + (size_t)y * t->pitch + x1,
-                                source + (size_t)(y - band_y) * source_pitch +
-                                    (x1 - band_x),
-                                (unsigned long)(x2 - x1), t->opaque);
+                TARGET_PICK(t, canvas_row_blit)(
+                        t->pixels + (size_t)y * t->pitch + x1,
+                        source + (size_t)(y - band_y) * source_pitch + (x1 - band_x),
+                        (unsigned long)(x2 - x1), t->opaque);
         }
 }
 
@@ -3917,11 +4016,13 @@ static void cell_draw(const struct target *t, const struct shape *shape,
                 target_mark((unsigned long)canvas_cell_w *
                             (unsigned long)canvas_cell_h);
                 if (desktop.scale == 1)
-                        canvas_cell(t->pixels + (size_t)y * t->pitch + x,
-                                    t->pitch, bits, WINDOW_CELL_H, ink, paper);
+                        TARGET_PICK(t, canvas_cell)(
+                                t->pixels + (size_t)y * t->pitch + x,
+                                t->pitch, bits, WINDOW_CELL_H, ink, paper);
                 else
-                        canvas_cell2(t->pixels + (size_t)y * t->pitch + x,
-                                     t->pitch, bits, WINDOW_CELL_H, ink, paper);
+                        TARGET_PICK(t, canvas_cell2)(
+                                t->pixels + (size_t)y * t->pitch + x,
+                                t->pitch, bits, WINDOW_CELL_H, ink, paper);
                 return;
         }
 
@@ -3973,10 +4074,11 @@ static noinline int compose_run(const struct target *t, int x, int y,
 
         target_mark((unsigned long)(run - column) *
                     (unsigned long)canvas_cell_w * (unsigned long)canvas_cell_h);
-        canvas_cells(t->pixels + (size_t)y * t->pitch + left, t->pitch,
-                     font_data, cells + column, (unsigned long)(run - column),
-                     cell_palette(ink_index, t->opaque),
-                     cell_palette(paper_index, t->opaque));
+        TARGET_PICK(t, canvas_cells)(
+                t->pixels + (size_t)y * t->pitch + left, t->pitch,
+                font_data, cells + column, (unsigned long)(run - column),
+                cell_palette(ink_index, t->opaque),
+                cell_palette(paper_index, t->opaque));
         return run - column;
 }
 
@@ -4540,9 +4642,10 @@ static HOT void compose_clip(const struct target *t)
 // damage. The clip is in target coordinates; the rectangle asked for is in
 // desktop ones.
 static PURE struct target target_of(struct output *output, u32 *pixels,
-                                    const struct drm_rect *r)
+                                    const struct drm_rect *r, _Bool simd)
 {
         struct target t = {
+                .simd = simd,
                 .pixels = pixels,
                 .pitch = output->buffer->fb->pitches[0] / sizeof(u32),
                 .width = (int)output->width,
@@ -4568,9 +4671,9 @@ static PURE struct target target_of(struct output *output, u32 *pixels,
         of writes. The rectangle is in desktop coordinates.
 */
 static void compose_rect(struct output *output, u32 *pixels,
-                         const struct drm_rect *r)
+                         const struct drm_rect *r, _Bool simd)
 {
-        struct target t = target_of(output, pixels, r);
+        struct target t = target_of(output, pixels, r, simd);
 
         if (t.clip.x2 > t.clip.x1 && t.clip.y2 > t.clip.y1)
                 compose_clip(&t);
@@ -4580,7 +4683,7 @@ static void compose_rect(struct output *output, u32 *pixels,
         The cursor, where this output shows it. On a hardware plane it is never
         drawn in, and on the outputs it is not over there is nothing to draw.
 */
-static void output_draw_cursor(struct output *output, u32 *pixels)
+static void output_draw_cursor(struct output *output, u32 *pixels, _Bool simd)
 {
         struct drm_rect cell, screen;
         struct target t;
@@ -4603,7 +4706,7 @@ static void output_draw_cursor(struct output *output, u32 *pixels)
 
         drm_rect_init(&screen, output->x, output->y, (int)output->width,
                       (int)output->height);
-        t = target_of(output, pixels, &screen);
+        t = target_of(output, pixels, &screen, simd);
         canvas_draw_cursor(&t, desktop.cursor_x - output->x,
                            desktop.cursor_y - output->y,
                            desktop.cursor_shape, desktop.cursor_scale);
@@ -4656,7 +4759,8 @@ static _Bool output_describe(struct output *output)
                 return false;
 
         pr_info("[moonwater canvas] " "scanout %p4cc, %u bytes a row (%lu KiB), modifier %llx, "
-                           "%s memory\n", &fb->format->format, fb->pitches[0], ((unsigned long)fb->pitches[0] * output->height) >> 10, (unsigned long long)fb->modifier, map.is_iomem ? "device" : "system");
+                           "%s memory, drawn with %s registers\n", &fb->format->format, fb->pitches[0], ((unsigned long)fb->pitches[0] * output->height) >> 10, (unsigned long long)fb->modifier, map.is_iomem ? "device" : "system",
+                           !map.is_iomem && canvas_simd && canvas_simd_present() ? "vector" : "general");
 
         drm_client_buffer_vunmap_local(output->buffer);
         return true;
@@ -4809,6 +4913,7 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
         struct drm_rect merged[4];
         unsigned int kept = 0;
         _Bool joined;
+        struct canvas_simd_hold simd;
 
         if (!count || count > ARRAY_SIZE(merged) || !output_map(output, &map))
                 return;
@@ -4854,10 +4959,12 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
         pixels = map.vaddr;
         started = ktime_get_ns();
 
+        canvas_simd_begin(&simd, map.is_iomem);
         for (i = 0; i < kept; i++)
-                compose_rect(output, pixels, &merged[i]);
+                compose_rect(output, pixels, &merged[i], simd.on);
 
-        output_draw_cursor(output, pixels);
+        output_draw_cursor(output, pixels, simd.on);
+        canvas_simd_end(&simd);
 
         drm_client_buffer_vunmap_local(output->buffer);
         pointer_draw_total += ktime_get_ns() - started;
@@ -4874,6 +4981,7 @@ static void compose_output(struct output *output)
 {
         struct iosys_map map;
         struct drm_rect screen;
+        struct canvas_simd_hold simd;
         u32 *pixels;
 
         if (!output_map(output, &map))
@@ -4882,9 +4990,11 @@ static void compose_output(struct output *output)
         pixels = map.vaddr;
         drm_rect_init(&screen, output->x, output->y, (int)output->width,
                       (int)output->height);
-        compose_rect(output, pixels, &screen);
+        canvas_simd_begin(&simd, map.is_iomem);
+        compose_rect(output, pixels, &screen, simd.on);
 
-        output_draw_cursor(output, pixels);
+        output_draw_cursor(output, pixels, simd.on);
+        canvas_simd_end(&simd);
 
         drm_client_buffer_vunmap_local(output->buffer);
 
@@ -5060,6 +5170,7 @@ static int plane_paint(struct output *output, unsigned int shape,
         t.y = 0;
         t.opaque = 0xff000000;
         t.ink = opaque_ink;
+        t.simd = false;         // a cursor's worth of pixels is not worth the bracket
         drm_rect_init(&t.clip, 0, 0, t.width, t.height);
 
         // Transparent everywhere the shape does not cover, or it wears a box

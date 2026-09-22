@@ -1324,10 +1324,153 @@ riscv_alignment_audit()
         [ "$alignment_failed" = 0 ]
 }
 
-#       SSE2 is the x86-64 userspace floor, but the kernel has not enabled or
-#       saved that register file when early memcpy-style consumers run. An
-#       assembler accepts XMM instructions even under -mno-sse, so only the
-#       linked instruction stream is authoritative here.
+#       Where a kernel object may touch the vector registers: nowhere but
+#       .text.moonwater_simd (ASM_SIMD_SECTION in lib.c), whose bodies are all
+#       named *_wide and are called only by the kernel's own dispatch inside
+#       kernel_fpu_begin/kernel_neon_begin/kernel_vector_begin on a RAM buffer.
+#       Everything else -- the narrow bodies, memcpy and memset that fbdev
+#       calls on device memory, early boot -- stays general register only.
+#
+#       The disassembly is the authority, since an assembler takes vector
+#       instructions whatever -mno-sse or -mgeneral-regs-only says. It fails
+#       on a vector instruction in any other section, on a routine in the
+#       section that is not *_wide or a *_wide routine outside it, and on any
+#       reference from outside the section into it, so a narrow body cannot
+#       fall into a wide one. The module's side is held in canvas.c: the wide
+#       names appear there only in their declarations and in TARGET_PICK,
+#       and every canvas_simd_begin is closed by a canvas_simd_end.
+kernel_simd_boundary()
+{
+        awk -v arch="$1" '
+                function vector_line(line,    mnemonic, operands, fields, token, field) {
+                        if (arch == "x86")
+                                return line ~ /%(xmm|ymm|zmm|mm|st|k)[0-9]/ ||
+                                       line ~ /vzero(all|upper)/ ||
+                                       line ~ /(^|[[:space:]])f?emms([[:space:]]|$)/
+                        # riscv64 is disassembled without the raw bytes;
+                        # arm64 has them, and they go before the mnemonic.
+                        if (arch == "riscv64")
+                                sub(/^[[:space:]]*[[:xdigit:]]+:[[:space:]]+/, "", line)
+                        else
+                                sub(/^[[:space:]]*[[:xdigit:]]+:[[:space:]]+([[:xdigit:]]+[[:space:]]+)+/, "", line)
+                        mnemonic = line
+                        sub(/[[:space:]].*/, "", mnemonic)
+                        # A branch target such as b30 is an address, not a
+                        # register; no branch touches vector state.
+                        if (arch == "arm64" && (mnemonic == "b" || mnemonic == "bl" ||
+                            mnemonic == "br" || mnemonic == "blr" ||
+                            mnemonic ~ /^b\./ || mnemonic ~ /^cb/ || mnemonic ~ /^tb/))
+                                return 0
+                        if (arch == "arm64" && (mnemonic == "smstart" || mnemonic == "smstop"))
+                                return 1
+                        if (arch == "riscv64" && mnemonic ~ /^v/)
+                                return 1
+                        # Nor does a riscv64 branch, whose target prints as a
+                        # bare hex address that reads like f22.
+                        if (arch == "riscv64" && mnemonic ~ /^(c\.)?(b|j)/)
+                                return 0
+                        operands = line
+                        sub(/^[^[:space:]]+[[:space:]]*/, "", operands)
+                        sub(/[[:space:]]*[#<].*$/, "", operands)
+                        gsub(/[][{}(),.]/, " ", operands)
+                        fields = split(operands, token, /[[:space:]]+/)
+                        for (field = 1; field <= fields; field++) {
+                                if (arch == "arm64" &&
+                                    (token[field] ~ /^(v|q|d|s|h|b|z|p)[0-9]+$/ ||
+                                     token[field] ~ /^za[0-9]*$/ ||
+                                     token[field] ~ /^fp(cr|sr)$/))
+                                        return 1
+                                if (arch == "riscv64" &&
+                                    (token[field] ~ /^v[0-9]+$/ ||
+                                     token[field] ~ /^f(t|s|a)?[0-9]+$/ ||
+                                     token[field] ~ /^(fcsr|frm|fflags|vl|vtype|vstart)$/))
+                                        return 1
+                        }
+                        return 0
+                }
+                BEGIN { wide = ".text.moonwater_simd" }
+                /^Disassembly of section / {
+                        section = $4
+                        sub(/:$/, "", section)
+                        next
+                }
+                # riscv64 keeps its local labels for relaxation, and they
+                # print as symbols; they are inside whatever routine they are.
+                # Alignment padding before the first routine of a section prints
+                # as that routine minus an offset.
+                /^[[:xdigit:]]+ <(\.L|[^>]*-0x)/ { next }
+                /^[[:xdigit:]]+ <[^+>]+>:/ {
+                        routine = $0
+                        sub(/^.*</, "", routine)
+                        sub(/>:.*/, "", routine)
+                        if (section == wide && routine !~ /_wide$/) {
+                                print routine " is in " wide " but is not a wide body"
+                                bad = 1
+                        } else if (section != wide && routine ~ /_wide$/) {
+                                print routine " is a wide body outside " wide
+                                bad = 1
+                        }
+                        if (section == wide)
+                                bodies++
+                        next
+                }
+                /R_(X86_64|AARCH64|RISCV)_/ {
+                        target = $NF
+                        if (section != wide &&
+                            ((target ~ /_wide([+-]|$)/ && target !~ /^\.L/) ||
+                             target ~ /moonwater_simd/)) {
+                                print routine " in " section " reaches into " wide " (" target ")"
+                                bad = 1
+                        }
+                        next
+                }
+                /^[[:space:]]*[[:xdigit:]]+:/ {
+                        if (!vector_line($0))
+                                next
+                        if (section == wide)
+                                wide_vector++
+                        else {
+                                found[routine]++
+                                bad = 1
+                        }
+                }
+                END {
+                        for (routine in found)
+                                print "vector instructions outside " wide " in " \
+                                      routine " (" found[routine] ")"
+                        if (!bodies || !wide_vector) {
+                                print "no wide bodies in " wide ": the audit is looking at the wrong object"
+                                bad = 1
+                        }
+                        exit bad
+                }
+        ' "$2"
+}
+
+#       The module side of the same boundary, over the module's own sources:
+#       a wide name only in a declaration or TARGET_PICK, and Canvas's
+#       bracket opened as often as it is closed.
+kernel_simd_callers()
+{
+        awk '
+                /canvas_[a-z0-9_]*_wide|##_wide/ && !/^void canvas_[a-z0-9_]*_wide\(/ &&
+                    !/^#define TARGET_PICK\(t, name\) \(\(t\)->simd \? name##_wide : name\)$/ &&
+                    !/^[[:space:]]*(\/?\*|\/\/)/ {
+                        print FILENAME ":" FNR ": a wide body named outside TARGET_PICK: " $0
+                        bad = 1
+                }
+                FILENAME ~ /canvas\.c$/ && /canvas_simd_begin\(&/ { begins++ }
+                FILENAME ~ /canvas\.c$/ && /canvas_simd_end\(&/ { ends++ }
+                END {
+                        if (begins != ends || !begins) {
+                                print "canvas_simd_begin " begins + 0 " times, canvas_simd_end " ends + 0
+                                bad = 1
+                        }
+                        exit bad
+                }
+        ' src/moonwater/*.c src/sh/term.c
+}
+
 x86_kernel_vector_audit()
 {
         x86_kernel_compiler=
@@ -1402,10 +1545,11 @@ x86_kernel_vector_audit()
                 return 1
         fi
 
-        if grep -E '(%(xmm|ymm|zmm|mm|st|k)[0-9]|vzero(all|upper)|(^|[[:space:]])(emms|femms)([[:space:]]|$))' \
-                "$work/x86-kernel.dis" > "$work/x86-kernel-vector.err"
+        if ! kernel_simd_boundary x86 "$work/x86-kernel.dis" \
+                > "$work/x86-kernel-vector.err" ||
+           ! kernel_simd_callers >> "$work/x86-kernel-vector.err"
         then
-                note "the x86 KERNEL_MODE library touches vector/FPU state:"
+                note "the x86 KERNEL_MODE vector boundary is broken:"
                 sed 's/^/    /' "$work/x86-kernel-vector.err" | head -20
                 return 1
         fi
@@ -1414,12 +1558,11 @@ x86_kernel_vector_audit()
 }
 
 #       AArch64 makes NEON mandatory for userspace, not freely usable by the
-#       kernel: code that touches the FP/SIMD register file must bracket it
-#       with the kernel's state-management API. lib.c does not do that.
-#
-#       Every routine now selects a GP-register-only body in KERNEL_MODE.
-#       Compile the real kernel preprocessor path, without an architecture
-#       header shim, and reject any instruction that touches vector state.
+#       kernel: code that touches the FP/SIMD register file must be inside
+#       kernel_neon_begin, which lib.c cannot see. So the same boundary as
+#       x86 (kernel_simd_boundary): general registers everywhere but the wide
+#       bodies' section. Compile the real kernel preprocessor path, without an
+#       architecture header shim.
 arm64_kernel_vector_audit()
 {
         arm64_kernel_compiler=
@@ -1558,47 +1701,8 @@ arm64_kernel_vector_audit()
                         }
                         next
                 }
-                /^[[:space:]]*[[:xdigit:]]+:/ {
-                        line = $0
-                        sub(/^[[:space:]]*[[:xdigit:]]+:[[:space:]]+[[:xdigit:]]+[[:space:]]+/, "", line)
-                        mnemonic = line
-                        sub(/[[:space:]].*/, "", mnemonic)
-
-                        # A branch target such as b30 is an address, not the
-                        # scalar SIMD register b30. No branch itself modifies
-                        # vector state, so discard the whole branch family.
-                        if (mnemonic == "b" || mnemonic == "bl" ||
-                            mnemonic == "br" || mnemonic == "blr" ||
-                            mnemonic ~ /^b\./ || mnemonic ~ /^cb/ ||
-                            mnemonic ~ /^tb/)
-                                next
-
-                        operands = line
-                        sub(/^[^[:space:]]+[[:space:]]+/, "", operands)
-                        gsub(/[][{},.]/, " ", operands)
-                        fields = split(operands, token, /[[:space:]]+/)
-                        # Streaming-mode transitions change vector state even
-                        # when an objdump prints them with no operand.
-                        vector = (mnemonic == "smstart" || mnemonic == "smstop")
-                        for (field = 1; field <= fields; field++)
-                                if (token[field] ~ /^(v|q|d|s|h|b|z|p)[0-9]+$/ ||
-                                    token[field] ~ /^za[0-9]*$/ ||
-                                    token[field] ~ /^fp(cr|sr)$/)
-                                        vector = 1
-
-                        if (vector) {
-                                found[routine]++
-                                total++
-                        }
-                }
                 END {
                         bad = bad_relocation
-                        for (routine in found)
-                                if (found[routine]) {
-                                        print "vector routine " routine " (" \
-                                              found[routine] " instructions)"
-                                        bad = 1
-                                }
                         for (routine in expected)
                                 if (tails[routine] != 1) {
                                         print routine " has " (tails[routine] + 0) \
@@ -1606,20 +1710,63 @@ arm64_kernel_vector_audit()
                                               ", expected one"
                                         bad = 1
                                 }
-                        if (total != 0) {
-                                print "kernel object has " total \
-                                      " vector instructions, expected zero"
-                                bad = 1
-                        }
                         exit bad
                 }
-        ' "$work/arm64-kernel.dis" > "$work/arm64-kernel-vector.err"
+        ' "$work/arm64-kernel.dis" > "$work/arm64-kernel-vector.err" &&
+           kernel_simd_boundary arm64 "$work/arm64-kernel.dis" \
+                >> "$work/arm64-kernel-vector.err" &&
+           kernel_simd_callers >> "$work/arm64-kernel-vector.err"
         then
                 return 0
         fi
 
         note "the ARM64 KERNEL_MODE vector boundary changed:"
         sed 's/^/    /' "$work/arm64-kernel-vector.err" | head -20
+        return 1
+}
+
+#       riscv64 the same way: V and the F/D registers only in the wide
+#       bodies' section, which the kernel reaches inside kernel_vector_begin.
+riscv64_kernel_vector_audit()
+{
+        command -v riscv64-linux-gnu-gcc > /dev/null 2>&1 || {
+                note "riscv64 kernel vector audit: NOT RUN -- no riscv64 compiler"
+                return 2
+        }
+        command -v riscv64-linux-gnu-objdump > /dev/null 2>&1 || {
+                note "riscv64 kernel vector audit: NOT RUN -- no riscv64 objdump"
+                return 2
+        }
+
+        if ! riscv64-linux-gnu-gcc -std=gnu11 -O2 -march=rv64imac_zicsr_zifencei \
+                -mabi=lp64 -ffreestanding -fno-builtin -nostdlib \
+                -DSTANDARD_MODERN_C_KERNEL '-DEXPORT_SYMBOL(name)=' \
+                -DCONFIG_MOONWATER_CANVAS -c src/lib.c -o "$work/riscv64-kernel.o" \
+                2> "$work/riscv64-kernel.err"
+        then
+                note "the standalone riscv64 KERNEL_MODE library did not compile:"
+                sed 's/^/    /' "$work/riscv64-kernel.err" | head -10
+                return 1
+        fi
+
+        if ! riscv64-linux-gnu-objdump -dr --no-show-raw-insn -M no-aliases \
+                "$work/riscv64-kernel.o" > "$work/riscv64-kernel.dis" \
+                2> "$work/riscv64-kernel.err"
+        then
+                note "the riscv64 KERNEL_MODE library could not be disassembled:"
+                sed 's/^/    /' "$work/riscv64-kernel.err" | head -10
+                return 1
+        fi
+
+        if kernel_simd_boundary riscv64 "$work/riscv64-kernel.dis" \
+                > "$work/riscv64-kernel-vector.err" &&
+           kernel_simd_callers >> "$work/riscv64-kernel-vector.err"
+        then
+                return 0
+        fi
+
+        note "the riscv64 KERNEL_MODE vector boundary is broken:"
+        sed 's/^/    /' "$work/riscv64-kernel-vector.err" | head -20
         return 1
 }
 
@@ -1809,6 +1956,17 @@ lane_standard()
         2) ;;
         *)
                 tally arm64-kernel-vector 0 1
+                failed=$((failed + 1))
+                ;;
+        esac
+
+        riscv64_kernel_outcome=0
+        riscv64_kernel_vector_audit || riscv64_kernel_outcome=$?
+        case $riscv64_kernel_outcome in
+        0) tally riscv64-kernel-vector 1 1 ;;
+        2) ;;
+        *)
+                tally riscv64-kernel-vector 0 1
                 failed=$((failed + 1))
                 ;;
         esac
