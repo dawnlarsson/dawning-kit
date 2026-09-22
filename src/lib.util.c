@@ -15564,13 +15564,14 @@ DEAD_END fn quick_exit(b32 code)
 
         The sigaction handed to the kernel is four zeroed words and it is the
         same four words on every architecture here, which is worth saying
-        because the struct is not. x86_64 carries a restorer pointer between
-        the flags and the mask and arm64 and riscv64 do not, so the mask lands
-        at a different offset on each. Every field is zero -- SIG_DFL is zero,
-        no flags, an empty mask -- so a zeroed buffer is the right buffer
-        under both layouts, and there is no need to write the struct twice.
-        A restorer would be needed to install a real handler on x86_64, and
-        this never installs one, which is exactly why it does not need one.
+        because the struct is not. x86_64 and arm64 carry a restorer pointer
+        between the flags and the mask and riscv64 does not, so the mask lands
+        at a different offset. Every field is zero -- SIG_DFL is zero, no
+        flags, an empty mask -- so a zeroed buffer is the right buffer under
+        both layouts, and there is no need to write the struct twice. A
+        restorer would be needed to install a real handler on x86_64 and on
+        arm64, whose Spark images have no vDSO, and this never installs one,
+        which is exactly why it does not need one.
 
         tgkill rather than kill so the signal is delivered to this thread and
         cannot be taken by another one that has SIGABRT blocked.
@@ -23467,7 +23468,7 @@ static decimal modf(decimal, decimal address_to)
 
         SA_RESTORER is in this list and is not for callers. It is the bit that
         says a restorer address is present in the structure, this file sets it
-        on x86_64 and only on x86_64, and it is cleared out of anything handed
+        on x86_64 and arm64 and nowhere else, and it is cleared out of anything handed
         back to a caller so that a program reading a disposition it did not
         install does not see a flag it never set. riscv64 does not define it
         at all, which is why it is guarded and why nothing outside the one

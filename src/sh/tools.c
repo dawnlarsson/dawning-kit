@@ -22801,7 +22801,9 @@ static b32 util_linux_mkswap()
                 return string_report(log_error, 1, "%s: %s\n", "mkswap", "image is busy");
         }
 
-        positive page = 4096;
+        // The running kernel's page, as util-linux's getpagesize(): an arm64
+        // kernel built for 16 or 64 KiB pages swaps only to an area of those.
+        positive page = system_page_size();
         string_address page_text = file_option_value(address_of taking, 'p');
         if (page_text && !ul_swap_page(page_text, address_of page))
         {
