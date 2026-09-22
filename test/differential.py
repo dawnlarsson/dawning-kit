@@ -7361,7 +7361,169 @@ def files_zones(farm):
     return passed, len(cases), notes
 
 
-FILES_CHECKS = (files_column_layout, files_xargs_parallel, files_zones)
+def files_tar_archives(rng, count):
+    """Archives written by Python's tarfile, not by either tar under test:
+    members drawn from a menu of the ordinary and the hostile, in the three
+    formats a tar reads, as (name, bytes)."""
+    import io
+    import tarfile
+
+    def member(kind, name, **fields):
+        info = tarfile.TarInfo(name)
+        info.mtime = fields.get("mtime", 1790000000)
+        info.mode = fields.get("mode", 0o644)
+        info.uid, info.gid = 1000, 1000
+        info.uname, info.gname = "someone", "somegroup"
+        data = fields.get("data", b"")
+        if kind == "file":
+            info.size = len(data)
+        elif kind == "dir":
+            info.type, info.mode = tarfile.DIRTYPE, fields.get("mode", 0o755)
+        elif kind == "sym":
+            info.type, info.linkname = tarfile.SYMTYPE, fields["target"]
+        elif kind == "hard":
+            info.type, info.linkname = tarfile.LNKTYPE, fields["target"]
+        elif kind == "fifo":
+            info.type = tarfile.FIFOTYPE
+        return info, (data if kind == "file" else None)
+
+    long_name = "d/" + "n" * 140
+    menu = [
+        lambda: [member("file", "a", data=b"one\n")],
+        lambda: [member("dir", "d"), member("file", "d/b", data=b"two\n")],
+        lambda: [member("file", "d/deep/c", data=b"three\n")],
+        lambda: [member("sym", "s", target="a"), member("file", "a", data=b"x")],
+        lambda: [member("file", "t", data=b"tt"), member("hard", "h", target="t")],
+        lambda: [member("fifo", "p")],
+        lambda: [member("file", long_name, data=b"long")],
+        lambda: [member("sym", "ls", target="t" * 130)],
+        lambda: [member("file", "x", mode=0o4755, data=b"#!")],
+        lambda: [member("file", "same", data=b"first"), member("file", "same", data=b"second")],
+        lambda: [member("file", "sw", data=b"f"), member("dir", "sw")],
+        lambda: [member("dir", "ds"), member("file", "ds", data=b"now a file")],
+        lambda: [member("file", "sp ace\ttab", data=b"s")],
+        lambda: [member("file", "old", mtime=0, data=b"o")],
+        # The hostile: out through .., absolute, a link then a write through
+        # it, a hard link to something outside, a link turned into a directory.
+        lambda: [member("file", "../escape", data=b"out")],
+        lambda: [member("file", "d/../../escape2", data=b"out")],
+        lambda: [member("file", "/abs-escape", data=b"out")],
+        lambda: [member("sym", "out", target="../outside"),
+                 member("file", "out/pwned", data=b"pwned")],
+        lambda: [member("sym", "up", target=".."), member("file", "up/pwned2", data=b"pwned")],
+        lambda: [member("hard", "hl", target="../outside/victim")],
+    ]
+    #       GNU tar answers this one by the filesystem: it lands a link that
+    #       climbs as a placeholder and settles it at the end by identity,
+    #       so the later file wins on tmpfs and the link survives on ext4.
+    #       It is held to the safety rule alone.
+    unsettled = [
+        lambda: [member("sym", "sl", target="../outside/victim"),
+                 member("file", "sl", data=b"overwrote")],
+    ]
+    archives = []
+    everything = menu + unsettled
+    for number in range(count):
+        chosen = [everything[rng.randrange(len(everything))] for _ in range(rng.randint(1, 4))]
+        form = (tarfile.GNU_FORMAT, tarfile.PAX_FORMAT, tarfile.USTAR_FORMAT)[number % 3]
+        stream = io.BytesIO()
+        try:
+            with tarfile.open(fileobj=stream, mode="w", format=form) as archive:
+                for build in chosen:
+                    for info, data in build():
+                        archive.addfile(info, io.BytesIO(data) if data is not None else None)
+        except ValueError:
+            continue  # a name the format cannot hold
+        archives.append((f"{number}-{form}", stream.getvalue(),
+                         not any(build in unsettled for build in chosen)))
+    return archives
+
+
+def files_tar(farm):
+    """tar against GNU tar over generated archives, ordinary and hostile.
+
+    No lane compared tar's command line with GNU's: -tv printed bare names
+    and nothing noticed. Each archive here is listed with tf and tvf and
+    extracted with xf, plainly, with --strip-components=1 and into -C, by
+    both; the listings, the answer and the extracted tree -- names, kinds,
+    modes, contents, link targets and times -- have to agree. Whatever GNU
+    does, nothing may appear beside the extraction directory, in the
+    outside/ directory the hostile members aim at.
+    """
+    import random
+    import shutil
+    import subprocess
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+
+    reference = shutil.which("tar", path=os.defpath)
+    candidate = Path(farm) / "tar"
+    if not reference or not candidate.exists():
+        return 0, 1, ["tar checks need tar on both sides"]
+
+    def snapshot(root):
+        seen = []
+        for path in sorted(root.rglob("*")):
+            relative = str(path.relative_to(root))
+            info = path.lstat()
+            if path.is_symlink():
+                seen.append((relative, "l", os.readlink(path)))
+            elif path.is_dir():
+                seen.append((relative, "d", oct(info.st_mode & 0o7777)))
+            elif stat.S_ISFIFO(info.st_mode):
+                seen.append((relative, "p", oct(info.st_mode & 0o7777)))
+            else:
+                seen.append((relative, "f", oct(info.st_mode & 0o7777), info.st_nlink,
+                             int(info.st_mtime), hashlib.sha256(path.read_bytes()).hexdigest()[:12]))
+        return seen
+
+    commands = (("tf",), ("tvf",), ("xf",), ("xf", "--strip-components=1"), ("xf", "-C", "sub"))
+
+    def run(binary, name, data, command):
+        with tempfile.TemporaryDirectory(prefix="tar-check-") as temporary:
+            top = Path(temporary)
+            (top / "outside").mkdir()
+            (top / "outside" / "victim").write_bytes(b"victim")
+            work = top / "work"
+            (work / "sub").mkdir(parents=True)
+            (top / "a.tar").write_bytes(data)
+            before = snapshot(top / "outside")
+            ran = subprocess.run([binary, command[0], str(top / "a.tar"), *command[1:]],
+                                 cwd=work, env={"PATH": os.defpath, "LC_ALL": "C", "TZ": "UTC0"},
+                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+            outside = snapshot(top / "outside")
+            stray = sorted(p.name for p in top.iterdir()
+                           if p.name not in ("outside", "work", "a.tar"))
+            return (ran.returncode == 0, ran.stdout, snapshot(work)), \
+                (outside if outside != before else None, stray)
+
+    rng = random.Random(0x7a52)
+    cases = [(name, data, command, settled)
+             for name, data, settled in files_tar_archives(rng, 240) for command in commands]
+
+    def compare(case):
+        name, data, command, settled = case
+        want, _ = run(reference, name, data, command)
+        got, escaped = run(str(candidate), name, data, command)
+        return case, (want if settled or command[0] != "xf" else got), got, escaped
+
+    passed, notes = 0, []
+    total = 0
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for (name, data, command, _), want, got, (outside, stray) in pool.map(compare, cases):
+            total += 2
+            safe = outside is None and not stray
+            passed += safe
+            if not safe and len(notes) < 40:
+                notes.append(f"tar {' '.join(command)} {name}: wrote outside: {outside} {stray}")
+            if want == got:
+                passed += 1
+            elif len(notes) < 40:
+                notes.append(f"tar {' '.join(command)} {name}: GNU {want!r:.400} ours {got!r:.400}")
+    return passed, total, notes
+
+
+FILES_CHECKS = (files_column_layout, files_xargs_parallel, files_zones, files_tar)
 
 # ---- domain: misc (from spec_misc.py) ----
 
