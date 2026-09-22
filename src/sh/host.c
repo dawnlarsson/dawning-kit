@@ -8,12 +8,13 @@
         session loses at power off, the bowl roots, /root and /home. Updating
         is copying a newer image over the old one; the data stays where it is.
 
-        Which image is which comes from the image. The x86 boot header carries
-        the kernel's version string -- release, builder, and the count and date
-        of its link, the words uname and /proc/version give back -- so a
-        running system finds its own image on the stick it started from by
-        reading headers, and tells an installed disk carrying this very build
-        from one carrying another.
+        Which image is which comes from the image. It carries the kernel's
+        version string -- release, builder, and the count and date of its
+        link, the words uname and /proc/version give back -- in the x86 boot
+        header, and in the kernel's own banner on arm64 and riscv64, whose
+        image is the kernel uncompressed. So a running system finds its own
+        image on the stick it started from by reading images, and tells an
+        installed disk carrying this very build from one carrying another.
 
         `moonwater boot` is a service of init's, and settles which of three a
         machine is before any shell starts:
@@ -59,8 +60,20 @@
 
 #define HOST_SYSTEM_NAME "moonwater-boot"
 #define HOST_DATA_NAME "moonwater-data"
+/* The removable-media name the UEFI specification gives each machine's loader:
+   firmware on a disk with no boot entry of its own starts this file. */
+#if X64
 #define HOST_IMAGE "/EFI/BOOT/BOOTX64.EFI"
 #define HOST_IMAGE_NEXT "/EFI/BOOT/BOOTX64.NEW"
+#elif ARM64
+#define HOST_IMAGE "/EFI/BOOT/BOOTAA64.EFI"
+#define HOST_IMAGE_NEXT "/EFI/BOOT/BOOTAA64.NEW"
+#elif RISCV64
+#define HOST_IMAGE "/EFI/BOOT/BOOTRISCV64.EFI"
+#define HOST_IMAGE_NEXT "/EFI/BOOT/BOOTRISCV64.NEW"
+#else
+#error "no removable-media loader name for this architecture"
+#endif
 #define HOST_KEPT_DIRECTORY "/EFI/moonwater"
 #define HOST_KEPT_IMAGE HOST_KEPT_DIRECTORY "/previous.efi"
 #define HOST_KEPT_IMAGE_NEXT HOST_KEPT_DIRECTORY "/previous.new"
@@ -598,17 +611,12 @@ static fn host_plain_line(p8 address_to text)
                         text[at] = '?';
 }
 
+#if X64
 /* The version string in an x86 boot image's setup header, if it has one. */
-static bool host_image_build(string_address path, p8 address_to into,
-                             positive room)
+static bool host_image_version(bipolar handle, p8 address_to into,
+                               positive room)
 {
         p8 header[0x210];
-        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
-        bool found = false;
-
-        into[0] = end;
-        if (handle < 0)
-                return false;
 
         if (file_transfer_exact(syscall(pread64), handle, header, sizeof(header),
                                 0) == (bipolar)sizeof(header) &&
@@ -624,14 +632,160 @@ static bool host_image_build(string_address path, p8 address_to into,
                 if (got > 0)
                 {
                         into[got] = end;
-                        found = into[0] && string_length(into) < (positive)got;
-                        if (found)
-                                host_plain_line(into);
+                        return into[0] && string_length(into) < (positive)got;
                 }
         }
 
+        return false;
+}
+#else
+#define HOST_BANNER_HEAD "Linux version "
+#define HOST_BANNER_ROOM 512
+#define HOST_BANNER_CHUNK ((positive)1 << 20)
+
+/*
+        One banner, "Linux version R (who) (compiler) #N ...\n" as /proc/version
+        prints it, spelled "R (who) #N ..." the way x86's setup header spells
+        the same build. The compiler is in brackets that nest -- "(gcc (GCC)
+        16.1.0, GNU ld (GNU Binutils) 2.47)" -- and a build number follows it.
+        A copy with no number is the one the kernel links before it is
+        numbered, and is not this build's.
+*/
+static bool host_banner_parse(p8 address_to at, positive length,
+                              p8 address_to into, positive room)
+{
+        positive head = sizeof(HOST_BANNER_HEAD) - 1;
+        positive release = head;
+        positive who;
+        positive compiler;
+        positive version;
+        positive depth = 1;
+        positive stop;
+        positive used;
+
+        while (release < length && at[release] > ' ' && at[release] < 0x7f &&
+               at[release] != '(')
+                release++;
+        if (release == head || release + 2 >= length ||
+            memory_compare(at + release, " (", 2))
+                return false;
+
+        who = release + 2;
+        while (who < length && at[who] >= ' ' && at[who] < 0x7f &&
+               at[who] != ')' && at[who] != '(')
+                who++;
+        if (who + 3 >= length || memory_compare(at + who, ") (", 3))
+                return false;
+
+        compiler = who + 3;
+        while (compiler < length && depth && at[compiler] >= ' ' &&
+               at[compiler] < 0x7f)
+        {
+                depth += at[compiler] == '(';
+                depth -= at[compiler] == ')';
+                compiler++;
+        }
+        if (depth || compiler + 3 >= length || at[compiler] != ' ' ||
+            at[compiler + 1] != '#' || at[compiler + 2] < '0' ||
+            at[compiler + 2] > '9')
+                return false;
+
+        version = compiler + 1;
+        stop = version;
+        while (stop < length && at[stop] >= ' ' && at[stop] < 0x7f)
+                stop++;
+        if (stop >= length || at[stop] != '\n')
+                return false;
+
+        used = (release - head) + 2 + (who - release - 2) + 2 + (stop - version);
+        if (used + 1 > room)
+                return false;
+
+        //      "R (who) " then the version, the build number onward.
+        memory_copy(into, at + head, who + 1 - head);
+        into[who + 1 - head] = ' ';
+        memory_copy(into + who + 2 - head, at + version, stop - version);
+        into[used] = end;
+        return true;
+}
+
+/*
+        The kernel's own banner, from an image that is the kernel itself.
+
+        An arm64 or riscv64 image is the kernel uncompressed behind its PE
+        header, and has no setup header to carry a version; its banner is in
+        its read-only data where it is linked, some megabytes in. The file is
+        read a megabyte at a time until one parses, the tail of each chunk
+        carried into the next so a banner across the seam is still whole.
+*/
+static bool host_image_version(bipolar handle, p8 address_to into,
+                               positive room)
+{
+        static p8 chunk[HOST_BANNER_CHUNK + HOST_BANNER_ROOM];
+        positive head = sizeof(HOST_BANNER_HEAD) - 1;
+        positive kept = 0;
+        p64 offset = 0;
+
+        for (;;)
+        {
+                bipolar got = system_call_4(syscall(pread64), (positive)handle,
+                                            (positive)(chunk + kept),
+                                            HOST_BANNER_CHUNK, (positive)offset);
+                positive have;
+                positive at = 0;
+
+                if (got <= 0)
+                        return false;
+                offset += (p64)got;
+                have = kept + (positive)got;
+
+                while (at + head <= have)
+                {
+                        p8 address_to found = (p8 address_to)memory_search(
+                            chunk + at, have - at, HOST_BANNER_HEAD, head);
+                        positive left;
+
+                        if (!found)
+                                break;
+                        at = (positive)(found - chunk);
+                        left = have - at;
+                        //      Too near the end to judge: the next chunk
+                        //      starts with it.
+                        if (left < HOST_BANNER_ROOM &&
+                            (positive)got == HOST_BANNER_CHUNK)
+                                break;
+                        if (host_banner_parse(found, left < HOST_BANNER_ROOM
+                                                         ? left
+                                                         : HOST_BANNER_ROOM,
+                                              into, room))
+                                return true;
+                        at++;
+                }
+
+                if ((positive)got < HOST_BANNER_CHUNK)
+                        return false;
+                kept = have < HOST_BANNER_ROOM ? have : HOST_BANNER_ROOM;
+                memory_copy(chunk, chunk + have - kept, kept);
+        }
+}
+#endif
+
+/* The build an image carries, as host_running_build spells this one. */
+static bool host_image_build(string_address path, p8 address_to into,
+                             positive room)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
+        bool found = false;
+
+        into[0] = end;
+        if (handle < 0)
+                return false;
+
+        found = host_image_version(handle, into, room);
         system_close(handle);
-        if (!found)
+        if (found)
+                host_plain_line(into);
+        else
                 into[0] = end;
 
         return found;

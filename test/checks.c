@@ -58879,6 +58879,105 @@ static fn settings_sections(void)
               held);
 }
 
+/*
+        Which build an image is, read the way this machine's images carry it:
+        x86's setup header, or on arm64 and riscv64 the kernel's own banner
+        in an image that is the kernel uncompressed. The banner is looked for
+        past the copy the kernel links before it is numbered, past the bare
+        words a program in the initramfs holds, and across the seam between
+        two megabyte reads; spelled as the running build is, "R (who) #N ...".
+*/
+static fn image_builds(void)
+{
+        static p8 image[(3 << 20) + 4096];
+        static const p8 want[] =
+            "7.2.6moonwater-25 (root@box) #4 SMP PREEMPT Tue Sep 22 07:21:00 CEST 2026";
+        p8 got[256];
+        bool held = true;
+        bool refused = true;
+
+#if X64
+        static const p8 version[] =
+            "7.2.6moonwater-25 (root@box) #4 SMP PREEMPT Tue Sep 22 07:21:00 CEST 2026";
+        positive size = 0x4000;
+
+        memory_zero(image, size);
+        image[0] = 'M';
+        image[1] = 'Z';
+        memory_copy_apart(image + 0x202, "HdrS", 4);
+        storage_put16(image + 0x206, 0x020f);
+        storage_put16(image + 0x20e, 0x1000);
+        memory_copy_apart(image + 0x1200, version, sizeof(version));
+#else
+        static const p8 placeholder[] =
+            "Linux version 7.2.6moonwater-25 (root@box) (aarch64-linux-gnu-gcc "
+            "(GCC) 16.1.0, GNU ld (GNU Binutils) 2.47) # SMP PREEMPT \n";
+        static const p8 banner[] =
+            "Linux version 7.2.6moonwater-25 (root@box) (aarch64-linux-gnu-gcc "
+            "(GCC) 16.1.0, GNU ld (GNU Binutils) 2.47) #4 SMP PREEMPT Tue Sep 22 "
+            "07:21:00 CEST 2026\n";
+        positive size = sizeof(image);
+
+        memory_zero(image, size);
+        image[0] = 'M';
+        image[1] = 'Z';
+        memory_copy_apart(image + 0x40000, "Linux version ", 14);
+        memory_copy_apart(image + (1 << 20) - 60, placeholder, sizeof(placeholder) - 1);
+        memory_copy_apart(image + (2 << 20) - 40, banner, sizeof(banner) - 1);
+#endif
+        {
+                bipolar handle = system_call_2(syscall(memfd_create),
+                                               (positive)(string_address)"image", 0);
+
+                held = handle >= 0 &&
+                       storage_write(handle, image, size, 0) == (bipolar)size &&
+                       host_image_version(handle, got, sizeof(got)) &&
+                       string_equals(got, want);
+                if (handle >= 0)
+                        system_close(handle);
+        }
+
+        //      No version, one cut off before its end, and one with no room.
+        for (positive at = 0; at < 3; at++)
+        {
+                bipolar handle = system_call_2(syscall(memfd_create),
+                                               (positive)(string_address)"image", 0);
+                positive length = size;
+
+#if X64
+                if (at == 0)
+                        storage_put16(image + 0x20e, 0);
+                else if (at == 1)
+                        memory_copy_apart(image + 0x202, "HdrT", 4);
+                else
+                        memory_copy_apart(image + 0x202, "HdrS", 4),
+                            storage_put16(image + 0x20e, 0x1000),
+                            length = 0x1100;
+#else
+                if (at == 0)
+                        memory_zero(image + (2 << 20) - 40, sizeof(banner) - 1);
+                else if (at == 1)
+                        memory_copy_apart(image + (2 << 20) - 40, banner,
+                                          sizeof(banner) - 1),
+                            length = (2 << 20) + 60;
+                else
+                        length = size;
+#endif
+                if (handle < 0 ||
+                    storage_write(handle, image, length, 0) != (bipolar)length)
+                        refused = false;
+                else if (at < 2)
+                        refused &= !host_image_version(handle, got, sizeof(got));
+                else
+                        refused &= !host_image_version(handle, got, 24);
+                if (handle >= 0)
+                        system_close(handle);
+        }
+
+        check("an image names its build as the running kernel spells it", held);
+        check("an image with no whole version names no build", refused);
+}
+
 b32 main(void)
 {
         settings_format();
@@ -58886,6 +58985,7 @@ b32 main(void)
         settings_torn();
         settings_commands();
         settings_sections();
+        image_builds();
         format_sums();
         format_spans();
         format_layouts();
