@@ -12118,6 +12118,11 @@ if len(runs) >= 1:
     type_text("0\n")
     time.sleep(1.0)
 
+    #   Through the whole of its ring, so what it holds when the X closes it
+    #   is what a scrolled terminal holds, not an idle one.
+    type_text("seq 700\n")
+    time.sleep(1.5)
+
     #   The X in the titlebar, which is the only thing on a window that ends
     #   a program rather than moving it. Aimed at the glyph the compositor
     #   actually drew -- the rightmost title-coloured text in the new
@@ -12145,6 +12150,8 @@ if len(runs) >= 1:
 if len(runs) < 2:
     out.append(("the checks between two windows", "not run: %d windows" % len(runs), "run"))
 
+wider_cols = 0
+wider_note = "no second window"
 if len(runs) >= 2:
     a_left, a_right = runs[0]
     b_left, b_right = runs[1]
@@ -12317,6 +12324,48 @@ if len(runs) >= 2:
                 "%dx%d rows %d/%d pixels %d" %
                 (old_width, again_extent, wide_rows, again_rows,
                  restored_difference), "yes"))
+
+    #   Wider than it opened. A terminal's lines start as far apart as its
+    #   window opens and are spread when it is given more columns than that
+    #   (pane_restride), so a line longer than the window first was must
+    #   still come out on one row once the window is that wide. Dragged well
+    #   past where it opened, a 120 character line has to reach further right
+    #   than any line the opening stride can hold; then back to the width it
+    #   had, for everything below.
+    wider_cols = 0
+    wider_note = "not dragged"
+    if again_run:
+        moveto(b_right - 1, edge_y)
+        send([{"type": "btn", "data": {"down": True, "button": "left"}}])
+        time.sleep(0.08)
+        for distance in (100, 200, 300, 400):
+            moveto(min(b_right - 1 + distance, again_w - 24), edge_y)
+            time.sleep(0.12)
+        time.sleep(0.3)
+        send([{"type": "btn", "data": {"down": False, "button": "left"}}])
+        time.sleep(0.5)
+        type_text("echo " + "0123456789" * 12 + "\n")
+        time.sleep(1.0)
+        shot("terminal-wider", 0.3)
+        wider_w, wider_h, terminal_wider = load("terminal-wider")
+        wider_runs = runs_in(terminal_wider, wider_w, h // 2)
+        wider_run = (min(wider_runs, key=lambda run: abs(run[0] - again_run[0]))
+                     if wider_runs else None)
+        if wider_run:
+            reach = max((x for y in range(b_top + 24, min(b_bottom, wider_h) - 2)
+                         for x in range(wider_run[0] + 8, wider_run[1] - 18)
+                         if sum(pixel(terminal_wider, wider_w, x, y)) > 180),
+                        default=wider_run[0] + 8)
+            wider_cols = (reach - wider_run[0] - 8) // 8 + 1
+            wider_note = "window %d-%d, was %d-%d" % (wider_run[0], wider_run[1],
+                                                     b_left, b_right)
+            moveto(wider_run[1] - 1, edge_y)
+            send([{"type": "btn", "data": {"down": True, "button": "left"}}])
+            time.sleep(0.08)
+            moveto(again_run[1], edge_y)
+            time.sleep(0.3)
+            send([{"type": "btn", "data": {"down": False, "button": "left"}}])
+            time.sleep(0.5)
 
     shot("shell-before-monitor")
     before_w, before_h, before_monitor = load("shell-before-monitor")
@@ -12764,6 +12813,24 @@ out.append(("terminal ring is cut for the ceiling",
 held = [(int(a), int(b)) for a, b in re.findall(rb"ring held (\d+) of (\d+) kib", serial)]
 out.append(("a closed terminal held a small part of its ring",
             "yes" if held and all(a * 4 <= b for a, b in held) else str(held), "yes"))
+
+#       Scrolled through all of it, too: the terminal the X closes ran seq 700
+#       first, and its lines are as far apart as it is wide rather than as
+#       the ceiling, so a full ring is still a small part of the reservation.
+#       With lines a page apart it held all of it again.
+apart = [int(a) for a in re.findall(rb"ring holds \d+x\d+ \(\d+ kib\), lines (\d+) apart", serial)]
+out.append(("a terminal's lines start as far apart as it opens",
+            "yes" if apart and max(apart) <= 160 else str(apart), "yes"))
+
+#       And spread when it is widened past that: the line typed into the
+#       widened terminal reached past the widest stride any window opened at,
+#       and the compositor said it recut that ring at least that wide.
+widened = [int(w) for w in re.findall(rb"window ring recut to (\d+)x", serial)]
+out.append(("a widened terminal draws lines wider than it opened",
+            "yes" if runs and apart and widened and
+            wider_cols > max(apart) and max(widened) >= wider_cols
+            else "%s cols drawn (%s), apart %s, recut %s" %
+                 (wider_cols, wider_note, apart, widened), "yes"))
 
 #       The kernel log's ring is cut for its own window, and the fill above
 #       recut it. Cut for the ceiling it held about 2 MiB from boot on.

@@ -188,10 +188,11 @@ struct window
         /*
                 A window of cells is a ring of lines rather than a grid.
 
-                stride is how far apart two lines are, which is as wide as the
-                desktop could ever make this window and so never changes;
-                history is how many lines the ring holds; head is one past the
-                newest. The visible rows are the last of them, so scrolling is
+                stride is how far apart two lines are, which starts as wide
+                as the window opens and only grows, when the program asks
+                with window_widen; the mapping has room for lines as wide as
+                the desktop could ever make the window. history is how many
+                lines the ring holds; head is one past the newest. The visible rows are the last of them, so scrolling is
                 a store to head rather than a copy of every row, and what goes
                 past the top is still there to scroll back to.
 
@@ -289,6 +290,10 @@ static inline void window_damage(struct window *window, unsigned int row,
 
 // _IO('s', 5) -- redraw what changed
 #define WINDOW_IOCTL_COMMIT 0x00007305u
+
+// _IO('s', 16) -- spread the lines of a window of cells out to at least this
+// many columns; answers the stride they are now
+#define WINDOW_IOCTL_STRIDE 0x00007310u
 
 struct window_request
 {
@@ -654,6 +659,24 @@ static void window_flush(struct window *window)
 {
         __atomic_store_n(&window->sequence, window->sequence + 1, __ATOMIC_RELEASE);
         window_call(WINDOW_SYS_IOCTL, window->handle, WINDOW_IOCTL_COMMIT, 0, 0, 0, 0);
+}
+
+/*
+        A window of cells given more columns than its lines are apart.
+
+        A line is only as far from the next as the window was wide when it
+        opened, because a line a page apart is a scrolled terminal holding
+        two megabytes for text a quarter as wide. A program laying its text
+        out at more columns than stride calls this first: the compositor
+        moves every line out to a wider stride and stride says what it is.
+        Lines already written keep their text; nothing narrower is ever
+        asked for, so nothing is ever cut.
+*/
+static void window_widen(struct window *window, unsigned int columns)
+{
+        if (columns > window->stride)
+                window_call(WINDOW_SYS_IOCTL, window->handle, WINDOW_IOCTL_STRIDE,
+                            columns, 0, 0, 0);
 }
 
 static void window_close(struct window *window)

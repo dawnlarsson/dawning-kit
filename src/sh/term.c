@@ -3650,6 +3650,12 @@ static fn grid_take()
         COLUMNS = window->columns ? window->columns : 1;
         ROWS = window->rows ? window->rows : 1;
 
+#ifndef KERNEL_MODE
+        // A window wider than its lines are apart spreads them first; the
+        // kernel log's own ring is recut by the compositor instead.
+        window_widen(window, COLUMNS);
+#endif
+
         if (COLUMNS > window->stride)
                 COLUMNS = window->stride;
 }

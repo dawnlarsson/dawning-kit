@@ -737,7 +737,9 @@ static void lay_out(void)
 {
         unsigned int row;
 
-        columns = window->columns;
+        window_widen(window, window->columns);
+        columns = window->columns < window->stride ? window->columns
+                                                   : window->stride;
         rows = window->rows;
 
         // Emptying a line is its length, not its cells.

@@ -2044,7 +2044,7 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
 {
         unsigned int max_columns, max_rows;
         unsigned int fit_columns, fit_rows;
-        unsigned int stride = 0, history = 0;
+        unsigned int stride = 0, history = 0, cut = 0;
         unsigned long ring_bytes = 0;
         struct window *page;
         struct pane *pane;
@@ -2075,6 +2075,13 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
                 pane_ring(owned ? console_stride(min(columns, fit_columns), max_columns)
                                 : max_columns,
                           max_rows, &stride, &history, &ring_bytes);
+
+                // A ring held as it is written is laid out for the ceiling
+                // but its lines start as far apart as the window is wide,
+                // and pane_restride spreads them when the program asks.
+                cut = PANE_LAZY && !owned
+                          ? console_stride(min(columns, fit_columns), max_columns)
+                          : stride;
 
                 // The ring is cut for the ceiling; what opens is what fits.
                 columns = min(columns, fit_columns);
@@ -2148,7 +2155,7 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
 
                 pane->cells = pane->mapping + WINDOW_PIXELS;
                 pane->lengths = pane->mapping + lines;
-                pane->stride = stride;
+                pane->stride = cut;
                 pane->history = history;
                 pane->head = history + rows;
                 pane->view = PANE_LIVE;
@@ -2169,7 +2176,7 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
                 if (owned)
                         pr_info("[moonwater canvas] " "kernel log grid %ux%u, ring cut to %ux%u (%lu KiB), recut as it grows\n", columns, rows, stride, history, bytes >> 10);
                 else
-                        pr_info("[moonwater canvas] " "window grid %ux%u, ring holds %ux%u (%lu KiB)\n", columns, rows, stride, history, bytes >> 10);
+                        pr_info("[moonwater canvas] " "window grid %ux%u, ring holds %ux%u (%lu KiB), lines %u apart\n", columns, rows, stride, history, bytes >> 10, cut);
 
                 page->max_columns = max_columns;
                 page->max_rows = max_rows;
@@ -2177,7 +2184,7 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
                 page->rows = rows;
                 page->grid_columns = columns;
                 page->grid_rows = rows;
-                page->stride = stride;
+                page->stride = cut;
                 page->history = history;
                 page->head = pane->head;
                 page->lines = (unsigned int)lines;
@@ -2975,6 +2982,98 @@ static __poll_t window_poll(struct file *file, poll_table *wait)
                 return EPOLLIN | EPOLLRDNORM;
 
         return 0;
+}
+
+/*
+        A program's lines spread further apart, because its window has grown
+        wider than they are.
+
+        The ring is laid out for the ceiling, so it has room for lines as
+        wide as the window can ever be, but they start as far apart as the
+        window opens: a terminal's lines a page each were a scrolled
+        terminal holding 1,920 KiB for text a quarter as wide. A program
+        that is given more columns than its stride asks for this before it
+        lays its text out at them, and every line it has written moves out
+        to its place at the wider stride here, under desktop.lock so no
+        compose reads the ring half moved, and under pages_lock because the
+        lines land on pages that may not be held yet. The program is in this
+        call, so it is not writing; whatever else writes its page gets the
+        same ring it would have got from a program that raced itself.
+
+        Only wider: a narrower stride would cut the lines a wider window
+        wrote, which it still draws folded. Every page a moved line lands on
+        is held before any line moves, so running out of memory leaves the
+        ring as it was, and the answer is the stride the lines are now.
+*/
+static long pane_restride(struct pane *pane, unsigned int columns)
+{
+        unsigned int stride = console_stride(min(columns, pane->max_columns),
+                                             pane->max_columns);
+        unsigned int was = pane->stride;
+        unsigned int slot, length;
+        unsigned long first, last;
+
+        if (!pane->pages || stride <= was)
+                return was;
+
+        for (slot = 0; slot < pane->history; slot++)
+        {
+                length = min(READ_ONCE(pane->lengths[slot]), was);
+                if (!length || !pane_cells_held(pane, slot, length))
+                        continue;
+
+                first = WINDOW_PIXELS + (unsigned long)slot * stride *
+                                            sizeof(struct window_cell);
+                last = first + (unsigned long)length * sizeof(struct window_cell);
+                if (!pane_pages_hold(pane, first >> PAGE_SHIFT,
+                                     PAGE_ALIGN(last) >> PAGE_SHIFT))
+                        return -ENOMEM;
+        }
+
+        // From the last line down: a line only ever moves further out, past
+        // the end of every line below it, so nothing lands on a line that
+        // has yet to move.
+        for (slot = pane->history; slot--;)
+        {
+                length = min(READ_ONCE(pane->lengths[slot]), was);
+                if (length && !pane_cells_held(pane, slot, length))
+                        length = 0;
+
+                if (length)
+                        memmove(pane->cells + (unsigned long)slot * stride,
+                                pane->cells + (unsigned long)slot * was,
+                                (unsigned long)length * sizeof(struct window_cell));
+
+                WRITE_ONCE(pane->lengths[slot], length);
+        }
+
+        pane->stride = stride;
+        WRITE_ONCE(pane->shared->stride, stride);
+        pr_info("[moonwater canvas] " "window ring recut to %ux%u\n", stride, pane->history);
+        return stride;
+}
+
+static long window_ioctl_stride(struct file *file, unsigned long columns)
+{
+        struct device_context *context = file->private_data;
+        struct pane *pane = smp_load_acquire(&context->pane);
+        long answer;
+
+        if (!pane || !pane->cells || !pane->shared)
+                return -EINVAL;
+
+        rt_mutex_lock(&desktop.lock);
+        if (pane->pages)
+                mutex_lock(&pane->pages_lock);
+
+        answer = pane_restride(pane, (unsigned int)min(columns, (unsigned long)UINT_MAX));
+
+        if (pane->pages)
+                mutex_unlock(&pane->pages_lock);
+
+        // Nothing to draw: every line reads the same at its new place.
+        rt_mutex_unlock(&desktop.lock);
+        return answer;
 }
 
 static long window_ioctl_commit(struct file *file)

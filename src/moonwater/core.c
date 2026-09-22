@@ -329,6 +329,8 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                 return window_ioctl_create(file, arg);
         case WINDOW_IOCTL_COMMIT:
                 return window_ioctl_commit(file);
+        case WINDOW_IOCTL_STRIDE:
+                return window_ioctl_stride(file, arg);
 #endif
         }
 
