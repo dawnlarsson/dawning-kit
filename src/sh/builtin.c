@@ -1327,17 +1327,6 @@ static inline INLINE fn env_index_touch()
         }
 }
 
-static inline INLINE fn env_hit_remember(positive hash, positive length,
-                                         positive index)
-{
-        if (!env_lookup.generation)
-                env_lookup.generation = 1;
-        env_lookup.hit_generation = env_lookup.generation;
-        env_lookup.hit_hash = hash;
-        env_lookup.hit_length = length;
-        env_lookup.hit_index = index;
-}
-
 // Rebuilt lazily for execve and the in-process utilities that spawn children.
 string_address address_to shell_envp;
 static positive shell_envp_room;
