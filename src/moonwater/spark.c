@@ -1129,6 +1129,24 @@ int execute_spark(struct linux_binprm *bprm)
 
         atomic_long_add(ktime_get_ns() - map_started, &stat_map_ns);
 
+#ifdef CONFIG_RISCV
+        /*
+                riscv64 returns from every signal handler to the vDSO's
+                rt_sigreturn and has no sa_restorer to name anything else, so
+                an image mapped without one returned from its first handler to
+                the trampoline's offset from zero: the shell died after every
+                command that had a child. x86_64 and arm64 hand the kernel
+                their own trampoline through SA_RESTORER; here the loader maps
+                the vDSO the way the ELF loader does.
+        */
+        ret = arch_setup_additional_pages(bprm, 0);
+        if (ret)
+        {
+                pr_alert_ratelimited("[moonwater] " "mapping the vDSO failed: %d\n", ret);
+                goto fatal;
+        }
+#endif
+
         current->mm->start_code = header->base;
         current->mm->end_code = header->base + header->text_size;
         current->mm->start_data = header->base + header->text_size;

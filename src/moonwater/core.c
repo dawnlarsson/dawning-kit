@@ -71,6 +71,12 @@
 #elif defined(CONFIG_RISCV)
 #include <asm/cpufeature.h>
 #include <asm/vector.h>
+// arch_setup_additional_pages: the Spark loader maps the vDSO every signal
+// handler returns through. Not exported, so the core cannot be a module here.
+#include <linux/elf.h>
+#if !IS_BUILTIN(CONFIG_MOONWATER_CORE)
+#error "on riscv64 the Moonwater core maps each program's vDSO and must be built in (CONFIG_MOONWATER_CORE=y)"
+#endif
 #endif
 
 // The graphics headers must precede lib.c: it defines "end" as a macro
