@@ -28365,6 +28365,7 @@ def harness_moonwater_cli(argv):
     promises to keep.
     """
     import platform
+    import random
     import shutil
     import subprocess
     import tempfile
@@ -28471,15 +28472,34 @@ def harness_moonwater_cli(argv):
         script = ("rm -f /root/timezone /root/timezone.mode\n" + say("timezone") +
                   "printf 'Europe/London\\n' > /root/timezone\n" + say("timezone") +
                   "echo '@@ settings'; cat /root/timezone.mode 2>/dev/null; echo '@@status 0'\n")
+        #       And argument vectors drawn from a grammar: every verb that
+        #       touches no disk, with words that are almost right, empty,
+        #       long, numeric, signed, full of controls or of UTF-8.
+        rng = random.Random(0xc11)
+        words = ["", "on", "off", "list", "auto", "sync", "filter", "add", "remove", "init",
+                 "exit", "mount", "internet", "wired", "wifi", "+", "-", "+99:99", "-0",
+                 "UTC+14", "UTC-14", "<+0530>-5:30", "Europe/", "../../etc/passwd", "x" * 300,
+                 "\x1b[31m", "tab\there", "sv", "SE", "\u00e5\u00e4\u00f6", "0", "18446744073709551616",
+                 "power", "canvas on", "--", "-h", "status"]
+        verbs = ["", "status", "timezone", "time", "ntp", "keyboard", "canvas", "bind",
+                 "wifi", "bluetooth", "priority", "-h"]
+        fuzzed = []
+        for number in range(300):
+            argv = [rng.choice(verbs)] + [rng.choice(words) for _ in range(rng.randint(0, 4))]
+            fuzzed.append(" ".join(shlex.quote(word.encode().decode("unicode_escape"))
+                                   for word in argv))
         script += "".join(say(command) for command in walk)
+        script += "".join(f"echo '@@ fuzz{number}'; timeout 20 /tmp/moonwater {command} 2>&1; "
+                          f"echo \"@@status $?\"\n" for number, command in enumerate(fuzzed))
         lines, finished = session(script)
         walked = answers(lines)
         check(finished, "the walk of every verb finished", "")
-        for command in ["timezone"] + walk:
+        for command in ["timezone"] + walk + [f"fuzz{n}" for n in range(len(fuzzed))]:
             got = walked.get(command)
             status = got and got["status"]
+            shown = fuzzed[int(command[4:])] if command.startswith("fuzz") else command
             check(got is not None and status is not None and status < 124,
-                         f"moonwater {command} answers", repr(got)[:300])
+                  f"moonwater {shown} answers", repr(got)[:300])
         joined = "\n".join(lines)
         check("auto" in joined.split("@@ timezone", 2)[1].split("@@status")[0],
                      "neither zone file is auto", joined[:400])
