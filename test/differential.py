@@ -91,6 +91,9 @@ DOMAIN_FLOOR = {
     #       domain agrees on everything, which four of the seven already do --
     #       misc among them since 2026-09-10, when the last 626 of its cases
     #       were closed or pinned and its row was taken out of this table.
+    #       The counts leave out a domain's CHECKS, which answer for
+    #       themselves: 2 cases of shell's, 138 of util_linux's and 88 of
+    #       files' came out of these numbers when that changed.
     #
     #       The fourth field is how far above the floor a run may land before
     #       it is a gain rather than a good day. A handful of cases still flip
@@ -105,7 +108,7 @@ DOMAIN_FLOOR = {
     #       disagrees about is a session driven through a pseudo-terminal on
     #       wall-clock pauses, and how many of those land the same way twice
     #       depends on what else the machine is doing.
-    "shell": (24200, 26971, 150,
+    "shell": (24198, 26969, 150,
               "what a session says when something goes wrong. The process-surface "
               "families are no longer the gap. bash answers an option nobody has with "
               "its whole usage banner, which the startup family replays onto stdout, and "
@@ -164,7 +167,7 @@ DOMAIN_FLOOR = {
               "--debugger looks for; and xtrace-shape's are PS4 itself, which bash "
               "reads backslash escapes and a command substitution out of before "
               "writing it."),
-    "util_linux": (79140, 81037, 100,
+    "util_linux": (79002, 80899, 100,
                    "listings this build does not carry, and a handful of "
                    "usage banners. The mount namespace is no longer the gap: "
                    "umount_live agrees on all 8576 of its cases and "
@@ -228,7 +231,7 @@ DOMAIN_FLOOR = {
                    "with the work under /tmp: a run whose root is on a "
                    "filesystem mounted without nosuid and nodev cannot see "
                    "the mounts this build used to break"),
-    "files": (71779, 74220, 150,
+    "files": (71691, 74132, 150,
               "2342 cases are still untriaged, and a dozen causes hold most "
               "of them. kill is 2963 of 2963. leftover14 matches GNU dest "
               "-w slash strip and leftover dest-slash backup ENOTDIR, "
@@ -1686,12 +1689,18 @@ def main(argv=None):
         save_rows(args.record, rows)
         print(f"  recorded {added} rows into {args.record}")
 
+    #       A check is a property that holds or does not, so no floor stands
+    #       in for it: inside a floored domain its cases once went into the
+    #       floor's sum, where a check that lost every case still left the
+    #       domain above what it was held to.
+    check_keys = set()
     if not args.replay:
         for domain in domains:
             for check in getattr(specs.get(domain), "CHECKS", ()):
                 if selected and check.__name__ not in selected:
                     continue
                 key = f"{domain}/{check.__name__}"
+                check_keys.add(key)
                 won, count, notes = check(str(farm))
                 passed[key] += won
                 total[key] += count
@@ -1716,7 +1725,8 @@ def main(argv=None):
         #       floor is the assertion and these numbers are the evidence
         #       for it. So a floored domain's programs are printed and not
         #       tallied, and the floor writes the one row it is owed.
-        floored_here = whole_run and key.split("/")[0] in DOMAIN_FLOOR
+        floored_here = (whole_run and key.split("/")[0] in DOMAIN_FLOOR
+                        and key not in check_keys)
 
         if total[key] and not floored_here:
             write_tally(key.replace('/', '-'), passed[key], total[key])
@@ -1733,9 +1743,9 @@ def main(argv=None):
             if not floor:
                 continue
             agreed = sum(count for key, count in passed.items()
-                         if key.startswith(domain + "/"))
+                         if key.startswith(domain + "/") and key not in check_keys)
             ran = sum(count for key, count in total.items()
-                      if key.startswith(domain + "/"))
+                      if key.startswith(domain + "/") and key not in check_keys)
             want, of, slack, why = floor
 
             #       The one row the floor is owed, in place of the programs
@@ -1778,9 +1788,9 @@ def main(argv=None):
     #       Cases inside a floored domain are not counted against the run;
     #       the floor above is what holds them.
     unfloored = sum(count for key, count in total.items()
-                    if key.split("/")[0] not in DOMAIN_FLOOR)
+                    if key.split("/")[0] not in DOMAIN_FLOOR or key in check_keys)
     unfloored_passed = sum(count for key, count in passed.items()
-                           if key.split("/")[0] not in DOMAIN_FLOOR)
+                           if key.split("/")[0] not in DOMAIN_FLOOR or key in check_keys)
     if args.replay or selected or modes or families or args.budget:
         return 1 if all_passed != all_total or invalid else 0
     return 1 if unfloored_passed != unfloored else 0
@@ -7227,7 +7237,131 @@ else:
     return passed, total, notes
 
 
-FILES_CHECKS = (files_column_layout, files_xargs_parallel)
+
+FILES_ZONES = (
+    #       Both hemispheres, offsets on the half and quarter hour, a zone
+    #       whose summer time is its standard (Dublin), one that dropped DST
+    #       (Tehran) and one that took it back (Cairo), and POSIX strings the
+    #       table never names.
+    "UTC0", "Europe/Stockholm", "Europe/London", "Europe/Dublin", "America/New_York",
+    "America/St_Johns", "America/Sao_Paulo", "America/Santiago", "Australia/Sydney",
+    "Australia/Adelaide", "Pacific/Auckland", "Pacific/Chatham", "Asia/Kolkata",
+    "Asia/Kathmandu", "Asia/Tehran", "Africa/Cairo", "EST5EDT,M3.2.0,M11.1.0",
+    "<+0530>-5:30", "CET-1CEST,M3.5.0,M10.5.0/3",
+)
+
+
+def files_zone_instants(zone):
+    """Instants around every change of offset in 2025 and 2026, and a few
+    fixed ones: (seconds since the epoch, civil times near the change)."""
+    import datetime
+    try:
+        from zoneinfo import ZoneInfo
+        where = ZoneInfo(zone)
+    except Exception:  # a POSIX string zoneinfo cannot name: fixed instants only
+        where = None
+    #       Nothing before 2023: the candidate carries each zone's current
+    #       rule, the one its TZif footer states, and not its history, so
+    #       1970 in Sydney or 2001 in Tehran is summer time by today's rule
+    #       where GNU reads the transitions tzdata lists (27 of 1788 cases
+    #       when they were in). Far instants check the rule is extended.
+    fixed = [1700000000, 1735689599, 1782000000, 2000000000, 4102444800]
+    instants, civil = list(fixed), []
+    if where is None:
+        return instants, civil
+
+    def offset(t):
+        return datetime.datetime.fromtimestamp(t, where).utcoffset()
+
+    start = int(datetime.datetime(2025, 1, 1, tzinfo=datetime.timezone.utc).timestamp())
+    for t in range(start, start + 2 * 366 * 86400, 3600):
+        if offset(t) == offset(t + 3600):
+            continue
+        low, high = t, t + 3600
+        while high - low > 1:
+            middle = (low + high) // 2
+            low, high = (middle, high) if offset(middle) == offset(t) else (low, middle)
+        for step in (-3601, -1, 0, 1, 1800, 3599):
+            instants.append(high + step)
+        before = datetime.datetime.fromtimestamp(high - 1, where).replace(tzinfo=None)
+        for step in (1, 1800, 3600, 5400):
+            civil.append((before + datetime.timedelta(seconds=step)).strftime("%Y-%m-%d %H:%M:%S"))
+    return instants, civil
+
+
+def files_zones(farm):
+    """date, touch, stat and ls in real zones against GNU under the same TZ.
+
+    Every other case runs under TZ=UTC0, where a tool that ignores the zone
+    is right. The zone work of 2026-09-21 found %s, date -u and the hours
+    either side of a change of offset wrong by hand in seven zones; this is
+    that comparison made procedural: every zone above, every instant around
+    each of its changes in 2025 and 2026, and the civil times in the skipped
+    and repeated hours, printed and parsed, as a file stamp and as a clock.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+
+    tools = ("date", "touch", "stat", "ls")
+    reference = {tool: shutil.which(tool, path=os.defpath) for tool in tools}
+    candidate = {tool: Path(farm) / tool for tool in tools}
+    if not all(reference.values()) or not all(p.exists() for p in candidate.values()):
+        return 0, 1, ["zone checks need date, touch, stat and ls on both sides"]
+    if not Path("/usr/share/zoneinfo/Europe/Stockholm").exists():
+        return 0, 1, ["zone checks need the reference's tzdata in /usr/share/zoneinfo"]
+
+    shown = "+%Y-%m-%d %H:%M:%S %Z %z %:z %s %a %j %V"
+    cases = []
+    for zone in FILES_ZONES:
+        instants, civil = files_zone_instants(zone)
+        for t in instants:
+            cases.append((zone, [["date", "-d", f"@{t}", shown]]))
+            cases.append((zone, [["date", "-u", "-d", f"@{t}", shown]]))
+            cases.append((zone, [["date", "-d", f"@{t}"]]))
+            cases.append((zone, [["touch", "-d", f"@{t}", "f"],
+                                 ["stat", "-c", "%y %Y", "f"],
+                                 ["ls", "-l", "--time-style=full-iso", "f"],
+                                 ["date", "-r", "f", shown]]))
+        for when in civil:
+            cases.append((zone, [["date", "-d", when, shown]]))
+            cases.append((zone, [["touch", "-d", when, "f"], ["stat", "-c", "%Y", "f"]]))
+
+    def run(case, side):
+        zone, commands = case
+        environment = {"PATH": os.defpath, "LC_ALL": "C", "TZ": zone}
+        answers = []
+        with tempfile.TemporaryDirectory(prefix="zones-") as directory:
+            for command in commands:
+                binary = str(side[command[0]])
+                result = subprocess.run([binary, *command[1:]], cwd=directory,
+                                        env=environment, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        timeout=10)
+                output = result.stdout.replace(directory.encode(), b"<DIR>")
+                # The owner, group and link count of a scratch file are not the zone.
+                if command[0] == "ls":
+                    output = b" ".join(output.split()[5:])
+                answers.append((result.returncode, output, bool(result.stderr)))
+        return answers
+
+    def compare(case):
+        return case, run(case, reference), run(case, candidate)
+
+    passed, notes = 0, []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for case, want, got in pool.map(compare, cases):
+            if want == got:
+                passed += 1
+            elif len(notes) < 40:
+                zone, commands = case
+                notes.append(f"TZ={zone} {' ; '.join(' '.join(c) for c in commands)}: "
+                             f"GNU {want!r} ours {got!r}")
+    return passed, len(cases), notes
+
+
+FILES_CHECKS = (files_column_layout, files_xargs_parallel, files_zones)
 
 # ---- domain: misc (from spec_misc.py) ----
 
