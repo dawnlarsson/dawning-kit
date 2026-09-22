@@ -28508,6 +28508,234 @@ def harness_objtool_shape(argv):
     return 1 if failures else 0
 
 
+def harness_terminfo_install(argv):
+    """The terminfo blob is written into a directory, never through a name.
+
+    /run is a place other programs write, and the blob is opened FILE_WRITE,
+    which carries O_CREAT and O_TRUNC: a symlink left at one of these names by
+    anyone who got there first made the install truncate and rewrite whatever
+    it pointed at, with the privilege the terminal or bowl was started with.
+    The installer is cut out of src/sh/terminfo.c and run for real against a
+    temporary directory with a link planted at every step of the path -- the
+    directories the walk makes and the four files it writes -- and each
+    planted link must still point at an untouched file afterwards.
+
+    The parent's three-line installer is compiled and run the same way, and
+    has to clobber every one of them: a check that does not go red on the code
+    it was written for is not evidence of anything.
+    """
+    del argv
+    root = HARNESS_ROOT
+    text = (root / "src/sh/terminfo.c").read_text()
+    kept = text[text.index("static fn terminal_terminfo_write"):]
+
+    parent = r'''
+static fn terminal_terminfo_write(string_address path)
+{
+        bipolar handle = system_open_at_mode(AT_FDCWD, path,
+                                             FILE_WRITE | O_CLOEXEC, 0644);
+
+        if (handle < 0)
+                return;
+
+        system_write_all((positive)handle, terminal_terminfo_blob,
+                         sizeof(terminal_terminfo_blob));
+        system_close(handle);
+}
+
+static fn terminal_terminfo_install()
+{
+        system_make_directory_at(AT_FDCWD, TERM_INFO_PARENT, 0755);
+        system_make_directory_at(AT_FDCWD, TERM_INFO_DIRECTORY, 0755);
+        system_make_directory_at(AT_FDCWD, TERM_INFO_DIRECTORY "/x", 0755);
+        system_make_directory_at(AT_FDCWD, TERM_INFO_DIRECTORY "/78", 0755);
+        system_make_directory_at(AT_FDCWD, TERM_INFO_DIRECTORY "/m", 0755);
+        system_make_directory_at(AT_FDCWD, TERM_INFO_DIRECTORY "/6d", 0755);
+        terminal_terminfo_write(TERM_INFO_DIRECTORY "/x/" TERM_NAME);
+        terminal_terminfo_write(TERM_INFO_DIRECTORY "/78/" TERM_NAME);
+        terminal_terminfo_write(TERM_INFO_DIRECTORY "/m/moonwater");
+        terminal_terminfo_write(TERM_INFO_DIRECTORY "/6d/moonwater");
+}
+'''
+
+    shim = r'''
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <string.h>
+#include <stdbool.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+typedef unsigned char p8;
+typedef unsigned long positive;
+typedef long bipolar;
+typedef const char *string_address;
+#define fn void
+#define address_to *
+#define array_count(a) (sizeof(a) / sizeof((a)[0]))
+#define FILE_READ O_RDONLY
+#define FILE_WRITE (O_WRONLY | O_CREAT | O_TRUNC)
+static bipolar system_open_at(bipolar d, string_address p, positive f) {
+        return openat((int)d, p, (int)f);
+}
+static bipolar system_open_at_mode(bipolar d, string_address p, positive f,
+                                   positive m) {
+        return openat((int)d, p, (int)f, (mode_t)m);
+}
+static bipolar system_open_output_at(bipolar d, string_address p, int replace,
+                                     positive m) {
+        return openat((int)d, p, FILE_WRITE | O_CLOEXEC |
+                                     (replace ? O_NOFOLLOW : O_EXCL), (mode_t)m);
+}
+static bipolar system_make_directory_at(bipolar d, string_address p, positive m) {
+        return mkdirat((int)d, p, (mode_t)m);
+}
+static bipolar system_write_all(positive h, const void *b, positive n) {
+        return write((int)h, b, n);
+}
+static fn system_close(bipolar h) { close((int)h); }
+#define TERM_NAME "xterm-256color"
+#define TERM_INFO_PARENT ROOT "/run"
+#define TERM_INFO_DIRECTORY ROOT "/run/terminfo"
+'''
+
+    #   The blob itself is beside the point here; one byte stands in for it so
+    #   the fixture compiles in a moment and a clobbered victim is still
+    #   unmistakable.
+    blob = ('static const unsigned char terminal_terminfo_blob[] = {0x1a};\n')
+
+    driver = r"""
+static int failures, checks;
+static void check(int good, const char *what) {
+        checks++;
+        if (good) return;
+        failures++;
+        printf("  FAIL %s\n", what);
+}
+static int untouched(const char *path) {
+        char seen[16] = {0};
+        int handle = open(path, O_RDONLY);
+        ssize_t got;
+        if (handle < 0) return 0;
+        got = read(handle, seen, sizeof seen - 1);
+        close(handle);
+        return got == 4 && !memcmp(seen, "keep", 4);
+}
+static void victim(const char *at, const char *link) {
+        int handle = open(at, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        write(handle, "keep", 4);
+        close(handle);
+        symlink(at, link);
+}
+static const char *names[] = {
+    ROOT "/run/terminfo/x/" TERM_NAME,
+    ROOT "/run/terminfo/78/" TERM_NAME,
+    ROOT "/run/terminfo/m/moonwater",
+    ROOT "/run/terminfo/6d/moonwater",
+};
+static const char *holds[] = {
+    ROOT "/run/terminfo/x", ROOT "/run/terminfo/78",
+    ROOT "/run/terminfo/m", ROOT "/run/terminfo/6d",
+};
+
+/*      A link where each of the four files goes. The directories are real,
+        so nothing but the last component can stop the write. */
+static void names_are_links(void) {
+        unsigned i;
+        char away[512];
+
+        mkdir(ROOT "/run", 0755);
+        mkdir(ROOT "/run/terminfo", 0755);
+        for (i = 0; i < array_count(holds); i++)
+                mkdir(holds[i], 0755);
+        for (i = 0; i < array_count(names); i++) {
+                snprintf(away, sizeof away, ROOT "/away-%u", i);
+                victim(away, names[i]);
+        }
+
+        terminal_terminfo_install();
+
+        for (i = 0; i < array_count(names); i++) {
+                snprintf(away, sizeof away, ROOT "/away-%u", i);
+                check(untouched(away),
+                      "a file name that is a link is not written through");
+        }
+}
+
+/*      A link where a directory of the path goes, at a real directory
+        elsewhere. Walking it would make the whole tree over there. */
+static void a_step_is_a_link(void) {
+        char away[512];
+        int handle;
+
+        mkdir(ROOT "/run", 0755);
+        mkdir(ROOT "/elsewhere", 0755);
+        symlink(ROOT "/elsewhere", ROOT "/run/terminfo");
+
+        terminal_terminfo_install();
+
+        snprintf(away, sizeof away, ROOT "/elsewhere/x/" TERM_NAME);
+        handle = open(away, O_RDONLY);
+        check(handle < 0, "a directory step that is a link is not walked through");
+        if (handle >= 0) close(handle);
+}
+
+int main(int count, char **argument) {
+        mkdir(ROOT, 0755);
+        if (count > 1 && argument[1][0] == 'b')
+                a_step_is_a_link();
+        else
+                names_are_links();
+        printf("%d of %d\n", checks - failures, checks);
+        return failures != 0;
+}
+"""
+
+    compiler = os.environ.get("CC", "gcc")
+    scenes = ("a", "b")
+    tallies = {}
+    with tempfile.TemporaryDirectory(prefix="moonwater-terminfo-") as temporary:
+        work = Path(temporary)
+        for which, installer in (("kept", kept), ("parent", parent)):
+            passed = total = 0
+            for scene in scenes:
+                where = work / (which + scene)
+                where.mkdir()
+                source = work / (which + scene + ".c")
+                source.write_text(shim + blob + installer + driver)
+                built = subprocess.run(
+                    [compiler, "-O1", "-std=gnu11", "-w",
+                     '-DROOT="%s"' % (where / "tree"), str(source),
+                     "-o", str(work / (which + scene + ".run"))],
+                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                if built.returncode:
+                    sys.stderr.write(built.stdout)
+                    return 1
+                ran = subprocess.run([str(work / (which + scene + ".run")), scene],
+                                     text=True, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT)
+                found = re.search(r"(\d+) of (\d+)", ran.stdout)
+                if not found:
+                    sys.stderr.write(ran.stdout)
+                    return 1
+                passed += int(found.group(1))
+                total += int(found.group(2))
+                if which == "kept" and ran.returncode:
+                    print(ran.stdout, end="", flush=True)
+            tallies[which] = (passed, total)
+
+    passed, total = tallies["kept"]
+    #   The parent has to lose every one of them, or this fixture is testing
+    #   the planting and not the installer.
+    if tallies["parent"][0]:
+        print("  FAIL the parent installer kept %d of %d; the check does not "
+              "hold it" % tallies["parent"])
+        return 1
+    print("terminfo install: %d of %d, the three-line parent 0 of %d"
+          % (passed, total, tallies["parent"][1]))
+    write_tally("terminfo-install", passed, total)
+    return 1 if passed != total else 0
+
 def harness_moonwater_cli(argv):
     """The moonwater command, which no lane but boot reached, in a sandbox.
 
@@ -29246,6 +29474,7 @@ HARNESS_CHECKS = {
     "bowl_roots": harness_bowl_roots,
     "riscv_builtins": harness_riscv_builtins,
     "objtool_shape": harness_objtool_shape,
+    "terminfo_install": harness_terminfo_install,
     "moonwater_cli": harness_moonwater_cli,
     "machine_reap": harness_machine_reap,
     "tls_chains": harness_tls_chains,

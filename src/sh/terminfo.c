@@ -280,10 +280,17 @@ static const unsigned char terminal_terminfo_blob[] = {
         0x55, 0x50, 0x36, 0x00, 0x6b, 0x55, 0x50, 0x37, 0x00,
 };
 
-static fn terminal_terminfo_write(string_address path)
+/*
+        The blob into a descriptor of the directory that holds it, never
+        through a name. /run is a place other programs write, and this file
+        is opened FILE_WRITE, which carries O_CREAT and O_TRUNC: a symlink
+        left under this name by anyone who got there first would make an
+        install truncate and rewrite whatever it pointed at, with whatever
+        privilege the terminal or bowl was started with.
+*/
+static fn terminal_terminfo_write(bipolar directory, string_address name)
 {
-        bipolar handle = system_open_at_mode(AT_FDCWD, path,
-                                             FILE_WRITE | O_CLOEXEC, 0644);
+        bipolar handle = system_open_output_at(directory, name, true, 0644);
 
         if (handle < 0)
                 return;
@@ -293,18 +300,94 @@ static fn terminal_terminfo_write(string_address path)
         system_close(handle);
 }
 
-static fn terminal_terminfo_install()
+/* The directory below this one, made if it is not there and opened as
+   itself: a name that is a symlink is refused rather than followed. */
+static bipolar terminal_terminfo_step(bipolar directory, string_address name)
 {
-        system_make_directory_at(AT_FDCWD, "/run", 0755);
-        system_make_directory_at(AT_FDCWD, "/run/moonwater", 0755);
-        system_make_directory_at(AT_FDCWD, TERM_INFO_DIRECTORY, 0755);
-        system_make_directory_at(AT_FDCWD, TERM_INFO_DIRECTORY "/x", 0755);
-        system_make_directory_at(AT_FDCWD, TERM_INFO_DIRECTORY "/78", 0755);
-        system_make_directory_at(AT_FDCWD, TERM_INFO_DIRECTORY "/m", 0755);
-        system_make_directory_at(AT_FDCWD, TERM_INFO_DIRECTORY "/6d", 0755);
-        terminal_terminfo_write(TERM_INFO_DIRECTORY "/x/" TERM_NAME);
-        terminal_terminfo_write(TERM_INFO_DIRECTORY "/78/" TERM_NAME);
-        terminal_terminfo_write(TERM_INFO_DIRECTORY "/m/moonwater");
-        terminal_terminfo_write(TERM_INFO_DIRECTORY "/6d/moonwater");
+        system_make_directory_at(directory, name, 0755);
+        return system_open_at(directory, name, FILE_READ | O_DIRECTORY |
+                                                   O_NOFOLLOW | O_CLOEXEC);
 }
 
+/* Every component of the path walked that way, so no part of the chain can
+   be turned into a link between the mkdir and the open. */
+static bipolar terminal_terminfo_open(string_address path)
+{
+        bipolar at = AT_FDCWD;
+        p8 name[256];
+        positive used = 0;
+
+        if (path[0] == '/')
+        {
+                at = system_open_at(AT_FDCWD, (string_address) "/",
+                                    FILE_READ | O_DIRECTORY | O_CLOEXEC);
+                if (at < 0)
+                        return at;
+        }
+
+        for (positive i = 0;; i++)
+        {
+                p8 byte = (p8)path[i];
+
+                if (byte && byte != '/')
+                {
+                        if (used + 1 >= sizeof name)
+                                break;
+                        name[used++] = byte;
+                        continue;
+                }
+
+                if (used)
+                {
+                        bipolar next;
+
+                        name[used] = 0;
+                        next = terminal_terminfo_step(at,
+                                                      (string_address)name);
+                        if (at != AT_FDCWD)
+                                system_close(at);
+                        if (next < 0)
+                                return next;
+                        at = next;
+                        used = 0;
+                }
+
+                if (!byte)
+                        return at;
+        }
+
+        if (at != AT_FDCWD)
+                system_close(at);
+        return -36;
+}
+
+static fn terminal_terminfo_install()
+{
+        static const struct
+        {
+                string_address directory;
+                string_address name;
+        } places[] = {
+            {"x", TERM_NAME},
+            {"78", TERM_NAME},
+            {"m", "moonwater"},
+            {"6d", "moonwater"},
+        };
+        bipolar root = terminal_terminfo_open(TERM_INFO_DIRECTORY);
+
+        if (root < 0)
+                return;
+
+        for (positive i = 0; i < array_count(places); i++)
+        {
+                bipolar at = terminal_terminfo_step(root, places[i].directory);
+
+                if (at < 0)
+                        continue;
+
+                terminal_terminfo_write(at, places[i].name);
+                system_close(at);
+        }
+
+        system_close(root);
+}
