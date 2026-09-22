@@ -28653,8 +28653,11 @@ static bipolar system_write_all(positive h, const void *b, positive n) {
 }
 static fn system_close(bipolar h) { close((int)h); }
 #define TERM_NAME "xterm-256color"
-#define TERM_INFO_PARENT ROOT "/run"
-#define TERM_INFO_DIRECTORY ROOT "/run/terminfo"
+/*      Relative, and the fixture moves into its own tree first: an
+        absolute temporary path can itself run through a symlink -- /var is
+        one on Darwin -- and the walk refuses those on purpose. */
+#define TERM_INFO_PARENT "run"
+#define TERM_INFO_DIRECTORY "run/terminfo"
 '''
 
     #   The blob itself is beside the point here; one byte stands in for it so
@@ -28679,21 +28682,31 @@ static int untouched(const char *path) {
         close(handle);
         return got == 4 && !memcmp(seen, "keep", 4);
 }
+/*      A file to lose, and a link to it where the install will write. The
+        link's target is absolute: a relative one would resolve beside the
+        link, which is not where the file is, and the parent installer would
+        make a new file instead of clobbering this one -- a fixture that
+        looks green for the wrong reason. */
+static char here[4096];
+
 static void victim(const char *at, const char *link) {
+        char full[4200];
         int handle = open(at, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
         write(handle, "keep", 4);
         close(handle);
-        symlink(at, link);
+        snprintf(full, sizeof full, "%s/%s", here, at);
+        symlink(full, link);
 }
 static const char *names[] = {
-    ROOT "/run/terminfo/x/" TERM_NAME,
-    ROOT "/run/terminfo/78/" TERM_NAME,
-    ROOT "/run/terminfo/m/moonwater",
-    ROOT "/run/terminfo/6d/moonwater",
+    "run/terminfo/x/" TERM_NAME,
+    "run/terminfo/78/" TERM_NAME,
+    "run/terminfo/m/moonwater",
+    "run/terminfo/6d/moonwater",
 };
 static const char *holds[] = {
-    ROOT "/run/terminfo/x", ROOT "/run/terminfo/78",
-    ROOT "/run/terminfo/m", ROOT "/run/terminfo/6d",
+    "run/terminfo/x", "run/terminfo/78",
+    "run/terminfo/m", "run/terminfo/6d",
 };
 
 /*      A link where each of the four files goes. The directories are real,
@@ -28702,19 +28715,19 @@ static void names_are_links(void) {
         unsigned i;
         char away[512];
 
-        mkdir(ROOT "/run", 0755);
-        mkdir(ROOT "/run/terminfo", 0755);
+        mkdir("run", 0755);
+        mkdir("run/terminfo", 0755);
         for (i = 0; i < array_count(holds); i++)
                 mkdir(holds[i], 0755);
         for (i = 0; i < array_count(names); i++) {
-                snprintf(away, sizeof away, ROOT "/away-%u", i);
+                snprintf(away, sizeof away, "away-%u", i);
                 victim(away, names[i]);
         }
 
         terminal_terminfo_install();
 
         for (i = 0; i < array_count(names); i++) {
-                snprintf(away, sizeof away, ROOT "/away-%u", i);
+                snprintf(away, sizeof away, "away-%u", i);
                 check(untouched(away),
                       "a file name that is a link is not written through");
         }
@@ -28726,22 +28739,45 @@ static void a_step_is_a_link(void) {
         char away[512];
         int handle;
 
-        mkdir(ROOT "/run", 0755);
-        mkdir(ROOT "/elsewhere", 0755);
-        symlink(ROOT "/elsewhere", ROOT "/run/terminfo");
+        mkdir("run", 0755);
+        mkdir("elsewhere", 0755);
+        snprintf(away, sizeof away, "%s/elsewhere", here);
+        symlink(away, "run/terminfo");
 
         terminal_terminfo_install();
 
-        snprintf(away, sizeof away, ROOT "/elsewhere/x/" TERM_NAME);
+        snprintf(away, sizeof away, "elsewhere/x/" TERM_NAME);
         handle = open(away, O_RDONLY);
         check(handle < 0, "a directory step that is a link is not walked through");
         if (handle >= 0) close(handle);
 }
 
+/*      Nothing planted at all: the install has to land the blob. A walk
+        that refused everything would pass both scenes above, and an
+        ncurses program in a bowl would find no terminfo and nothing would
+        say so. Both installers pass this one -- the parent is wrong about
+        links, not about writing files. */
+static void nothing_is_a_link(void) {
+        unsigned i;
+
+        terminal_terminfo_install();
+
+        for (i = 0; i < array_count(names); i++) {
+                int handle = open(names[i], O_RDONLY);
+
+                check(handle >= 0, "a clean tree gets the blob written into it");
+                if (handle >= 0) close(handle);
+        }
+}
+
 int main(int count, char **argument) {
         mkdir(ROOT, 0755);
+        if (chdir(ROOT)) return 2;
+        if (!getcwd(here, sizeof here)) return 2;
         if (count > 1 && argument[1][0] == 'b')
                 a_step_is_a_link();
+        else if (count > 1 && argument[1][0] == 'c')
+                nothing_is_a_link();
         else
                 names_are_links();
         printf("%d of %d\n", checks - failures, checks);
@@ -28750,12 +28786,16 @@ int main(int count, char **argument) {
 """
 
     compiler = os.environ.get("CC", "gcc")
-    scenes = ("a", "b")
+    #   a and b plant a link and are the ones the parent has to lose; c
+    #   plants nothing and both installers have to win it.
+    scenes = ("a", "b", "c")
+    hostile = ("a", "b")
     tallies = {}
     with tempfile.TemporaryDirectory(prefix="moonwater-terminfo-") as temporary:
         work = Path(temporary)
         for which, installer in (("kept", kept), ("parent", parent)):
             passed = total = 0
+            hostile_passed = hostile_total = 0
             for scene in scenes:
                 where = work / (which + scene)
                 where.mkdir()
@@ -28778,19 +28818,26 @@ int main(int count, char **argument) {
                     return 1
                 passed += int(found.group(1))
                 total += int(found.group(2))
+                if scene in hostile:
+                    hostile_passed += int(found.group(1))
+                    hostile_total += int(found.group(2))
                 if which == "kept" and ran.returncode:
                     print(ran.stdout, end="", flush=True)
-            tallies[which] = (passed, total)
+            tallies[which] = (passed, total, hostile_passed, hostile_total)
 
-    passed, total = tallies["kept"]
-    #   The parent has to lose every one of them, or this fixture is testing
+    passed, total, _, planted = tallies["kept"]
+    #   The parent has to lose every planted one, or this fixture is testing
     #   the planting and not the installer.
-    if tallies["parent"][0]:
-        print("  FAIL the parent installer kept %d of %d; the check does not "
-              "hold it" % tallies["parent"])
+    if tallies["parent"][2]:
+        print("  FAIL the parent installer kept %d of the planted ones; the "
+              "check does not hold it" % tallies["parent"][2])
         return 1
-    print("terminfo install: %d of %d, the three-line parent 0 of %d"
-          % (passed, total, tallies["parent"][1]))
+    if tallies["parent"][0] != tallies["parent"][1] - tallies["parent"][3]:
+        print("  FAIL the parent installer did not write a clean tree either; "
+              "the planted scenes prove nothing")
+        return 1
+    print("terminfo install: %d of %d, the three-line parent losing all %d "
+          "planted" % (passed, total, planted))
     write_tally("terminfo-install", passed, total)
     return 1 if passed != total else 0
 
