@@ -1510,9 +1510,16 @@ static bool host_partitions_wait(host_install address_to install,
         {
                 install->system[0] = install->data[0] = end;
 
+                /*      The identities too, which every later step resolves
+                        the names from again: without them the install's own
+                        attach found no partition and said the disk had gone. */
                 if (host_partition_resolve(parts[0].unique, install->system) &&
                     host_partition_resolve(parts[1].unique, install->data))
+                {
+                        host_partuuid(install->system_partuuid, parts[0].unique);
+                        host_partuuid(install->data_partuuid, parts[1].unique);
                         return true;
+                }
 
                 host_pause(HOST_POLL_NS);
         }
