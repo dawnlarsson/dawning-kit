@@ -15977,6 +15977,10 @@ static bool chown_group_words(void)
 static b32 chown_status;
 static positive chown_flags;
 static bool chown_quiet;
+//      Whether -R was asked for, which decides what a link named on the
+//      command line is: without -R the default is to follow it, and with -R
+//      only -H or -L says to.
+static bool chown_recursive;
 typedef struct { p8 dereference, traverse, loudness, root; } chown_selection;
 _Static_assert(sizeof(chown_selection) <= 16, "selection mask covers every field");
 static chown_selection chown_selected;
@@ -16066,6 +16070,10 @@ enum
         CHOWN_REFUSED_UNLOOKED,
         //      A directory the walk could not read, said the way chmod's is.
         CHOWN_UNREAD,
+        //      A link whose target is not there, under a look that was
+        //      following it: the reference calls that a dereference it could
+        //      not make rather than a name it could not reach.
+        CHOWN_DANGLING,
 };
 
 typedef struct
@@ -16090,8 +16098,9 @@ static fn chown_decide(bipolar directory, string_address name,
         //      to change the link and not what it aims at. A link the caller
         //      named keeps the old following default.
         positive through = chown_selected.dereference == 'h'
-                || (descended && chown_selected.traverse != 'L'
-                    && chown_selected.traverse != 'H')
+                || ((descended || chown_recursive) &&
+                    chown_selected.traverse != 'L' &&
+                    chown_selected.traverse != 'H')
             ? AT_SYMLINK_NOFOLLOW : 0;
         file_facts facts;
         bipolar looked = 0;
@@ -16124,10 +16133,19 @@ static fn chown_decide(bipolar directory, string_address name,
 
         // A name that is not there, or one the caller may not look at, is
         // not an ownership that would not change: the reference says it
-        // could not access it, and why.
+        // could not access it, and why -- and where the look was following a
+        // link, that the link is what it could not follow.
         if (looked < 0)
         {
-                out->kind = CHOWN_UNREACHED;
+                file_facts link;
+
+                out->kind = through == AT_SYMLINK_NOFOLLOW ||
+                                    file_look_code(directory, name,
+                                                   AT_SYMLINK_NOFOLLOW,
+                                                   address_of link) < 0 ||
+                                    (link.mode & MODE_FORMAT) != MODE_LINK
+                                ? CHOWN_UNREACHED
+                                : CHOWN_DANGLING;
                 out->error = (b32)looked;
                 return;
         }
@@ -16208,6 +16226,7 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
                 chown_status = 1;
                 return;
 
+        case CHOWN_DANGLING:
         case CHOWN_UNREACHED:
                 if (chown_selected.loudness == 'v')
                 {
@@ -16218,7 +16237,11 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
 
                 if (!chown_quiet)
                 {
-                        string_format(log_error, "%s: cannot access '%w': %s\n", chown_program,
+                        string_format(log_error,
+                                      out->kind == CHOWN_DANGLING
+                                          ? "%s: cannot dereference '%w': %s\n"
+                                          : "%s: cannot access '%w': %s\n",
+                                      chown_program,
                                       writer_terminal_quoted_name, shown, file_reason(out->error));
                 }
 
@@ -16647,6 +16670,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
         chown_flags = taking.flags;
         chown_quiet = (taking.flags & FILE_FLAG('f')) != 0;
+        chown_recursive = (taking.flags & FILE_FLAG('R')) != 0;
 
         string_address like = file_option_value(address_of taking, 'e');
 
