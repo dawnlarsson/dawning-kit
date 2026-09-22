@@ -2970,6 +2970,17 @@ static void desktop_watch(void)
 
         desktop_set_awake(true);
         desktop.idle_frames = 0;
+
+        //      The last frame of the idle spell may still be running on
+        //      another CPU: it can read awake after the store above, forward
+        //      itself and ask to be re-armed, while the start below has
+        //      already queued it -- and forwarding a queued timer is the
+        //      WARN_ON in hrtimer_forward and a corrupted timer tree. Cancel
+        //      waits for that callback and takes the timer off the queue, so
+        //      only the start below arms it. This runs under desktop.lock in
+        //      process context, which the callback never takes, and only on
+        //      the step out of idle.
+        hrtimer_cancel(&desktop.frame);
         hrtimer_start(&desktop.frame, ns_to_ktime(canvas_frame_ns()),
                       HRTIMER_MODE_REL);
 }
