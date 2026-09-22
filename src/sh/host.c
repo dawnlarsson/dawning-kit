@@ -6132,7 +6132,9 @@ static COLD bipolar sntp_reply_ok(p8 address_to reply, p8 address_to request)
 {
         if (memory_compare(reply + 24, request + 40, 8))
                 return SNTP_NO_REPLY;
-        if ((reply[0] & 0x7) != 4)
+        //      Mode 4 is a server's answer; versions 1 to 4 are the ones
+        //      there are, and 0, 5, 6 and 7 are not an NTP answer at all.
+        if ((reply[0] & 0x7) != 4 || !((reply[0] >> 3) & 7) || ((reply[0] >> 3) & 7) > 4)
                 return SNTP_BAD_SERVER;
         if (!reply[1])
                 return network_load_32(reply + 12) == SNTP_KISS_RATE
@@ -6204,6 +6206,9 @@ static COLD bool sntp_math_ok(void)
             {0x24, 2, 0, 0, 0, false, SNTP_NO_REPLY},
             /* mode 3 is a request, not a reply */
             {0x23, 2, 0, 0, 0, true, SNTP_BAD_SERVER},
+            /* version 0 and version 7 are no version NTP has had */
+            {0x04, 2, 0, 0, 0, true, SNTP_BAD_SERVER},
+            {0x3c, 2, 0, 0, 0, true, SNTP_BAD_SERVER},
             /* stratum 0 carries a kiss code in the reference id */
             {0x24, 0, 0, 0, SNTP_KISS_RATE, true, SNTP_RATE_LIMITED},
             {0x24, 0, 0, 0, SNTP_KISS_DENY, true, SNTP_BAD_SERVER},

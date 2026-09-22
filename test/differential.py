@@ -28537,6 +28537,73 @@ def harness_moonwater_cli(argv):
                              f"timezone {current} ({stored and stored[0]}) at {line.split()[1]}: "
                              "this system, both bowls and tzdata agree", line)
 
+        # moonwater time sync against a server that answers what it is
+        # told: a local one inside the namespace's own loopback, every field
+        # an SNTP client has to judge walked -- the version, the mode, the
+        # stratum and a kiss-o-death's code, the leap alarm, a short packet,
+        # a transmit stamp of zero, an origin that does not echo ours. What
+        # RFC 4330 has a client take is taken (and then refused by a kernel
+        # that will not let a namespace set the clock), RATE is reported as
+        # asked too often, and everything else is no answer at all.
+        server = r"""
+import json, socket, struct, time
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(("127.0.0.1", 123))
+s.settimeout(120)
+while True:
+    try:
+        data, peer = s.recvfrom(512)
+    except socket.timeout:
+        break
+    spec = json.load(open("/tmp/ntp.spec"))
+    now = time.time()
+    def stamp(t):
+        return struct.pack("!II", (int(t) + 2208988800) & 0xffffffff, int((t % 1) * 2**32))
+    head = (spec["li"] << 6) | (spec["vn"] << 3) | spec["mode"]
+    packet = struct.pack("!BBbb", head, spec["stratum"], 4, -20) + bytes(8) + spec["refid"].encode()
+    packet += stamp(now - 10) + (data[40:48] if spec["echo"] else bytes([1]) * 8)
+    # Received and sent in the same instant: a server that claims to have
+    # held a request longer than the round trip gives a negative delay,
+    # which a client is right to refuse.
+    packet += stamp(now) + (stamp(now) if spec["transmit"] else bytes(8))
+    s.sendto(packet[:spec["length"]], peer)
+"""
+        (sandbox / "tmp/ntpd.py").write_text(server)
+        answers_ntp = []
+        script = ("ip link set lo up\npython3 /tmp/ntpd.py &\nntp_server=$!\nsleep 1\n"
+                  "echo 127.0.0.1 > /root/ntp.server\necho off > /root/ntp.filter\n")
+        fields = {"vn": (0, 1, 3, 4, 5, 7), "mode": (3, 4, 5), "stratum": (0, 1, 15, 16),
+                  "li": (0, 1, 3), "refid": ("RATE", "DENY", "GPS\0"), "length": (47, 48, 60),
+                  "transmit": (True, False), "echo": (True, False)}
+        base = {"vn": 4, "mode": 4, "stratum": 2, "li": 0, "refid": "GPS\0", "length": 48,
+                "transmit": True, "echo": True}
+        specs = [dict(base, **{name: value}) for name, values in fields.items() for value in values]
+        specs += [dict(base, **{name: rng.choice(values) for name, values in fields.items()})
+                  for _ in range(40)]
+        for number, spec in enumerate(specs):
+            script += (f"printf '%s' {shlex.quote(json.dumps(spec))} > /tmp/ntp.spec\n"
+                       f"echo '@@ ntp{number}'; timeout 20 /tmp/moonwater time sync 2>&1 | head -1\n")
+        script += "kill $ntp_server\n"
+        lines, finished = session(script)
+        check(finished, "the time sync walk finished", "")
+        said = {}
+        current = None
+        for line in lines:
+            if line.startswith("@@ ntp"):
+                current = int(line[6:])
+            elif current is not None and current not in said:
+                said[current] = line
+        for number, spec in enumerate(specs):
+            valid = spec["length"] >= 48 and spec["mode"] == 4 and 1 <= spec["vn"] <= 4 and spec["echo"]
+            taken = valid and 1 <= spec["stratum"] <= 15 and spec["li"] != 3 and spec["transmit"]
+            rated = valid and spec["stratum"] == 0 and spec["refid"] == "RATE"
+            answer = said.get(number, "")
+            got = ("taken" if "answered, but" in answer else
+                   "rated" if "asked too often" in answer else
+                   "none" if "no server answered" in answer else answer)
+            want = "taken" if taken else "rated" if rated else "none"
+            check(got == want, f"time sync against {spec} is {want}", got)
+
         # What the other settings write, and what wipe keeps.
         script = "".join(say(f"keyboard {layout}") + "echo \"@@kept $(cat /root/keyboard)\"\n"
                          for layout in layouts)
