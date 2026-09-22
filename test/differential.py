@@ -23040,13 +23040,22 @@ def harness_floodlight(argv):
                    '!', 'floodlight_entry_unfiltered', '(', ')', ')'),
              'interpreter recursion recognizes only a filter installed by '
              'this still-running image'),
-            (calls('memory_fill', '(', 'status_text', ',', '0', ',',
-                   'sizeof', '(', 'status_text', ')', ')', ';'),
+            (calls('memory_fill', '(', 'status_text', '+', 'total', ',', '0',
+                   ',', 'chunk', ')', ';', 'got', '=', 'system_read_retry', '(',
+                   '(', 'positive', ')', 'status', ',', 'status_text', '+',
+                   'total', ',', 'chunk', ')', ';'),
              'a forged successful status read cannot expose stale stack bytes'),
-            (calls('(', 'positive', ')', 'got', '>', 'sizeof', '(',
-                   'status_text', ')', '|', '|', '(', 'positive', ')', 'got',
-                   '>', 'FLOODLIGHT_STATUS_MAX', '-', 'total'),
+            (calls('(', 'positive', ')', 'got', '>', 'chunk', '|', '|', '(',
+                   'positive', ')', 'got', '>', 'FLOODLIGHT_STATUS_MAX', '-',
+                   'total'),
              'a forged status length is bounded before it indexes the chunk'),
+            (calls('memory_fill', '(', 'text', '+', 'used', ',', '0', ',',
+                   'chunk', ')', ';', 'got', '=', 'system_read_retry', '(',
+                   '(', 'positive', ')', 'handle', ',', 'text', '+', 'used',
+                   ',', 'chunk', ')', ';', 'if', '(', 'got', '>', '0', '&', '&',
+                   '(', 'positive', ')', 'got', '>', 'chunk', ')'),
+             'a forged successful proc read cannot expose stale stack bytes, '
+             'and its length is bounded by the bytes that were cleared'),
             (calls('floodlight_own_seccomp', '=', 'true', ';', 'return',
                    'true', ';'),
              'the image records filter ownership only after installation '
@@ -23463,6 +23472,7 @@ typedef int b32;
 typedef unsigned long positive;
 typedef long bipolar;
 typedef char *string_address;
+typedef void *address_any;
 #define DEAD_END __attribute__((noreturn))
 #define address_to *
 #define address_of &
@@ -23763,6 +23773,38 @@ static p8 *memory_copy_end(p8 *into, const void *from, positive length)
 #define memory_compare(one, two, length) memcmp((one), (two), (length))
 #define memory_copy_apart(into, from, length) memcpy((into), (from), (length))
 #define memory_fill(into, value, length) memset((into), (value), (length))
+#define memory_first_of(block, byte, size) memchr((block), (byte), (size))
+#define memory_search(block, size, needle, needle_size) memmem((block), (size), (needle), (needle_size))
+/* The status scan sits outside the slice this unit takes from the shell,
+   so the unit links a C model of it. */
+static bool floodlight_status_clear(const p8 *text, positive length)
+{
+        bool mode = false, count = false, *seen;
+        positive at = 0, used, name, value;
+
+        while (at < length) {
+                const p8 *line = text + at, *stop = memchr(line, '\n', length - at);
+
+                if (!stop)
+                        return false;
+                used = (positive)(stop - line);
+                at += used + 1;
+                if (used >= 8 && !memcmp(line, "Seccomp:", 8))
+                        name = 8, seen = &mode;
+                else if (used >= 16 && !memcmp(line, "Seccomp_filters:", 16))
+                        name = 16, seen = &count;
+                else
+                        continue;
+                if (used > 32 || *seen)
+                        return false;
+                for (value = name; value < used && (line[value] == ' ' || line[value] == '\t'); value++)
+                        ;
+                if (value + 1 != used || line[value] != '0')
+                        return false;
+                *seen = true;
+        }
+        return mode && count;
+}
 /* Taken before the name is redefined below, or the macro eats the call. */
 static long raw_call(long n, long a, long b, long c, long d, long e)
 {

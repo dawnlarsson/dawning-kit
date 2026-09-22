@@ -545,12 +545,17 @@ static bipolar floodlight_read_whole(bipolar handle, p8 address_to text,
 
         do
         {
-                if (used == room - 1)
+                /* Cleared a chunk at a time, only as far as the read may
+                   claim to have written. */
+                positive chunk = room - 1 - used;
+
+                if (!chunk)
                         return -ERROR_ACCESS;
-                memory_fill(text + used, 0, room - used);
-                got = system_read_retry((positive)handle, text + used,
-                                        room - 1 - used);
-                if (got > 0 && (positive)got > room - 1 - used)
+                if (chunk > 1024)
+                        chunk = 1024;
+                memory_fill(text + used, 0, chunk);
+                got = system_read_retry((positive)handle, text + used, chunk);
+                if (got > 0 && (positive)got > chunk)
                         return -ERROR_ACCESS;
                 if (got > 0)
                         used += (positive)got;
@@ -629,20 +634,30 @@ static bipolar floodlight_policy_registered()
 
         used = (positive)got;
 
+        /* Where the name is, and then whether it is a whole line: nothing
+           after it but the newline or the end, and nothing before it on its
+           line but spaces and tabs. */
         for (positive at = 0; at < used;)
         {
-                positive stop = at;
+                const p8 address_to found = memory_search(
+                    text + at, used - at, (address_any)registered,
+                    sizeof(registered) - 1);
+                positive start;
+                positive after;
 
-                while (stop < used && text[stop] != '\n')
-                        stop++;
-                while (at < stop &&
-                       (text[at] == ' ' || text[at] == '\t'))
-                        at++;
-                if (stop - at == sizeof(registered) - 1 &&
-                    !memory_compare(text + at, registered,
-                                    sizeof(registered) - 1))
+                if (!found)
+                        break;
+
+                start = (positive)(found - text);
+                after = start + sizeof(registered) - 1;
+                at = start + 1;
+
+                if (after < used && text[after] != '\n')
+                        continue;
+                while (start && (text[start - 1] == ' ' || text[start - 1] == '\t'))
+                        start--;
+                if (!start || text[start - 1] == '\n')
                         return 1;
-                at = stop < used ? stop + 1 : stop;
         }
 
         return 0;
@@ -15185,6 +15200,60 @@ publish:
         floodlight_report_state = state;
 }
 
+/*
+        Whether a whole /proc/self/status says no filter is on this process:
+        every line ends in a newline, and exactly one says "Seccomp:" and one
+        "Seccomp_filters:", each at most 32 bytes long and holding nothing
+        after its name but spaces or tabs and then a single 0. Any other line
+        is passed over whatever it holds, NULs included.
+*/
+static PURE bool floodlight_status_clear(const p8 address_to text, positive length)
+{
+        bool saw_mode = false;
+        bool saw_count = false;
+        positive at = 0;
+
+        while (at < length)
+        {
+                const p8 address_to line = text + at;
+                const p8 address_to stop = memory_first_of(line, '\n', length - at);
+                positive used;
+                positive name;
+                positive value;
+                bool address_to seen;
+
+                if (!stop)
+                        return false;
+
+                used = (positive)(stop - line);
+                at += used + 1;
+
+                if (used >= 8 && !memory_compare(line, "Seccomp:", 8))
+                {
+                        name = 8;
+                        seen = address_of saw_mode;
+                }
+                else if (used >= 16 && !memory_compare(line, "Seccomp_filters:", 16))
+                {
+                        name = 16;
+                        seen = address_of saw_count;
+                }
+                else
+                        continue;
+
+                if (used > 32 || address_to seen)
+                        return false;
+                value = name;
+                while (value < used && (line[value] == ' ' || line[value] == '\t'))
+                        value++;
+                if (value + 1 != used || line[value] != '0')
+                        return false;
+                address_to seen = true;
+        }
+
+        return saw_mode && saw_count;
+}
+
 /* Authenticate /proc first, then require the complete status file to contain
    exactly one zero-valued Seccomp and Seccomp_filters row.  Ordinary cBPF
    errno actions can forge a syscall result but cannot manufacture these
@@ -15194,19 +15263,14 @@ publish:
 static bool floodlight_entry_unfiltered()
 {
 #define FLOODLIGHT_STATUS_MAX (16 * 1024)
-        p8 status_text[512];
-        p8 status_line[32];
+#define FLOODLIGHT_STATUS_CHUNK 2048
+        p8 status_text[FLOODLIGHT_STATUS_MAX + 1];
         file_facts proc_facts;
         file_facts expected;
         file_facts status_facts;
         bipolar proc;
         bipolar status;
         bipolar got;
-        positive line_used = 0;
-        bool line_long = false;
-        bool ended = true;
-        bool saw_mode = false;
-        bool saw_count = false;
         positive total = 0;
 
         if (system_call_5(syscall(prctl), FLOODLIGHT_PR_GET_SECCOMP,
@@ -15252,73 +15316,27 @@ static bool floodlight_entry_unfiltered()
                 /* A seccomp errno action can claim a successful read without
                    writing the destination.  Clear every chunk and reject an
                    impossible byte count or an endless forged stream before
-                   any returned length is trusted for indexing. */
-                memory_fill(status_text, 0, sizeof(status_text));
-                got = system_read_retry((positive)status, status_text,
-                                        sizeof(status_text));
+                   any returned length is trusted for indexing.  The file is
+                   gathered whole, one byte past the most it may hold so a
+                   longer one is seen, and then read in one pass. */
+                positive chunk = sizeof(status_text) - total;
+
+                if (chunk > FLOODLIGHT_STATUS_CHUNK)
+                        chunk = FLOODLIGHT_STATUS_CHUNK;
+                memory_fill(status_text + total, 0, chunk);
+                got = system_read_retry((positive)status, status_text + total,
+                                        chunk);
                 if (got < 0)
                         goto finished;
                 if (!got)
                         break;
-                if ((positive)got > sizeof(status_text) ||
+                if ((positive)got > chunk ||
                     (positive)got > FLOODLIGHT_STATUS_MAX - total)
                         goto finished;
                 total += (positive)got;
-
-                for (positive at = 0; at < (positive)got; at++)
-                {
-                        p8 byte = status_text[at];
-
-                        if (byte != '\n')
-                        {
-                                ended = false;
-                                if (line_used < sizeof(status_line))
-                                        status_line[line_used++] = byte;
-                                else
-                                        line_long = true;
-                                continue;
-                        }
-
-                        positive name = 0;
-                        positive value;
-                        bool address_to seen = null;
-
-                        if (line_used >= 8 &&
-                            !memory_compare(status_line, "Seccomp:", 8))
-                        {
-                                name = 8;
-                                seen = address_of saw_mode;
-                        }
-                        else if (line_used >= 16 &&
-                                 !memory_compare(status_line,
-                                                 "Seccomp_filters:", 16))
-                        {
-                                name = 16;
-                                seen = address_of saw_count;
-                        }
-
-                        if (seen)
-                        {
-                                if (line_long || address_to seen)
-                                        goto finished;
-                                value = name;
-                                while (value < line_used &&
-                                       (status_line[value] == ' ' ||
-                                        status_line[value] == '\t'))
-                                        value++;
-                                if (value + 1 != line_used ||
-                                    status_line[value] != '0')
-                                        goto finished;
-                                address_to seen = true;
-                        }
-
-                        line_used = 0;
-                        line_long = false;
-                        ended = true;
-                }
         }
 
-        if (!ended || !saw_mode || !saw_count)
+        if (!floodlight_status_clear(status_text, total))
                 goto finished;
         system_close(status);
         return true;
@@ -15328,6 +15346,7 @@ finished:
                 system_close(proc);
         system_close(status);
         return false;
+#undef FLOODLIGHT_STATUS_CHUNK
 #undef FLOODLIGHT_STATUS_MAX
 }
 
