@@ -1739,6 +1739,18 @@ static void desktop_grid(int width, int height,
         least two screens of the tallest window there could be, because
         everything below counts backwards from the newest line.
 */
+/*
+        How wide the compositor's own console is cut: its window's columns, a
+        step at a time so a drag that widens it recuts it a few times rather
+        than once a column, and never wider than any window may be.
+*/
+#define CONSOLE_STRIDE_STEP 32u
+
+static unsigned int console_stride(unsigned int columns, unsigned int max_columns)
+{
+        return min(round_up(max(columns, 1u), CONSOLE_STRIDE_STEP), max_columns);
+}
+
 static void pane_ring(unsigned int max_columns, unsigned int max_rows,
                       unsigned int *stride, unsigned int *history,
                       unsigned long *bytes)
@@ -2057,7 +2069,12 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
         */
         if (columns)
         {
-                pane_ring(max_columns, max_rows, &stride, &history, &ring_bytes);
+                // The compositor's own window is cut for what it opens as,
+                // and console_recut cuts it again when it grows: nothing
+                // else has it mapped, so nothing else has to be told.
+                pane_ring(owned ? console_stride(min(columns, fit_columns), max_columns)
+                                : max_columns,
+                          max_rows, &stride, &history, &ring_bytes);
 
                 // The ring is cut for the ceiling; what opens is what fits.
                 columns = min(columns, fit_columns);
@@ -2149,7 +2166,10 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
                         so logging max_rows here understated each boot pane by
                         almost four times and hid about two MiB of live RAM.
                 */
-                pr_info("[moonwater canvas] " "window grid %ux%u, ring holds %ux%u (%lu KiB)\n", columns, rows, stride, history, bytes >> 10);
+                if (owned)
+                        pr_info("[moonwater canvas] " "kernel log grid %ux%u, ring cut to %ux%u (%lu KiB), recut as it grows\n", columns, rows, stride, history, bytes >> 10);
+                else
+                        pr_info("[moonwater canvas] " "window grid %ux%u, ring holds %ux%u (%lu KiB)\n", columns, rows, stride, history, bytes >> 10);
 
                 page->max_columns = max_columns;
                 page->max_rows = max_rows;
@@ -3809,12 +3829,92 @@ static void console_start(void)
         was started at. It is told here, through the same page a program would
         have been told through.
 */
+/*
+        The console grown wider than its ring, cut again for the width it has.
+
+        A program's ring is cut for the ceiling because the program has it
+        mapped and cannot be handed a larger one. This one is the
+        compositor's own and nothing maps it, so it is cut for the window it
+        opens as -- a quarter of the two megabytes a ceiling ring is -- and
+        cut again here, under desktop.lock, when the window grows past it.
+        The history is the ceiling's already, so every line keeps its slot
+        and moves over whole; the swap is under console_cells as well, which
+        every writer of the ring holds, a dying one included.
+
+        With no room for a wider ring the old one stays, and the emulator
+        wraps at its width (grid_take): a log narrower than its window, not a
+        write past the end.
+*/
+static void console_recut(struct pane *pane)
+{
+        unsigned int stride = console_stride(pane->columns, pane->max_columns);
+        unsigned long lines, bytes, flags;
+        struct window_cell *cells;
+        unsigned int *lengths;
+        unsigned int slot;
+        void *fresh, *old;
+
+        if (stride <= pane->stride)
+                return;
+
+        lines = WINDOW_PIXELS + (unsigned long)pane->history * stride *
+                                    sizeof(struct window_cell);
+        bytes = PAGE_ALIGN(lines + (unsigned long)pane->history * sizeof(unsigned int));
+
+        if (canvas_pane_bytes - pane->bytes + bytes > canvas_pane_budget())
+                return;
+
+        fresh = vzalloc(bytes);
+        if (!fresh)
+                return;
+
+        cells = fresh + WINDOW_PIXELS;
+        lengths = fresh + lines;
+
+        spin_lock_irqsave(&console_cells, flags);
+
+        old = pane->mapping;
+        memory_copy_apart(fresh, old, WINDOW_PIXELS);
+
+        for (slot = 0; slot < pane->history; slot++)
+        {
+                unsigned int length = min(pane->lengths[slot], pane->stride);
+
+                memory_copy_apart(cells + (unsigned long)slot * stride,
+                                  pane->cells + (unsigned long)slot * pane->stride,
+                                  (positive)length * sizeof(struct window_cell));
+                lengths[slot] = length;
+        }
+
+        ((struct window *)fresh)->stride = stride;
+        ((struct window *)fresh)->lines = (unsigned int)lines;
+        ((struct window *)fresh)->mapping = (unsigned int)bytes;
+
+        pane->mapping = fresh;
+        pane->cells = cells;
+        pane->lengths = lengths;
+        pane->stride = stride;
+        canvas_pane_bytes += bytes - pane->bytes;
+        pane->bytes = bytes;
+
+        if (window == old)
+                window = fresh;
+
+        spin_unlock_irqrestore(&console_cells, flags);
+
+        vfree(old);
+        pr_info("[moonwater canvas] " "kernel log ring recut to %ux%u (%lu KiB)\n",
+                stride, pane->history, bytes >> 10);
+}
+
 static void console_regrid(struct pane *pane)
 {
         unsigned long flags;
 
         if (pane != READ_ONCE(console_pane) || !pane->cells)
                 return;
+
+        console_recut(pane);
 
         spin_lock_irqsave(&console_cells, flags);
 

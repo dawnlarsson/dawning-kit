@@ -11959,6 +11959,7 @@ if not runs:
 if len(runs) >= 1:
     left, right = runs[0]
     top = next((y for y in range(h) if at((left + right) // 2, y) != bg), 0)
+    log_top = top
 
     #       Every row of the log starts at the left.
     #
@@ -12629,6 +12630,48 @@ if runs:
                 "%d%% of the left column, %d%% of the right" % (at_left, at_right),
                 "yes"))
 
+#       The kernel log's ring is cut for the window it opens as and cut again
+#       when the window grows past it, since nothing maps it. Last, because a
+#       click on its titlebar takes the focus. Filled to the screen, the log
+#       is recut about three times as wide and still starts every row at the
+#       margin: the lines moved over whole and the emulator wraps at the new
+#       width. The serial side is read with the rest below.
+if runs:
+    left, right = runs[0]
+    moveto(left + 30, log_top + 9)
+    for _ in range(2):
+        send([{"type": "btn", "data": {"down": True, "button": "left"}}])
+        time.sleep(0.08)
+        send([{"type": "btn", "data": {"down": False, "button": "left"}}])
+        time.sleep(0.12)
+    time.sleep(1.0)
+    shot("log-filled", 0.5)
+    fw, fh, fpx = load("log-filled")
+
+    def filled_lit(x, y):
+        o = (y * fw + x) * 3
+        return fpx[o] + fpx[o + 1] + fpx[o + 2] > 180
+
+    starts = []
+    for row in range(3, 26):
+        band = range(24 + row * 16, min(24 + row * 16 + 16, fh))
+        first = next((x for x in range(2, fw // 2)
+                      if any(filled_lit(x, y) for y in band)), None)
+        if first is not None:
+            starts.append(first)
+    #   Filled, the window is what covers the right half of the screen: a
+    #   log line is rarely half a screen long, so this asks the window, not
+    #   the text in it.
+    row_y = fh // 2
+    covering = sum(1 for x in range(fw // 2, fw - 8)
+                   if tuple(fpx[(row_y * fw + x) * 3:(row_y * fw + x) * 3 + 3]) != bg)
+    out.append(("the log filled to the screen starts at the margin",
+                "yes" if starts and sum(x < 28 for x in starts) >= len(starts) - 4
+                else str(starts), "yes"))
+    out.append(("and covers the screen",
+                "yes" if covering * 10 >= (fw // 2 - 8) * 9 else
+                "%d of %d columns" % (covering, fw // 2 - 8), "yes"))
+
 try:
     serial = open(work + "/serial", "rb").read().lower()
 except OSError:
@@ -12721,6 +12764,15 @@ out.append(("terminal ring is cut for the ceiling",
 held = [(int(a), int(b)) for a, b in re.findall(rb"ring held (\d+) of (\d+) kib", serial)]
 out.append(("a closed terminal held a small part of its ring",
             "yes" if held and all(a * 4 <= b for a, b in held) else str(held), "yes"))
+
+#       The kernel log's ring is cut for its own window, and the fill above
+#       recut it. Cut for the ceiling it held about 2 MiB from boot on.
+cut = re.findall(rb"kernel log grid \d+x\d+, ring cut to (\d+)x\d+ \((\d+) kib\)", serial)
+recut = [int(w) for w in re.findall(rb"kernel log ring recut to (\d+)x", serial)]
+out.append(("the kernel log's ring is cut for its window",
+            "yes" if cut and all(int(k) <= 640 for _, k in cut) else str(cut), "yes"))
+out.append(("and recut for the screen it was filled to",
+            "yes" if runs and recut and max(recut) >= 300 else str(recut), "yes"))
 
 for name, marker in (("no protection fault", b"general protection fault"),
                      ("no oops", b"oops:"),
