@@ -201,6 +201,10 @@ typedef struct
         shell_mark token_text;
         b32 wanted, filled, taken;
         positive used, names_used;
+        // The last parse ran out of tokens where a list reads its next
+        // command, and what the lines since then may take at most.
+        b32 open_list;
+        positive open_nodes, open_words, open_redirects;
 } parse_frame;
 
 /* Live marks and saved marks intentionally have one shape. One assignment is
@@ -220,6 +224,7 @@ static parse_frame parse_context = {.node = 1};
 #define here_taken parse_context.taken
 #define here_used parse_context.used
 #define here_names_used parse_context.names_used
+#define parse_open_list parse_context.open_list
 
 /*
         Here-documents, which arrive after the line that asked for them.
@@ -326,6 +331,7 @@ fn parse_reset()
         here_used = 0;
         here_names_used = 0;
         parse_here_capped = false;
+        parse_open_list = false;
 }
 
 bool parse_here_limit_exceeded()
@@ -2675,6 +2681,9 @@ static b32 parse_and_or()
         return index;
 }
 
+/* Whether the list that stopped last stopped because the tokens ran out. */
+static bool parse_list_ran_out;
+
 static b32 parse_list()
 {
         b32 index = 0;
@@ -2767,6 +2776,8 @@ static b32 parse_list()
                 }
         }
 
+        parse_list_ran_out = parse_look(0)->kind == PT_END;
+
         if (!head)
                 return 0;
 
@@ -2804,8 +2815,14 @@ b32 parse_program()
         parse_redirect_used = parse_redirect_base;
         here_taken = 0;
         shell_parse_generation++;
+        parse_list_ran_out = false;
 
         root = parse_list();
+
+        parse_open_list = parse_state == PARSE_INCOMPLETE && parse_list_ran_out;
+        parse_context.open_nodes = 0;
+        parse_context.open_words = 0;
+        parse_context.open_redirects = 0;
 
         if (parse_state)
                 return 0;
@@ -2817,6 +2834,107 @@ b32 parse_program()
         }
 
         return root;
+}
+
+/*
+        Whether the line just fed can only carry on the list the last parse
+        ran out of tokens in, so that parsing everything again would run out
+        in the same place and say nothing new.
+
+        The parser starts from the first token of a construct every time, so
+        a function or an if block of n lines was parsed n times over, which
+        made reading one quadratic in its length: a function of 150 lines
+        took 6.6 million cycles to read, where a flat script of the same
+        lines took under one. The last parse stopped inside a list, and a
+        line that is only simple commands -- words that are not reserved and
+        not a=(...), redirections with their words, and ; & | && || |& each
+        after a word -- can only put more commands in that list, which then
+        runs out of tokens where it did before. Anything else is parsed as it
+        was, as is every line while an alias is defined, since an alias can
+        become any of those. So is the line that could take the last free
+        node, word or redirection, because running out of those is a syntax
+        error that has to be told on the line that caused it: each skipped
+        line counts the most it could take.
+*/
+static bool parse_line_continues_list(positive from)
+{
+        positive words = 0, redirects = 0, controls = 0;
+        b32 last = 0;
+        b32 held = parse_position;
+
+        if (!parse_open_list || parse_state != PARSE_INCOMPLETE ||
+            parse_pending_used || alias_count)
+                return false;
+
+        for (positive at = from; at < parse_token_count; at++)
+        {
+                parse_token address_to token = parse_tokens + at;
+
+                if (token->kind == PT_WORD)
+                {
+                        positive name_length = 0;
+                        p8 assignment = shell_assignment_kind(token->text,
+                                                              address_of name_length);
+                        b32 keyword;
+
+                        parse_position = (b32)at;
+                        keyword = parse_keyword(0);
+                        parse_position = held;
+
+                        if (keyword ||
+                            (token->length == 8 &&
+                             !memory_compare(token->text, "function", 8)) ||
+                            (assignment &&
+                             string_is(token->text + name_length + assignment, '(')))
+                                return false;
+                        words++;
+                        last = 1;
+                }
+                else if (token->kind == PT_OP &&
+                         (token->op == OP_AND_IF || token->op == OP_OR_IF ||
+                          token->op == OP_SEMI || token->op == OP_PIPE ||
+                          token->op == OP_AMP || token->op == OP_PIPEAND))
+                {
+                        if (last != 1)
+                                return false;
+                        controls++;
+                        last = 3;
+                }
+                else if (token->kind == PT_OP && token->op != OP_DLESS &&
+                         (token->op == OP_DGREAT || token->op == OP_LESSAND ||
+                          token->op == OP_GREATAND || token->op == OP_LESSGREAT ||
+                          token->op == OP_CLOBBER || token->op == OP_LESS ||
+                          token->op == OP_GREAT || token->op == OP_ANDGREAT ||
+                          token->op == OP_ANDDGREAT || token->op == OP_HERESTRING))
+                {
+                        if (last == 2)
+                                return false;
+                        redirects++;
+                        last = 2;
+                }
+                else if (token->kind == PT_NEWLINE)
+                {
+                        if (last == 2)
+                                return false;
+                        last = 0;
+                }
+                else
+                        return false;
+        }
+
+        if (last == 2)
+                return false;
+
+        parse_context.open_nodes += 3 * (words + redirects + controls) + 3;
+        parse_context.open_words += words;
+        parse_context.open_redirects += redirects;
+
+        if (parse_node_used + parse_context.open_nodes + 2 >= parse_node_top ||
+            parse_word_used + parse_context.open_words + 2 >= parse_word_top ||
+            parse_redirect_used + parse_context.open_redirects + 2 >= parse_redirect_top)
+                return false;
+
+        return true;
 }
 
 /* Retained bodies own independent ranges in the existing arenas. Occupancy

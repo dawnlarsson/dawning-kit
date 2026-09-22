@@ -1839,6 +1839,7 @@ static fn shell_syntax_fatal(b32 status, bool fatal)
 static fn run_line_inner(string_address line)
 {
         string_address waiting = parse_here_open();
+        positive fed_from;
         b32 root;
 
         // What a job made of a loop or a group is listed under: the words are
@@ -1858,6 +1859,8 @@ static fn run_line_inner(string_address line)
         if (exec_line_aborted())
                 return;
 
+        fed_from = parse_token_count;
+
         if (waiting)
                 parse_here_line(line);
         else if (!parse_feed(line))
@@ -1875,6 +1878,12 @@ static fn run_line_inner(string_address line)
         }
 
         if (parse_here_open())
+        {
+                shell_more = true;
+                return;
+        }
+
+        if (!waiting && parse_line_continues_list(fed_from))
         {
                 shell_more = true;
                 return;
