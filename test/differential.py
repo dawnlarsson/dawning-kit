@@ -28379,6 +28379,189 @@ int main(void)
         return ran.returncode
 
 
+def harness_tls_chains(argv):
+    """wget's certificate verdict against openssl verify's, chain by chain.
+
+    tls_verify_chain and the CertificateVerify check were reached by no lane:
+    CHECK_net proves the curve and RSA arithmetic and the https bench trusts
+    one fixed chain. This builds the shell trusting a P-384 root it makes
+    (TLS_BENCH_ANCHOR), then walks a grammar of chains -- the leaf's key
+    (P-256, P-384, RSA-2048) against every mutation below -- serving each
+    from a loopback TLS 1.3 server and asking wget for it, and asks openssl
+    verify the same question with the same root, intermediates, name and
+    purpose. The two verdicts have to agree, except where this tree refuses
+    by policy what openssl accepts, which DELIBERATE names with its reason.
+    """
+    import datetime
+    import shutil
+    import socket
+    import ssl
+    import subprocess
+    import tempfile
+    import threading
+    parser = argparse.ArgumentParser(prog="differential.py --harness tls_chains")
+    parser.add_argument("--cc", default=os.environ.get("CC", "gcc"))
+    args = parser.parse_args(argv)
+    if platform.system() != "Linux" or not shutil.which("openssl"):
+        print("tls chains: NOT RUN -- needs Linux and openssl")
+        return 2
+
+    # (name, depth, leaf extensions, per-certificate changes)
+    good_leaf = ("basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n"
+                 "extendedKeyUsage=serverAuth\nsubjectAltName=IP:127.0.0.1\n")
+    mutations = (
+        ("good", 2, good_leaf, {}),
+        ("under the root", 0, good_leaf, {}),
+        ("one intermediate", 1, good_leaf, {}),
+        ("root served too", 2, good_leaf, {"serve_root": True}),
+        ("leaf expired", 2, good_leaf, {"leaf_dates": (-400, -1)}),
+        ("leaf not yet valid", 2, good_leaf, {"leaf_dates": (2, 90)}),
+        ("intermediate expired", 2, good_leaf, {"second_dates": (-400, -1)}),
+        ("name is another address", 2, good_leaf.replace("IP:127.0.0.1", "IP:127.0.0.2"), {}),
+        ("name is only a DNS name", 2, good_leaf.replace("IP:127.0.0.1", "DNS:localhost"), {}),
+        ("no subject alternative name", 2, good_leaf.replace("subjectAltName=IP:127.0.0.1\n", ""), {}),
+        ("intermediate is not a CA", 2, good_leaf, {"second_ca": "CA:FALSE"}),
+        ("path length exceeded", 2, good_leaf, {"first_pathlen": 0}),
+        ("leaf for clients only", 2, good_leaf.replace("serverAuth", "clientAuth"), {}),
+        ("leaf may only sign certificates", 2, good_leaf.replace("digitalSignature", "keyCertSign"), {}),
+        ("a stranger's root", 2, good_leaf, {"stranger": True}),
+        ("an intermediate left out", 2, good_leaf, {"skip_second": True}),
+        ("leaf is a CA", 2, good_leaf.replace("CA:FALSE", "CA:TRUE"), {}),
+    )
+    keys = (("P-256", ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1"]),
+            ("P-384", ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:secp384r1"]),
+            ("RSA-2048", ["-newkey", "rsa:2048"]))
+    #       This tree's policy where it is stricter than openssl, on purpose.
+    DELIBERATE = {
+        "no subject alternative name": "a name is taken from subjectAltName only, never the CN",
+        "leaf is a CA": "a certificate that says CA:TRUE is not an end entity (tls_leaf_authorized)",
+    }
+
+    checks = Checks()
+    with tempfile.TemporaryDirectory(prefix="tls-chains-") as temporary:
+        work = Path(temporary)
+
+        def openssl(*arguments):
+            subprocess.run(["openssl", *arguments], check=True, cwd=work,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def when(days):
+            moment = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)
+            return moment.strftime("%Y%m%d%H%M%SZ")
+
+        def issue(name, key, subject, issuer, extensions, dates=(-1, 90)):
+            (work / (name + ".ext")).write_text(extensions)
+            openssl("req", "-new", *key, "-nodes", "-keyout", name + ".key", "-out",
+                    name + ".csr", "-subj", subject)
+            openssl("x509", "-req", "-in", name + ".csr", "-CA", issuer + ".pem", "-CAkey",
+                    issuer + ".key", "-set_serial", str(abs(hash(name)) % (1 << 62)),
+                    "-not_before", when(dates[0]), "-not_after", when(dates[1]),
+                    "-out", name + ".pem", "-sha384", "-extfile", name + ".ext")
+
+        p384 = keys[1][1]
+        for root in ("root", "stranger"):
+            openssl("req", "-x509", *p384, "-nodes", "-keyout", root + ".key", "-out",
+                    root + ".pem", "-days", "3650", "-sha384", "-subj", "/CN=tls chains root",
+                    "-addext", "basicConstraints=critical,CA:TRUE",
+                    "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+        spki = subprocess.run(["openssl", "pkey", "-in", str(work / "root.key"), "-pubout",
+                               "-outform", "DER"], check=True, capture_output=True).stdout
+        point = spki[-97:]
+        (work / "anchor.inc").write_text("".join(
+            "static const p8 tls_bench_anchor_%s[48] = {%s};\n" % (
+                axis, ", ".join("0x%02x" % b for b in coordinate))
+            for axis, coordinate in (("x", point[1:49]), ("y", point[49:97]))))
+        built = subprocess.run(
+            [args.cc, "-O2", "-static", "-nostdlib", "-nostartfiles", "-fno-stack-protector",
+             "-fno-builtin", "-march=x86-64", "-w", "-T", "src/build/spark.ld", "-Wl,-e,_start",
+             "-Wl,--build-id=none", "-Wl,--no-warn-rwx-segments",
+             '-DTLS_BENCH_ANCHOR="%s"' % (work / "anchor.inc"), "-o", str(work / "shell"),
+             "programs/shell.c"], cwd=HARNESS_ROOT, capture_output=True, text=True)
+        if built.returncode:
+            print(built.stderr[-3000:])
+            return 1
+        (work / "wget").symlink_to(work / "shell")
+
+        for mutation, depth, leaf_ext, change in mutations:
+            for key_name, key in keys:
+                top = "stranger" if change.get("stranger") else "root"
+                chain = []
+                issuer = top
+                if depth >= 1:
+                    issue("first", p384, "/CN=tls chains first", top,
+                          "basicConstraints=critical,CA:TRUE,pathlen:%d\n"
+                          "keyUsage=critical,keyCertSign,cRLSign\n" % change.get("first_pathlen", 1))
+                    chain.insert(0, "first")
+                    issuer = "first"
+                if depth >= 2:
+                    issue("second", p384, "/CN=tls chains second", "first",
+                          "basicConstraints=critical,%s\nkeyUsage=critical,keyCertSign,cRLSign\n"
+                          % change.get("second_ca", "CA:TRUE,pathlen:0"),
+                          change.get("second_dates", (-1, 90)))
+                    chain.insert(0, "second")
+                    issuer = "second"
+                issue("leaf", key, "/CN=127.0.0.1", issuer, leaf_ext,
+                      change.get("leaf_dates", (-1, 90)))
+                served = [c for c in chain if not (change.get("skip_second") and c == "second")]
+                if change.get("serve_root"):
+                    served.append(top)
+                (work / "chain.pem").write_text("".join(
+                    (work / (n + ".pem")).read_text() for n in ["leaf"] + served))
+                (work / "untrusted.pem").write_text("".join(
+                    (work / (n + ".pem")).read_text() for n in served) or "")
+                verify = ["openssl", "verify", "-CAfile", "root.pem", "-purpose", "sslserver",
+                          "-verify_ip", "127.0.0.1"]
+                if served:
+                    verify += ["-untrusted", "untrusted.pem"]
+                openssl_ok = subprocess.run(verify + ["leaf.pem"], cwd=work,
+                                            capture_output=True).returncode == 0
+
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                context.minimum_version = ssl.TLSVersion.TLSv1_3
+                context.load_cert_chain(work / "chain.pem", work / "leaf.key")
+                context.set_ecdh_curve("prime256v1")
+                listener = socket.socket()
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+                listener.settimeout(20)
+
+                def serve():
+                    try:
+                        raw, _ = listener.accept()
+                        raw.settimeout(20)
+                        with context.wrap_socket(raw, server_side=True) as tls:
+                            head = b""
+                            while b"\r\n\r\n" not in head:
+                                got = tls.recv(4096)
+                                if not got:
+                                    return
+                                head += got
+                            tls.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n"
+                                        b"Connection: close\r\n\r\ntrusted")
+                    except (OSError, ssl.SSLError):
+                        pass
+
+                server = threading.Thread(target=serve, daemon=True)
+                server.start()
+                fetched = subprocess.run(
+                    [str(work / "wget"), "-q", "-O", "-", "https://127.0.0.1:%d/" %
+                     listener.getsockname()[1]], capture_output=True, timeout=30,
+                    env={"PATH": "/usr/bin:/bin", "HOME": str(work)})
+                server.join(25)
+                listener.close()
+                ours_ok = fetched.returncode == 0 and fetched.stdout.startswith(b"truste")
+                name = "%s with a %s leaf" % (mutation, key_name)
+                if mutation in DELIBERATE and openssl_ok and not ours_ok:
+                    checks(True, name)
+                    continue
+                checks(ours_ok == openssl_ok,
+                       "%s: openssl %s it and wget %s it (%s)" % (
+                           name, "accepts" if openssl_ok else "refuses",
+                           "accepts" if ours_ok else "refuses",
+                           fetched.stderr.decode(errors="replace").strip()[:200]))
+    return checks.verdict("tls chains", "tls-chains")
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -28404,6 +28587,7 @@ HARNESS_CHECKS = {
     "objtool_shape": harness_objtool_shape,
     "moonwater_cli": harness_moonwater_cli,
     "machine_reap": harness_machine_reap,
+    "tls_chains": harness_tls_chains,
 }
 
 

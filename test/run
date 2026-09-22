@@ -3125,7 +3125,20 @@ lane_socket() { freestanding_checks_lane socket socket; }
 #       `unshare -rn` and the same binary configures a real interface instead,
 #       which is how the mutation path is actually covered.
 #
-lane_net() { freestanding_checks_lane net net; }
+#       tls_chains puts wget's certificate verdicts against openssl verify's
+#       over a grammar of generated chains, served from loopback.
+lane_net()
+{
+        freestanding_checks_lane net net
+        net_outcome=$?
+        python3 test/differential.py --harness tls_chains
+        case $? in
+        0) ;;
+        2) [ "$net_outcome" != 0 ] || net_outcome=2 ;;
+        *) net_outcome=1 ;;
+        esac
+        return "$net_outcome"
+}
 lane_bowl() { freestanding_checks_lane bowl bowl; }
 lane_tar() { freestanding_checks_lane tar tar; }
 lane_zstd() { freestanding_checks_lane zstd zstd; }

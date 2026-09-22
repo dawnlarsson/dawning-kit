@@ -5675,9 +5675,10 @@ static COLD bool tls_anchor_key(const tls_anchor address_to anchor,
 }
 
 /* TLS_BENCH_ANCHOR names a file holding tls_bench_anchor_x and _y, the
-   P-384 root that test/differential.py --harness https_bench generates for a
-   loopback server. Only that harness defines it; build.sh never does, so a
-   shipped binary trusts exactly the anchors in anchors.inc. */
+   P-384 root that test/differential.py's https_bench and tls_chains harnesses
+   generate for a loopback server, trusted served or not. Only they define it;
+   build.sh never does, so a shipped binary trusts exactly the anchors in
+   anchors.inc. */
 #ifdef TLS_BENCH_ANCHOR
 #include TLS_BENCH_ANCHOR
 #endif
@@ -5822,6 +5823,18 @@ static COLD bool tls_anchor_verifies(tls_cert address_to child)
 
         if (!child->issuer || !child->issuer_length)
                 return false;
+#ifdef TLS_BENCH_ANCHOR
+        {
+                tls_cert root;
+
+                memory_fill(address_of root, 0, sizeof(root));
+                root.curve = 2;
+                memory_copy(root.qx, tls_bench_anchor_x, 48);
+                memory_copy(root.qy, tls_bench_anchor_y, 48);
+                if (tls_verify_one(child, address_of root))
+                        return true;
+        }
+#endif
         crypto_sha256_of(child->issuer, child->issuer_length, digest);
         for (positive i = 0; i < array_count(tls_anchors); i++)
         {
