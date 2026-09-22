@@ -3289,39 +3289,224 @@ typedef struct
 /* Resolve and consume one option without diagnostics or application effects.
    On a missing value the match still identifies the option, so callers can
    preserve their pre-error state transitions. Explicit empty values are
-   non-null; optional short and long spellings can have different arities. */
-static b32 argument_option_take(argument_cursor address_to cursor,
-    const argument_option address_to options, bool prefix,
-    argument_match address_to match)
-{
-        b32 token = argument_next(cursor);
-        *match = (argument_match){};
-        if (token == ARGUMENT_END || token == ARGUMENT_OPERAND)
-        {
-                match->value = cursor->word;
-                return token;
-        }
-        const argument_option address_to option = cursor->long_option
-            ? argument_option_long(options, cursor->word + 2, cursor->name_length, prefix)
-            : argument_option_short(options, (p8)token);
-        match->letter = cursor->long_option ? (option ? option->letter : 0) : (p8)token;
-        if (!option || (!cursor->long_option && (option->mode & ARGUMENT_LONG_ONLY)))
-                return ARGUMENT_UNKNOWN;
-        match->mode = option->mode;
-        match->selection = option->selection;
-        match->optional = (option->mode & ARGUMENT_OPTIONAL) ||
-            (cursor->long_option && (option->mode & ARGUMENT_LONG_OPTIONAL));
-        bool required = (option->mode & ARGUMENT_REQUIRED) && !match->optional;
-        if (cursor->attached && !match->optional && !required)
-                return ARGUMENT_UNEXPECTED;
-        if (required || match->optional)
-        {
-                match->value = argument_value(cursor, required);
-                if (required && !match->value)
-                        return ARGUMENT_MISSING;
-        }
-        return match->letter;
-}
+   non-null; optional short and long spellings can have different arities.
+
+   Most tools read their arguments through this, a hundred and fifty tables
+   of them, and it was four functions: argument_next for the token, a scan of
+   the table calling string_first_of on every row that groups short letters
+   or string_compare_max on every long name, and argument_value. Here they
+   are one body on all three machines, the rows walked sixteen bytes a turn
+   and their letters and names compared in place: ls -l passes forty three
+   letters and a group before it finds l in Cglmox. */
+b32 argument_option_take(argument_cursor address_to cursor,
+                         const argument_option address_to options, bool prefix,
+                         argument_match address_to match);
+
+_Static_assert(sizeof(argument_cursor) == 64 &&
+               __builtin_offsetof(argument_cursor, argc) == 0 &&
+               __builtin_offsetof(argument_cursor, argv) == 8 &&
+               __builtin_offsetof(argument_cursor, at) == 16 &&
+               __builtin_offsetof(argument_cursor, letters) == 24 &&
+               __builtin_offsetof(argument_cursor, word) == 32 &&
+               __builtin_offsetof(argument_cursor, operands_only) == 40 &&
+               __builtin_offsetof(argument_cursor, long_option) == 41 &&
+               __builtin_offsetof(argument_cursor, attached) == 48 &&
+               __builtin_offsetof(argument_cursor, name_length) == 56,
+               "argument_option_take reads the cursor at these offsets");
+_Static_assert(sizeof(argument_option) == 16 &&
+               __builtin_offsetof(argument_option, letter) == 8 &&
+               __builtin_offsetof(argument_option, mode) == 9 &&
+               __builtin_offsetof(argument_option, selection) == 10,
+               "argument_option_take reads a row at these offsets");
+_Static_assert(sizeof(argument_match) == 16 &&
+               __builtin_offsetof(argument_match, value) == 0 &&
+               __builtin_offsetof(argument_match, selection) == 8 &&
+               __builtin_offsetof(argument_match, letter) == 10 &&
+               __builtin_offsetof(argument_match, mode) == 11 &&
+               __builtin_offsetof(argument_match, optional) == 12,
+               "argument_option_take writes the match at these offsets");
+_Static_assert(ARGUMENT_END == 0 && ARGUMENT_OPERAND == 256 && ARGUMENT_UNKNOWN == -1 &&
+               ARGUMENT_MISSING == -2 && ARGUMENT_UNEXPECTED == -3 &&
+               ARGUMENT_REQUIRED == 1 && ARGUMENT_OPTIONAL == 2 &&
+               ARGUMENT_LONG_ONLY == 4 && ARGUMENT_LONG_OPTIONAL == 8,
+               "argument_option_take spells these numbers");
+
+#if X64
+__asm__(
+    ASM_FUNC(argument_option_take)
+    "push %rbx\n   push %r12\n   push %r13\n   push %r14\n"
+    "mov %rsi, %r12\n   mov %rcx, %r13\n   mov %edx, %r14d\n"
+    "xorps %xmm0, %xmm0\n   movups %xmm0, (%r13)\n"
+    // The next letter of a cluster, or the next word.
+    "1:  mov 24(%rdi), %rax\n   test %rax, %rax\n   jz 2f\n   movzbl (%rax), %ebx\n   test %ebx, %ebx\n   jz 2f\n"
+    "inc %rax\n   mov %rax, 24(%rdi)\n   jmp 40f\n"
+    "2:  xor %eax, %eax\n   mov %rax, 24(%rdi)\n   mov %rax, 48(%rdi)\n   movb $0, 41(%rdi)\n"
+    "mov 16(%rdi), %rax\n   cmp (%rdi), %rax\n   jae 90f\n"
+    "mov 8(%rdi), %rdx\n   mov (%rdx,%rax,8), %rdx\n   inc %rax\n   mov %rax, 16(%rdi)\n   mov %rdx, 32(%rdi)\n"
+    "cmpb $0, 40(%rdi)\n   jne 91f\n   cmpb $45, (%rdx)\n   jne 91f\n   movzbl 1(%rdx), %eax\n   test %eax, %eax\n   jz 91f\n"
+    "cmp $45, %eax\n   je 3f\n   inc %rdx\n   mov %rdx, 24(%rdi)\n   jmp 1b\n"
+    "3:  cmpb $0, 2(%rdx)\n   jne 4f\n   movb $1, 40(%rdi)\n   jmp 1b\n"
+    // A long name, up to an = or its end.
+    "4:  lea 2(%rdx), %r8\n   mov %r8, %r9\n"
+    "5:  movzbl (%r9), %eax\n   test %eax, %eax\n   jz 7f\n   cmp $61, %eax\n   je 6f\n   inc %r9\n   jmp 5b\n"
+    "6:  lea 1(%r9), %rax\n   mov %rax, 48(%rdi)\n"
+    "7:  movb $1, 41(%rdi)\n   mov %r9, %r10\n   sub %r8, %r10\n   mov %r10, 56(%rdi)\n"
+    // Its row: the one it spells whole, or with prefix the only one it begins.
+    // A row costs one branch back unless its first byte agrees.
+    "xor %ebx, %ebx\n   test %r10, %r10\n   jz 20f\n   mov %r12, %rdx\n   movzbl (%r8), %r9d\n"
+    "10: mov (%rdx), %r11\n   test %r11, %r11\n   jz 20f\n   cmpb %r9b, (%r11)\n   je 15f\n"
+    "13: add $16, %rdx\n   jmp 10b\n"
+    "15: cmpb $0, 8(%rdx)\n   je 13b\n   mov $1, %ecx\n   cmp %r10, %rcx\n   jae 16f\n"
+    "11: movzbl (%r11,%rcx), %eax\n   cmpb %al, (%r8,%rcx)\n   jne 13b\n   inc %rcx\n   cmp %r10, %rcx\n   jb 11b\n"
+    "16: cmpb $0, (%r11,%r10)\n   je 12f\n   test %r14b, %r14b\n   jz 13b\n   test %rbx, %rbx\n   jnz 14f\n"
+    "mov %rdx, %rbx\n   jmp 13b\n"
+    "12: mov %rdx, %rbx\n   jmp 20f\n"
+    "14: xor %ebx, %ebx\n"
+    "20: test %rbx, %rbx\n   jz 92f\n   movzbl 8(%rbx), %eax\n   mov %al, 10(%r13)\n   jmp 50f\n"
+    // A short letter: its own row, or a row that groups it.
+    // A lettered row that is not it costs one branch back; a grouping row
+    // is searched out of the way.
+    "40: mov %bl, 10(%r13)\n   mov %r12, %rdx\n"
+    "41: mov (%rdx), %r11\n   test %r11, %r11\n   jz 92f\n   movzbl 8(%rdx), %eax\n   cmp %ebx, %eax\n   je 44f\n"
+    "test %eax, %eax\n   jz 42f\n"
+    "43: add $16, %rdx\n   jmp 41b\n"
+    "42: movzbl (%r11), %eax\n   test %eax, %eax\n   jz 43b\n   cmp %ebx, %eax\n   je 44f\n   inc %r11\n   jmp 42b\n"
+    "44: mov %rdx, %rbx\n   testb $4, 9(%rbx)\n   jnz 92f\n"
+    // Its mode, whether its value is optional or required, and the value.
+    "50: movzbl 9(%rbx), %eax\n   mov %al, 11(%r13)\n   movzwl 10(%rbx), %edx\n   mov %dx, 8(%r13)\n"
+    "xor %edx, %edx\n   test $2, %al\n   jnz 51f\n   cmpb $0, 41(%rdi)\n   je 52f\n   test $8, %al\n   jz 52f\n"
+    "51: mov $1, %edx\n"
+    "52: mov %dl, 12(%r13)\n   xor %r8d, %r8d\n   test %edx, %edx\n   jnz 53f\n   test $1, %al\n   jz 53f\n   mov $1, %r8d\n"
+    "53: cmpq $0, 48(%rdi)\n   je 54f\n   test %edx, %edx\n   jnz 54f\n   test %r8d, %r8d\n   jnz 54f\n"
+    "mov $-3, %eax\n   jmp 99f\n"
+    "54: mov %edx, %eax\n   or %r8d, %eax\n   jz 60f\n"
+    "cmpb $0, 41(%rdi)\n   je 55f\n   mov 48(%rdi), %rax\n   test %rax, %rax\n   jnz 57f\n   jmp 56f\n"
+    "55: mov 24(%rdi), %rax\n   test %rax, %rax\n   jz 56f\n   cmpb $0, (%rax)\n   je 56f\n   movq $0, 24(%rdi)\n   jmp 57f\n"
+    "56: xor %eax, %eax\n   test %r8d, %r8d\n   jz 57f\n   mov 16(%rdi), %rdx\n   cmp (%rdi), %rdx\n   jae 57f\n"
+    "mov 8(%rdi), %rax\n   mov (%rax,%rdx,8), %rax\n   inc %rdx\n   mov %rdx, 16(%rdi)\n"
+    "57: mov %rax, (%r13)\n   test %r8d, %r8d\n   jz 60f\n   test %rax, %rax\n   jnz 60f\n   mov $-2, %eax\n   jmp 99f\n"
+    "60: movzbl 10(%r13), %eax\n   jmp 99f\n"
+    "90: mov 32(%rdi), %rax\n   mov %rax, (%r13)\n   xor %eax, %eax\n   jmp 99f\n"
+    "91: mov %rdx, (%r13)\n   mov $256, %eax\n   jmp 99f\n"
+    "92: mov $-1, %eax\n"
+    "99: pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(argument_option_take)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(argument_option_take)
+    "stp xzr, xzr, [x3]\n"
+    // The next letter of a cluster, or the next word.
+    "1:  ldr x4, [x0, #24]\n   cbz x4, 2f\n   ldrb w5, [x4]\n   cbz w5, 2f\n   add x4, x4, #1\n   str x4, [x0, #24]\n   b 40f\n"
+    "2:  str xzr, [x0, #24]\n   str xzr, [x0, #48]\n   strb wzr, [x0, #41]\n"
+    "ldp x6, x7, [x0]\n   ldr x4, [x0, #16]\n   cmp x4, x6\n   b.hs 90f\n"
+    "ldr x6, [x7, x4, lsl #3]\n   add x4, x4, #1\n   str x4, [x0, #16]\n   str x6, [x0, #32]\n"
+    "ldrb w5, [x0, #40]\n   cbnz w5, 91f\n   ldrb w5, [x6]\n   cmp w5, #45\n   b.ne 91f\n   ldrb w5, [x6, #1]\n   cbz w5, 91f\n"
+    "cmp w5, #45\n   b.eq 3f\n   add x6, x6, #1\n   str x6, [x0, #24]\n   b 1b\n"
+    "3:  ldrb w5, [x6, #2]\n   cbnz w5, 4f\n   mov w5, #1\n   strb w5, [x0, #40]\n   b 1b\n"
+    // A long name, up to an = or its end.
+    "4:  add x8, x6, #2\n   mov x9, x8\n"
+    "5:  ldrb w5, [x9]\n   cbz w5, 7f\n   cmp w5, #61\n   b.eq 6f\n   add x9, x9, #1\n   b 5b\n"
+    "6:  add x5, x9, #1\n   str x5, [x0, #48]\n"
+    "7:  mov w5, #1\n   strb w5, [x0, #41]\n   sub x10, x9, x8\n   str x10, [x0, #56]\n"
+    // Its row: the one it spells whole, or with prefix the only one it begins.
+    // A row costs one branch back unless its first byte agrees.
+    "mov x12, #0\n   cbz x10, 20f\n   mov x13, x1\n   ldrb w15, [x8]\n"
+    "10: ldr x11, [x13]\n   cbz x11, 20f\n   ldrb w5, [x11]\n   cmp w5, w15\n   b.eq 15f\n"
+    "13: add x13, x13, #16\n   b 10b\n"
+    "15: ldrb w5, [x13, #8]\n   cbz w5, 13b\n   mov x14, #1\n   cmp x14, x10\n   b.hs 16f\n"
+    "11: ldrb w5, [x11, x14]\n   ldrb w6, [x8, x14]\n   cmp w5, w6\n   b.ne 13b\n   add x14, x14, #1\n   cmp x14, x10\n   b.lo 11b\n"
+    "16: ldrb w5, [x11, x10]\n   cbz w5, 12f\n   cbz w2, 13b\n   cbnz x12, 14f\n   mov x12, x13\n   b 13b\n"
+    "12: mov x12, x13\n   b 20f\n"
+    "14: mov x12, #0\n"
+    "20: cbz x12, 92f\n   ldrb w5, [x12, #8]\n   strb w5, [x3, #10]\n   b 50f\n"
+    // A short letter: its own row, or a row that groups it.
+    "40: strb w5, [x3, #10]\n   mov x13, x1\n"
+    "41: ldr x11, [x13]\n   cbz x11, 92f\n   ldrb w6, [x13, #8]\n   cmp w6, w5\n   b.eq 44f\n   cbz w6, 42f\n"
+    "43: add x13, x13, #16\n   b 41b\n"
+    "42: ldrb w6, [x11]\n   cbz w6, 43b\n   cmp w6, w5\n   b.eq 44f\n   add x11, x11, #1\n   b 42b\n"
+    "44: mov x12, x13\n   ldrb w6, [x12, #9]\n   tbnz w6, #2, 92f\n"
+    // Its mode, whether its value is optional or required, and the value.
+    "50: ldrb w5, [x12, #9]\n   strb w5, [x3, #11]\n   ldrh w6, [x12, #10]\n   strh w6, [x3, #8]\n"
+    "ldrb w7, [x0, #41]\n   and w6, w5, #8\n   cmp w7, #0\n   csel w6, w6, wzr, ne\n   and w7, w5, #2\n   orr w6, w6, w7\n"
+    "cmp w6, #0\n   cset w6, ne\n   strb w6, [x3, #12]\n"
+    "and w7, w5, #1\n   cmp w6, #0\n   csel w7, w7, wzr, eq\n"
+    "ldr x4, [x0, #48]\n   cbz x4, 54f\n   orr w8, w6, w7\n   cbnz w8, 54f\n   mov w0, #-3\n"
+    ASM_RET
+    "54: orr w8, w6, w7\n   cbz w8, 60f\n"
+    "ldrb w8, [x0, #41]\n   cbz w8, 55f\n   ldr x4, [x0, #48]\n   cbnz x4, 57f\n   b 56f\n"
+    "55: ldr x4, [x0, #24]\n   cbz x4, 56f\n   ldrb w8, [x4]\n   cbz w8, 56f\n   str xzr, [x0, #24]\n   b 57f\n"
+    "56: mov x4, #0\n   cbz w7, 57f\n   ldp x8, x9, [x0]\n   ldr x10, [x0, #16]\n   cmp x10, x8\n   b.hs 57f\n"
+    "ldr x4, [x9, x10, lsl #3]\n   add x10, x10, #1\n   str x10, [x0, #16]\n"
+    "57: str x4, [x3]\n   cbz w7, 60f\n   cbnz x4, 60f\n   mov w0, #-2\n"
+    ASM_RET
+    "60: ldrb w0, [x3, #10]\n"
+    ASM_RET
+    "90: ldr x4, [x0, #32]\n   str x4, [x3]\n   mov w0, #0\n"
+    ASM_RET
+    "91: str x6, [x3]\n   mov w0, #256\n"
+    ASM_RET
+    "92: mov w0, #-1\n"
+    ASM_RET
+    ASM_END(argument_option_take)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(argument_option_take)
+    "sd zero, 0(a3)\n   sd zero, 8(a3)\n"
+    // The next letter of a cluster, or the next word.
+    "1:  ld a4, 24(a0)\n   beqz a4, 2f\n   lbu a5, 0(a4)\n   beqz a5, 2f\n   addi a4, a4, 1\n   sd a4, 24(a0)\n   j 40f\n"
+    "2:  sd zero, 24(a0)\n   sd zero, 48(a0)\n   sb zero, 41(a0)\n"
+    "ld t0, 0(a0)\n   ld a4, 16(a0)\n   bgeu a4, t0, 90f\n"
+    "ld t1, 8(a0)\n   slli t2, a4, 3\n   add t1, t1, t2\n   ld a6, 0(t1)\n   addi a4, a4, 1\n   sd a4, 16(a0)\n   sd a6, 32(a0)\n"
+    "lbu a5, 40(a0)\n   bnez a5, 91f\n   lbu a5, 0(a6)\n   li t0, 45\n   bne a5, t0, 91f\n   lbu a5, 1(a6)\n   beqz a5, 91f\n"
+    "beq a5, t0, 3f\n   addi a6, a6, 1\n   sd a6, 24(a0)\n   j 1b\n"
+    "3:  lbu a5, 2(a6)\n   bnez a5, 4f\n   li a5, 1\n   sb a5, 40(a0)\n   j 1b\n"
+    // A long name, up to an = or its end.
+    "4:  addi t3, a6, 2\n   mv t4, t3\n   li t0, 61\n"
+    "5:  lbu a5, 0(t4)\n   beqz a5, 7f\n   beq a5, t0, 6f\n   addi t4, t4, 1\n   j 5b\n"
+    "6:  addi a5, t4, 1\n   sd a5, 48(a0)\n"
+    "7:  li a5, 1\n   sb a5, 41(a0)\n   sub t5, t4, t3\n   sd t5, 56(a0)\n"
+    // Its row: the one it spells whole, or with prefix the only one it begins.
+    "li a7, 0\n   beqz t5, 20f\n   mv t6, a1\n"
+    "10: ld t1, 0(t6)\n   beqz t1, 20f\n   lbu a5, 8(t6)\n   beqz a5, 13f\n   li t2, 0\n"
+    "11: add a5, t1, t2\n   lbu a5, 0(a5)\n   add a6, t3, t2\n   lbu a6, 0(a6)\n   bne a5, a6, 13f\n   addi t2, t2, 1\n   bltu t2, t5, 11b\n"
+    "add a5, t1, t5\n   lbu a5, 0(a5)\n   beqz a5, 12f\n   beqz a2, 13f\n   bnez a7, 14f\n   mv a7, t6\n"
+    "13: addi t6, t6, 16\n   j 10b\n"
+    "12: mv a7, t6\n   j 20f\n"
+    "14: li a7, 0\n"
+    "20: beqz a7, 92f\n   lbu a5, 8(a7)\n   sb a5, 10(a3)\n   j 50f\n"
+    // A short letter: its own row, or a row that groups it.
+    "40: sb a5, 10(a3)\n   mv t6, a1\n"
+    "41: ld t1, 0(t6)\n   beqz t1, 92f\n   lbu a6, 8(t6)\n   beq a6, a5, 44f\n   bnez a6, 43f\n"
+    "42: lbu a6, 0(t1)\n   beqz a6, 43f\n   beq a6, a5, 44f\n   addi t1, t1, 1\n   j 42b\n"
+    "43: addi t6, t6, 16\n   j 41b\n"
+    "44: mv a7, t6\n   lbu a6, 9(a7)\n   andi a6, a6, 4\n   bnez a6, 92f\n"
+    // Its mode, whether its value is optional or required, and the value.
+    "50: lbu a5, 9(a7)\n   sb a5, 11(a3)\n   lhu a6, 10(a7)\n   sh a6, 8(a3)\n"
+    "andi t0, a5, 2\n   lbu t1, 41(a0)\n   beqz t1, 51f\n   andi t1, a5, 8\n   or t0, t0, t1\n"
+    "51: snez t0, t0\n   sb t0, 12(a3)\n   andi t1, a5, 1\n   beqz t0, 52f\n   li t1, 0\n"
+    "52: ld a4, 48(a0)\n   beqz a4, 54f\n   or t2, t0, t1\n   bnez t2, 54f\n   li a0, -3\n"
+    ASM_RET
+    "54: or t2, t0, t1\n   beqz t2, 60f\n"
+    "lbu t2, 41(a0)\n   beqz t2, 55f\n   ld a4, 48(a0)\n   bnez a4, 57f\n   j 56f\n"
+    "55: ld a4, 24(a0)\n   beqz a4, 56f\n   lbu t2, 0(a4)\n   beqz t2, 56f\n   sd zero, 24(a0)\n   j 57f\n"
+    "56: li a4, 0\n   beqz t1, 57f\n   ld t2, 0(a0)\n   ld t3, 16(a0)\n   bgeu t3, t2, 57f\n"
+    "ld t2, 8(a0)\n   slli t4, t3, 3\n   add t2, t2, t4\n   ld a4, 0(t2)\n   addi t3, t3, 1\n   sd t3, 16(a0)\n"
+    "57: sd a4, 0(a3)\n   beqz t1, 60f\n   bnez a4, 60f\n   li a0, -2\n"
+    ASM_RET
+    "60: lbu a0, 10(a3)\n"
+    ASM_RET
+    "90: ld a4, 32(a0)\n   sd a4, 0(a3)\n   li a0, 0\n"
+    ASM_RET
+    "91: sd a6, 0(a3)\n   li a0, 256\n"
+    ASM_RET
+    "92: li a0, -1\n"
+    ASM_RET
+    ASM_END(argument_option_take)
+);
+#endif
 
 /* Long-name policy stays with each option family; the ordered conflict scan
    only needs its decoded byte. This preserves the legacy scan's treatment

@@ -26086,6 +26086,181 @@ static fn shell_asm_assignments(p8 address_to pages)
                         }
 }
 
+/*
+        argument_option_take from src/lib.util.c against the four C functions
+        it folds, run side by side over the same argument vector until it
+        ends: tables of letters, grouped letters and long names that begin
+        one another, every mode, and argument vectors of clusters, long names
+        with and without =, prefixes, --, -, operands, values, empty words,
+        a value missing at the end, and words that end before a page nobody
+        may read. The answer, the whole match and the whole cursor are
+        compared after every call.
+*/
+static b32 shell_asm_take_former(argument_cursor address_to cursor,
+                                 const argument_option address_to options, bool prefix,
+                                 argument_match address_to match)
+{
+        b32 token = argument_next(cursor);
+        *match = (argument_match){};
+        if (token == ARGUMENT_END || token == ARGUMENT_OPERAND)
+        {
+                match->value = cursor->word;
+                return token;
+        }
+        const argument_option address_to option = cursor->long_option
+            ? argument_option_long(options, cursor->word + 2, cursor->name_length, prefix)
+            : argument_option_short(options, (p8)token);
+        match->letter = cursor->long_option ? (option ? option->letter : 0) : (p8)token;
+        if (!option || (!cursor->long_option && (option->mode & ARGUMENT_LONG_ONLY)))
+                return ARGUMENT_UNKNOWN;
+        match->mode = option->mode;
+        match->selection = option->selection;
+        match->optional = (option->mode & ARGUMENT_OPTIONAL) ||
+            (cursor->long_option && (option->mode & ARGUMENT_LONG_OPTIONAL));
+        bool required = (option->mode & ARGUMENT_REQUIRED) && !match->optional;
+        if (cursor->attached && !match->optional && !required)
+                return ARGUMENT_UNEXPECTED;
+        if (required || match->optional)
+        {
+                match->value = argument_value(cursor, required);
+                if (required && !match->value)
+                        return ARGUMENT_MISSING;
+        }
+        return match->letter;
+}
+
+static fn shell_asm_take_run(string_address address_to argv, positive argc,
+                             const argument_option address_to options, bool prefix)
+{
+        argument_cursor want = {.argc = argc, .argv = argv, .at = shell_asm_next() % 2};
+        argument_cursor got = want;
+
+        for (positive call = 0; call < 64; call++)
+        {
+                argument_match want_match, got_match;
+
+                memory_fill(address_of want_match, 0x5a, sizeof(want_match));
+                memory_fill(address_of got_match, 0xa5, sizeof(got_match));
+                b32 a = shell_asm_take_former(address_of want, options, prefix, address_of want_match);
+                b32 b = argument_option_take(address_of got, options, prefix, address_of got_match);
+
+                checks++;
+                if (a != b || memory_compare(address_of want, address_of got, sizeof(want)) ||
+                    want_match.value != got_match.value || want_match.selection != got_match.selection ||
+                    want_match.letter != got_match.letter || want_match.mode != got_match.mode ||
+                    want_match.optional != got_match.optional)
+                {
+                        failures++;
+                        if (failures < 10)
+                                string_format(log, "FAIL argument_option_take call %p word %p: %p want %p\n",
+                                              call, want.at, (positive)(bipolar)b, (positive)(bipolar)a);
+                        return;
+                }
+                if (a == ARGUMENT_END)
+                        return;
+        }
+}
+
+static fn shell_asm_arguments(p8 address_to pages)
+{
+        static argument_option table[24];
+        static char names[24][16];
+        static char words[16][24];
+        static string_address argv[16];
+        static const char letters[] = "abcdlnvxZ0-9";
+        static const char address_to stems[] = {"all", "almost", "al", "block", "b", "color",
+                                                "col", "x", "name", "number", "numeric-sort"};
+
+        for (positive round = 0; round < 40000; round++)
+        {
+                positive rows = shell_asm_next() % 20;
+
+                for (positive i = 0; i < rows; i++)
+                {
+                        const char address_to stem = stems[shell_asm_next() % array_count(stems)];
+                        positive length = string_length((string_address)stem);
+
+                        memory_copy_apart(names[i], stem, length + 1);
+                        if (shell_asm_next() % 3 == 0 && length < 12)
+                        {
+                                names[i][length] = letters[shell_asm_next() % 12];
+                                names[i][length + 1] = 0;
+                        }
+                        table[i] = (argument_option){(string_address)names[i],
+                                                     shell_asm_next() % 5 ? (p8)letters[shell_asm_next() % 12] : 0,
+                                                     (p8)(shell_asm_next() % 32),
+                                                     (p16)shell_asm_next()};
+                }
+                table[rows] = (argument_option){null};
+
+                positive argc = shell_asm_next() % 10;
+                for (positive i = 0; i < argc; i++)
+                {
+                        char address_to word = words[i];
+                        positive shape = shell_asm_next() % 8, at = 0;
+
+                        if (shape < 3)
+                        {
+                                word[at++] = '-';
+                                for (positive n = shell_asm_next() % 4; n; n--)
+                                        word[at++] = letters[shell_asm_next() % 12];
+                        }
+                        else if (shape < 6)
+                        {
+                                const char address_to stem = stems[shell_asm_next() % array_count(stems)];
+                                positive length = string_length((string_address)stem);
+
+                                word[at++] = '-';
+                                word[at++] = '-';
+                                length -= shell_asm_next() % 2 && length > 1 ? shell_asm_next() % length : 0;
+                                memory_copy_apart(word + at, stem, length);
+                                at += length;
+                                if (shell_asm_next() % 3 == 0)
+                                {
+                                        word[at++] = '=';
+                                        if (shell_asm_next() % 2)
+                                                word[at++] = 'v';
+                                }
+                        }
+                        else if (shape == 6)
+                        {
+                                word[at++] = '-';
+                                if (shell_asm_next() % 2)
+                                        word[at++] = '-';
+                        }
+                        else
+                                for (positive n = shell_asm_next() % 4; n; n--)
+                                        word[at++] = "fv-="[shell_asm_next() % 4];
+                        word[at] = 0;
+                        argv[i] = (string_address)word;
+                }
+                shell_asm_take_run(argv, argc, table, shell_asm_next() % 2);
+        }
+
+        /* Words that end on the last byte before a page nobody may read. */
+        if (pages)
+        {
+                static const char address_to ends[] = {"-a", "-abc", "--al", "--color", "--color=",
+                                                       "--x=1", "--", "-", "file", "--numeric-sort"};
+
+                for (positive i = 0; i < 20; i++)
+                        table[i] = (argument_option){(string_address)stems[i % array_count(stems)],
+                                                     (p8)letters[i % 12], (p8)(i % 16)};
+                table[20] = (argument_option){(string_address)"abc", 0};
+                table[21] = (argument_option){null};
+                for (positive i = 0; i < array_count(ends); i++)
+                {
+                        positive length = string_length((string_address)ends[i]) + 1;
+                        char address_to word = (char address_to)pages + 8192 - length;
+
+                        memory_copy_apart(word, ends[i], length);
+                        argv[0] = (string_address)word;
+                        argv[1] = (string_address)word;
+                        shell_asm_take_run(argv, 1 + i % 2, table, i % 2);
+                }
+        }
+}
+
 b32 main(void)
 {
         static p8 built[4096];
@@ -26139,6 +26314,7 @@ b32 main(void)
         shell_asm_variables((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_functions((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_assignments((bipolar)(positive)pages > 0 ? pages : null);
+        shell_asm_arguments((bipolar)(positive)pages > 0 ? pages : null);
 
         string_format(log, "shell assembly: %p checks, %p failures\n", checks, failures);
         log_flush();
@@ -64524,6 +64700,263 @@ int main(void)
         return bad ? 1 : 0;
 }
 #endif /* CHECK_native_assignment */
+
+#ifdef CHECK_native_arguments
+/* ARM64 argument_option_take lifted verbatim from src/lib.util.c, against
+   the four C functions it folds -- argument_next, argument_option_short,
+   argument_option_long and argument_value, with string_first_of and
+   string_compare_max lifted from lib.c -- over whole option loops as tools
+   run them: ls -la dir, ls -l --color=auto dir, ls -1 --sort=time -r a b,
+   ls --almost-all -h against ls's own table of 49 rows, and wc -l file,
+   wc -lwc a b, wc --lines f against wc's, every call compared and then
+   both timed. */
+#include "arguments.h"
+#include "arguments_lib.h"
+
+#define NATIVE_SEED 0x243f6a8885a308d3ull
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
+
+typedef struct { u64 argc; char **argv; u64 at; char *letters, *word; unsigned char operands_only, long_option;
+                 char *attached; u64 name_length; } argument_cursor;
+typedef struct { const char *name; unsigned char letter, mode; unsigned short selection; } argument_option;
+typedef struct { char *value; unsigned short selection; unsigned char letter, mode, optional; } argument_match;
+enum { ARGUMENT_END, ARGUMENT_OPERAND = 256, ARGUMENT_LONG, ARGUMENT_UNKNOWN = -1, ARGUMENT_MISSING = -2,
+       ARGUMENT_UNEXPECTED = -3 };
+
+int argument_option_take(argument_cursor *, const argument_option *, _Bool, argument_match *);
+char *string_first_of(const char *, int);
+int string_compare_max(const char *, const char *, u64);
+int memory_compare(const void *, const void *, u64);
+u64 strlen(const char *);
+
+static u64 checks, bad;
+
+static int argument_next(argument_cursor *cursor)
+{
+        for (;;) {
+                if (cursor->letters && *cursor->letters)
+                        return (unsigned char)*cursor->letters++;
+                cursor->letters = 0;
+                cursor->attached = 0;
+                cursor->long_option = 0;
+                if (cursor->at >= cursor->argc)
+                        return ARGUMENT_END;
+                cursor->word = cursor->argv[cursor->at++];
+                if (cursor->operands_only || cursor->word[0] != '-' || !cursor->word[1])
+                        return ARGUMENT_OPERAND;
+                if (cursor->word[1] != '-') {
+                        cursor->letters = cursor->word + 1;
+                        continue;
+                }
+                if (!cursor->word[2]) {
+                        cursor->operands_only = 1;
+                        continue;
+                }
+                char *name = cursor->word + 2, *mark = string_first_of(name, '=');
+                cursor->long_option = 1;
+                cursor->name_length = mark ? (u64)(mark - name) : strlen(name);
+                cursor->attached = mark ? mark + 1 : 0;
+                return ARGUMENT_LONG;
+        }
+}
+
+static char *argument_value(argument_cursor *cursor, _Bool required)
+{
+        if (cursor->long_option) {
+                if (cursor->attached)
+                        return cursor->attached;
+        } else if (cursor->letters && *cursor->letters) {
+                char *value = cursor->letters;
+                cursor->letters = 0;
+                return value;
+        }
+        return required && cursor->at < cursor->argc ? cursor->argv[cursor->at++] : 0;
+}
+
+static const argument_option *argument_option_short(const argument_option *options, unsigned char letter)
+{
+        for (; options && options->name; options++)
+                if (options->letter == letter || (!options->letter && string_first_of(options->name, letter)))
+                        return options;
+        return 0;
+}
+
+static const argument_option *argument_option_long(const argument_option *options, const char *name,
+                                                   u64 length, _Bool prefix)
+{
+        const argument_option *candidate = 0;
+
+        if (!length)
+                return 0;
+        for (; options && options->name; options++) {
+                if (!options->letter || string_compare_max(options->name, name, length))
+                        continue;
+                if (!options->name[length])
+                        return options;
+                if (prefix) {
+                        if (candidate)
+                                return 0;
+                        candidate = options;
+                }
+        }
+        return candidate;
+}
+
+__attribute__((noinline)) static int former(argument_cursor *cursor, const argument_option *options, _Bool prefix,
+                                            argument_match *match)
+{
+        int token = argument_next(cursor);
+
+        *match = (argument_match){0};
+        if (token == ARGUMENT_END || token == ARGUMENT_OPERAND) {
+                match->value = cursor->word;
+                return token;
+        }
+        const argument_option *option = cursor->long_option
+            ? argument_option_long(options, cursor->word + 2, cursor->name_length, prefix)
+            : argument_option_short(options, (unsigned char)token);
+        match->letter = cursor->long_option ? (option ? option->letter : 0) : (unsigned char)token;
+        if (!option || (!cursor->long_option && (option->mode & 4)))
+                return ARGUMENT_UNKNOWN;
+        match->mode = option->mode;
+        match->selection = option->selection;
+        match->optional = (option->mode & 2) || (cursor->long_option && (option->mode & 8));
+        _Bool required = (option->mode & 1) && !match->optional;
+        if (cursor->attached && !match->optional && !required)
+                return ARGUMENT_UNEXPECTED;
+        if (required || match->optional) {
+                match->value = argument_value(cursor, required);
+                if (required && !match->value)
+                        return ARGUMENT_MISSING;
+        }
+        return match->letter;
+}
+
+static const argument_option options_ls[] = {
+    {"all", 'a', 0, 7},
+    {"almost-all", 'A', 0, 7},
+    {"author", '8', 4},
+    {"escape", 'b', 0, 7},
+    {"block-size", '7', 1 | 4, 7},
+    {"ignore-backups", 'B'},
+    {"color", 'K', 8},
+    {"directory", 'd'},
+    {"dired", 'D', 0, 7},
+    {"classify", 'E', 8 | 4},
+    {"file-type", 'j', 4, 7},
+    {"format", 'J', 1 | 4, 7},
+    {"full-time", 'M', 4, 7},
+    {"group-directories-first", 'O', 4},
+    {"no-group", 'G'},
+    {"human-readable", 'h', 0, 7},
+    {"si", 'P', 4, 7},
+    {"dereference-command-line", 'H', 0, 7},
+    {"dereference-command-line-symlink-to-dir", 'V', 4, 7},
+    {"hide", 'W', 1 | 4},
+    {"hyperlink", 'y', 8 | 4},
+    {"indicator-style", 'Y', 1 | 4, 7},
+    {"inode", 'i'},
+    {"ignore", 'I', 1},
+    {"kibibytes", 'k'},
+    {"dereference", 'L', 0, 7},
+    {"numeric-uid-gid", 'n', 0, 7},
+    {"literal", 'N', 0, 7},
+    {"hide-control-chars", 'q', 0, 7},
+    {"show-control-chars", '2', 4, 7},
+    {"quote-name", 'Q', 0, 7},
+    {"quoting-style", 'z', 1 | 4, 7},
+    {"reverse", 'r'},
+    {"recursive", 'R'},
+    {"size", 's'},
+    {"sort", '3', 1 | 4, 7},
+    {"time", '4', 1 | 4, 7},
+    {"time-style", '5', 1 | 4, 7},
+    {"tabsize", 'T', 1},
+    {"width", 'w', 1},
+    {"context", 'Z'},
+    {"zero", '6', 4, 7},
+    {"cu", 0, 0, 7},
+    {"Cglmox", 0, 0, 7},
+    {"f", 0, 0, 7},
+    {"Fp", 0, 0, 7},
+    {"StUvX", 0, 0, 7},
+    {"1", 0},
+    {0},
+};
+static const argument_option options_wc[] = {
+    {"bytes", 'c'}, {"chars", 'm'}, {"lines", 'l'}, {"files0-from", 'F', 5}, {"max-line-length", 'L'},
+    {"words", 'w'}, {"total", 'T', 5}, {0},
+};
+
+static char *ls1[] = {"-la", "dir"}, *ls2[] = {"-l", "--color=auto", "dir"},
+            *ls3[] = {"-1", "--sort=time", "-r", "a", "b"}, *ls4[] = {"--almost-all", "-h"},
+            *wc1[] = {"-l", "file"}, *wc2[] = {"-lwc", "a", "b"}, *wc3[] = {"--lines", "f"};
+static const struct { char **argv; u64 argc; const argument_option *table; } runs[] = {
+        {ls1, 2, options_ls}, {ls2, 3, options_ls}, {ls3, 5, options_ls}, {ls4, 2, options_ls},
+        {wc1, 2, options_wc}, {wc2, 3, options_wc}, {wc3, 2, options_wc},
+};
+
+static u64 loop(int body)
+{
+        u64 sum = 0;
+
+        for (u64 r = 0; r < sizeof(runs) / sizeof(runs[0]); r++) {
+                argument_cursor cursor = {runs[r].argc, runs[r].argv};
+                argument_match match;
+                int got;
+
+                do {
+                        got = body ? argument_option_take(&cursor, runs[r].table, 1, &match)
+                                   : former(&cursor, runs[r].table, 1, &match);
+                        sum += (u64)got + (u64)match.value;
+                } while (got != ARGUMENT_END);
+        }
+        return sum;
+}
+
+int main(void)
+{
+        for (u64 r = 0; r < sizeof(runs) / sizeof(runs[0]); r++) {
+                argument_cursor want = {runs[r].argc, runs[r].argv}, got = want;
+
+                for (int call = 0; call < 16; call++) {
+                        argument_match a, b;
+                        int x = former(&want, runs[r].table, 1, &a), y = argument_option_take(&got, runs[r].table, 1, &b);
+
+                        checks++;
+                        if ((x != y || memory_compare(&want, &got, sizeof(want)) || a.value != b.value ||
+                             a.letter != b.letter || a.mode != b.mode || a.optional != b.optional ||
+                             a.selection != b.selection) && bad++ < 8)
+                                printf("  FAIL run %lu call %d: %d want %d\n", r, call, y, x);
+                        if (x == ARGUMENT_END)
+                                break;
+                }
+        }
+
+        u64 best_former = ~0ul, best_body = ~0ul, sink = 0, sink_body = 0;
+        for (int trial = 0; trial < 9; trial++) {
+                u64 start = ticks();
+                for (int r = 0; r < 20000; r++)
+                        sink += loop(0);
+                u64 took = ticks() - start;
+                best_former = took < best_former ? took : best_former;
+                start = ticks();
+                for (int r = 0; r < 20000; r++)
+                        sink_body += loop(1);
+                took = ticks() - start;
+                best_body = took < best_body ? took : best_body;
+        }
+        checks++;
+        if (sink != sink_body)
+                bad++;
+        printf("  seven option loops of ls and wc, 20000 times: C %lu ticks, assembly %lu, asm/C %lu%%\n",
+               best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+        printf("arm64 argument_option_take: %lu checks | %lu failures\n", checks, bad);
+        return bad ? 1 : 0;
+}
+#endif /* CHECK_native_arguments */
 
 #ifdef CHECK_native_floodlight
 /* ARM64 floodlight_status_clear lifted verbatim from src/sh/builtin.c,

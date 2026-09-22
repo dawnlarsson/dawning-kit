@@ -3472,6 +3472,7 @@ while read -r lifted_header lifted_source lifted_routines; do
         parse) lifted_source=src/sh/parse.c ;;
         exec) lifted_source=src/sh/exec.c ;;
         shell) lifted_source=src/sh/shell.c ;;
+        util) lifted_source=src/lib.util.c ;;
         *) lifted_source=$lib ;;
         esac
         # shellcheck disable=SC2086 # the routines are separate arguments
@@ -3492,6 +3493,8 @@ envprobe builtin env_find_hashed_span_probe
 funcslot exec exec_function_slot
 assignment shell shell_assignment_kind
 assignment_lib lib string_span
+arguments util argument_option_take
+arguments_lib lib string_first_of string_compare_max memory_compare
 floodlight_lib lib memory_first_of memory_compare
 wide lib string_length string_length_max string_first_of string_first_of_or_end string_first_of_max string_last_of string_last_of_or_end memory_first_of
 bases lib positive_into_base
@@ -3505,7 +3508,7 @@ reserve lib memory_growth memory_reserve memory_release
 LIFTED
 
 status=0
-for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets hash join floodlight keyword envprobe funcslot assignment series wide bases base_field human human_nearest fields input_bases network reserve; do
+for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets hash join floodlight keyword envprobe funcslot assignment arguments series wide bases base_field human human_nearest fields input_bases network reserve; do
         cc -O2 -w -I"$work" "-DCHECK_native_$case" test/checks.c -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done
