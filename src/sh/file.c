@@ -15394,6 +15394,11 @@ enum
         CHMOD_LINK_KEPT,
         CHMOD_INVALID,
         CHMOD_REFUSED,
+        //      A directory the walk could not read. The reference says so
+        //      and answers 1; the pool walk passed over it without a word,
+        //      so chmod -R, chown -R and chgrp -R came back saying nothing
+        //      went wrong over a tree they had not been able to look into.
+        CHMOD_UNREAD,
 };
 
 typedef struct
@@ -15565,6 +15570,18 @@ static fn chmod_report(string_address shown, chmod_outcome address_to out)
         // what the mode looked like it asked for, and answers 1 -- but only
         // for a mode given as that kind of word, which is the one that reads
         // like an option and surprises.
+        if (out->kind == CHMOD_UNREAD)
+        {
+                //      -f takes the word away and leaves the answer: the
+                //      reference is silent and still answers 1.
+                if (!chmod_quiet)
+                        string_format(log_error, "chmod: cannot read directory '%w': %s\n",
+                                      writer_terminal_quoted_name, shown,
+                                      file_reason(out->error));
+                chmod_status = 1;
+                return;
+        }
+
         if (chmod_surprising && (out->wanted & ~out->naive))
         {
                 p8 set[12];
@@ -15623,11 +15640,22 @@ static fn chmod_tree_enter(address_any context, address_any node_address,
 
         (void)context;
 
-        //      A directory that will not open, or one that is not the one
-        //      its parent looked at, is passed over without a word, as the
-        //      serial walk passes over it.
+        //      A directory that will not open is named, as the reference
+        //      names it; one that is not the directory its parent looked at
+        //      is passed over without a word, because the name it stands for
+        //      was changed under the walk and nothing under it is this tree.
         if (directory < 0)
+        {
+                chmod_outcome outcome;
+
+                memory_fill(address_of outcome, 0, sizeof(outcome));
+                outcome.kind = CHMOD_UNREAD;
+                outcome.error = (b32)directory;
+                if (!chmod_tree_put(output, address_of outcome, node,
+                                    (string_address)"", 0))
+                        parallel_stop();
                 return;
+        }
 
         if (node->parent)
         {
@@ -15744,7 +15772,14 @@ static fn chmod_tree(string_address path)
                                               address_of opened);
 
         if (handle < 0)
+        {
+                if (!chmod_quiet)
+                        string_format(log_error, "chmod: cannot read directory '%w': %s\n",
+                                      writer_terminal_quoted_name, path,
+                                      file_reason(handle));
+                chmod_status = 1;
                 return;
+        }
 
         file_change_tree_node address_to top =
             file_change_tree_node_new(null, path, string_length(path));
@@ -16029,6 +16064,8 @@ enum
         CHOWN_UNREACHED,
         CHOWN_REFUSED,
         CHOWN_REFUSED_UNLOOKED,
+        //      A directory the walk could not read, said the way chmod's is.
+        CHOWN_UNREAD,
 };
 
 typedef struct
@@ -16162,6 +16199,15 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
 
         switch (out->kind)
         {
+        case CHOWN_UNREAD:
+                //      -f takes the word away and leaves the answer.
+                if (!chown_quiet)
+                        string_format(log_error, "%s: cannot read directory '%w': %s\n",
+                                      chown_program, writer_terminal_quoted_name, shown,
+                                      file_reason(out->error));
+                chown_status = 1;
+                return;
+
         case CHOWN_UNREACHED:
                 if (chown_selected.loudness == 'v')
                 {
@@ -16281,10 +16327,23 @@ static fn chown_tree_enter(address_any context, address_any node_address,
 
         (void)context;
 
-        //      Not opened, or not the directory its parent looked at: nothing
-        //      under it is walked, and its leaf still changes it.
+        //      Not opened: named, as the reference names it, and nothing
+        //      under it is walked. Not the directory its parent looked at:
+        //      passed over without a word, because the name was changed
+        //      under the walk. Either way its leaf still changes it.
         if (directory < 0)
+        {
+                chown_outcome outcome;
+
+                memory_fill(address_of outcome, 0, sizeof(outcome));
+                outcome.kind = CHOWN_UNREAD;
+                outcome.error = (b32)directory;
+                if (!chown_tree_put(output, address_of outcome,
+                                    (string_address)node->path, node->length,
+                                    (string_address)"", 0))
+                        parallel_stop();
                 return;
+        }
 
         if (node->parent)
         {
@@ -16419,7 +16478,15 @@ static fn chown_tree(string_address path)
                                               FILE_READ | O_DIRECTORY | O_NOFOLLOW,
                                               address_of opened);
 
-        if (handle >= 0)
+        if (handle < 0)
+        {
+                if (!chown_quiet)
+                        string_format(log_error, "%s: cannot read directory '%w': %s\n",
+                                      chown_program, writer_terminal_quoted_name, path,
+                                      file_reason(handle));
+                chown_status = 1;
+        }
+        else
         {
                 file_change_tree_node address_to top =
                     file_change_tree_node_new(null, path, string_length(path));
@@ -29296,29 +29363,6 @@ static fn rm_batch_replay(walk_batch address_to batch)
         }
 }
 
-//      The root of a tree rm that would not open, or that is no longer the
-//      directory the caller looked at: -f swallows one that is simply gone, a
-//      moved identity (-ERROR_AGAIN) is not retried, and anything else is
-//      still worth one rmdir. Both walks refuse alike and differ only in how
-//      they give the descriptor back, so each closes before asking.
-static COLD fn rm_tree_root_refused(string_address root,
-                                    file_facts address_to facts, bipolar looked)
-{
-        if (rm_force && looked == -ERROR_NO_ENTRY)
-                return;
-        if (looked != -ERROR_AGAIN &&
-            file_remove_same(AT_FDCWD, root, AT_REMOVEDIR, facts) == 0)
-        {
-                if (rm_loud)
-                        string_format(log, "removed directory '%w'\n",
-                                      writer_terminal_quoted_name, root);
-                return;
-        }
-        string_format(log_error, "rm: cannot remove '%w': %s\n",
-                      writer_terminal_quoted_name, root, file_reason(looked));
-        rm_status = 1;
-}
-
 #if defined(LIBRARY_THREAD_RUNTIME)
 /*
         rm -r over parallel_tree.  A directory's plain names are unlinked in
@@ -29730,7 +29774,20 @@ static fn rm_tree_parallel(string_address root, file_facts address_to facts)
         {
                 if (opened >= 0)
                         system_close(opened);
-                rm_tree_root_refused(root, facts, looked);
+                if (rm_force && looked == -ERROR_NO_ENTRY)
+                        return;
+                if (looked != -ERROR_AGAIN &&
+                    file_remove_same(AT_FDCWD, root, AT_REMOVEDIR, facts) == 0)
+                {
+                        if (rm_loud)
+                                string_format(log, "removed directory '%w'\n",
+                                              writer_terminal_quoted_name, root);
+                        return;
+                }
+                string_format(log_error, "rm: cannot remove '%w': %s\n",
+                              writer_terminal_quoted_name, root,
+                              file_reason(looked));
+                rm_status = 1;
                 return;
         }
 
@@ -29815,7 +29872,20 @@ static fn rm_batched(string_address root, file_facts address_to facts)
         {
                 if (opened >= 0)
                         walk_abandon(walker);
-                rm_tree_root_refused(root, facts, looked);
+                if (rm_force && looked == -ERROR_NO_ENTRY)
+                        return;
+                if (looked != -ERROR_AGAIN &&
+                    file_remove_same(AT_FDCWD, root, AT_REMOVEDIR, facts) == 0)
+                {
+                        if (rm_loud)
+                                string_format(log, "removed directory '%w'\n",
+                                              writer_terminal_quoted_name, root);
+                        return;
+                }
+                string_format(log_error, "rm: cannot remove '%w': %s\n",
+                              writer_terminal_quoted_name, root,
+                              file_reason(looked));
+                rm_status = 1;
                 return;
         }
 

@@ -6574,21 +6574,32 @@ FILES_UTILITIES = (
                               Option("--recursive"), Option("--preserve-root"), Option("--no-preserve-root"),
                               Option("--from", (files_UID, "root", ":" + files_GID, "nosuch", files_UID + ":" + files_GID, ":"), True),
                               Option("--reference", ("b.txt", "missing", "link", "dir", "dangling", "shut/inside"), True)),
-            operands=files_UID_OPERANDS, stdin=("empty",), fixture="files", stderr="exact"),
+            operands=files_UID_OPERANDS, stdin=("empty",), fixture="files", stderr="exact",
+            #       As chmod's: a directory the walk cannot read is named and
+            #       answered for, silently under -f.
+            extra=((("-R", files_UID, "shut"), ("-fR", files_UID, "shut")))),
     Utility("chgrp", options=(Option("-c"), Option("-f"), Option("-v"), Option("-h"), Option("-R"), Option("-H"),
                               Option("-L"), Option("-P"), Option("--changes"), Option("--silent"), Option("--quiet"),
                               Option("--verbose"), Option("--no-dereference"), Option("--dereference"),
                               Option("--recursive"), Option("--preserve-root"), Option("--no-preserve-root"),
                               Option("--from", (files_UID + ":" + files_GID, ":" + files_GID, "root:root", "nosuch", ":"), True),
                               Option("--reference", ("b.txt", "missing", "link", "dir", "dangling", "shut/inside"), True)),
-            operands=files_GID_OPERANDS, stdin=("empty",), fixture="files", stderr="exact"),
+            operands=files_GID_OPERANDS, stdin=("empty",), fixture="files", stderr="exact",
+            #       As chmod's: a directory the walk cannot read is named and
+            #       answered for, silently under -f.
+            extra=((("-R", files_GID, "shut"), ("-fR", files_GID, "shut")))),
     Utility("chmod", options=(Option("-c"), Option("-f"), Option("-v"), Option("-R"), Option("--changes"),
                               Option("--silent"), Option("--quiet"), Option("--verbose"), Option("--recursive"),
                               Option("--preserve-root"), Option("--no-preserve-root"),
                               Option("-h"), Option("--no-dereference"), Option("--dereference"),
                               Option("-H"), Option("-L"), Option("-P"),
                               Option("--reference", ("b.txt", "missing", "link", "dir", "exe", "dangling", "shut/inside"), True)),
-            operands=files_CHMOD_OPERANDS, stdin=("empty",), fixture="files", stderr="exact"),
+            operands=files_CHMOD_OPERANDS, stdin=("empty",), fixture="files", stderr="exact",
+            #       A directory the walk cannot read: the reference names it
+            #       and answers 1, -f takes the word away and leaves the
+            #       answer, and the pool walk said nothing and answered 0.
+            extra=(("-R", "a-w", "shut"), ("-fR", "a-w", "shut"),
+                   ("-R", "a-w", "dir/../shut"))),
     Utility("ln", options=(Option("-s"), Option("-f"), Option("-i"), Option("-n"), Option("-r"), Option("-v"),
                            Option("-T"), Option("-L"), Option("-P"), Option("-b"), Option("-d"), Option("-F"),
                            Option("--directory"), Option("--symbolic"),
