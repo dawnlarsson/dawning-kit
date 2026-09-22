@@ -221,7 +221,42 @@ typedef struct
         // command, and what the lines since then may take at most.
         b32 open_list;
         positive open_nodes, open_words, open_redirects;
+        // The last parse of this frame ran out of tokens, under this memo
+        // epoch, having used the arenas up to here.
+        b32 memo_open;
+        positive memo_epoch;
+        b32 memo_nodes, memo_words, memo_redirects;
 } parse_frame;
+
+/*
+        What the last parse already knew.
+
+        A construct that spans lines is parsed again from its first token as
+        each line arrives, since the parser cannot stop and resume, so a
+        function or loop of n lines was parsed n times over: 867 million
+        instructions to read a function of 800 lines of if, where dash takes
+        seven. Each list remembers, by the token it began at, how far it had
+        got -- its first and last command and where the next one begins --
+        and the next parse of the same tokens, which only ever grow at the
+        end, carries on from there instead of reading those commands again.
+        A state is kept only with two tokens still behind it, which is as far
+        as the parser ever looks ahead, and taken only with the same
+        here-documents consumed before the list. A parse that carries on
+        begins its arenas where the last one ended, so the nodes it keeps
+        stay where they are; an epoch that moves whenever the tokens could
+        have changed -- a reset, a nested parse, an alias -- retires every
+        state.
+*/
+typedef struct
+{
+        positive epoch;
+        b32 index, head, tail, at, here_start, here_at;
+} parse_memo;
+
+static parse_memo address_to parse_memos;
+static positive parse_memo_room;
+static positive parse_memo_epoch = 1;
+static bool parse_memo_on;
 
 /* Live marks and saved marks intentionally have one shape. One assignment is
    the complete nest transition, so future state cannot drift between entry
@@ -348,6 +383,7 @@ fn parse_reset()
         here_names_used = 0;
         parse_here_capped = false;
         parse_open_list = false;
+        parse_memo_epoch++;
 }
 
 bool parse_here_limit_exceeded()
@@ -382,6 +418,7 @@ fn parse_nest_enter()
         frame = parse_frames + parse_nest_depth++;
 
         address_to frame = parse_context;
+        parse_memo_epoch++;
 
         /* Node zero is the parser's absent-child sentinel.  A nested source
            can be the first source this process parses (BASH_ENV is one), so
@@ -422,6 +459,7 @@ fn parse_nest_leave()
         shell_store_rewind(address_of parse_store, parse_text_base);
 
         parse_context = address_to frame;
+        parse_memo_epoch++;
 }
 
 // What a child of this shell has to know about being one. Declared here and
@@ -1656,6 +1694,7 @@ static bool parse_alias_replace(b32 position)
                        parse_tokens[position + removed].kind != PT_NEWLINE)
                         removed++;
 
+        parse_memo_epoch++;
         memory_copy(parse_tokens + position + replacement_count,
                     parse_tokens + position + removed,
                     (parse_token_count - (positive)position - removed) *
@@ -2705,20 +2744,37 @@ static b32 parse_list()
         b32 index = 0;
         b32 head = 0;
         b32 tail = 0;
+        b32 start = parse_position;
+        b32 here_start = (b32)here_taken;
 
         if (parse_state)
                 return 0;
 
-        parse_skip_newlines();
-        parse_alias_command();
-
-        // A semicolon separates two commands; it cannot stand where no
-        // command precedes it. Treating it like a blank line made `;` a
-        // successful empty program and accepted repeated separators.
-        if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_SEMI)
+        if (parse_memo_on && (positive)start < parse_memo_room &&
+            parse_memos[start].epoch == parse_memo_epoch &&
+            parse_memos[start].here_start == here_start)
         {
-                parse_state = PARSE_SYNTAX;
-                return 0;
+                parse_memo address_to memo = parse_memos + start;
+
+                index = memo->index;
+                head = memo->head;
+                tail = memo->tail;
+                parse_position = memo->at;
+                here_taken = (positive)memo->here_at;
+        }
+        else
+        {
+                parse_skip_newlines();
+                parse_alias_command();
+
+                // A semicolon separates two commands; it cannot stand where no
+                // command precedes it. Treating it like a blank line made `;` a
+                // successful empty program and accepted repeated separators.
+                if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_SEMI)
+                {
+                        parse_state = PARSE_SYNTAX;
+                        return 0;
+                }
         }
 
         while (!parse_at_list_end())
@@ -2790,6 +2846,14 @@ static b32 parse_list()
                         parse_state = PARSE_SYNTAX;
                         return 0;
                 }
+
+                // Where the next command begins, for the next parse of the
+                // same tokens, while two more are there to have looked at.
+                if (parse_memo_on && (positive)parse_position + 2 < parse_token_count &&
+                    shell_array_room(parse_memos, parse_memo_room, (positive)start + 1))
+                        parse_memos[start] = (parse_memo){
+                            parse_memo_epoch, index, head, tail, parse_position,
+                            here_start, (b32)here_taken};
         }
 
         parse_list_ran_out = parse_look(0)->kind == PT_END;
@@ -2823,16 +2887,44 @@ b32 parse_program()
                 return 0;
         }
 
+        // The last parse ran out of these same tokens and left the arenas
+        // at least half free: begin past it, and reuse what it finished.
+        bool reuse = parse_context.memo_open && !alias_count &&
+                     parse_context.memo_epoch == parse_memo_epoch &&
+                     parse_context.memo_nodes - parse_node_base < (parse_node_top - parse_node_base) / 2 &&
+                     parse_context.memo_words - parse_word_base < (parse_word_top - parse_word_base) / 2 &&
+                     parse_context.memo_redirects - parse_redirect_base <
+                         (parse_redirect_top - parse_redirect_base) / 2;
+
+again:
+        if (!reuse)
+                parse_memo_epoch++;
+        parse_memo_on = !alias_count;
         parse_position = (b32)parse_token_base;
         parse_state = PARSE_OK;
-        parse_node_used = parse_node_base;
-        parse_word_used = parse_word_base;
-        parse_redirect_used = parse_redirect_base;
+        parse_node_used = reuse ? parse_context.memo_nodes : parse_node_base;
+        parse_word_used = reuse ? parse_context.memo_words : parse_word_base;
+        parse_redirect_used = reuse ? parse_context.memo_redirects : parse_redirect_base;
         here_taken = 0;
         shell_parse_generation++;
         parse_list_ran_out = false;
 
         root = parse_list();
+
+        // A mistake is told by a parse of its own, word for word as before.
+        if (reuse && parse_state != PARSE_INCOMPLETE &&
+            (parse_state || parse_look(0)->kind != PT_END))
+        {
+                reuse = false;
+                goto again;
+        }
+
+        parse_memo_on = false;
+        parse_context.memo_open = parse_state == PARSE_INCOMPLETE;
+        parse_context.memo_epoch = parse_memo_epoch;
+        parse_context.memo_nodes = parse_node_used;
+        parse_context.memo_words = parse_word_used;
+        parse_context.memo_redirects = parse_redirect_used;
 
         parse_open_list = parse_state == PARSE_INCOMPLETE && parse_list_ran_out;
         parse_context.open_nodes = 0;
