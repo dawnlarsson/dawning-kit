@@ -6874,7 +6874,11 @@ FILES_UTILITIES = (
                    ("-f", "-i", "a.txt"), ("-i", "-f", "a.txt"), ("-r", "--one-file-system", "dir"), ("-I", "a.txt", "b.txt", "c.txt", "empty"),
                    ("-rI", "dir"), ("-rf", "shut"), ("-r", "shut"), ("-rf", "unreadable"), ("-r", "dir/sub/back"), ("-rf", "dir/back/"),
                    ("-r", "dirlink"), ("-r", "dirlink/"), ("-rf", "deep", "nest", "dup"), ("-d", "dir"), ("-d", "hollow", "nest/a/b"),
-                   ("-r", "."), ("-rf", "./"), ("-W", "a.txt"), ("-v", "a.txt", "link", "dangling"))),
+                   ("-r", "."), ("-rf", "./"), ("-W", "a.txt"), ("-v", "a.txt", "link", "dangling"),
+                   #   A slash on the end of a link to a directory: the
+                   #   contents go, the link stays and the removal of the
+                   #   name itself is an ENOTDIR that -f forgives.
+                   ("-rf", "dirlink/"), ("-rfv", "dirlink/"), ("-Rf", "dirlink/"))),
     Utility("mktemp", options=(Option("-d"), Option("-u"), Option("-q"), Option("-t"), Option("--directory"), Option("--dry-run"),
                                Option("--quiet"), Option("--tmpdir"),
                                Option("-p", ("dir", ".", "missing", "", "a.txt", "hollow"), None),
