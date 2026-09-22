@@ -2018,7 +2018,8 @@ b32 storage_findfs_run(positive argc, string_address address_to argv,
 */
 
 #define STORAGE_OPEN_PATH    010000000
-#define STORAGE_OPEN_NOFOLLOW 0400000
+// This machine's: arm64's O_NOFOLLOW is not x86_64's and riscv64's.
+#define STORAGE_OPEN_NOFOLLOW O_NOFOLLOW
 
 /*
         Shared API (the definitions live together because shell sources are

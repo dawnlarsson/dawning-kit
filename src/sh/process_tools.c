@@ -1590,11 +1590,8 @@ static b32 process_timeout()
 // script ----------------------------------------------------------
 /* The terminal recorder and graphical terminal share pty.c's open floor. */
 #define PROCESS_TERMINAL_ECHO 0x0008u
-#if ARM64 || RISCV64
-#define PROCESS_O_NOFOLLOW 0100000
-#else
-#define PROCESS_O_NOFOLLOW 0400000
-#endif
+// This machine's: riscv64 has x86_64's value, and only arm64 moves it.
+#define PROCESS_O_NOFOLLOW O_NOFOLLOW
 
 
 typedef struct

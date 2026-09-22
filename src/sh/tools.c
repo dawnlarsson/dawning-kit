@@ -1347,10 +1347,12 @@ static b32 tools_logger()
 // Login records: who, users and pinky -----------------------
 
 /* The common fields have one Linux layout through offset 336. All 32-bit
-   targets, plus x86-64 for compatibility, keep 32-bit session/time fields and
-   a 384-byte record; other 64-bit targets use native fields and 400 bytes.
-   Decode the varying offsets rather than trusting a libc struct definition. */
-#if BITS == 32 || X64 || X86
+   targets, plus x86-64 and riscv64, whose glibc keeps the 32-bit layout
+   (__WORDSIZE_TIME64_COMPAT32), have 32-bit session/time fields and a
+   384-byte record; arm64 uses native fields and 400 bytes, sizeof(struct
+   utmp) under each glibc. Decode the varying offsets rather than trusting a
+   libc struct definition. */
+#if BITS == 32 || X64 || X86 || RISCV64
 #define LOGIN_UTMP_SIZE 384
 #define LOGIN_UTMP_SESSION 336
 #define LOGIN_UTMP_SECONDS 340
@@ -7250,13 +7252,19 @@ static b32 tools_mcookie()
 #define DD_APPEND 0x001
 #define DD_SEEK_BYTES 0x002
 #define DD_O_APPEND 02000
-// The open(2) bits the iflag/oflag names stand for, on Linux.
+// The open(2) bits the iflag/oflag names stand for, on Linux. arm64 swaps
+// O_DIRECT and O_DIRECTORY and moves O_NOFOLLOW, so those three are this
+// machine's.
 #define DD_O_NOCTTY 0400
 #define DD_O_NONBLOCK 04000
 #define DD_O_DSYNC 010000
+#if ARM64
+#define DD_O_DIRECT 0200000
+#else
 #define DD_O_DIRECT 040000
-#define DD_O_DIRECTORY 0200000
-#define DD_O_NOFOLLOW 0400000
+#endif
+#define DD_O_DIRECTORY O_DIRECTORY
+#define DD_O_NOFOLLOW O_NOFOLLOW
 #define DD_O_SYNC 04010000
 #define DD_O_NOATIME 01000000
 
