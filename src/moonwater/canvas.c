@@ -3586,9 +3586,20 @@ static void console_feed(const char *text, unsigned int count)
         A dying machine does not wait for a thread. With an oops or a panic
         in progress, or no thread to hand to, the write empties the ring and
         parses its own record where it is, as it always did.
+
+        As long as the window can show and no longer: its ring keeps
+        PANE_HISTORY lines, so a flood the drain meets all at once shows the
+        last of them and scrolls the rest away. 128 KiB holds that many
+        records of 254 bytes, where a kernel line is under a hundred; the
+        256 KiB this was cut at held records the window scrolled away as
+        soon as it was given them, in kernel memory from boot. A power of
+        two, because the ring's positions are free-running unsigned words
+        taken modulo its size.
 */
-#define CONSOLE_QUEUE (256u * 1024u)
+#define CONSOLE_QUEUE (PANE_HISTORY * 256u)
 #define CONSOLE_RECORD 4096u
+_Static_assert((CONSOLE_QUEUE & (CONSOLE_QUEUE - 1)) == 0,
+               "the console ring's size divides the wrap of its positions");
 
 static char console_queue[CONSOLE_QUEUE];
 static unsigned int console_queue_head, console_queue_tail;
