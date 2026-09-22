@@ -61356,6 +61356,8 @@ void canvas_cell_wide(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
 void canvas_cell2_wide(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
 void canvas_row_blit_wide(u32 *,const u32 *,unsigned long,u32);
 void canvas_cells_wide(u32 *,unsigned long,const u8 *,const struct window_cell *,unsigned long,u32,u32);
+void canvas_rect_fill_wide(u32 *,unsigned long,unsigned long,unsigned long,u32);
+void canvas_glyph_wide(u32 *,unsigned long,const u8 *,unsigned long,unsigned long,u32);
 // The ring reads the program's line lengths through the kernel's single-load
 // spelling; hosted, one load is all there is.
 #define READ_ONCE(a) (a)
@@ -61561,6 +61563,28 @@ static void check_wide_bodies(void) {
         memset(got,0xa5,sizeof(got));memset(want,0xa5,sizeof(want));
         canvas_cells(want+align,pitch,face,run,count,ink,paper);
         canvas_cells_wide(got+align,pitch,face,run,count,ink,paper);
+        check(!memcmp(got,want,sizeof(got)));
+    }
+    /* Rectangles of every narrow width and a spread of wide ones, at four
+       alignments and three pitches, and a row with no pitch at all. */
+    static u32 big[8*720+8],big_want[8*720+8];
+    for(unsigned width=0;width<=700;width+=width<40?1:width<640?29:1)
+    for(unsigned rows=0;rows<=3;rows++)for(unsigned align=0;align<4;align++) {
+        unsigned pitch=rows<2?0:width+align+rows*3;
+        if(rows>=2&&pitch<width)continue;
+        memset(big,0xa5,sizeof(big));memset(big_want,0xa5,sizeof(big_want));
+        canvas_rect_fill(big_want+align,pitch,width,rows,colors[(width+rows)%6]);
+        canvas_rect_fill_wide(big+align,pitch,width,rows,colors[(width+rows)%6]);
+        check(!memcmp(big,big_want,sizeof(big)));
+    }
+    /* Glyphs drawn over a picture, which only the set bits may change. */
+    for(unsigned trial=0;trial<2048;trial++) {
+        unsigned rows=trial%18,stride=1+trial%3,pitch=8+trial%9,align=trial%4;
+        u8 bits[18*3];for(unsigned i=0;i<sizeof(bits);i++)bits[i]=(u8)(trial*37+i*101);
+        if(trial%5==0)bits[0]=0;
+        for(unsigned i=0;i<4096;i++)want[i]=got[i]=i*2654435761u;
+        canvas_glyph(want+align,pitch,bits,stride,rows,colors[trial%6]);
+        canvas_glyph_wide(got+align,pitch,bits,stride,rows,colors[trial%6]);
         check(!memcmp(got,want,sizeof(got)));
     }
     static u32 source[1100];

@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        350 routines (336 public, 14 local), 348 of them on all three and 2 local to one.
+        352 routines (338 public, 14 local), 350 of them on all three and 2 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -118,7 +118,9 @@
           canvas_cells_wide              public  yes     yes     yes
           canvas_glyph                   public  yes     yes     yes
           canvas_glyph2                  public  yes     yes     yes
+          canvas_glyph_wide              public  yes     yes     yes
           canvas_rect_fill               public  yes     yes     yes
+          canvas_rect_fill_wide          public  yes     yes     yes
           canvas_row_blit                public  yes     yes     yes
           canvas_row_blit_wide           public  yes     yes     yes
           cells_from_ascii               public  yes     yes     yes
@@ -44948,6 +44950,9 @@ __asm__(
     "1:      mov     %rdi, %r11              # this scanline\n"
     "        mov     %rcx, %rax              # the first cell\n"
     "        mov     %r8, %r9                # cells left\n"
+        // The cell loop on a line of its own. Where the linker happened to
+        // put it moved a line of text by a quarter, 30 cycles a cell or 38.
+    "        .p2align 6\n"
     "2:      mov     (%rax), %ebx            # the character\n"
     "        add     $8, %rax\n"
     "        shl     $4, %ebx\n"
@@ -44969,6 +44974,8 @@ __asm__(
     "9:      " ASM_RET
     ASM_END(canvas_cells_wide)
 
+    ".p2align 6\n"                     // called a cell at a time: the loop is
+                                        // placed by the entry, never by padding in it
     ASM_FUNC(canvas_cell_wide)
     "        test    %rcx, %rcx\n"
     "        jz      9f\n"
@@ -45000,6 +45007,8 @@ __asm__(
         //       down, so a glyph row is sixteen pixels, two ymm, each lane
         //       pair sharing a bit, stored on both scanlines.
         //
+    ".p2align 6\n"                     // called a cell at a time: the loop is
+                                        // placed by the entry, never by padding in it
     ASM_FUNC(canvas_cell2_wide)
     "        test    %rcx, %rcx\n"
     "        jz      9f\n"
@@ -45052,6 +45061,7 @@ __asm__(
     "        vpbroadcastd %xmm0, %ymm0       # the mask in every lane\n"
     "        sub     $8, %rdx\n"
     "        jb      7f\n"
+    "        .p2align 6\n"
     "6:      vpor    (%rsi), %ymm0, %ymm1\n"
     "        vmovdqu %ymm1, (%rdi)\n"
     "        add     $32, %rsi\n"
@@ -45070,6 +45080,128 @@ __asm__(
     "8:      vzeroupper\n"
     "        " ASM_RET
     ASM_END(canvas_row_blit_wide)
+
+        //
+        //       A rectangle a ymm at a time, and every row's tail as one more
+        //       store that overlaps the last, so no row ends in a scalar loop.
+        //       Narrower than a ymm the same trick in an xmm, a quadword or a
+        //       single pixel.
+        //
+    ASM_FUNC(canvas_rect_fill_wide)
+    "        test    %rcx, %rcx\n"
+    "        jz      9f\n"
+    "        test    %rdx, %rdx\n"
+    "        jz      9f\n"
+    "        shl     $2, %rsi                # pitch, pixels to bytes\n"
+    "        vmovd   %r8d, %xmm0\n"
+    "        vpbroadcastd %xmm0, %ymm0       # the colour in every lane\n"
+    "        cmp     $8, %rdx\n"
+    "        jb      4f\n"
+        // Wide enough and rep stosq is quicker still: it writes whole lines
+        // without reading them first, which no store here can say. On Zen 5
+        // over a 2560 pixel pitch the ymm rows win to 512 pixels (697
+        // cycles for sixteen rows against 987) and lose from 700 (1250
+        // against 1143); canvas_rect_fill's own crossing is 208.
+    "        cmp     $600, %rdx\n"
+    "        jae     8f\n"
+    "        lea     -32(,%rdx,4), %r9       # where the last ymm of a row goes\n"
+    "1:      vmovdqu %ymm0, (%rdi)           # the head, wherever it falls\n"
+    "        mov     %rdi, %rax\n"
+    "        and     $31, %rax\n"
+    "        neg     %rax\n"
+    "        add     $32, %rax               # and the rest on 32 byte boundaries\n"
+    "        cmp     %r9, %rax\n"
+    "        jae     3f\n"
+    "2:      vmovdqu %ymm0, (%rdi,%rax)\n"
+    "        add     $32, %rax\n"
+    "        cmp     %r9, %rax\n"
+    "        jb      2b\n"
+    "3:      vmovdqu %ymm0, (%rdi,%r9)       # the tail, over the last\n"
+    "        add     %rsi, %rdi\n"
+    "        dec     %rcx\n"
+    "        jnz     1b\n"
+    "        vzeroupper\n"
+    "        " ASM_RET
+
+    "8:      vzeroupper\n"
+    "        mov     %r8d, %eax\n"
+    "        mov     %rax, %r10\n"
+    "        shl     $32, %r10\n"
+    "        or      %r10, %rax              # the colour twice\n"
+    "        mov     %rdi, %r9\n"
+    "        mov     %rcx, %r10\n"
+    "10:     mov     %r9, %rdi\n"
+    "        mov     %rdx, %rcx\n"
+    "        shr     $1, %rcx\n"
+    "        rep stosq\n"
+    "        test    $1, %dl\n"
+    "        jz      11f\n"
+    "        mov     %eax, (%rdi)\n"
+    "11:     add     %rsi, %r9\n"
+    "        dec     %r10\n"
+    "        jnz     10b\n"
+    "        " ASM_RET
+
+    "4:      cmp     $4, %rdx\n"
+    "        jb      5f\n"
+    "        lea     -16(,%rdx,4), %r9\n"
+    "12:     vmovdqu %xmm0, (%rdi)\n"
+    "        vmovdqu %xmm0, (%rdi,%r9)\n"
+    "        add     %rsi, %rdi\n"
+    "        dec     %rcx\n"
+    "        jnz     12b\n"
+    "        vzeroupper\n"
+    "        " ASM_RET
+
+    "5:      cmp     $2, %rdx\n"
+    "        jb      7f\n"
+    "        lea     -8(,%rdx,4), %r9\n"
+    "6:      vmovq   %xmm0, (%rdi)\n"
+    "        vmovq   %xmm0, (%rdi,%r9)\n"
+    "        add     %rsi, %rdi\n"
+    "        dec     %rcx\n"
+    "        jnz     6b\n"
+    "        vzeroupper\n"
+    "        " ASM_RET
+
+    "7:      vmovd   %xmm0, (%rdi)\n"
+    "        add     %rsi, %rdi\n"
+    "        dec     %rcx\n"
+    "        jnz     7b\n"
+    "        vzeroupper\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_rect_fill_wide)
+
+        //
+        //       A glyph over what is there: the row's bits as a lane mask, and
+        //       the colour stored only where it is set -- vpmaskmovd writes
+        //       nothing under a clear lane, so the pixels between the strokes
+        //       are never touched.
+        //
+    ASM_FUNC(canvas_glyph_wide)
+    "        test    %r8, %r8\n"
+    "        jz      9f\n"
+    "        shl     $2, %rsi\n"
+    "        vmovd   %r9d, %xmm0\n"
+    "        vpbroadcastd %xmm0, %ymm0       # the colour\n"
+    "        mov     $0x0102040810204080, %rax\n"
+    "        vmovq   %rax, %xmm2\n"
+    "        vpmovzxbd %xmm2, %ymm2\n"
+    "1:      movzbl  (%rdx), %eax\n"
+    "        add     %rcx, %rdx\n"
+    "        test    %eax, %eax\n"
+    "        jz      2f                      # a blank row, and most rows are\n"
+    "        vmovd   %eax, %xmm3\n"
+    "        vpbroadcastd %xmm3, %ymm3\n"
+    "        vpand   %ymm2, %ymm3, %ymm3\n"
+    "        vpcmpeqd %ymm2, %ymm3, %ymm3\n"
+    "        vpmaskmovd %ymm0, %ymm3, (%rdi)\n"
+    "2:      add     %rsi, %rdi\n"
+    "        dec     %r8\n"
+    "        jnz     1b\n"
+    "        vzeroupper\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_glyph_wide)
     ASM_SIMD_SECTION_END
 );
 #elif ARM64
@@ -45469,6 +45601,88 @@ __asm__(
     "        b.ne    5b\n"
     "3:      " ASM_RET
     ASM_END(canvas_row_blit_wide)
+
+        //
+        //       Two q registers a store and every row's tail as one more that
+        //       overlaps the last; narrower, a q, a d or an s the same way.
+        //
+    ASM_FUNC(canvas_rect_fill_wide)
+    "        cbz     x3, 9f\n"
+    "        cbz     x2, 9f\n"
+    "        lsl     x1, x1, #2\n"
+    "        dup     v0.4s, w4               // the colour\n"
+    "        lsl     x9, x2, #2              // a row in bytes\n"
+    "        cmp     x2, #8\n"
+    "        b.lo    4f\n"
+    "        sub     x9, x9, #32             // where the last pair goes\n"
+    "1:      mov     x11, x0\n"
+    "        add     x12, x0, x9\n"
+    "2:      stp     q0, q0, [x11], #32\n"
+    "        cmp     x11, x12\n"
+    "        b.lo    2b\n"
+    "        stp     q0, q0, [x12]\n"
+    "        add     x0, x0, x1\n"
+    "        subs    x3, x3, #1\n"
+    "        b.ne    1b\n"
+    "        " ASM_RET
+    "4:      cmp     x2, #4\n"
+    "        b.lo    5f\n"
+    "        sub     x9, x9, #16\n"
+    "3:      str     q0, [x0]\n"
+    "        str     q0, [x0, x9]\n"
+    "        add     x0, x0, x1\n"
+    "        subs    x3, x3, #1\n"
+    "        b.ne    3b\n"
+    "        " ASM_RET
+    "5:      cmp     x2, #2\n"
+    "        b.lo    7f\n"
+    "        sub     x9, x9, #8\n"
+    "6:      str     d0, [x0]\n"
+    "        str     d0, [x0, x9]\n"
+    "        add     x0, x0, x1\n"
+    "        subs    x3, x3, #1\n"
+    "        b.ne    6b\n"
+    "        " ASM_RET
+    "7:      str     s0, [x0]\n"
+    "        add     x0, x0, x1\n"
+    "        subs    x3, x3, #1\n"
+    "        b.ne    7b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_rect_fill_wide)
+
+        //
+        //       A glyph over what is there. No masked store here, so the row
+        //       is read, the colour put in under the bits, and written back.
+        //
+    ASM_FUNC(canvas_glyph_wide)
+    "        cbz     x4, 9f\n"
+    "        lsl     x1, x1, #2\n"
+    "        dup     v0.4s, w5               // the colour\n"
+    "        mov     w7, #0x4080\n"
+    "        movk    w7, #0x1020, lsl #16\n"
+    "        fmov    s2, w7\n"
+    "        uxtl    v2.8h, v2.8b\n"
+    "        uxtl    v2.4s, v2.4h\n"
+    "        mov     w7, #0x0408\n"
+    "        movk    w7, #0x0102, lsl #16\n"
+    "        fmov    s3, w7\n"
+    "        uxtl    v3.8h, v3.8b\n"
+    "        uxtl    v3.4s, v3.4h\n"
+    "1:      ldrb    w6, [x2]\n"
+    "        add     x2, x2, x3\n"
+    "        cbz     w6, 2f                  // a blank row, and most rows are\n"
+    "        dup     v4.16b, w6\n"
+    "        cmtst   v5.4s, v4.4s, v2.4s\n"
+    "        cmtst   v6.4s, v4.4s, v3.4s\n"
+    "        ldp     q16, q17, [x0]\n"
+    "        bit     v16.16b, v0.16b, v5.16b\n"
+    "        bit     v17.16b, v0.16b, v6.16b\n"
+    "        stp     q16, q17, [x0]\n"
+    "2:      add     x0, x0, x1\n"
+    "        subs    x4, x4, #1\n"
+    "        b.ne    1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_glyph_wide)
     ASM_SIMD_SECTION_END
 );
 #elif RISCV64
@@ -46079,6 +46293,54 @@ __asm__(
     "        bnez    a2, 1b\n"
     "9:      " ASM_RET
     ASM_END(canvas_row_blit_wide)
+
+        //
+        //       As many lanes as the machine gives at LMUL eight, a row at a
+        //       time, and vsetvli takes each row's tail.
+        //
+    ASM_FUNC(canvas_rect_fill_wide)
+    "        beqz    a3, 9f\n"
+    "        beqz    a2, 9f\n"
+    "        slli    a1, a1, 2\n"
+    "        vsetvli t0, zero, e32, m8, ta, ma\n"
+    "        vmv.v.x v8, a4                  # the colour\n"
+    "1:      mv      t1, a0\n"
+    "        mv      t2, a2\n"
+    "2:      vsetvli t0, t2, e32, m8, ta, ma\n"
+    "        vse32.v v8, (t1)\n"
+    "        slli    t3, t0, 2\n"
+    "        add     t1, t1, t3\n"
+    "        sub     t2, t2, t0\n"
+    "        bnez    t2, 2b\n"
+    "        add     a0, a0, a1\n"
+    "        addi    a3, a3, -1\n"
+    "        bnez    a3, 1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_rect_fill_wide)
+
+        //
+        //       A glyph over what is there, stored under the bits as a mask.
+        //
+    ASM_FUNC(canvas_glyph_wide)
+    "        beqz    a4, 9f\n"
+    "        slli    a1, a1, 2\n"
+    "        vsetivli zero, 8, e32, m2, ta, ma\n"
+    "        vid.v   v2\n"
+    "        li      t0, 0x80\n"
+    "        vmv.v.x v4, t0\n"
+    "        vsrl.vv v2, v4, v2              # 0x80 >> lane\n"
+    "        vmv.v.x v6, a5                  # the colour\n"
+    "1:      lbu     t1, 0(a2)\n"
+    "        add     a2, a2, a3\n"
+    "        beqz    t1, 2f                  # a blank row, and most rows are\n"
+    "        vand.vx v4, v2, t1\n"
+    "        vmsne.vi v0, v4, 0\n"
+    "        vse32.v v6, (a0), v0.t\n"
+    "2:      add     a0, a0, a1\n"
+    "        addi    a4, a4, -1\n"
+    "        bnez    a4, 1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_glyph_wide)
     ".option pop\n"
     ASM_SIMD_SECTION_END
 );

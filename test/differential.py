@@ -16876,7 +16876,7 @@ HARNESS_COREUTILS_9_11 = {
 CANVAS_ROUTINES = ("canvas_rect_fill", "canvas_row_blit", "canvas_glyph",
                    "canvas_glyph2", "canvas_cell", "canvas_cell2", "canvas_cells",
                    "canvas_cell_wide", "canvas_cell2_wide", "canvas_row_blit_wide",
-                   "canvas_cells_wide")
+                   "canvas_cells_wide", "canvas_rect_fill_wide", "canvas_glyph_wide")
 
 
 def canvas_assembly(library, arch):
@@ -17137,8 +17137,10 @@ static int canvas_title=24, canvas_border=2, canvas_cell_w=8, canvas_cell_h=16, 
 struct drm_rect { int x1,y1,x2,y2; };
 struct target {
     u32 *pixels; unsigned pitch; int width,height,x,y; u32 opaque;
-    const u32 *ink; struct drm_rect clip;
+    const u32 *ink; struct drm_rect clip; _Bool simd;
 };
+/* No vector bodies in this harness: every target it makes says so. */
+#define TARGET_PICK(t, name) name
 static void drm_rect_init(struct drm_rect *r,int x,int y,int w,int h) {
     *r=(struct drm_rect){x,y,x+w,y+h};
 }

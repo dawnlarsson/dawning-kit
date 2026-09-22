@@ -553,6 +553,10 @@ void canvas_row_blit_wide(u32 *at, const u32 *from, unsigned long count,
 void canvas_cells_wide(u32 *at, unsigned long pitch, const u8 *font,
                        const struct window_cell *cells, unsigned long count,
                        u32 ink, u32 paper);
+void canvas_rect_fill_wide(u32 *at, unsigned long pitch, unsigned long width,
+                           unsigned long height, u32 colour);
+void canvas_glyph_wide(u32 *at, unsigned long pitch, const u8 *bits,
+                       unsigned long stride, unsigned long rows, u32 colour);
 
 /*
         The vector registers, for a whole pass of drawing.
@@ -906,8 +910,8 @@ static void bits_draw(const struct target *t, int x, int y, int scale,
                         const u8 *src = bits + column / 8;
 
                         if (scale == 1)
-                                canvas_glyph(at, t->pitch, src, pitch, h,
-                                             colour);
+                                TARGET_PICK(t, canvas_glyph)(at, t->pitch, src,
+                                                             pitch, h, colour);
                         else
                                 canvas_glyph2(at, t->pitch, src, pitch, h,
                                               colour);
@@ -3406,8 +3410,13 @@ static void target_row(const struct target *t, int y, int x1, int x2, u32 colour
                 return;
 
         target_mark((unsigned long)(x2 - x1));
-        memory_fill_u32(t->pixels + (size_t)y * t->pitch + x1,
-                        (unsigned long)(x2 - x1), colour);
+        if (t->simd)
+                TARGET_PICK(t, canvas_rect_fill)(t->pixels + (size_t)y * t->pitch + x1,
+                                                 0, (unsigned long)(x2 - x1), 1,
+                                                 colour);
+        else
+                memory_fill_u32(t->pixels + (size_t)y * t->pitch + x1,
+                                (unsigned long)(x2 - x1), colour);
 }
 
 // Clipped solid rectangles share one accounting and strided-store floor.
@@ -3429,8 +3438,9 @@ static void target_rectangle(const struct target *t, int x, int y, int w, int h,
         if (w <= 0 || h <= 0)
                 return;
         target_mark((unsigned long)w * h);
-        canvas_rect_fill(t->pixels + (size_t)y * t->pitch + x, t->pitch,
-                         (unsigned long)w, (unsigned long)h, colour);
+        TARGET_PICK(t, canvas_rect_fill)(t->pixels + (size_t)y * t->pitch + x,
+                                         t->pitch, (unsigned long)w,
+                                         (unsigned long)h, colour);
 }
 
 /*
@@ -4033,6 +4043,39 @@ static void cell_draw(const struct target *t, const struct shape *shape,
 }
 
 /*
+        Blank cells in one colour, count of them from x.
+
+        One alone is a cell of paper, and drawn as one: the rectangle's clip,
+        corner and row walk cost five hundred instructions for sixteen rows
+        of eight pixels, and a row whose background changes every cell was
+        all of them. Out of line for the reason compose_run is.
+*/
+static noinline void blank_fill(const struct target *t,
+                                const struct shape *shape, int x, int y,
+                                int count, u32 paper, _Bool direct)
+{
+        static const unsigned char blank[WINDOW_CELL_H];
+
+        if (count == 1 && direct && x >= max(t->clip.x1, 0) &&
+            x + canvas_cell_w <= min(t->clip.x2, t->width))
+        {
+                u32 *at = t->pixels + (size_t)y * t->pitch + x;
+
+                target_mark((unsigned long)canvas_cell_w *
+                            (unsigned long)canvas_cell_h);
+                if (desktop.scale == 1)
+                        TARGET_PICK(t, canvas_cell)(at, t->pitch, blank,
+                                                    WINDOW_CELL_H, paper, paper);
+                else
+                        TARGET_PICK(t, canvas_cell2)(at, t->pitch, blank,
+                                                     WINDOW_CELL_H, paper, paper);
+                return;
+        }
+
+        shape_fill(t, shape, x, y, count * canvas_cell_w, canvas_cell_h, paper);
+}
+
+/*
         A run of printable ASCII in one pair of colours from column, scale one
         and wholly inside the damage: one call, one table of colour pairs,
         drawn a scanline at a time. Answers the cells drawn, or 0 for a run of
@@ -4175,9 +4218,8 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
                                         break;
                         }
 
-                        shape_fill(t, shape, x + column * cell_w, y,
-                                   (run - column) * cell_w, canvas_cell_h,
-                                   paper);
+                        blank_fill(t, shape, x + column * cell_w, y,
+                                   run - column, paper, direct);
                         column = run;
                         continue;
                 }
