@@ -1884,8 +1884,15 @@ static b32 bowl_launch(string_address root, string_address program,
 
 
 #define BOWL_TEXT 131072
+/* For a pacman mirror list with no live server: the machine's own port's. */
+#if X64
 #define BOWL_GEO_MIRROR \
         "Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch\n"
+#elif ARM64
+#define BOWL_GEO_MIRROR "Server = http://mirror.archlinuxarm.org/$arch/$repo\n"
+#else
+#define BOWL_GEO_MIRROR "Server = https://riscv.mirror.pkgbuild.com/repo/$repo\n"
+#endif
 
 static bool bowl_has(string_address root, string_address path)
 {
@@ -3966,26 +3973,127 @@ static b32 bowl_land(string_address archive, string_address root,
         small prime step.
 */
 
+/*
+        Where each first boot comes from, per machine: every binary is built
+        for one, and a bowl is that machine's own distribution. All five have
+        an upstream on all three.
+
+        Arch itself builds x86_64 only. arm64 is Arch Linux ARM, the port
+        whose root tarball carries its own keyring and mirror list; its
+        download host has no TLS, so the file comes from one of its mirrors
+        that speaks TLS 1.3, which is all this wget speaks: de3, the nearest
+        to most of Europe, answers only TLS 1.2. riscv64 is Arch Linux RISC-V, which Arch's own
+        riscv.mirror.pkgbuild.com serves. Fedora builds riscv64 in its alt/
+        tree beside the primary architectures. Nix publishes all three from
+        the one release.
+
+        A download that names one release is pinned to its SHA-256, taken
+        from that release's own word for it: Alpine's .sha256 beside each
+        tarball, Fedora's CHECKSUM file, which Fedora signs (the riscv64
+        image's .sha256), and the hash lines of the installer at
+        releases.nixos.org/nix/nix-2.35.2/install. Arch's, Arch Linux ARM's,
+        Arch Linux RISC-V's and Debian's name only the latest build, have no
+        hash to pin and are held to the floor and a known archive instead. A
+        newer release is a new set of lines here.
+
+        The sizes are what each download and its unpacked tree took on a
+        4 KiB-page tmpfs, with nothing added, so a setup that fits is never
+        refused. x86_64 on 2026-09-15 and 2026-09-21, arm64 and riscv64 on
+        2026-09-22. Fedora's tree counts its one layer, which is on the
+        filesystem while it is unpacked and which the download does not
+        outlive; Nix's counts its database and profile. Arch Linux ARM's
+        root tarball is a bootable system, kernel and firmware included,
+        which is why it is so much larger than Arch's bootstrap. A release
+        that has grown since is what the check after the download is for,
+        and a failure part way still says how much room is left.
+*/
+#if X64
+#define BOWL_ARCH_LABEL "Arch"
 #define BOWL_ARCH_URL \
         "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.zst"
+#define BOWL_ARCH_STORE "archlinux-bootstrap-x86_64.tar.zst"
+#define BOWL_ARCH_BYTES 126491574, 607944704
 #define BOWL_ALPINE_URL \
         "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-minirootfs-3.24.1-x86_64.tar.gz"
+#define BOWL_ALPINE_SHA256 \
+        "41f73e3cf5fa919b8aa5ca6b30dc48f0da2720776d7423e2a7748211456fe081"
+#define BOWL_ALPINE_STORE "alpine-minirootfs-x86_64.tar.gz"
+#define BOWL_ALPINE_BYTES 3698422, 8675328
 #define BOWL_DEBIAN_URL \
         "https://github.com/debuerreotype/docker-debian-artifacts/raw/dist-amd64/stable/oci/blobs/rootfs.tar.gz"
-/*
-        Fedora and Nix are pinned to a release and to its SHA-256, taken from
-        the release's own word for it: Fedora's CHECKSUM file beside the
-        image, which Fedora signs, and the hash line of the installer at
-        nixos.org/nix/install. A newer release is a new pair of lines here.
-*/
+#define BOWL_DEBIAN_STORE "debian-rootfs-amd64.tar.gz"
+#define BOWL_DEBIAN_BYTES 49337828, 130928640
 #define BOWL_FEDORA_URL \
         "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Container/x86_64/images/Fedora-Container-Base-Generic-44-1.7.x86_64.oci.tar.xz"
 #define BOWL_FEDORA_SHA256 \
         "75200f5752a74a21a616ca9a75e25beb594e2e117a0195c54f87c0b3e3974d1b"
+#define BOWL_FEDORA_STORE "fedora-container-x86_64.oci.tar.xz"
+#define BOWL_FEDORA_BYTES 70170200, 261955584
 #define BOWL_NIX_URL \
         "https://releases.nixos.org/nix/nix-2.35.2/nix-2.35.2-x86_64-linux.tar.xz"
 #define BOWL_NIX_SHA256 \
         "0c3960a9792331a22081c3c7a5d8465db9b17c50b3acdf18587fa4c6f2cb1158"
+#define BOWL_NIX_STORE "nix-x86_64-linux.tar.xz"
+#define BOWL_NIX_BYTES 27131728, 125870080
+#elif ARM64
+#define BOWL_ARCH_LABEL "Arch Linux ARM"
+#define BOWL_ARCH_URL \
+        "https://fl.us.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
+#define BOWL_ARCH_STORE "archlinuxarm-aarch64.tar.gz"
+#define BOWL_ARCH_BYTES 829367415, 2193645568
+#define BOWL_ALPINE_URL \
+        "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz"
+#define BOWL_ALPINE_SHA256 \
+        "f55a90f69052c5bd6f92cb09a8f47065970830b194c917a006fb94028e721259"
+#define BOWL_ALPINE_STORE "alpine-minirootfs-aarch64.tar.gz"
+#define BOWL_ALPINE_BYTES 4023732, 8912896
+#define BOWL_DEBIAN_URL \
+        "https://github.com/debuerreotype/docker-debian-artifacts/raw/dist-arm64v8/stable/oci/blobs/rootfs.tar.gz"
+#define BOWL_DEBIAN_STORE "debian-rootfs-arm64.tar.gz"
+#define BOWL_DEBIAN_BYTES 49748834, 153010176
+#define BOWL_FEDORA_URL \
+        "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Container/aarch64/images/Fedora-Container-Base-Generic-44-1.7.aarch64.oci.tar.xz"
+#define BOWL_FEDORA_SHA256 \
+        "eca19542a48a8e39b84e869713a1fa2408cbcc578de26c25ae72e3334ef968c1"
+#define BOWL_FEDORA_STORE "fedora-container-aarch64.oci.tar.xz"
+#define BOWL_FEDORA_BYTES 66049080, 267513856
+#define BOWL_NIX_URL \
+        "https://releases.nixos.org/nix/nix-2.35.2/nix-2.35.2-aarch64-linux.tar.xz"
+#define BOWL_NIX_SHA256 \
+        "4d0302a2910f5eec1c33b8deef634f04899a75737e7001ec49908d003ae5efda"
+#define BOWL_NIX_STORE "nix-aarch64-linux.tar.xz"
+#define BOWL_NIX_BYTES 25288932, 137592832
+#elif RISCV64
+#define BOWL_ARCH_LABEL "Arch Linux RISC-V"
+#define BOWL_ARCH_URL \
+        "https://archriscv.felixc.at/images/archriscv-latest.tar.zst"
+#define BOWL_ARCH_STORE "archriscv-riscv64.tar.zst"
+#define BOWL_ARCH_BYTES 171783137, 745746432
+#define BOWL_ALPINE_URL \
+        "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/riscv64/alpine-minirootfs-3.24.1-riscv64.tar.gz"
+#define BOWL_ALPINE_SHA256 \
+        "7201513262d851f39105102cf95519410100259bd7996fca13bade517838d7b7"
+#define BOWL_ALPINE_STORE "alpine-minirootfs-riscv64.tar.gz"
+#define BOWL_ALPINE_BYTES 3442892, 7393280
+#define BOWL_DEBIAN_URL \
+        "https://github.com/debuerreotype/docker-debian-artifacts/raw/dist-riscv64/stable/oci/blobs/rootfs.tar.gz"
+#define BOWL_DEBIAN_STORE "debian-rootfs-riscv64.tar.gz"
+#define BOWL_DEBIAN_BYTES 47866994, 116793344
+#define BOWL_FEDORA_URL \
+        "https://dl.fedoraproject.org/pub/alt/risc-v/release/44/Container/riscv64/images/Fedora-Container-Base-Generic-44-20260604.0.riscv64.oci.tar.xz"
+#define BOWL_FEDORA_SHA256 \
+        "198c75fe6f58fea77e539fd29a3103407c0923833c7192c5e962a008c0595f31"
+#define BOWL_FEDORA_STORE "fedora-container-riscv64.oci.tar.xz"
+#define BOWL_FEDORA_BYTES 75309204, 269754368
+#define BOWL_NIX_URL \
+        "https://releases.nixos.org/nix/nix-2.35.2/nix-2.35.2-riscv64-linux.tar.xz"
+#define BOWL_NIX_SHA256 \
+        "98ee79540d4b9ccfe733655ea049a67af24f15860fbf92103bc1911bbd905a53"
+#define BOWL_NIX_STORE "nix-riscv64-linux.tar.xz"
+#define BOWL_NIX_BYTES 28914596, 138350592
+#else
+#error "bowl has no first boots for this architecture"
+#endif
 #define BOWL_INTERPRETER "/bowl"
 #define BOWL_BIN_DIRECTORY "/bin"
 
@@ -4271,8 +4379,10 @@ static b32 bowl_publish_bin(string_address name)
 static b32 bowl_prime_arch(string_address root)
 {
         string_address init_argv[] = {"/usr/bin/pacman-key", "--init", null};
+        // Every keyring the tree ships: archlinux, and archlinuxarm beside
+        // it on Arch Linux ARM.
         string_address populate_argv[] = {"/usr/bin/pacman-key", "--populate",
-                                          "archlinux", null};
+                                          null};
         b32 failed;
 
         if (bowl_has(root, "/etc/pacman.d/gnupg/pubring.gpg") ||
@@ -4361,40 +4471,28 @@ static string_address bowl_nix_expose[] = {
     "/nix/var/nix/profiles/default/bin/nix-build",
     "/nix/var/nix/profiles/default/bin/nix-store", null};
 
-/*
-        The sizes are what each download and its unpacked tree took on a
-        4 KiB-page tmpfs on 2026-09-15, with nothing added, so a setup that
-        fits is never refused: Arch 126,491,574 bytes unpacking to 607,944,704,
-        Alpine 3,698,422 to 8,675,328, Debian 49,337,828 to 130,928,640. On
-        2026-09-21 the same way: Fedora 70,170,200 to 191,016,960, and its
-        tree counts the 70,938,624 its one layer takes while it is unpacked,
-        which the download does not outlive; Nix 27,131,728 to 125,870,080
-        with its database and profile made. A release that has grown since is
-        what the check after the download is for, and a failure part way
-        still says how much room is left.
-*/
 static const struct bowl_distro bowl_distros[] = {
-    {"arch", "Arch", BOWL_ROOT_PREFIX "arch",
-     BOWL_ROOT_PREFIX "archlinux-bootstrap-x86_64.tar.zst", BOWL_ARCH_URL,
+    {"arch", BOWL_ARCH_LABEL, BOWL_ROOT_PREFIX "arch",
+     BOWL_ROOT_PREFIX BOWL_ARCH_STORE, BOWL_ARCH_URL,
      "/usr/bin/pacman", "pacman -Syu", null, (p64)32 * 1024 * 1024,
-     126491574, 607944704, BOWL_PRIME_ARCH, bowl_arch_expose, null, null},
+     BOWL_ARCH_BYTES, BOWL_PRIME_ARCH, bowl_arch_expose, null, null},
     {"alpine", "Alpine", BOWL_ROOT_PREFIX "alpine",
-     BOWL_ROOT_PREFIX "alpine-minirootfs-x86_64.tar.gz", BOWL_ALPINE_URL, "/sbin/apk",
-     "apk update", null, (p64)1024 * 1024, 3698422, 8675328, BOWL_PRIME_NONE,
-     bowl_alpine_expose, null, null},
-    {"debian", "Debian", BOWL_ROOT_PREFIX "debian", BOWL_ROOT_PREFIX "debian-rootfs-amd64.tar.gz",
-     BOWL_DEBIAN_URL, "/usr/bin/apt-get", "apt-get update", null,
-     (p64)8 * 1024 * 1024, 49337828, 130928640, BOWL_PRIME_NONE,
-     bowl_debian_expose, null, null},
+     BOWL_ROOT_PREFIX BOWL_ALPINE_STORE, BOWL_ALPINE_URL, "/sbin/apk",
+     "apk update", null, (p64)1024 * 1024, BOWL_ALPINE_BYTES, BOWL_PRIME_NONE,
+     bowl_alpine_expose, BOWL_ALPINE_SHA256, null},
+    {"debian", "Debian", BOWL_ROOT_PREFIX "debian",
+     BOWL_ROOT_PREFIX BOWL_DEBIAN_STORE, BOWL_DEBIAN_URL, "/usr/bin/apt-get",
+     "apt-get update", null, (p64)8 * 1024 * 1024, BOWL_DEBIAN_BYTES,
+     BOWL_PRIME_NONE, bowl_debian_expose, null, null},
     {"fedora", "Fedora", BOWL_ROOT_PREFIX "fedora",
-     BOWL_ROOT_PREFIX "fedora-container-x86_64.oci.tar.xz", BOWL_FEDORA_URL,
+     BOWL_ROOT_PREFIX BOWL_FEDORA_STORE, BOWL_FEDORA_URL,
      "/usr/bin/dnf", "dnf makecache", null, (p64)32 * 1024 * 1024,
-     70170200, 261955584, BOWL_PRIME_NONE, bowl_fedora_expose,
+     BOWL_FEDORA_BYTES, BOWL_PRIME_NONE, bowl_fedora_expose,
      BOWL_FEDORA_SHA256, bowl_extract_oci},
     {"nix", "Nix", BOWL_ROOT_PREFIX "nix",
-     BOWL_ROOT_PREFIX "nix-x86_64-linux.tar.xz", BOWL_NIX_URL, "/nix/.reginfo",
+     BOWL_ROOT_PREFIX BOWL_NIX_STORE, BOWL_NIX_URL, "/nix/.reginfo",
      "nix-channel --update, or nix run nixpkgs#hello", null,
-     (p64)8 * 1024 * 1024, 27131728, 125870080, BOWL_PRIME_NIX,
+     (p64)8 * 1024 * 1024, BOWL_NIX_BYTES, BOWL_PRIME_NIX,
      bowl_nix_expose, BOWL_NIX_SHA256, bowl_extract_nix},
 };
 
@@ -4484,6 +4582,25 @@ static b32 bowl_setup_distro(const struct bowl_distro address_to distro)
                 }
 
                 system_remove_at(AT_FDCWD, distro->store, 0);
+
+                /*
+                        A keyring that arrives in the tarball was made where
+                        the tarball was, master key and all, and is the same
+                        for everyone who downloads it: Arch Linux RISC-V ships
+                        one. Pacman trusts what that key signs, so it goes, and
+                        the prime step makes this machine's own.
+                */
+                if (distro->prime == BOWL_PRIME_ARCH)
+                {
+                        p8 keyring[BOWL_PATH_LIMIT];
+
+                        if (!bowl_root_path(keyring, sizeof(keyring), distro->root,
+                                            "/etc/pacman.d/gnupg"))
+                                return bowl_refuse("bowl path is too long\n");
+                        failed = bowl_forget_path(keyring);
+                        if (failed)
+                                return failed;
+                }
         }
 
         if (distro->prime == BOWL_PRIME_ARCH)
@@ -4521,13 +4638,6 @@ static b32 bowl_setup(positive count, string_address address_to arguments)
 
         if (distro->refuse)
                 return bowl_refuse(distro->refuse);
-
-#ifndef X64
-        string_format(log, bowl_label "%s setup is x86_64 for now\n",
-                      distro->label);
-        log_flush();
-        return 1;
-#endif
 
         if (bowl_setup_become_root(distro->name))
                 return 1;

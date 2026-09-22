@@ -51831,9 +51831,46 @@ static fn distros(void)
                           bowl_hex_digest(row->sha256, string_length(row->sha256)));
         }
 
+        /*
+                Each machine's table names its own builds and nobody else's,
+                in the URL and in the name it keeps the download under. Arch
+                Linux RISC-V spells itself archriscv, hence riscv alone.
+        */
+#if X64
+        static string_address own[] = {"x86_64", "amd64", null};
+        static string_address others[] = {"aarch64", "arm64", "riscv", null};
+#elif ARM64
+        static string_address own[] = {"aarch64", "arm64", null};
+        static string_address others[] = {"x86_64", "amd64", "riscv", null};
+#else
+        static string_address own[] = {"riscv", null};
+        static string_address others[] = {"x86_64", "amd64", "aarch64", "arm64", null};
+#endif
+        for (positive at = 0; at < array_count(bowl_distros); at++)
+        {
+                const struct bowl_distro address_to row = bowl_distros + at;
+                bool url_own = false;
+                bool store_own = false;
+                bool foreign = false;
+
+                for (string_address address_to name = own; *name; name++)
+                {
+                        url_own |= string_find(row->url, *name) != null;
+                        store_own |= string_find(row->store, *name) != null;
+                }
+                for (string_address address_to name = others; *name; name++)
+                        foreign |= string_find(row->url, *name) != null ||
+                                   string_find(row->store, *name) != null;
+                check("Every setup downloads this machine's own build",
+                      url_own && store_own && !foreign);
+        }
+
+        const struct bowl_distro address_to alpine = bowl_find_distro("alpine");
         const struct bowl_distro address_to fedora = bowl_find_distro("fedora");
         const struct bowl_distro address_to nix = bowl_find_distro("nix");
 
+        check("Alpine's release is pinned on every machine",
+              alpine && alpine->sha256);
         check("Fedora and Nix are set up, pinned, and unpacked their own way",
               fedora && nix && fedora->sha256 && nix->sha256 &&
                   fedora->unpack == bowl_extract_oci &&
