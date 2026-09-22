@@ -3094,6 +3094,8 @@ static void cursor_settle(void)
         cursor_move(desktop.cursor_x, desktop.cursor_y);
 }
 
+static _Bool console_pending(void);
+
 static void desktop_frame_pass(void)
 {
         rt_mutex_lock(&desktop.lock);
@@ -3126,6 +3128,14 @@ static void desktop_frame_pass(void)
                 {
                         desktop_refresh_panes();
                         desktop_repaint();
+                }
+
+                // And the console, whose writer read awake too and left its
+                // record for this frame rather than waking anyone.
+                if (console_pending())
+                {
+                        atomic_set(&desktop.frame_pending, 1);
+                        canvas_thread_wake();
                 }
         }
 
@@ -3167,33 +3177,28 @@ static void desktop_frame_pass(void)
 static struct pane *console_pane;
 static DEFINE_SPINLOCK(console_cells);
 
-static void console_put_line(struct console *console, const char *text,
-                             unsigned int count)
+/*
+        One printk record into the emulator, as the console has always fed
+        it: its own message, not the end of the last one, and a newline that
+        means the start of the next line.
+
+        A newline here is a line feed and nothing else. The emulator is what
+        sits behind a pty, and the line discipline in front of one turns \n
+        into \r\n before it ever arrives. printk has no line discipline: it
+        says \n and means the start of the next line. Fed raw, the cursor
+        drops a row and stays in the column it was in, so every message
+        begins where the one before it ended and the log walks off to the
+        right until it wraps. The return is put in here, which is where the
+        pty that is missing would have put it.
+
+        Under console_cells.
+*/
+static void console_feed(const char *text, unsigned int count)
 {
-        struct pane *pane = READ_ONCE(console_pane);
-        unsigned long flags;
         unsigned int i;
 
-        if (!pane || !pane->cells)
-                return;
-
-        spin_lock_irqsave(&console_cells, flags);
-
-        // This record is its own message; it does not continue the last one.
         term_record_begin();
 
-        /*
-                A newline here is a line feed and nothing else.
-
-                The emulator is what sits behind a pty, and the line discipline
-                in front of one turns \n into \r\n before it ever arrives.
-                printk has no line discipline: it says \n and means the start
-                of the next line. Fed raw, the cursor drops a row and stays in
-                the column it was in, so every message begins where the one
-                before it ended and the log walks off to the right until it
-                wraps. The return is put in here, which is where the pty that
-                is missing would have put it.
-        */
         for (i = 0; i < count;)
         {
                 unsigned int stop = i;
@@ -3211,7 +3216,148 @@ static void console_put_line(struct console *console, const char *text,
                 consume('\n');
                 i = stop + 1;
         }
+}
 
+/*
+        What the console write leaves for the compositor's thread.
+
+        printk calls the console with interrupts off, and a vector register
+        cannot be taken there, so the write does not parse: it copies the
+        record into this ring and asks for a frame, and the canvas thread
+        takes the ring, runs the emulator over it inside its vector bracket,
+        and draws. The interrupts-off stretch a message costs is one copy.
+
+        Records keep their boundaries -- two bytes of length and the bytes --
+        because each is its own message to the emulator. A record that finds
+        the ring full pushes the oldest out whole rather than being lost
+        itself: the last thing a machine said is the one worth keeping, and
+        the count of what went is said in the log when the ring is next read.
+
+        A dying machine does not wait for a thread. With an oops or a panic
+        in progress, or no thread to hand to, the write empties the ring and
+        parses its own record where it is, as it always did.
+*/
+#define CONSOLE_QUEUE (256u * 1024u)
+#define CONSOLE_RECORD 4096u
+
+static char console_queue[CONSOLE_QUEUE];
+static unsigned int console_queue_head, console_queue_tail;
+static unsigned long console_queue_dropped;
+static DEFINE_RAW_SPINLOCK(console_queue_lock);
+static atomic_t console_queued = ATOMIC_INIT(0);
+
+// The copy the reader parses from, a record at a time; the reader is the
+// canvas thread or a writer that holds console_cells, never both.
+static char console_record[CONSOLE_RECORD];
+
+static void console_queue_put(unsigned int at, const void *from, unsigned int count)
+{
+        unsigned int first = min(count, CONSOLE_QUEUE - at % CONSOLE_QUEUE);
+
+        memory_copy_apart(console_queue + at % CONSOLE_QUEUE, (address_any)from, first);
+        memory_copy_apart(console_queue, (address_any)((const char *)from + first),
+                          count - first);
+}
+
+static void console_queue_get(unsigned int at, void *to, unsigned int count)
+{
+        unsigned int first = min(count, CONSOLE_QUEUE - at % CONSOLE_QUEUE);
+
+        memory_copy_apart(to, console_queue + at % CONSOLE_QUEUE, first);
+        memory_copy_apart((char *)to + first, console_queue, count - first);
+}
+
+// Under console_queue_lock.
+static unsigned int console_queue_length_at(unsigned int at)
+{
+        u16 length;
+
+        console_queue_get(at, &length, sizeof(length));
+        return length;
+}
+
+static _Bool console_pending(void)
+{
+        return atomic_read(&console_queued) != 0;
+}
+
+static void console_enqueue(const char *text, unsigned int count)
+{
+        unsigned long flags;
+        u16 length;
+
+        count = min(count, CONSOLE_RECORD);
+        length = (u16)count;
+
+        raw_spin_lock_irqsave(&console_queue_lock, flags);
+
+        while (console_queue_head - console_queue_tail + sizeof(length) + count >
+               CONSOLE_QUEUE)
+        {
+                console_queue_tail += sizeof(length) +
+                                      console_queue_length_at(console_queue_tail);
+                console_queue_dropped++;
+        }
+
+        console_queue_put(console_queue_head, &length, sizeof(length));
+        console_queue_put(console_queue_head + sizeof(length), text, count);
+        console_queue_head += sizeof(length) + count;
+        atomic_set(&console_queued, 1);
+
+        raw_spin_unlock_irqrestore(&console_queue_lock, flags);
+}
+
+// The oldest record into console_record, and its length; false when none.
+static _Bool console_dequeue(unsigned int *count, unsigned long *dropped)
+{
+        unsigned long flags;
+        _Bool some;
+
+        raw_spin_lock_irqsave(&console_queue_lock, flags);
+
+        some = console_queue_head != console_queue_tail;
+        if (some)
+        {
+                *count = console_queue_length_at(console_queue_tail);
+                console_queue_get(console_queue_tail + 2, console_record, *count);
+                console_queue_tail += 2 + *count;
+        }
+        else
+                atomic_set(&console_queued, 0);
+
+        *dropped = console_queue_dropped;
+        console_queue_dropped = 0;
+
+        raw_spin_unlock_irqrestore(&console_queue_lock, flags);
+        return some;
+}
+
+// Every record the ring holds into the emulator. Under console_cells.
+static void console_feed_queue(void)
+{
+        unsigned int count;
+        unsigned long dropped;
+
+        while (console_dequeue(&count, &dropped))
+        {
+                if (dropped)
+                {
+                        char note[64];
+                        int n = scnprintf(note, sizeof(note),
+                                          "[moonwater canvas] %lu log records "
+                                          "dropped, the ring was full\n",
+                                          dropped);
+
+                        console_feed(note, (unsigned int)n);
+                }
+
+                console_feed(console_record, count);
+        }
+}
+
+// The emulator has written: tell the compositor. Under console_cells.
+static void console_moved(struct pane *pane)
+{
         // The emulator counts the ring on in the page; the compositor reads
         // its own copy, and this is where the two meet.
         pane->head = window->head;
@@ -3230,9 +3376,114 @@ static void console_put_line(struct console *console, const char *text,
         */
         pane->damage_row = 0;
         pane->damage_rows = pane->grid_rows;
+}
 
-        spin_unlock_irqrestore(&console_cells, flags);
+/*
+        The canvas thread's half: the ring into the emulator, inside the
+        vector bracket so the emulator's runs of text take the wide bodies.
+        Process context with interrupts on, which the bracket needs;
+        console_cells is taken plainly, and the only writer that can meet it
+        from an interrupt on this processor is a dying one, which does not
+        wait for it.
+*/
+static void console_drain(void)
+{
+        struct pane *pane = READ_ONCE(console_pane);
+        struct canvas_simd_hold simd;
 
+        if (!atomic_read(&console_queued) || !pane || !pane->cells)
+                return;
+
+        canvas_simd_begin(&simd, false);
+        spin_lock(&console_cells);
+        term_simd = simd.on;
+
+        console_feed_queue();
+        console_moved(pane);
+
+        term_simd = false;
+        spin_unlock(&console_cells);
+        canvas_simd_end(&simd);
+
+        /*
+                From here the frame timer comes for the console: a flood is
+                drained and drawn once a frame, whatever number of records
+                arrived in it, rather than once a record.
+        */
+        rt_mutex_lock(&desktop.lock);
+        desktop_watch();
+        rt_mutex_unlock(&desktop.lock);
+}
+
+/*
+        console_cells from a dying writer: taken if it can be, waited on for a
+        moment if not, and then gone around -- the holder may be a processor
+        panic has stopped, and a log that never reaches the screen is worse
+        than one drawn over a half-finished line. Only a dying writer takes
+        it from an interrupt, and an oops has turned lockdep off by then.
+*/
+static _Bool console_cells_take(void)
+{
+        unsigned int tries;
+
+        for (tries = 0; tries < 1000; tries++)
+        {
+                if (spin_trylock(&console_cells))
+                        return true;
+                udelay(10);
+        }
+
+        return false;
+}
+
+static void console_put_line(struct console *console, const char *text,
+                             unsigned int count)
+{
+        struct pane *pane = READ_ONCE(console_pane);
+        unsigned long flags;
+        _Bool locked;
+
+        if (!pane || !pane->cells)
+                return;
+
+        /*
+                Queued whether or not the thread is there to take it: a
+                console with no compositor running is a window nobody can
+                see, and the ring keeps the last of what was said until
+                there is one.
+        */
+        if (!oops_in_progress && !panic_in_progress())
+        {
+                console_enqueue(text, count);
+
+                /*
+                        A desktop that is awake has a frame coming, and the
+                        frame drains the ring: no wake for every record. One
+                        that is not is woken, and the drain wakes the frames.
+                        The ring's flag is set before awake is read, and the
+                        frame that lets awake go reads the flag after it, so
+                        one of the two always sees the other.
+                */
+                smp_mb();
+                if (READ_ONCE(desktop.awake))
+                        return;
+                goto wake;
+        }
+
+        local_irq_save(flags);
+        locked = console_cells_take();
+
+        // The general register bodies here, whatever a reader left behind.
+        term_simd = false;
+        console_feed_queue();
+        console_feed(text, count);
+        console_moved(pane);
+
+        if (locked)
+                spin_unlock(&console_cells);
+        local_irq_restore(flags);
+
+wake:
         /*
                 Asking for a frame rather than drawing one.
 
@@ -10062,6 +10313,10 @@ static int canvas_loop(void *unused)
                         wheel_deliver();
                         rt_mutex_unlock(&desktop.lock);
                 }
+
+                // The console's queued records into its window first, so the
+                // frame they asked for draws them.
+                console_drain();
 
                 if (atomic_xchg(&desktop.frame_pending, 0))
                         desktop_frame_pass();

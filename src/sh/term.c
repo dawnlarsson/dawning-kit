@@ -664,6 +664,23 @@ static fn put(unsigned int character)
         one function in this file that has a file descriptor sends them. The
         emulator itself still makes no system call.
 */
+/*
+        Which body the emulator's runs of text take.
+
+        In a program, cells_from_ascii picks its own. In the kernel the
+        emulator is the console's, and the routine may only take its vector
+        body inside the vector bracket, which is console_drain's -- it sets
+        term_simd for the stretch it holds the bracket and console_cells, and
+        clears it before letting either go. Every other writer finds it
+        false.
+*/
+#ifdef KERNEL_MODE
+static _Bool term_simd;
+#define TERM_PICK(name) (term_simd ? name##_wide : name)
+#else
+#define TERM_PICK(name) name
+#endif
+
 #ifdef KERNEL_MODE
 #define TO_SHELL_MAX 2048
 static p8 to_shell[TO_SHELL_MAX];
@@ -2240,7 +2257,7 @@ static positive text_ascii(const p8 address_to bytes, positive count)
                 if (n == limit || (unsigned int)bytes[n] - ' ' >= 95)
                         break;
 
-                n += cells_from_ascii(
+                n += TERM_PICK(cells_from_ascii)(
                     cells + first + n, (address_any)(bytes + n), limit - n,
                     guarded > n ? guarded - n : 0, attribute,
                     (positive)(WINDOW_CELL_WIDE | WINDOW_CELL_WIDE_RIGHT) << 48);

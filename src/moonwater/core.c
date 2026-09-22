@@ -454,6 +454,19 @@ static b32 __init start()
         */
         pr_alert("[moonwater] " "Moonwater starting...\n");
 
+        /*
+                What the wide bodies may ask of the processor, from what the
+                kernel decided it has -- cpuid alone would say yes to AVX-512
+                on a kernel booted to leave it off. Before anything that
+                could reach one.
+        */
+#ifdef CONFIG_X86_64
+        cpu_has_avx2 = boot_cpu_has(X86_FEATURE_AVX2);
+        cpu_has_avx512 = cpu_has_avx2 && boot_cpu_has(X86_FEATURE_AVX512F) &&
+                         boot_cpu_has(X86_FEATURE_AVX512BW) &&
+                         boot_cpu_has(X86_FEATURE_AVX512VL);
+#endif
+
         // Before anything that starts from them: Canvas asks at its probe.
         settings_start();
 

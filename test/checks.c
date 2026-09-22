@@ -12653,6 +12653,11 @@ static p64 cells_ascii_random(p64 address_to state)
         return x;
 }
 
+// The body under test: cells_from_ascii, or cells_from_ascii_wide for the
+// tiers that ask for the vector entry by name.
+static positive (address_to cells_ascii_body)(address_any, address_any, positive,
+                                             positive, p64, p64) = cells_from_ascii;
+
 static positive cells_ascii_case(p8 address_to pages, p8 address_to rows,
                                  p64 address_to want, positive limit,
                                  positive slack, positive bad, positive dirty,
@@ -12689,7 +12694,7 @@ static positive cells_ascii_case(p8 address_to pages, p8 address_to rows,
                 want[at] = cells[at];
 
         expected = cells_ascii_reference(want, bytes, limit, guarded, attribute, stop);
-        got = cells_from_ascii(cells, bytes, limit, guarded, attribute, stop);
+        got = cells_ascii_body(cells, bytes, limit, guarded, attribute, stop);
 
         if (got != expected)
                 wrong++;
@@ -12731,19 +12736,31 @@ fn check_cells_from_ascii()
                 memory_free(rows, 3 * 4096);
                 return;
         }
+        //      The tiers past the program's own are cells_from_ascii_wide by
+        //      name, the kernel's vector entry, on every body it has here:
+        //      AVX-512 and AVX2 on x86_64, NEON on arm64, V on riscv64.
 #if X64
         p8 avx2 = cpu_has_avx2, avx512 = cpu_has_avx512;
-        positive tiers = 3;
+        positive tiers = 3, vector_tiers = avx2 ? (avx512 ? 2 : 1) : 0;
+#elif RISCV64
+        struct { b64 key; p64 value; } probe = {4, 0};
+        positive tiers = 1, vector_tiers =
+            system_call_5(258, (positive)address_of probe, 1, 0, 0, 0) == 0 &&
+            (probe.value & 4) ? 1 : 0;
 #else
-        positive tiers = 1;
+        positive tiers = 1, vector_tiers = 1;
 #endif
-        for (positive tier = 0; tier < tiers; tier++)
+        for (positive tier = 0; tier < tiers + vector_tiers; tier++)
         {
                 p64 seed = 0x9e3779b97f4a7c15 + tier;
                 positive short_wrong = 0, long_wrong = 0;
+                positive vector = tier >= tiers ? tier - tiers + 1 : 0;
+
+                cells_ascii_body = vector ? cells_from_ascii_wide : cells_from_ascii;
 #if X64
-                cpu_has_avx2 = tier < 2 ? avx2 : 0;
-                cpu_has_avx512 = tier < 1 ? avx512 : 0;
+                cpu_has_avx2 = vector ? avx2 : tier < 2 ? avx2 : 0;
+                cpu_has_avx512 = vector ? (vector == 1 && vector_tiers == 2 ? avx512 : 0)
+                                        : tier < 1 ? avx512 : 0;
 #endif
                 //      Every stop and every guard around it, short runs.
                 for (positive limit = 0; limit <= 26; limit++)
@@ -12782,15 +12799,18 @@ fn check_cells_from_ascii()
                                                        address_of seed);
                 }
 
-                same("cells_from_ascii", tier + 1 < tiers ? tier ? "short runs, AVX2 body"
+                same("cells_from_ascii", vector ? "short runs, cells_from_ascii_wide"
+                                         : tier + 1 < tiers ? tier ? "short runs, AVX2 body"
                                                                 : "short runs, widest body"
                                                        : "short runs, word body",
                      short_wrong, 0);
-                same("cells_from_ascii", tier + 1 < tiers ? tier ? "long runs, AVX2 body"
+                same("cells_from_ascii", vector ? "long runs, cells_from_ascii_wide"
+                                         : tier + 1 < tiers ? tier ? "long runs, AVX2 body"
                                                                 : "long runs, widest body"
                                                        : "long runs, word body",
                      long_wrong, 0);
         }
+        cells_ascii_body = cells_from_ascii;
 #if X64
         cpu_has_avx2 = avx2;
         cpu_has_avx512 = avx512;

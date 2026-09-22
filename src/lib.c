@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        352 routines (338 public, 14 local), 350 of them on all three and 2 local to one.
+        353 routines (339 public, 14 local), 351 of them on all three and 2 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -124,6 +124,7 @@
           canvas_row_blit                public  yes     yes     yes
           canvas_row_blit_wide           public  yes     yes     yes
           cells_from_ascii               public  yes     yes     yes
+          cells_from_ascii_wide          public  yes     yes     yes
           cpu_hash_detect                local   yes     yes     yes
           decimal_ceiling                public  yes     yes     yes
           decimal_difference             public  yes     yes     yes
@@ -1689,10 +1690,12 @@ typedef union matrix4
 */
 #ifdef KERNEL_MODE
 #define ASM_SIMD_SECTION ".pushsection .text.moonwater_simd, \"ax\"\n"
-#else
-#define ASM_SIMD_SECTION ".pushsection .text\n"
-#endif
 #define ASM_SIMD_SECTION_END ".popsection\n"
+#else
+//      A program's wide bodies go where its other routines go.
+#define ASM_SIMD_SECTION ""
+#define ASM_SIMD_SECTION_END ""
+#endif
 
 /*
         Every routine in its own section, so --gc-sections drops the ones a
@@ -11147,91 +11150,97 @@ __asm__(
     //      alignment goes on the routine's own section, so the linker places
     //      it and nothing runs through padding; in the kernel, with no section
     //      per routine, it pads .noinstr.text in front of the label.
+    //      The wide bodies once, for both halves: inline behind WIDE_PICK in a
+    //      program, and in a kernel as cells_from_ascii_wide, which the console
+    //      reaches only from inside its vector bracket.
+#define CELLS_FROM_ASCII_X64_WIDE(y, z)                                                             \
+        /* */                                                                                       \
+        /*      AVX2: the byte test as one signed compare, with 0x20..0x7e */                       \
+        /*      moved onto -128..-34, and the cells four to a load. The load of */                  \
+        /*      eight bytes leaves the high half of the register zero, which */                     \
+        /*      moves onto 0x60 and fails, so a whole turn is exactly 0xff. */                      \
+        /* */                                                                                       \
+        "vmovq %r8, %xmm1\n   vpbroadcastq %xmm1, %ymm1  # the attribute\n"                         \
+        "vmovq %r9, %xmm2\n   vpbroadcastq %xmm2, %ymm2  # the guard flags\n"                       \
+        "mov $0x60, %r10d\n   vmovd %r10d, %xmm3\n   vpbroadcastb %xmm3, %xmm3\n"                   \
+        "mov $0xdf, %r10d\n   vmovd %r10d, %xmm4\n   vpbroadcastb %xmm4, %xmm4\n"                   \
+        "xor %eax, %eax\n"                                                                          \
+        ".balign 16\n.Lcells_from_ascii_x64_" #y ":\n"                                                 \
+        "lea 8(%rax), %r10\n   cmp %rdx, %r10\n   ja .Lcells_from_ascii_x64_" #y "_cell\n"             \
+        "vmovq (%rsi,%rax), %xmm5\n   vpaddb %xmm3, %xmm5, %xmm6\n"                                 \
+        "vpcmpgtb %xmm6, %xmm4, %xmm6\n   vpmovmskb %xmm6, %r11d\n"                                 \
+        "cmp %rcx, %rax\n   jae 1f\n"                                                               \
+        "vmovdqu (%rdi,%rax,8), %ymm7\n   vpor 32(%rdi,%rax,8), %ymm7, %ymm7\n"                     \
+        "vptest %ymm2, %ymm7\n   jnz .Lcells_from_ascii_x64_" #y "_cell\n"                             \
+        "1:  vpmovzxbq %xmm5, %ymm0\n   vpmovzxbq 4(%rsi,%rax), %ymm6\n"                            \
+        "vpor %ymm1, %ymm0, %ymm0\n   vpor %ymm1, %ymm6, %ymm6\n"                                   \
+        "cmp $255, %r11d\n   jne .Lcells_from_ascii_x64_" #y "_short\n"                                \
+        "vmovdqu %ymm0, (%rdi,%rax,8)\n   vmovdqu %ymm6, 32(%rdi,%rax,8)\n"                         \
+        "mov %r10, %rax\n   jmp .Lcells_from_ascii_x64_" #y "\n"                                       \
+        /* */                                                                                       \
+        /*      A turn the run ends in, with no flag in its way. The cells in */                    \
+        /*      front of the stop come from the new ones and the rest from */                       \
+        /*      what is already there, stored back unchanged, so the end of */                      \
+        /*      the run is not a branch: a cell at a time here missed one */                        \
+        /*      prediction at every run's end on top of the one that decides */                     \
+        /*      the turn is short, and the wide stream paid four per cent. */                       \
+        /* */                                                                                       \
+        ".Lcells_from_ascii_x64_" #y "_short:\n"                                                       \
+        "lea 1(%r11), %r10d\n   not %r10d\n   and %r11d, %r10d  # a bit for each lane in front\n"   \
+        "movabs $0x8040201008040201, %r9\n   vmovq %r9, %xmm8\n"                                    \
+        "vmovd %r10d, %xmm7\n   vpbroadcastb %xmm7, %xmm7\n   vpand %xmm8, %xmm7, %xmm7\n"          \
+        "vpxor %xmm9, %xmm9, %xmm9\n   vpcmpeqb %xmm9, %xmm7, %xmm7  # ones on a lane to keep\n"    \
+        "vpmovsxbq %xmm7, %ymm8\n   vpsrldq $4, %xmm7, %xmm7\n   vpmovsxbq %xmm7, %ymm9\n"          \
+        "vpblendvb %ymm8, (%rdi,%rax,8), %ymm0, %ymm0\n"                                            \
+        "vpblendvb %ymm9, 32(%rdi,%rax,8), %ymm6, %ymm6\n"                                          \
+        "vmovdqu %ymm0, (%rdi,%rax,8)\n   vmovdqu %ymm6, 32(%rdi,%rax,8)\n"                         \
+        "not %r11d\n   bsf %r11d, %r11d\n   add %r11, %rax\n   vzeroupper\n"                        \
+        ASM_RET                                                                                     \
+        CELLS_FROM_ASCII_X64_CELL(y)                                                              \
+        ".Lcells_from_ascii_x64_" #y "_done:\n   vzeroupper\n"                                         \
+        ASM_RET                                                                                     \
+        /* */                                                                                       \
+        /*      AVX-512: the eight cells from one widening load, and the */                         \
+        /*      guard folded into the byte mask as a masked test, so a turn */                      \
+        /*      asks one question. A turn cut short by a byte or a flag still */                    \
+        /*      stores the cells in front of it through the mask, and only a */                     \
+        /*      guard that ends inside the turn, or limit, goes a cell at a */                      \
+        /*      time. The mask bytes are read and written through kmovw: this */                    \
+        /*      body runs on F, BW and VL, and kmovb is DQ. */                                      \
+        /* */                                                                                       \
+        "6:  vpbroadcastq %r8, %zmm1  # the attribute\n"                                            \
+        "vpbroadcastq %r9, %zmm2  # the guard flags\n"                                              \
+        "mov $0x20, %r10d\n   vpbroadcastb %r10d, %xmm3\n"                                          \
+        "mov $95, %r10d\n   vpbroadcastb %r10d, %xmm4\n"                                            \
+        "xor %eax, %eax\n"                                                                          \
+        ".balign 16\n.Lcells_from_ascii_x64_" #z ":\n"                                                 \
+        "lea 8(%rax), %r10\n   cmp %rdx, %r10\n   ja .Lcells_from_ascii_x64_" #z "_cell\n"             \
+        "vmovq (%rsi,%rax), %xmm5\n   vpmovzxbq %xmm5, %zmm0\n"                                     \
+        "vpsubb %xmm3, %xmm5, %xmm5\n"                                                              \
+        "vpcmpub $1, %xmm4, %xmm5, %k1  # under 95 past the space\n"                                \
+        "cmp %rcx, %rax\n   jae 2f\n"                                                               \
+        "mov %rcx, %r11\n   sub %rax, %r11\n   cmp $8, %r11\n"                                      \
+        "jb .Lcells_from_ascii_x64_" #z "_cell\n"                                                      \
+        "vptestnmq (%rdi,%rax,8), %zmm2, %k1{%k1}  # and clear of the flags\n"                      \
+        "2:  kmovw %k1, %r11d\n   cmp $255, %r11d\n"                                                \
+        "jne .Lcells_from_ascii_x64_" #z "_short\n"                                                    \
+        "vporq %zmm1, %zmm0, %zmm0\n   vmovdqu64 %zmm0, (%rdi,%rax,8)\n"                            \
+        "mov %r10, %rax\n   jmp .Lcells_from_ascii_x64_" #z "\n"                                       \
+        ".Lcells_from_ascii_x64_" #z "_short:\n"                                                       \
+        "lea 1(%r11), %r10d\n   not %r10d\n   and %r11d, %r10d  # the ones under the first zero\n"  \
+        "kmovw %r10d, %k1\n   vporq %zmm1, %zmm0, %zmm0\n"                                          \
+        "vmovdqu64 %zmm0, (%rdi,%rax,8){%k1}\n"                                                     \
+        "not %r11d\n   bsf %r11d, %r11d\n   add %r11, %rax\n   vzeroupper\n"                        \
+        ASM_RET                                                                                     \
+        CELLS_FROM_ASCII_X64_CELL(z)                                                              \
+        ".Lcells_from_ascii_x64_" #z "_done:\n   vzeroupper\n"                                         \
+        ASM_RET                                                                                     \
+    /* the end of CELLS_FROM_ASCII_X64_WIDE */
     ASM_ROUTINE_SECTION(cells_from_ascii) ".p2align 6\n" ASM_ROUTINE_SECTION_END
     ASM_FUNC(cells_from_ascii)
     ASM_USERSPACE_WIDE(
         WIDE_PICK
-        //
-        //      AVX2: the byte test as one signed compare, with 0x20..0x7e
-        //      moved onto -128..-34, and the cells four to a load. The load of
-        //      eight bytes leaves the high half of the register zero, which
-        //      moves onto 0x60 and fails, so a whole turn is exactly 0xff.
-        //
-        "vmovq %r8, %xmm1\n   vpbroadcastq %xmm1, %ymm1  # the attribute\n"
-        "vmovq %r9, %xmm2\n   vpbroadcastq %xmm2, %ymm2  # the guard flags\n"
-        "mov $0x60, %r10d\n   vmovd %r10d, %xmm3\n   vpbroadcastb %xmm3, %xmm3\n"
-        "mov $0xdf, %r10d\n   vmovd %r10d, %xmm4\n   vpbroadcastb %xmm4, %xmm4\n"
-        "xor %eax, %eax\n"
-        ".balign 16\n.Lcells_from_ascii_x64_ymm:\n"
-        "lea 8(%rax), %r10\n   cmp %rdx, %r10\n   ja .Lcells_from_ascii_x64_ymm_cell\n"
-        "vmovq (%rsi,%rax), %xmm5\n   vpaddb %xmm3, %xmm5, %xmm6\n"
-        "vpcmpgtb %xmm6, %xmm4, %xmm6\n   vpmovmskb %xmm6, %r11d\n"
-        "cmp %rcx, %rax\n   jae 1f\n"
-        "vmovdqu (%rdi,%rax,8), %ymm7\n   vpor 32(%rdi,%rax,8), %ymm7, %ymm7\n"
-        "vptest %ymm2, %ymm7\n   jnz .Lcells_from_ascii_x64_ymm_cell\n"
-        "1:  vpmovzxbq %xmm5, %ymm0\n   vpmovzxbq 4(%rsi,%rax), %ymm6\n"
-        "vpor %ymm1, %ymm0, %ymm0\n   vpor %ymm1, %ymm6, %ymm6\n"
-        "cmp $255, %r11d\n   jne .Lcells_from_ascii_x64_ymm_short\n"
-        "vmovdqu %ymm0, (%rdi,%rax,8)\n   vmovdqu %ymm6, 32(%rdi,%rax,8)\n"
-        "mov %r10, %rax\n   jmp .Lcells_from_ascii_x64_ymm\n"
-        //
-        //      A turn the run ends in, with no flag in its way. The cells in
-        //      front of the stop come from the new ones and the rest from
-        //      what is already there, stored back unchanged, so the end of
-        //      the run is not a branch: a cell at a time here missed one
-        //      prediction at every run's end on top of the one that decides
-        //      the turn is short, and the wide stream paid four per cent.
-        //
-        ".Lcells_from_ascii_x64_ymm_short:\n"
-        "lea 1(%r11), %r10d\n   not %r10d\n   and %r11d, %r10d  # a bit for each lane in front\n"
-        "movabs $0x8040201008040201, %r9\n   vmovq %r9, %xmm8\n"
-        "vmovd %r10d, %xmm7\n   vpbroadcastb %xmm7, %xmm7\n   vpand %xmm8, %xmm7, %xmm7\n"
-        "vpxor %xmm9, %xmm9, %xmm9\n   vpcmpeqb %xmm9, %xmm7, %xmm7  # ones on a lane to keep\n"
-        "vpmovsxbq %xmm7, %ymm8\n   vpsrldq $4, %xmm7, %xmm7\n   vpmovsxbq %xmm7, %ymm9\n"
-        "vpblendvb %ymm8, (%rdi,%rax,8), %ymm0, %ymm0\n"
-        "vpblendvb %ymm9, 32(%rdi,%rax,8), %ymm6, %ymm6\n"
-        "vmovdqu %ymm0, (%rdi,%rax,8)\n   vmovdqu %ymm6, 32(%rdi,%rax,8)\n"
-        "not %r11d\n   bsf %r11d, %r11d\n   add %r11, %rax\n   vzeroupper\n"
-        ASM_RET
-        CELLS_FROM_ASCII_X64_CELL(ymm)
-        ".Lcells_from_ascii_x64_ymm_done:\n   vzeroupper\n"
-        ASM_RET
-        //
-        //      AVX-512: the eight cells from one widening load, and the
-        //      guard folded into the byte mask as a masked test, so a turn
-        //      asks one question. A turn cut short by a byte or a flag still
-        //      stores the cells in front of it through the mask, and only a
-        //      guard that ends inside the turn, or limit, goes a cell at a
-        //      time. The mask bytes are read and written through kmovw: this
-        //      body runs on F, BW and VL, and kmovb is DQ.
-        //
-        "6:  vpbroadcastq %r8, %zmm1  # the attribute\n"
-        "vpbroadcastq %r9, %zmm2  # the guard flags\n"
-        "mov $0x20, %r10d\n   vpbroadcastb %r10d, %xmm3\n"
-        "mov $95, %r10d\n   vpbroadcastb %r10d, %xmm4\n"
-        "xor %eax, %eax\n"
-        ".balign 16\n.Lcells_from_ascii_x64_zmm:\n"
-        "lea 8(%rax), %r10\n   cmp %rdx, %r10\n   ja .Lcells_from_ascii_x64_zmm_cell\n"
-        "vmovq (%rsi,%rax), %xmm5\n   vpmovzxbq %xmm5, %zmm0\n"
-        "vpsubb %xmm3, %xmm5, %xmm5\n"
-        "vpcmpub $1, %xmm4, %xmm5, %k1  # under 95 past the space\n"
-        "cmp %rcx, %rax\n   jae 2f\n"
-        "mov %rcx, %r11\n   sub %rax, %r11\n   cmp $8, %r11\n"
-        "jb .Lcells_from_ascii_x64_zmm_cell\n"
-        "vptestnmq (%rdi,%rax,8), %zmm2, %k1{%k1}  # and clear of the flags\n"
-        "2:  kmovw %k1, %r11d\n   cmp $255, %r11d\n"
-        "jne .Lcells_from_ascii_x64_zmm_short\n"
-        "vporq %zmm1, %zmm0, %zmm0\n   vmovdqu64 %zmm0, (%rdi,%rax,8)\n"
-        "mov %r10, %rax\n   jmp .Lcells_from_ascii_x64_zmm\n"
-        ".Lcells_from_ascii_x64_zmm_short:\n"
-        "lea 1(%r11), %r10d\n   not %r10d\n   and %r11d, %r10d  # the ones under the first zero\n"
-        "kmovw %r10d, %k1\n   vporq %zmm1, %zmm0, %zmm0\n"
-        "vmovdqu64 %zmm0, (%rdi,%rax,8){%k1}\n"
-        "not %r11d\n   bsf %r11d, %r11d\n   add %r11, %rax\n   vzeroupper\n"
-        ASM_RET
-        CELLS_FROM_ASCII_X64_CELL(zmm)
-        ".Lcells_from_ascii_x64_zmm_done:\n   vzeroupper\n"
-        ASM_RET
+        CELLS_FROM_ASCII_X64_WIDE(ymm, zmm)
     )
     //
     //      The word body. Three constants and seven registers of arguments
@@ -11290,6 +11299,16 @@ __asm__(
     ".Lcells_from_ascii_x64_word_done:\n   pop %r13\n   pop %r12\n   pop %rbx\n"
     ASM_RET
     ASM_END(cells_from_ascii)
+    //      cells_from_ascii_wide: the same bodies with no word body behind
+    //      them, for a caller that has asked for AVX2 -- the kernel's inside
+    //      its vector bracket, where they may be reached no other way.
+    ASM_SIMD_SECTION
+    ".p2align 6\n"
+    ASM_FUNC(cells_from_ascii_wide)
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 6f\n"
+    CELLS_FROM_ASCII_X64_WIDE(wide_ymm, wide_zmm)
+    ASM_END(cells_from_ascii_wide)
+    ASM_SIMD_SECTION_END
 #undef CELLS_FROM_ASCII_X64_CELL
 
     // Eligible disjoint spans index a table held in four vector registers.
@@ -24788,6 +24807,57 @@ __asm__(
     ".Lcells_from_ascii_arm64_done:\n   mov x0, x6\n"
     ASM_RET
     ASM_END(cells_from_ascii)
+
+    //
+    //      cells_from_ascii_wide: eight cells a turn in q registers. The byte
+    //      test is one unsigned compare of the eight bytes moved down by the
+    //      space, the guard the eight cells or'd and folded, and the cells
+    //      the bytes widened three times and or'd with the attribute -- two
+    //      stores of thirty two bytes where the word body makes four of
+    //      sixteen from eight byte loads. A turn that fails either test goes
+    //      a cell at a time to the end of its eight, as the word body does.
+    //      The kernel calls it inside kernel_neon_begin.
+    //
+    ASM_SIMD_SECTION
+    ASM_FUNC(cells_from_ascii_wide)
+    //      Under eight there is no turn to take, and the registers cost more
+    //      than the run: 1.3 ns a cell against 2.1 for a guarded run of two.
+    "cmp x2, #8\n   b.hs 1f\n   b cells_from_ascii  // b.lo reaches a megabyte, not .noinstr.text\n"
+    "1:  "
+    "mov x6, #0\n   dup v31.2d, x4  // the attribute\n"
+    "dup v30.2d, x5  // the guard flags\n"
+    "movi v29.8b, #0x20\n   movi v28.8b, #94\n"
+    ".balign 16\n.Lcells_from_ascii_arm64_q:\n"
+    "add x10, x6, #8\n   cmp x10, x2\n   b.hi .Lcells_from_ascii_arm64_q_cell\n"
+    "ldr d0, [x1, x6]\n   sub v1.8b, v0.8b, v29.8b\n   cmhi v1.8b, v1.8b, v28.8b\n"
+    "fmov x11, d1\n   cbnz x11, .Lcells_from_ascii_arm64_q_cell\n"
+    "add x13, x0, x6, lsl #3\n   cmp x6, x3\n   b.hs 1f\n"
+    "ldp q2, q3, [x13]\n   ldp q4, q5, [x13, #32]\n"
+    "orr v2.16b, v2.16b, v3.16b\n   orr v4.16b, v4.16b, v5.16b\n"
+    "orr v2.16b, v2.16b, v4.16b\n   and v2.16b, v2.16b, v30.16b\n"
+    "umaxp v2.4s, v2.4s, v2.4s\n   fmov x11, d2\n"
+    "cbnz x11, .Lcells_from_ascii_arm64_q_cell\n"
+    "1:  uxtl v2.8h, v0.8b\n   uxtl v3.4s, v2.4h\n   uxtl2 v4.4s, v2.8h\n"
+    "uxtl v16.2d, v3.2s\n   uxtl2 v17.2d, v3.4s\n"
+    "uxtl v18.2d, v4.2s\n   uxtl2 v19.2d, v4.4s\n"
+    "orr v16.16b, v16.16b, v31.16b\n   orr v17.16b, v17.16b, v31.16b\n"
+    "orr v18.16b, v18.16b, v31.16b\n   orr v19.16b, v19.16b, v31.16b\n"
+    "stp q16, q17, [x13]\n   stp q18, q19, [x13, #32]\n"
+    "mov x6, x10\n   b .Lcells_from_ascii_arm64_q\n"
+    ".Lcells_from_ascii_arm64_q_cell:\n"
+    "cmp x6, x2\n   b.hs .Lcells_from_ascii_arm64_q_done\n"
+    "ldrb w11, [x1, x6]\n   sub w12, w11, #32\n   cmp w12, #94\n"
+    "b.hi .Lcells_from_ascii_arm64_q_done\n"
+    "cmp x6, x3\n   b.hs 2f\n"
+    "ldr x12, [x0, x6, lsl #3]\n   tst x12, x5\n"
+    "b.ne .Lcells_from_ascii_arm64_q_done\n"
+    "2:  orr x11, x11, x4\n   str x11, [x0, x6, lsl #3]\n   add x6, x6, #1\n"
+    "tst x6, #7\n   b.ne .Lcells_from_ascii_arm64_q_cell\n"
+    "b .Lcells_from_ascii_arm64_q\n"
+    ".Lcells_from_ascii_arm64_q_done:\n   mov x0, x6\n"
+    ASM_RET
+    ASM_END(cells_from_ascii_wide)
+    ASM_SIMD_SECTION_END
 
     // Four independent table loads hide the dependent byte-index latency.
     ASM_FUNC(memory_translate)
@@ -38484,6 +38554,43 @@ __asm__(
     ASM_RET
     ASM_END(cells_from_ascii)
 
+    //
+    //      cells_from_ascii_wide with V: as many bytes as a register holds,
+    //      the first out of range found with vfirst, the guard asked of the
+    //      cells in front of it the same way, and the rest widened eight
+    //      times over in one vzext and stored. The caller has V -- the
+    //      kernel inside kernel_vector_begin.
+    //
+    ASM_SIMD_SECTION
+    ".option push\n   .option arch, +v\n"
+    ASM_FUNC(cells_from_ascii_wide)
+    //      Under eight the word body's cell loop is all either would run.
+    "li t0, 8\n   bltu a2, t0, .Lcells_from_ascii_rv_v_short\n"
+    "li t6, 0\n   li t5, 94\n   li a6, 32\n"
+    "1:  sub t0, a2, t6\n   beqz t0, 9f\n"
+    "vsetvli t0, t0, e8, m1, ta, ma\n"
+    "add t1, a1, t6\n   vle8.v v1, (t1)\n"
+    "vsub.vx v2, v1, a6\n   vmsgtu.vx v0, v2, t5  # outside 0x20..0x7e\n"
+    "vfirst.m t2, v0\n   mv t3, t0\n   bltz t2, 2f\n   mv t3, t2\n"
+    "2:  bgeu t6, a3, 3f  # nothing guarded from here\n"
+    "sub t4, a3, t6\n   mv t1, t3\n   bltu t3, t4, 4f\n   mv t1, t4\n"
+    "4:  beqz t1, 3f\n"
+    "vsetvli zero, t1, e64, m8, ta, ma\n"
+    "slli t4, t6, 3\n   add t4, a0, t4\n   vle64.v v8, (t4)\n"
+    "vand.vx v8, v8, a5\n   vmsne.vi v0, v8, 0\n   vfirst.m t2, v0\n"
+    "bltz t2, 3f\n   bgeu t2, t3, 3f\n   mv t3, t2\n"
+    "3:  beqz t3, 8f\n"
+    "vsetvli zero, t3, e64, m8, ta, ma\n"
+    "vzext.vf8 v16, v1\n   vor.vx v16, v16, a4\n"
+    "slli t4, t6, 3\n   add t4, a0, t4\n   vse64.v v16, (t4)\n"
+    "8:  add t6, t6, t3\n   beq t3, t0, 1b\n"
+    "9:  mv a0, t6\n"
+    ASM_RET
+    ".Lcells_from_ascii_rv_v_short:\n   tail cells_from_ascii\n"
+    ASM_END(cells_from_ascii_wide)
+    ".option pop\n"
+    ASM_SIMD_SECTION_END
+
     // RV64I has no required vector gather; four base-ISA chains overlap.
     ASM_FUNC(memory_translate)
     "mv t0, a0\n   li t6, 4\n   bltu a1, t6, .Lmemory_translate_rv_tail\n"
@@ -47988,6 +48095,13 @@ PURE positive memory_span_byte(address_any block, p8 value, positive size);
 READS_WRITES(1) READS(2, 3)
 positive cells_from_ascii(address_any cells, address_any bytes, positive limit,
                           positive guarded, p64 attribute, p64 stop);
+// The same with the vector body, for a caller that has the vector unit: a
+// program's on x86_64 is cells_from_ascii itself, which asks the processor;
+// arm64 always has it; on riscv64 the caller has asked for V. In the kernel,
+// only from inside the vector bracket (term.c's TERM_PICK).
+READS_WRITES(1) READS(2, 3)
+positive cells_from_ascii_wide(address_any cells, address_any bytes, positive limit,
+                               positive guarded, p64 attribute, p64 stop);
 // Returns {bytes, characters}, bounded by both size and count. Invalid UTF-8
 // bytes each count once; zero bounds permit a null block without reading it.
 PURE positive2 memory_utf8_span(address_any block, positive size, positive count);
@@ -48097,6 +48211,23 @@ p8 address_to memory_copy_end(p8 address_to destination, const address_any sourc
         Zbc and Zvkned (with V usable) on RISC-V. cpu_has_vpclmul and
         cpu_has_vaes are x86_64's ymm/zmm forms of the same two.
 */
+#if defined(KERNEL_MODE) && X64
+/*
+        A kernel's two, which only its wide bodies read -- the routines every
+        context calls take their narrow bodies whatever these say. Set once
+        at load by the module from boot_cpu_has, before anything can call one.
+*/
+extern p8 cpu_has_avx2;
+extern p8 cpu_has_avx512;
+__asm__(
+    ASM_BSS_OBJECT_BEGIN(cpu_has_avx2, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(cpu_has_avx2)
+    ASM_BSS_OBJECT_BEGIN(cpu_has_avx512, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(cpu_has_avx512)
+);
+#endif
 #ifndef KERNEL_MODE
 extern p8 cpu_has_pclmul;
 extern p8 cpu_has_aes;

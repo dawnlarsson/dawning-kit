@@ -208,6 +208,11 @@ cover('direct_benchmark', 'test/checks.c#BENCH_span_byte', 'memory_span_byte',
 cover('direct_benchmark', 'test/checks.c#BENCH_cells_ascii', 'cells_from_ascii',
       'guard and page-edge verifier, and term.c\'s C cell loop against the '
       'assembly in cycles and instructions per cell over fresh and guarded runs')
+cover('correctness_only', 'test/checks.c#CHECK_verify', 'cells_from_ascii_wide',
+      'the kernel console\'s vector entry, held to the same reference as '
+      'cells_from_ascii over every stop and guard on every body it has; timed '
+      'against the word body by run length and by the console drain in a guest '
+      'in the commit that made it')
 cover('direct_benchmark', 'test/checks.c#BENCH_fill_u32', 'memory_fill_u32',
       '32-bit span fill against scalar and bulk-store traffic floors')
 cover('direct_benchmark', 'test/checks.c#BENCH_fill_u64', 'memory_fill_u64_aligned',

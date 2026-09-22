@@ -1448,19 +1448,34 @@ kernel_simd_boundary()
 }
 
 #       The module side of the same boundary, over the module's own sources:
-#       a wide name only in a declaration or TARGET_PICK, and Canvas's
-#       bracket opened as often as it is closed.
+#       a wide name only in a declaration, TARGET_PICK or TERM_PICK, Canvas's
+#       bracket opened as often as it is closed, and the console emulator's
+#       term_simd set true only inside it.
 kernel_simd_callers()
 {
-        awk '
-                /canvas_[a-z0-9_]*_wide|##_wide/ && !/^void canvas_[a-z0-9_]*_wide\(/ &&
+        # Every wide routine lib.c defines, by name, whichever file calls it.
+        kernel_simd_names=$(sed -n 's/^[[:space:]]*ASM_FUNC(\([a-z0-9_]*_wide\)).*/\1/p' \
+                src/lib.c | sort -u | tr '\n' '|')
+
+        awk -v names="${kernel_simd_names%|}" '
+                BEGIN { named = "(^|[^a-z0-9_])(" names ")([^a-z0-9_]|$)" }
+                /^[[:space:]]*(\/?\*|\/\/)/ { next }
+                ($0 ~ named || /##_wide/) &&
+                    !/^void canvas_[a-z0-9_]*_wide\(/ &&
                     !/^#define TARGET_PICK\(t, name\) \(\(t\)->simd \? name##_wide : name\)$/ &&
-                    !/^[[:space:]]*(\/?\*|\/\/)/ {
-                        print FILENAME ":" FNR ": a wide body named outside TARGET_PICK: " $0
+                    !/^#define TERM_PICK\(name\) \(term_simd \? name##_wide : name\)$/ {
+                        print FILENAME ":" FNR ": a wide body named outside TARGET_PICK or TERM_PICK: " $0
                         bad = 1
                 }
-                FILENAME ~ /canvas\.c$/ && /canvas_simd_begin\(&/ { begins++ }
-                FILENAME ~ /canvas\.c$/ && /canvas_simd_end\(&/ { ends++ }
+                FILENAME ~ /canvas\.c$/ && /canvas_simd_begin\(&/ { begins++; held = 1 }
+                FILENAME ~ /canvas\.c$/ && /canvas_simd_end\(&/ { ends++; held = 0 }
+                # The emulator takes its wide bodies on term_simd, which only
+                # the bracket may set, and only from what the bracket says.
+                /term_simd = / && !/term_simd = false;/ &&
+                    !(/term_simd = simd\.on;/ && held && FILENAME ~ /canvas\.c$/) {
+                        print FILENAME ":" FNR ": term_simd set outside the bracket: " $0
+                        bad = 1
+                }
                 END {
                         if (begins != ends || !begins) {
                                 print "canvas_simd_begin " begins + 0 " times, canvas_simd_end " ends + 0
