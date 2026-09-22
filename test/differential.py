@@ -11218,6 +11218,42 @@ def shell_terminal_vanish_script(argv, stdin):
     return shell_pty_script(steps, settings, ["-i"] if "--interactive" in choice else [])
 
 
+#       History expansion, which only a person at a terminal reaches: bash
+#       -i and this shell each read the typed lines in a session of their
+#       own, !-designators, word selectors, modifiers, ^old^new, quoting that
+#       turns it off, an event that is not there and :p, which prints and
+#       runs nothing. No lane ran exec.c's expansion before.
+shell_HISTORY_LINES = (
+    "echo one two three", "echo alpha/beta.txt gamma", "echo !!", "echo !$", "echo !^",
+    "echo !:1-2", "echo !*", "!echo", "echo !-2:0", "^one^uno^", "echo !?two?",
+    "echo !!:s/one/1/", "echo !!:gs/o/0/", "echo !$:h !$:t !$:r !$:e", "echo '!!' \"x\"",
+    "echo \\!!", "!nosuchevent", "echo !!:p", "echo !#", "echo !!:q", "echo !:0-$",
+)
+
+
+def shell_terminal_history_script(argv, stdin):
+    typed = [shell_HISTORY_LINES[int(word.partition("=")[2])] for word in argv
+             if word.startswith(("--first=", "--then=", "--last="))]
+    steps = [("echo one two three\n", 0.3)] + [(line + "\n", 0.3) for line in typed]
+    steps.append(("exit\n", 0.3))
+    return shell_pty_script(steps, {"linger": 3.0}, ["-i"])
+
+
+shell_TERMINAL_HISTORY = Utility(
+    "terminal_history",
+    options=tuple(Option(spelling, values=tuple(str(n) for n in range(len(shell_HISTORY_LINES))),
+                         attached=True) for spelling in ("--first", "--then", "--last")),
+    operands=((),),
+    stdin=("empty",),
+    fixture="shell",
+    modes=("bash",),
+    script=shell_terminal_history_script,
+    normalize=shell_terminal_normalize,
+    max_flags=3,
+    timeout=20.0,
+)
+
+
 shell_TERMINAL_VANISH = Utility(
     "terminal_vanish",
     options=(
@@ -13675,6 +13711,7 @@ SHELL_UTILITIES = (
     shell_TERMINAL_SESSION,
     shell_TERMINAL_STARTUP,
     shell_TERMINAL_VANISH,
+    shell_TERMINAL_HISTORY,
     shell_POLICY_DASH,
     shell_POLICY_BASH,
 )

@@ -3654,6 +3654,9 @@ static bool history_event_at(string_address bang,
                 index = history_used - 1;
                 at++;
         }
+        //      !:1-2 names no event, which is the previous one.
+        else if (string_is(at, ':'))
+                index = history_used - 1;
         else if (string_is(at, '-') && byte_is_digit(string_get(at + 1)))
         {
                 at++;
@@ -3980,63 +3983,26 @@ static bool history_substitution_apply(bool global)
 
 static bool history_piece_path(p8 modifier)
 {
+        /*      As bash's history library cuts them, which is not csh's: :h
+                drops from the last slash and :r from the last dot, anywhere
+                in the word, :t and :e keep from there, and a word without
+                the slash or the dot is left as it is -- gamma:h is gamma,
+                not ".", and /usr:h is empty. */
         positive start = 0;
         positive length = history_piece.used;
-        p8 address_to slash;
-        p8 address_to dot;
+        p8 address_to mark = (p8 address_to)memory_last_of(
+            history_piece.bytes, modifier == 'h' || modifier == 't' ? '/' : '.', length);
 
-        if (modifier == 'h' || modifier == 't')
+        if (mark)
         {
-                slash = (p8 address_to)memory_last_of(history_piece.bytes,
-                                                      '/', length);
-                if (modifier == 'h')
-                {
-                        if (!slash)
-                        {
-                                history_changed.used = 0;
-                                if (!shell_bytes_add(
-                                        address_of history_changed,
-                                        (string_address)".", 1))
-                                        return false;
-                                goto replace;
-                        }
-                        length = (positive)(slash - history_piece.bytes);
-                        if (!length)
-                                length = 1;
-                }
-                else if (slash)
-                {
-                        start = (positive)(slash + 1 - history_piece.bytes);
-                        length -= start;
-                }
-        }
-        else
-        {
-                positive component;
+                positive at = (positive)(mark - history_piece.bytes);
 
-                slash = (p8 address_to)memory_last_of(history_piece.bytes,
-                                                      '/', length);
-                component =
-                    slash ? (positive)(slash + 1 - history_piece.bytes) : 0;
-                dot = (p8 address_to)memory_last_of(
-                    history_piece.bytes + component, '.', length - component);
-                if (modifier == 'r')
-                {
-                        if (dot)
-                                length = (positive)(dot - history_piece.bytes);
-                }
+                if (modifier == 'h' || modifier == 'r')
+                        length = at;
                 else
                 {
-                        if (!dot)
-                        {
-                                start = length;
-                                length = 0;
-                        }
-                        else
-                        {
-                                start = (positive)(dot - history_piece.bytes);
-                                length -= start;
-                        }
+                        start = modifier == 't' ? at + 1 : at;
+                        length -= start;
                 }
         }
 
@@ -4045,13 +4011,26 @@ static bool history_piece_path(p8 modifier)
                                history_piece.bytes + start, length))
                 return false;
 
-replace:
         {
                 byte_store held = history_piece;
                 history_piece = history_changed;
                 history_changed = held;
         }
         return true;
+}
+
+/*      A substitution with nothing to substitute says so, as bash does,
+        spelling the modifier the way it was typed: ":s^old^new^" for the
+        ^ shorthand, ":s/old/new/" or ":gs/old/new/" after a designator. */
+static fn history_substitution_failed(string_address from, string_address to,
+                                      bool shorthand)
+{
+        log_error("bash: :", 7);
+        if (shorthand)
+                log_error("s", 1);
+        log_error(from, (positive)(to - from));
+        log_error(": substitution failed\n", 22);
+        log_flush();
 }
 
 static bool history_quote_failed;
@@ -4251,8 +4230,14 @@ b32 history_expand_line(string_address line,
                 history_substitution_known = true;
 
                 if (!history_words(history_text[history_used - 1],
-                                   HISTORY_WORD_ALL, 0, positive_max) ||
-                    !history_substitution_apply(false) ||
+                                   HISTORY_WORD_ALL, 0, positive_max))
+                        goto bad_event;
+                if (!history_substitution_apply(false))
+                {
+                        history_substitution_failed(line, after, true);
+                        goto bad_event;
+                }
+                if (
                     !shell_bytes_add(address_of history_expanded,
                                        history_piece.bytes,
                                        history_piece.used) ||
@@ -4361,15 +4346,31 @@ b32 history_expand_line(string_address line,
                                                    word_kind, first, last))
                                         goto no_room;
                         }
-                        else if (!history_event_at(at, address_of event,
-                                                   address_of event_at) ||
-                                 !history_word_designator(
-                                     address_of event,
-                                     address_of word_kind,
-                                     address_of first, address_of last) ||
-                                 !history_words(history_text[event_at],
-                                                word_kind, first, last))
-                                goto bad_event;
+                        else
+                        {
+                                string_address designator;
+
+                                if (!history_event_at(at, address_of event,
+                                                      address_of event_at))
+                                        goto bad_event;
+                                designator = event;
+                                if (!history_word_designator(
+                                        address_of event, address_of word_kind,
+                                        address_of first, address_of last))
+                                        goto bad_event;
+                                //      Words the event has not got, said
+                                //      as bash says it.
+                                if (!history_words(history_text[event_at],
+                                                   word_kind, first, last))
+                                {
+                                        log_error("bash: ", 6);
+                                        log_error(designator,
+                                                  (positive)(event - designator));
+                                        log_error(": bad word specifier\n", 21);
+                                        log_flush();
+                                        goto bad_event;
+                                }
+                        }
 
                         while (string_is(event, ':'))
                         {
@@ -4427,9 +4428,15 @@ b32 history_expand_line(string_address line,
                                         goto unsupported_modifier;
 
                                 if (!history_substitution_read(
-                                        modifier, address_of event) ||
-                                    !history_substitution_apply(global))
+                                        modifier, address_of event))
                                         goto bad_event;
+                                if (!history_substitution_apply(global))
+                                {
+                                        history_substitution_failed(
+                                            modifier - (global ? 1 : 0),
+                                            event, false);
+                                        goto bad_event;
+                                }
                         }
 
                         if (!shell_bytes_add(address_of history_expanded,
