@@ -2294,6 +2294,148 @@ static unsigned int text_utf8(const p8 address_to bytes, positive count,
         return 0;
 }
 
+/*
+        Characters of two to four bytes from the first byte, as far as the row
+        has room, left as put() a character at a time would leave them.
+        Answers the bytes taken, which is 0 only when the first is not a
+        character text_utf8 takes; one that has to wrap goes through put(),
+        whose put_cells wraps it.
+
+        put() found the row's slot, the colours and the length again for every
+        character and marked the row touched each time; a run of Cyrillic or
+        kana is one row, one set of colours and one length, found once here.
+        What is left a character is the decode, its width and its cells. A
+        mark that takes no columns is dropped as put() drops it, and blanks
+        nothing even where a character would have had to blank up to the
+        column first. Bounded by the bytes handed over: every turn takes at
+        least one or stops.
+*/
+static positive __attribute__((__noinline__)) text_wide(const p8 address_to bytes, positive count)
+{
+        struct window_cell address_to cells = null;
+        unsigned int address_to length = null;
+        unsigned int at = column, had = 0, drawn = 0;
+        positive n = 0, attribute = 0;
+
+        while (n < count && bytes[n] >= 0x80)
+        {
+                unsigned int character, width, used;
+                unsigned int lead = bytes[n];
+
+                /*
+                        Two and three bytes whole and well formed are most of
+                        what is not ASCII, and are decoded here as the feed
+                        would decode them; anything else, including a C1 and
+                        the three byte spellings that are overlong or a
+                        surrogate, is text_utf8's to answer.
+                */
+                if (lead - 0xc2 < 0x1e && count - n >= 2 &&
+                    (bytes[n + 1] & 0xc0) == 0x80)
+                {
+                        character = (lead & 0x1f) << 6 | (bytes[n + 1] & 0x3f);
+                        used = character < 0xa0 ? 0 : 2;
+                }
+                else if (lead - 0xe0 < 0x10 && count - n >= 3 &&
+                         (bytes[n + 1] & 0xc0) == 0x80 &&
+                         (bytes[n + 2] & 0xc0) == 0x80 &&
+                         (character = (lead & 0x0f) << 12 |
+                                      (bytes[n + 1] & 0x3f) << 6 |
+                                      (bytes[n + 2] & 0x3f)) >= 0x800 &&
+                         character - 0xd800 >= 0x800)
+                        used = 3;
+                else
+                        used = text_utf8(bytes + n, count - n, address_of character);
+
+                if (!used)
+                        break;
+
+                width = character < 0x300
+                            ? 1
+                            : (unsigned int)unicode_width(character,
+                                                          UNICODE_WIDTH_TERMINAL);
+
+                if (width)
+                {
+                        positive word;
+
+                        if (width > COLUMNS)
+                                width = 1;
+
+                        if (at + width > COLUMNS)
+                                break;
+
+                        if (!cells)
+                        {
+                                unsigned int slot = row_slot(row);
+
+                                cells = slot_cells(slot);
+                                length = slot_length(slot);
+
+                                if (address_to length < at)
+                                {
+                                        cells_blank(row, address_to length,
+                                                    at - address_to length);
+                                        address_to length = at;
+                                }
+
+                                had = address_to length;
+                                attribute =
+                                    ((positive)(reverse ? paper : ink_drawn()) << 32) |
+                                    ((positive)(reverse ? ink_drawn() : paper) << 40) |
+                                    ((positive)style << 48);
+                        }
+
+                        unpair(cells, had, at);
+                        word = attribute | character;
+
+                        if (width == 2)
+                        {
+                                positive right = word |
+                                    (positive)WINDOW_CELL_WIDE_RIGHT << 48;
+
+                                unpair(cells, had, at + 1);
+                                word |= (positive)WINDOW_CELL_WIDE << 48;
+                                memory_copy(cells + at + 1, address_of right,
+                                            sizeof(right));
+                        }
+
+                        memory_copy(cells + at, address_of word, sizeof(word));
+
+                        drawn = character;
+                        at += width;
+                }
+
+                n += used;
+        }
+
+        if (cells)
+        {
+                last_character = drawn;
+                column = at;
+                touch(row);
+
+                if (address_to length < column)
+                        address_to length = column;
+        }
+
+        /*
+                Nothing put: one this could not, past the edge of the row,
+                where put_cells wraps it, or no character at all, which is
+                consume()'s.
+        */
+        if (!n)
+        {
+                unsigned int character;
+
+                n = text_utf8(bytes, count, address_of character);
+
+                if (n)
+                        put(character);
+        }
+
+        return n;
+}
+
 static positive text_run(const p8 address_to bytes, positive count)
 {
         positive at = 0;
@@ -2301,7 +2443,6 @@ static positive text_run(const p8 address_to bytes, positive count)
         while (at < count)
         {
                 unsigned int c = bytes[at];
-                unsigned int character;
                 unsigned int used;
 
                 if (c - ' ' < 95)
@@ -2310,14 +2451,14 @@ static positive text_run(const p8 address_to bytes, positive count)
                         continue;
                 }
 
-                used = c >= 0x80 ? text_utf8(bytes + at, count - at,
-                                             address_of character)
-                                 : 0;
+                if (c < 0x80)
+                        break;
+
+                used = (unsigned int)text_wide(bytes + at, count - at);
 
                 if (!used)
                         break;
 
-                put(character);
                 at += used;
         }
 
