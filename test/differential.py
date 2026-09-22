@@ -18862,10 +18862,14 @@ static void check_machine_events(void) {
     script.op=MOONWATER_SCRIPT_SET;
     script.length=(unsigned)(sizeof machine_shipped_script-1);
     script.address=(unsigned long)machine_shipped_script;
+    //  No moonwater_init in the shipped script: one that is defined owns the
+    //  init row, so `bind init add` would be refused and the stored init list
+    //  would never run at boot -- which an empty one did from 17b86355 until
+    //  fc6a81ce. The kiosk version sits in it commented out.
     check(!report_machine_script(&script) &&
-          (machine_script_overlay.hooks & MOONWATER_HOOK_INIT) &&
+          !(machine_script_overlay.hooks & MOONWATER_HOOK_INIT) &&
           (machine_script_overlay.hooks & MOONWATER_HOOK_EVENT),
-          "the machine script this build ships names moonwater_init and moonwater_event");
+          "the machine script this build ships names moonwater_event and leaves init to the stored list");
     check(moonwater_bind_line(&machine_script_overlay,SPARK_BIND_POWEROFF) &&
           moonwater_bind_line(&machine_script_overlay,SPARK_BIND_RESET) &&
           moonwater_bind_line(&machine_script_overlay,SPARK_BIND_CTRL_ALT_DELETE),
