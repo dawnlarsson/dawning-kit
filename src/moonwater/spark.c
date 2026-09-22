@@ -1186,12 +1186,17 @@ int execute_spark(struct linux_binprm *bprm)
         regs->sp = stack_addr;
         regs->pstate = PSR_MODE_EL0t;
 #elif defined(CONFIG_RISCV)
+        /*
+                The kernel's own start: sstatus with the floating-point unit
+                on and its registers at their initial values, the 64-bit
+                user XLEN and no shadow stack. SR_SPIE alone left FS off, and
+                the first floating-point instruction a program ran, the
+                shell's included, was an illegal instruction and SIGILL.
+        */
+        start_thread(regs, header->entry, stack_addr);
         regs->s2 = SPARK_START_MAGIC;
         regs->s3 = spark_cpu_features_now();
         regs->s4 = task_pid_nr(current);
-        regs->epc = header->entry;
-        regs->sp = stack_addr;
-        regs->status = SR_SPIE;
 #endif
 
         finalize_exec(bprm);
