@@ -12344,7 +12344,14 @@ static fn exec_coproc_drop_finished()
                         continue;
                 }
 
-                shell_wait_drop(pid);
+                /*      The row stays. A coprocess that has finished is still
+                        a job wait can be told about: the reference answers
+                        `wait "$C_PID"` with the status it ended on and says
+                        nothing, and plain `wait` walks over it in silence,
+                        where dropping the row here made both of them say
+                        "pid N is not a child of this shell" and answer 127.
+                        Whoever waits it drops it, as for any other job.
+                */
         }
 
         exec_coproc_count = into;
@@ -12461,11 +12468,13 @@ static b32 exec_coproc(b32 index)
                 return string_report(log_error, 2,
                                      "No room to retain coprocess\n");
 
-        if (exec_coproc_count)
-        {
-                shell_told("warning: execute_coproc: coproc [%b:%s] still exists\n",
-                    exec_coprocs[0].pid, exec_coprocs[0].name);
-        }
+        /*      A second coprocess is not a warning. Bash warned while it
+                held one at a time; 5.3 holds as many as it is given and says
+                nothing, and this has held eight all along, so the warning
+                was a line the reference no longer writes and the only thing
+                that separated `coproc A { ... }; coproc B { ... }` here from
+                the same two lines there.
+        */
 
         log_flush();
 
