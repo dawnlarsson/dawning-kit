@@ -13659,6 +13659,19 @@ static file_identity_set du_seen;
 static bool du_seen_broken;
 static bool du_depth_broken;
 static p8 du_unit_option;
+
+/*
+        --time: which of the three stamps is shown, and how it is written.
+        The stamp a directory shows is the newest in the whole tree under it,
+        which is what the reference shows and why it is carried up the walk
+        beside the size. It is kept in nanoseconds so two files of the same
+        second still order, the way the reference orders them.
+*/
+static p8 du_time_kind;
+static p8 du_time_style;
+static string_address du_time_format;
+static b64 du_measure_stamp;
+static b64 du_grand_stamp;
 /*
         The letter --block-size=M asks for after every count. ls_block_size_read
         already draws the line the reference draws -- a spelling that begins
@@ -13710,7 +13723,22 @@ static bool du_excluded(string_address path)
         return false;
 }
 
-static fn du_report(p64 bytes, string_address path)
+static b64 du_stamp(const file_facts address_to facts)
+{
+        const file_moment address_to moment =
+            du_time_kind == 'a'   ? address_of facts->accessed
+            : du_time_kind == 'c' ? address_of facts->changed
+                                  : address_of facts->modified;
+
+        return moment->seconds * 1000000000 + (b64)moment->nanoseconds;
+}
+
+static b64 du_newest(b64 left, b64 right)
+{
+        return left > right ? left : right;
+}
+
+static fn du_report(p64 bytes, b64 stamp, string_address path)
 {
         if (du_human)
                 positive_to_human_1024(log, bytes);
@@ -13720,6 +13748,29 @@ static fn du_report(p64 bytes, string_address path)
 
                 if (du_suffix[0])
                         log(du_suffix, string_length(du_suffix));
+        }
+
+        if (du_time_kind)
+        {
+                b64 seconds = stamp / 1000000000;
+                b64 rest = stamp - seconds * 1000000000;
+
+                if (rest < 0)
+                {
+                        seconds--;
+                        rest += 1000000000;
+                }
+
+                log("\t", 1);
+                if (du_time_style == 'f')
+                        file_stamp(log, seconds, (positive)rest);
+                else
+                        date_shape(log, seconds, 0,
+                                   du_time_style == '+'
+                                       ? du_time_format
+                                       : du_time_style == 'i'
+                                             ? (string_address) "%Y-%m-%d"
+                                             : (string_address) "%Y-%m-%d %H:%M");
         }
 
         string_format(log, "\t%w\n", writer_terminal_name, path);
@@ -13737,6 +13788,8 @@ static struct
 {
         p64 total;
         p64 below;
+        b64 stamp;
+        b64 shallow;
 } du_levels[WALK_LEVELS];
 #endif
 
@@ -13799,6 +13852,7 @@ typedef struct du_tree_node
         p64 inode;
         p32 device_major;
         p32 device_minor;
+        b64 stamp;
         bool unread;
         positive length;
         p8 path[];
@@ -13808,6 +13862,8 @@ typedef struct
 {
         p64 total;
         p64 below;
+        b64 stamp;
+        b64 shallow;
 } du_tree_level;
 
 enum
@@ -13831,11 +13887,13 @@ typedef struct
         p32 path_bytes;
         p64 inode;
         p64 cost;
+        b64 stamp;
 } du_tree_record;
 
 static du_tree_level address_to du_tree_levels;
 static positive du_tree_levels_room;
 static p64 du_tree_result;
+static b64 du_tree_result_stamp;
 static du_tree_node address_to du_tree_skipping;
 
 FILE_TREE_NODE_NEW(du_tree_node_new, du_tree_node,
@@ -13982,6 +14040,7 @@ static fn du_tree_enter(address_any context, address_any node_address,
                                         {
                                                 child->own = du_apparent ? 0
                                                                          : facts.blocks * 512;
+                                                child->stamp = du_stamp(address_of facts);
                                                 child->device = device;
                                                 child->inode = facts.inode;
                                                 child->device_major = facts.device_major;
@@ -14003,6 +14062,7 @@ static fn du_tree_enter(address_any context, address_any node_address,
                                 record.inode = facts.inode;
                                 record.cost = du_apparent ? (p64)facts.size
                                                           : facts.blocks * 512;
+                                record.stamp = du_stamp(address_of facts);
                                 kept = du_tree_put(output, address_of record,
                                                    shown ? (string_address)path : null,
                                                    length);
@@ -14042,16 +14102,22 @@ static fn du_tree_leave(address_any context, address_any node_address,
         (void)du_tree_put(output, address_of record, null, 0);
 }
 
-static fn du_tree_add(positive depth, p64 cost, bool below)
+static fn du_tree_add(positive depth, p64 cost, bool below, b64 stamp)
 {
         if (!depth)
         {
                 du_tree_result = cost;
+                du_tree_result_stamp = stamp;
                 return;
         }
         du_tree_levels[depth - 1].total += cost;
+        du_tree_levels[depth - 1].stamp =
+            du_newest(du_tree_levels[depth - 1].stamp, stamp);
         if (below)
                 du_tree_levels[depth - 1].below += cost;
+        else
+                du_tree_levels[depth - 1].shallow =
+                    du_newest(du_tree_levels[depth - 1].shallow, stamp);
 }
 
 //      Whether an identity was counted already.  A hard link always asks;
@@ -14135,6 +14201,8 @@ static bool du_tree_sink(address_any context, address_any node_address,
                         }
                         du_tree_levels[node->depth].total = node->own;
                         du_tree_levels[node->depth].below = 0;
+                        du_tree_levels[node->depth].stamp = node->stamp;
+                        du_tree_levels[node->depth].shallow = node->stamp;
                 }
                 else if (record.kind == DU_TREE_UNREAD)
                 {
@@ -14151,8 +14219,9 @@ static bool du_tree_sink(address_any context, address_any node_address,
                                       file_reason(record.error));
                         du_status = 1;
                         if (node->depth <= du_maximum)
-                                du_report(node->own, (string_address)node->path);
-                        du_tree_add(node->depth, node->own, true);
+                                du_report(node->own, node->stamp,
+                                          (string_address)node->path);
+                        du_tree_add(node->depth, node->own, true, node->stamp);
                 }
                 else if (record.kind == DU_TREE_READ)
                 {
@@ -14184,18 +14253,26 @@ static bool du_tree_sink(address_any context, address_any node_address,
                                 continue;
                         }
                         if (du_all && depth <= du_maximum)
-                                du_report(record.cost, path);
-                        du_tree_add(depth, record.cost, false);
+                                du_report(record.cost, record.stamp, path);
+                        du_tree_add(depth, record.cost, false, record.stamp);
                 }
                 else if (record.kind == DU_TREE_LEAVE)
                 {
                         p64 total = du_tree_levels[node->depth].total;
+                        b64 stamp = du_tree_levels[node->depth].stamp;
 
+                        //      -S leaves what is under the subdirectories
+                        //      out of both columns: the size the directory
+                        //      itself holds, and the newest stamp among the
+                        //      directory and the names that are not
+                        //      directories.
                         if (node->depth <= du_maximum)
                                 du_report(du_separate ? total - du_tree_levels[node->depth].below
                                                       : total,
+                                          du_separate ? du_tree_levels[node->depth].shallow
+                                                      : stamp,
                                           (string_address)node->path);
-                        du_tree_add(node->depth, total, true);
+                        du_tree_add(node->depth, total, true, stamp);
                 }
         }
         return true;
@@ -14233,9 +14310,11 @@ static p64 du_measure_tree(string_address root)
                        ? (directory ? 0 : (p64)facts.size)
                        : facts.blocks * 512;
 
+        du_measure_stamp = du_stamp(address_of facts);
+
         if (!directory)
         {
-                du_report(mine, root);
+                du_report(mine, du_measure_stamp, root);
                 return mine;
         }
 
@@ -14246,7 +14325,7 @@ static p64 du_measure_tree(string_address root)
                 string_format(log_error, "du: cannot read directory '%w': %s\n",
                               writer_terminal_quoted_name, root, file_reason(handle));
                 du_status = 1;
-                du_report(mine, root);
+                du_report(mine, du_measure_stamp, root);
                 return mine;
         }
 
@@ -14261,11 +14340,13 @@ static p64 du_measure_tree(string_address root)
                 return 0;
         }
         top->own = mine;
+        top->stamp = du_measure_stamp;
         top->device = du_device;
         top->inode = facts.inode;
         top->device_major = facts.device_major;
         top->device_minor = facts.device_minor;
         du_tree_result = 0;
+        du_tree_result_stamp = du_measure_stamp;
         du_tree_skipping = null;
 
         bool whole = parallel_tree(du_tree_enter, du_tree_leave, du_tree_sink, null,
@@ -14278,6 +14359,7 @@ static p64 du_measure_tree(string_address root)
                 du_seen_broken = true;
                 du_status = 1;
         }
+        du_measure_stamp = du_tree_result_stamp;
         return du_seen_broken ? 0 : du_tree_result;
 }
 #endif
@@ -14287,6 +14369,8 @@ static p64 du_measure(string_address root)
         //      GNU's du holds an operand to its exclusions like any other
         //      name, and does so before the look: --exclude=* missing is
         //      success, not cannot-access.
+        du_measure_stamp = 0;
+
         if (du_exclude_have && du_excluded(root))
                 return 0;
 #if defined(LIBRARY_THREAD_RUNTIME)
@@ -14393,17 +14477,24 @@ static p64 du_measure(string_address root)
                         if (kept->mark == DU_LEAVE)
                         {
                                 p64 total = du_levels[depth].total;
+                                b64 stamp = du_levels[depth].stamp;
 
                                 if (depth <= du_maximum)
                                         du_report(du_separate ? total - du_levels[depth].below
                                                               : total,
+                                                  du_separate ? du_levels[depth].shallow : stamp,
                                                   path);
                                 if (!depth)
+                                {
                                         result = total;
+                                        du_measure_stamp = stamp;
+                                }
                                 else
                                 {
                                         du_levels[depth - 1].total += total;
                                         du_levels[depth - 1].below += total;
+                                        du_levels[depth - 1].stamp =
+                                            du_newest(du_levels[depth - 1].stamp, stamp);
                                 }
                                 continue;
                         }
@@ -14456,10 +14547,14 @@ static p64 du_measure(string_address root)
                                               : (p64)facts->size)
                                        : facts->blocks * 512;
 
+                        b64 stamp = du_stamp(facts);
+
                         if (kept->mark == DU_ENTERED)
                         {
                                 du_levels[depth].total = mine;
                                 du_levels[depth].below = 0;
+                                du_levels[depth].stamp = stamp;
+                                du_levels[depth].shallow = stamp;
                                 continue;
                         }
 
@@ -14477,23 +14572,37 @@ static p64 du_measure(string_address root)
                                         du_status = 1;
                                 }
                                 if (depth <= du_maximum)
-                                        du_report(mine, path);
+                                        du_report(mine, stamp, path);
                                 if (depth)
                                 {
                                         du_levels[depth - 1].total += mine;
                                         du_levels[depth - 1].below += mine;
+                                        du_levels[depth - 1].stamp =
+                                            du_newest(du_levels[depth - 1].stamp, stamp);
                                 }
                                 else
+                                {
                                         result = mine;
+                                        du_measure_stamp = stamp;
+                                }
                                 continue;
                         }
 
                         if ((du_all || !depth) && depth <= du_maximum)
-                                du_report(mine, path);
+                                du_report(mine, stamp, path);
                         if (depth)
+                        {
                                 du_levels[depth - 1].total += mine;
+                                du_levels[depth - 1].stamp =
+                                    du_newest(du_levels[depth - 1].stamp, stamp);
+                                du_levels[depth - 1].shallow =
+                                    du_newest(du_levels[depth - 1].shallow, stamp);
+                        }
                         else
+                        {
                                 result = mine;
+                                du_measure_stamp = stamp;
+                        }
                 }
 
                 walk_batch_next(walker, batch);
@@ -14571,16 +14680,60 @@ static const argument_option du_options[] = {
     {"separate-dirs", 'S'},
     {"summarize", 's'},
     {"time", 'T', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"time-style", 'Y', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
     {"total", 'c'},
     {"km", 0, 0, 1},
     {null},
 };
 
+/*
+        --time names a stamp that is not the default one, and the reference
+        has only two to name: the modification time is what --time shows on
+        its own and there is no word for it, so mtime and modification are
+        refused here as the reference refuses them.
+*/
 static const file_word du_time_words[] = {
     {"atime", 'a'}, {"access", 'a'}, {"use", 'a'},
     {"ctime", 'c'}, {"status", 'c'},
-    {"mtime", 'm'}, {"modification", 'm'},
 };
+
+/*
+        How --time writes a stamp. Not ls's list: du has no locale style and
+        no posix- prefix, its iso is one shape rather than a recent one and
+        an old one, and a +FORMAT is taken whole, newline and all, where ls
+        cuts it in two at the newline.
+*/
+static bool du_time_style_read(string_address style)
+{
+        if (string_is(style, '+'))
+        {
+                du_time_style = '+';
+                du_time_format = style + 1;
+                return true;
+        }
+
+        if (string_equals(style, "full-iso"))
+                du_time_style = 'f';
+        else if (string_equals(style, "long-iso"))
+                du_time_style = 'l';
+        else if (string_equals(style, "iso"))
+                du_time_style = 'i';
+        else
+        {
+                string_format(log_error,
+                              "du: invalid argument '%s' for 'time style'\n"
+                              "Valid arguments are:\n"
+                              "  - full-iso\n"
+                              "  - long-iso\n"
+                              "  - iso\n"
+                              "  - +FORMAT (e.g., +%%H:%%M) for a 'date'-style format\n"
+                              "Try 'du --help' for more information.\n",
+                              style);
+                return false;
+        }
+
+        return true;
+}
 
 static b32 file_du()
 {
@@ -14674,15 +14827,39 @@ static b32 file_du()
                 string_copy_max_end(block_suffix, suffix, sizeof(block_suffix) - 1);
         }
 
+        /*
+                A style is read only where a stamp is going to be written,
+                which is what the reference does: du --time-style=bogus is a
+                plain listing and says nothing, and so is TIME_STYLE=bogus du.
+                The option wins over the environment.
+        */
+        du_time_kind = 0;
+        du_time_style = 'l';
+        du_time_format = null;
+        du_grand_stamp = 0;
+
         if (flags & FILE_FLAG('T'))
         {
                 string_address given = file_option_value(address_of taking, 'T');
 
-                if (given && string_get(given) &&
-                    file_word_among((string_address) "du",
-                                    (string_address) "--time", given,
-                                    du_time_words,
-                                    array_count(du_time_words)) < 0)
+                du_time_kind = 'm';
+                if (given && string_get(given))
+                {
+                        b32 chosen = file_word_among((string_address) "du",
+                                                     (string_address) "--time", given,
+                                                     du_time_words,
+                                                     array_count(du_time_words));
+
+                        if (chosen < 0)
+                                return 1;
+                        du_time_kind = (p8)chosen;
+                }
+
+                string_address style = (flags & FILE_FLAG('Y'))
+                                           ? file_option_value(address_of taking, 'Y')
+                                           : getenv((string_address) "TIME_STYLE");
+
+                if (style && string_get(style) && !du_time_style_read(style))
                         return 1;
         }
 
@@ -14733,15 +14910,19 @@ static b32 file_du()
         if (first >= count)
         {
                 du_grand += du_measure((string_address) ".");
+                du_grand_stamp = du_newest(du_grand_stamp, du_measure_stamp);
         }
         else
         {
                 while (first < count && !du_seen_broken && !du_depth_broken)
+                {
                         du_grand += du_measure(program_argument((b32)first++));
+                        du_grand_stamp = du_newest(du_grand_stamp, du_measure_stamp);
+                }
         }
 
         if (du_total && !du_seen_broken && !du_depth_broken)
-                du_report(du_grand, (string_address) "total");
+                du_report(du_grand, du_grand_stamp, (string_address) "total");
 
         walk_end(address_of du_walker);
         walk_batch_end(address_of du_batch);
