@@ -26033,8 +26033,50 @@ static p8 shell_asm_assignment_former(string_address word, positive address_to n
         return string_get(word + length) == '+' && string_get(word + length + 1) == '=' ? 2 : 0;
 }
 
+/* parse_word_kind from src/sh/parse.c: the same words, both questions at
+   once, against the two C answers it replaced, at the word's own length and
+   shorter, since the name is walked to the terminator and the rest to the
+   length. */
+b8 expand_literal_set[STRING_SET_BYTES];
+p8 parse_word_kind(string_address text, positive length, positive address_to name_length);
+
+static bool shell_asm_literal_former(string_address word, positive length)
+{
+        return string_span_max(word, length, expand_literal_set) == length ||
+               (length == 1 && string_is(word, '['));
+}
+
+p8 parse_word_kind_subscript(string_address text, positive length, positive address_to name_length)
+{
+        return shell_assignment_kind(text, name_length) | (shell_asm_literal_former(text, length) ? 4 : 0);
+}
+
+static fn shell_asm_word_kind_one(const p8 address_to word, positive length)
+{
+        positive want_length = 77, got_length = 77;
+        p8 want = shell_asm_assignment_former((string_address)word, address_of want_length) |
+                  (shell_asm_literal_former((string_address)word, length) ? 4 : 0);
+        p8 got = parse_word_kind((string_address)word, length, address_of got_length);
+
+        checks++;
+        if (want != got || want_length != got_length)
+        {
+                failures++;
+                if (failures < 10)
+                        string_format(log, "FAIL parse_word_kind %s length %p: %p/%p want %p/%p\n",
+                                      (string_address)word, length, (positive)got, got_length,
+                                      (positive)want, want_length);
+        }
+}
+
 static fn shell_asm_assignment_one(const p8 address_to word)
 {
+        positive whole = string_length((string_address)word);
+
+        shell_asm_word_kind_one(word, whole);
+        if (whole)
+                shell_asm_word_kind_one(word, shell_asm_next() % whole);
+
         positive want_length = 77, got_length = 77;
         p8 want = shell_asm_assignment_former((string_address)word, address_of want_length);
         p8 got = shell_assignment_kind((string_address)word, address_of got_length);
@@ -26054,7 +26096,12 @@ static fn shell_asm_assignment_one(const p8 address_to word)
 static fn shell_asm_assignments(p8 address_to pages)
 {
         static p8 room[96];
-        static const p8 bytes[] = "aZ_09=+[]$'\"- x\x80\xff";
+        static const p8 bytes[] = "aZ_09=+[]$'\"- x\x80\xff*?{~<>(`\\";
+
+        /* The set expand.c builds: every byte but these and the terminator. */
+        memory_fill(expand_literal_set + 1, 1, STRING_SET_BYTES - 1);
+        for (const char address_to at = "'\"\\$`*?[{~<>("; *at; at++)
+                expand_literal_set[(p8)*at] = 0;
 
         for (positive round = 0; round < 300000; round++)
         {
@@ -64528,6 +64575,7 @@ int main(void)
    with a byte no name can, a tenth assignments -- then both timed. */
 #include "assignment.h"
 #include "assignment_lib.h"
+#include "wordkind.h"
 
 #define NATIVE_SEED 0x243f6a8885a308d3ull
 #define SHARED_native
@@ -64535,9 +64583,11 @@ int main(void)
 #undef SHARED_native
 
 unsigned char shell_assignment_kind(const char *, u64 *);
+unsigned char parse_word_kind(const char *, u64, u64 *);
 u64 string_span(const char *, const unsigned char *);
+u64 string_span_max(const char *, u64, const unsigned char *);
 void *memcpy(void *, const void *, u64);
-unsigned char string_set_name[256];
+unsigned char string_set_name[256], expand_literal_set[256];
 
 static u64 checks, bad;
 
@@ -64575,6 +64625,23 @@ __attribute__((noinline)) static unsigned char former(const char *word, u64 *nam
         if (word[length] == '=')
                 return 1;
         return word[length] == '+' && word[length + 1] == '=' ? 2 : 0;
+}
+
+/* What the parser asked each word before parse_word_kind: the assignment
+   question, in assembly, then whether expansion leaves it alone. */
+__attribute__((noinline)) static _Bool literal(const char *word, u64 length)
+{
+        return string_span_max(word, length, expand_literal_set) == length || (length == 1 && word[0] == '[');
+}
+
+unsigned char parse_word_kind_subscript(const char *text, u64 length, u64 *name_length)
+{
+        return shell_assignment_kind(text, name_length) | (literal(text, length) ? 4 : 0);
+}
+
+__attribute__((noinline)) static unsigned char two_questions(const char *text, u64 length, u64 *name_length)
+{
+        return shell_assignment_kind(text, name_length) | (literal(text, length) ? 4 : 0);
 }
 
 static const struct { const char *word; u64 weight; } common[] = {
@@ -64696,7 +64763,47 @@ int main(void)
                 bad++;
         printf("  %d words drawn as the parser meets them, 10 times: C with string_span %lu ticks, assembly %lu, asm/C %lu%%\n",
                STREAM, best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
-        printf("arm64 shell_assignment_kind: %lu checks | %lu failures\n", checks, bad);
+
+        /* parse_word_kind: both questions in one walk, against the two calls. */
+        static u64 lengths[STREAM];
+        for (int c = 0; c < 256; c++)
+                expand_literal_set[c] = c != 0;
+        for (const char *at = "'\"\\$`*?[{~<>("; *at; at++)
+                expand_literal_set[(unsigned char)*at] = 0;
+        for (u64 i = 0; i < STREAM; i++) {
+                u64 want_length = 7, got_length = 7;
+
+                while (words[i][lengths[i]])
+                        lengths[i]++;
+                unsigned char want = two_questions(words[i], lengths[i], &want_length);
+                unsigned char got = parse_word_kind(words[i], lengths[i], &got_length);
+
+                checks++;
+                if ((want != got || want_length != got_length) && bad++ < 8)
+                        printf("  FAIL kind %s: %d/%lu want %d/%lu\n", words[i], got, got_length, want, want_length);
+        }
+        best_former = best_body = ~0ul;
+        sink = sink_body = 0;
+        for (int trial = 0; trial < 9; trial++) {
+                u64 start = ticks();
+                for (int r = 0; r < 10; r++)
+                        for (u64 i = 0; i < STREAM; i++)
+                                sink += two_questions(words[i], lengths[i], &length) + length;
+                u64 took = ticks() - start;
+                best_former = took < best_former ? took : best_former;
+                start = ticks();
+                for (int r = 0; r < 10; r++)
+                        for (u64 i = 0; i < STREAM; i++)
+                                sink_body += parse_word_kind(words[i], lengths[i], &length) + length;
+                took = ticks() - start;
+                best_body = took < best_body ? took : best_body;
+        }
+        checks++;
+        if (sink != sink_body)
+                bad++;
+        printf("  the same words, 10 times: two calls %lu ticks, parse_word_kind %lu, asm/C %lu%%\n",
+               best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+        printf("arm64 shell_assignment_kind and parse_word_kind: %lu checks | %lu failures\n", checks, bad);
         return bad ? 1 : 0;
 }
 #endif /* CHECK_native_assignment */

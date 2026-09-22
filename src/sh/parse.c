@@ -1336,6 +1336,106 @@ static b32 parse_node_new(b32 kind)
         return index;
 }
 
+/*
+        What a new word is, in one pass: whether it is NAME= or NAME+= (one
+        or two in the low bits, with the name's length), and whether
+        expansion leaves it as it is (four).
+
+        The parser makes 1.36 million words reading five configure scripts,
+        test/run and two ltmain.sh, and asked each two questions in two
+        calls: shell_assignment_kind walked the name and shell_expand_literal
+        walked the whole word again through string_span_max. Every byte a
+        name is made of is one expansion leaves alone, so the walk for the
+        second question starts where the name stopped, and both are in this
+        body, two bytes a turn through each table. A subscript after the
+        name, a[i]=v, is the lexer's to close, and goes to C.
+*/
+p8 parse_word_kind(string_address text, positive length, positive address_to name_length);
+
+KEEP __attribute__((externally_visible, noinline)) p8
+parse_word_kind_subscript(string_address text, positive length,
+                          positive address_to name_length)
+{
+        return shell_assignment_kind(text, name_length) |
+               (shell_expand_literal(text, length) ? 4 : 0);
+}
+
+#if X64
+__asm__(
+    ASM_FUNC(parse_word_kind)
+    "lea string_set_name(%rip), %r8\n   xor %eax, %eax\n"
+    "1:  movzbl (%rdi,%rax), %ecx\n   cmpb $0, (%r8,%rcx)\n   je 2f\n"
+    "movzbl 1(%rdi,%rax), %ecx\n   cmpb $0, (%r8,%rcx)\n   je 3f\n   add $2, %rax\n   jmp 1b\n"
+    "3:  inc %rax\n"
+    // The name is %rax bytes and %ecx the byte after it.
+    "2:  xor %r9d, %r9d\n   test %rax, %rax\n   jz 5f\n   movzbl (%rdi), %r10d\n   sub $48, %r10d\n"
+    "cmp $9, %r10d\n   jbe 5f\n   cmp $91, %ecx\n   je 9f\n   cmp $61, %ecx\n   jne 4f\n   mov $1, %r9d\n   jmp 5f\n"
+    "4:  cmp $43, %ecx\n   jne 5f\n   cmpb $61, 1(%rdi,%rax)\n   jne 5f\n   mov $2, %r9d\n"
+    // Whether expansion leaves the rest alone too.
+    "5:  mov %rax, (%rdx)\n   lea expand_literal_set(%rip), %r8\n"
+    "6:  lea 1(%rax), %r10\n   cmp %rsi, %r10\n   jae 11f\n"
+    "movzbl (%rdi,%rax), %r11d\n   cmpb $0, (%r8,%r11)\n   je 8f\n"
+    "movzbl 1(%rdi,%rax), %r11d\n   cmpb $0, (%r8,%r11)\n   je 8f\n   add $2, %rax\n   jmp 6b\n"
+    "11: cmp %rsi, %rax\n   jae 7f\n   movzbl (%rdi,%rax), %r11d\n   cmpb $0, (%r8,%r11)\n   je 8f\n"
+    "7:  lea 4(%r9), %eax\n"
+    ASM_RET
+    // A lone [ is the test command, which expansion leaves alone.
+    "8:  cmp $1, %rsi\n   jne 10f\n   cmpb $91, (%rdi)\n   jne 10f\n   or $4, %r9d\n"
+    "10: mov %r9d, %eax\n"
+    ASM_RET
+    "9:  jmp parse_word_kind_subscript\n"
+    ASM_END(parse_word_kind)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(parse_word_kind)
+    "adrp x8, string_set_name\n   add x8, x8, :lo12:string_set_name\n   mov x3, #0\n"
+    "1:  ldrb w4, [x0, x3]\n   ldrb w5, [x8, x4]\n   cbz w5, 2f\n   add x3, x3, #1\n"
+    "ldrb w4, [x0, x3]\n   ldrb w5, [x8, x4]\n   cbz w5, 2f\n   add x3, x3, #1\n   b 1b\n"
+    // The name is x3 bytes and w4 the byte after it.
+    "2:  mov w9, #0\n   cbz x3, 5f\n   ldrb w5, [x0]\n   sub w5, w5, #48\n   cmp w5, #9\n   b.ls 5f\n"
+    "cmp w4, #91\n   b.eq 9f\n   cmp w4, #61\n   b.ne 4f\n   mov w9, #1\n   b 5f\n"
+    "4:  cmp w4, #43\n   b.ne 5f\n   add x5, x0, x3\n   ldrb w5, [x5, #1]\n   cmp w5, #61\n   b.ne 5f\n   mov w9, #2\n"
+    // Whether expansion leaves the rest alone too.
+    "5:  str x3, [x2]\n   adrp x8, expand_literal_set\n   add x8, x8, :lo12:expand_literal_set\n"
+    "6:  add x10, x3, #1\n   cmp x10, x1\n   b.hs 11f\n"
+    "ldrb w4, [x0, x3]\n   ldrb w5, [x8, x4]\n   cbz w5, 8f\n   ldrb w4, [x0, x10]\n   ldrb w5, [x8, x4]\n   cbz w5, 8f\n"
+    "add x3, x3, #2\n   b 6b\n"
+    "11: cmp x3, x1\n   b.hs 7f\n   ldrb w4, [x0, x3]\n   ldrb w5, [x8, x4]\n   cbz w5, 8f\n"
+    "7:  orr w0, w9, #4\n"
+    ASM_RET
+    // A lone [ is the test command, which expansion leaves alone.
+    "8:  cmp x1, #1\n   b.ne 10f\n   ldrb w5, [x0]\n   cmp w5, #91\n   b.ne 10f\n   orr w9, w9, #4\n"
+    "10: mov w0, w9\n"
+    ASM_RET
+    "9:  b parse_word_kind_subscript\n"
+    ASM_END(parse_word_kind)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(parse_word_kind)
+    "lla t0, string_set_name\n   li t1, 0\n"
+    "1:  add t2, a0, t1\n   lbu t3, 0(t2)\n   add t4, t0, t3\n   lbu t4, 0(t4)\n   beqz t4, 2f\n"
+    "addi t1, t1, 1\n   j 1b\n"
+    // The name is t1 bytes and t3 the byte after it, at t2.
+    "2:  li a3, 0\n   beqz t1, 5f\n   lbu t5, 0(a0)\n   addi t5, t5, -48\n   li t6, 9\n   bleu t5, t6, 5f\n"
+    "li t6, 91\n   beq t3, t6, 9f\n   li t6, 61\n   bne t3, t6, 4f\n   li a3, 1\n   j 5f\n"
+    "4:  li t6, 43\n   bne t3, t6, 5f\n   lbu t5, 1(t2)\n   li t6, 61\n   bne t5, t6, 5f\n   li a3, 2\n"
+    // Whether expansion leaves the rest alone too.
+    "5:  sd t1, 0(a2)\n   lla t0, expand_literal_set\n"
+    "6:  bgeu t1, a1, 7f\n   add t2, a0, t1\n   lbu t3, 0(t2)\n   add t4, t0, t3\n   lbu t4, 0(t4)\n"
+    "beqz t4, 8f\n   addi t1, t1, 1\n   j 6b\n"
+    "7:  ori a0, a3, 4\n"
+    ASM_RET
+    // A lone [ is the test command, which expansion leaves alone.
+    "8:  li t6, 1\n   bne a1, t6, 10f\n   lbu t5, 0(a0)\n   li t6, 91\n   bne t5, t6, 10f\n   ori a3, a3, 4\n"
+    "10: mv a0, a3\n"
+    ASM_RET
+    "9:  tail parse_word_kind_subscript\n"
+    ASM_END(parse_word_kind)
+);
+#endif
+
 static b32 parse_word_new(string_address text, positive length)
 {
         positive name_length = 0;
@@ -1350,8 +1450,10 @@ static b32 parse_word_new(string_address text, positive length)
 
         parse_words[parse_word_used] = text;
         parse_word_lengths[parse_word_used] = length;
-        assignment = shell_assignment_kind(text, address_of name_length);
-        flags = shell_expand_literal(text, length) ? PARSE_WORD_LITERAL : 0;
+        expand_sets_prepare();
+        assignment = parse_word_kind(text, length, address_of name_length);
+        flags = assignment & 4 ? PARSE_WORD_LITERAL : 0;
+        assignment &= 3;
 
         if (assignment)
         {

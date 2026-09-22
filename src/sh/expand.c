@@ -452,7 +452,7 @@ static fn expand_push_string(string_address text, p8 mark)
 */
 static b8 expand_plain_set[STRING_SET_BYTES];
 static b8 expand_inside_set[STRING_SET_BYTES];
-static b8 expand_literal_set[STRING_SET_BYTES];
+KEEP __attribute__((externally_visible)) b8 expand_literal_set[STRING_SET_BYTES];
 static b32 expand_sets_ready;
 
 static fn expand_sets_prepare()

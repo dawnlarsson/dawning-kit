@@ -2128,7 +2128,7 @@ shell_asm_one()
         { python3 test/differential.py --harness native_extract --source \
                 src/sh/builtin.c floodlight_status_clear env_find_hashed_span_probe &&
           python3 test/differential.py --harness native_extract --source \
-                src/sh/parse.c parse_keyword_of &&
+                src/sh/parse.c parse_keyword_of parse_word_kind &&
           python3 test/differential.py --harness native_extract --source \
                 src/sh/exec.c exec_function_slot &&
           python3 test/differential.py --harness native_extract --source \
@@ -3492,7 +3492,8 @@ keyword parse parse_keyword_of
 envprobe builtin env_find_hashed_span_probe
 funcslot exec exec_function_slot
 assignment shell shell_assignment_kind
-assignment_lib lib string_span
+assignment_lib lib string_span string_span_max
+wordkind parse parse_word_kind
 arguments util argument_option_take
 arguments_lib lib string_first_of string_compare_max memory_compare
 floodlight_lib lib memory_first_of memory_compare
