@@ -25399,6 +25399,188 @@ static positive shell_asm_edit(p8 address_to text, positive length, positive roo
         }
 }
 
+/*
+        parse_keyword_of from src/sh/parse.c against the length switch it
+        replaced, over every reserved word, each cut, stretched and changed
+        by a byte, words of every length to twelve drawn from their letters,
+        tokens that are not words, at every alignment, and words that end on
+        the last byte before a page nobody may read.
+*/
+typedef struct
+{
+        b32 kind, op, joined;
+        string_address text;
+        positive length;
+        address_any alias_trace;
+        b32 alias_forced, line;
+} shell_asm_token;
+
+b32 parse_keyword_of(const shell_asm_token address_to token);
+
+static b32 shell_asm_keyword_former(const shell_asm_token address_to token)
+{
+        string_address text;
+
+        if (token->kind != 1)
+                return 0;
+
+        text = token->text;
+
+        switch (token->length)
+        {
+        case 1:
+                switch (text[0])
+                {
+                case '!': return 19;
+                case '{': return 9;
+                case '}': return 17;
+                default: return 0;
+                }
+        case 2:
+                switch (memory_load_unaligned(p16, text))
+                {
+                case byte_word_2('i', 'f'): return 1;
+                case byte_word_2('f', 'i'): return 13;
+                case byte_word_2('d', 'o'): return 14;
+                case byte_word_2('i', 'n'): return 18;
+                case byte_word_2(']', ']'): return 20;
+                default: return 0;
+                }
+        case 3:
+                return memory_is_2(text, 'f', 'o') && text[2] == 'r' ? 4 : 0;
+        case 4:
+                switch (memory_load_unaligned(p32, text))
+                {
+                case byte_word_4('t', 'h', 'e', 'n'): return 10;
+                case byte_word_4('e', 'l', 's', 'e'): return 11;
+                case byte_word_4('e', 'l', 'i', 'f'): return 12;
+                case byte_word_4('d', 'o', 'n', 'e'): return 15;
+                case byte_word_4('c', 'a', 's', 'e'): return 5;
+                case byte_word_4('e', 's', 'a', 'c'): return 16;
+                case byte_word_4('t', 'i', 'm', 'e'): return 7;
+                default: return 0;
+                }
+        case 5:
+                if (memory_is_4(text, 'w', 'h', 'i', 'l') && text[4] == 'e')
+                        return 2;
+                if (memory_is_4(text, 'u', 'n', 't', 'i') && text[4] == 'l')
+                        return 3;
+                return 0;
+        case 6:
+                if (memory_is_4(text, 's', 'e', 'l', 'e') &&
+                    memory_is_2(text + 4, 'c', 't'))
+                        return 6;
+                if (memory_is_4(text, 'c', 'o', 'p', 'r') &&
+                    memory_is_2(text + 4, 'o', 'c'))
+                        return 8;
+                return 0;
+        default:
+                return 0;
+        }
+}
+
+static const char address_to const shell_asm_reserved[] = {
+        "!", "{", "}", "if", "fi", "do", "in", "]]", "for", "then", "else",
+        "elif", "done", "case", "esac", "time", "while", "until", "select",
+        "coproc",
+};
+
+static fn shell_asm_keyword_one(b32 kind, const p8 address_to text, positive length)
+{
+        shell_asm_token token = {kind, 0, 0, (string_address)text, length, null, 0, 1};
+        b32 want = shell_asm_keyword_former(address_of token);
+        b32 got = parse_keyword_of(address_of token);
+
+        checks++;
+        if (want != got)
+        {
+                failures++;
+                if (failures < 10)
+                        string_format(log, "FAIL parse_keyword_of kind %p length %p: %p want %p\n",
+                                      (positive)kind, length, (positive)got, (positive)want);
+        }
+}
+
+static fn shell_asm_keywords(p8 address_to pages)
+{
+        static p8 room[64];
+        static const p8 letters[] = "ifthenlsdocaeswhiuntmprx!{}][ ";
+
+        for (positive i = 0; i < array_count(shell_asm_reserved); i++)
+        {
+                const char address_to word = shell_asm_reserved[i];
+                positive length = string_length((string_address)word);
+
+                for (positive offset = 0; offset < 16; offset++)
+                {
+                        p8 address_to at = room + offset;
+
+                        memory_copy_apart(at, word, length);
+                        at[length] = 'x';
+                        shell_asm_keyword_one(1, at, length);
+                        shell_asm_keyword_one(1, at, length + 1);
+                        for (positive cut = 0; cut < length; cut++)
+                                shell_asm_keyword_one(1, at, cut);
+                        for (b32 kind = 0; kind < 6; kind++)
+                                shell_asm_keyword_one(kind, at, length);
+                        for (positive change = 0; change < length; change++)
+                        {
+                                p8 held = at[change];
+
+                                at[change] ^= 0x20;
+                                shell_asm_keyword_one(1, at, length);
+                                at[change] = held + 1;
+                                shell_asm_keyword_one(1, at, length);
+                                at[change] = held;
+                        }
+                }
+        }
+
+        for (positive round = 0; round < 200000; round++)
+        {
+                positive length = shell_asm_next() % 13;
+                positive offset = shell_asm_next() % 16;
+
+                for (positive i = 0; i < length; i++)
+                        room[offset + i] = letters[shell_asm_next() % (sizeof(letters) - 1)];
+                room[offset + length] = shell_asm_next() % 2 ? 0 : 'q';
+                if (shell_asm_next() % 3 == 0 && length)
+                {
+                        const char address_to word = shell_asm_reserved[
+                            shell_asm_next() % array_count(shell_asm_reserved)];
+                        positive have = string_length((string_address)word);
+
+                        memory_copy_apart(room + offset, word, have < length ? have : length);
+                }
+                shell_asm_keyword_one(1, room + offset, length);
+        }
+
+        /* Words whose last byte is the last byte before a page nobody may read. */
+        if (pages)
+                for (positive i = 0; i < array_count(shell_asm_reserved); i++)
+                {
+                        const char address_to word = shell_asm_reserved[i];
+                        positive length = string_length((string_address)word);
+
+                        for (positive cut = 0; cut <= length; cut++)
+                        {
+                                p8 address_to at = pages + 8192 - cut;
+
+                                memory_copy_apart(at, word, cut);
+                                shell_asm_keyword_one(1, at, cut);
+                        }
+                        for (positive extra = 0; extra < 8; extra++)
+                        {
+                                p8 address_to at = pages + 8192 - length - extra;
+
+                                memory_copy_apart(at, word, length);
+                                memory_fill(at + length, 'e', extra);
+                                shell_asm_keyword_one(1, at, length);
+                                shell_asm_keyword_one(1, at, length + extra);
+                        }
+                }
+}
+
 b32 main(void)
 {
         static p8 built[4096];
@@ -25447,6 +25629,8 @@ b32 main(void)
                 failures++;
                 string_format(log, "FAIL only %p of the built files were clear\n", valid);
         }
+
+        shell_asm_keywords((bipolar)(positive)pages > 0 ? pages : null);
 
         string_format(log, "shell assembly: %p checks, %p failures\n", checks, failures);
         log_flush();
@@ -63105,6 +63289,156 @@ int main(void)
         return bad ? 1 : 0;
 }
 #endif /* CHECK_native_join */
+
+#ifdef CHECK_native_keyword
+/* ARM64 parse_keyword_of lifted verbatim from src/sh/parse.c, against the
+   length switch it replaced, over tokens drawn the way the parser meets
+   them: the forty commonest words of 1.6 million calls made reading five
+   configure scripts, test/run and two ltmain.sh, each as often as it came,
+   the rest as words of their lengths, then both timed over that stream. */
+#include "keyword.h"
+
+#define NATIVE_SEED 0x243f6a8885a308d3ull
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
+
+typedef struct { int kind, op, joined; const char *text; u64 length; void *trace; int forced, line; } keyword_token;
+
+int parse_keyword_of(const keyword_token *);
+void *memcpy(void *, const void *, u64);
+
+static u64 checks, bad;
+
+static inline unsigned l16(const char *p) { unsigned short v; memcpy(&v, p, 2); return v; }
+static inline unsigned l32(const char *p) { unsigned v; memcpy(&v, p, 4); return v; }
+#define W2(a, b) ((unsigned)(unsigned char)(a) | (unsigned)(unsigned char)(b) << 8)
+#define W4(a, b, c, d) (W2(a, b) | W2(c, d) << 16)
+
+__attribute__((noinline)) static int former(const keyword_token *token)
+{
+        const char *text;
+
+        if (token->kind != 1)
+                return 0;
+        text = token->text;
+        switch (token->length) {
+        case 1: return text[0] == '!' ? 19 : text[0] == '{' ? 9 : text[0] == '}' ? 17 : 0;
+        case 2:
+                switch (l16(text)) {
+                case W2('i', 'f'): return 1; case W2('f', 'i'): return 13;
+                case W2('d', 'o'): return 14; case W2('i', 'n'): return 18;
+                case W2(']', ']'): return 20; default: return 0;
+                }
+        case 3: return l16(text) == W2('f', 'o') && text[2] == 'r' ? 4 : 0;
+        case 4:
+                switch (l32(text)) {
+                case W4('t', 'h', 'e', 'n'): return 10; case W4('e', 'l', 's', 'e'): return 11;
+                case W4('e', 'l', 'i', 'f'): return 12; case W4('d', 'o', 'n', 'e'): return 15;
+                case W4('c', 'a', 's', 'e'): return 5; case W4('e', 's', 'a', 'c'): return 16;
+                case W4('t', 'i', 'm', 'e'): return 7; default: return 0;
+                }
+        case 5:
+                if (l32(text) == W4('w', 'h', 'i', 'l') && text[4] == 'e') return 2;
+                if (l32(text) == W4('u', 'n', 't', 'i') && text[4] == 'l') return 3;
+                return 0;
+        case 6:
+                if (l32(text) == W4('s', 'e', 'l', 'e') && l16(text + 4) == W2('c', 't')) return 6;
+                if (l32(text) == W4('c', 'o', 'p', 'r') && l16(text + 4) == W2('o', 'c')) return 8;
+                return 0;
+        default: return 0;
+        }
+}
+
+/* Thousands of calls in the trace: a word, its length, how often. */
+static const struct { const char *word; u64 length, weight; } common[] = {
+        {"if", 2, 376}, {"then", 4, 185}, {"case", 4, 155}, {"else", 4, 84}, {"{", 1, 64},
+        {"printf", 6, 62}, {"test", 4, 56}, {"for", 3, 55}, {"fi", 2, 41}, {":", 1, 26},
+        {"}", 1, 20}, {"func_mod", 14, 13}, {"ac_prev=", 14, 12}, {"eval", 4, 10},
+        {"rm", 2, 9}, {"ac_prev=", 18, 8}, {"while", 5, 8}, {"cat", 3, 8}, {"ac_prev=", 19, 8},
+        {"6", 1, 7}, {"echo", 4, 7}, {"$as_nop", 7, 7}, {"done", 4, 6}, {"ac_prev=", 15, 6},
+        {"\"%s\\n\"", 6, 6}, {"break", 5, 4}, {"do", 2, 4}, {"%s", 2, 4}, {"ac_fn_c_", 19, 3},
+        {"ac_prev=", 22, 3}, {"as_dir=.", 9, 3}, {"elif", 4, 3}, {"same", 4, 3},
+        {"func_app", 11, 3}, {"ac_prev=", 21, 3}, {"ac_dashd", 15, 2}, {"bindir=$", 17, 2},
+        {"build_al", 22, 2}, {"cache_fi", 21, 2}, {"cache_fi", 23, 2},
+};
+/* The rest, by length (twelve and longer as twelve), and tokens not words. */
+static const u64 other[13] = {0, 7, 6, 4, 8, 6, 3, 3, 6, 6, 11, 10, 242};
+#define NONWORD 5
+#define STREAM 65536
+
+int main(void)
+{
+        static keyword_token stream[STREAM];
+        static char arena[STREAM * 32 + 64];
+        char *at = arena;
+        u64 total = NONWORD;
+
+        for (u64 i = 0; i < sizeof(common) / sizeof(common[0]); i++)
+                total += common[i].weight;
+        for (u64 i = 0; i < 13; i++)
+                total += other[i];
+
+        for (u64 i = 0; i < STREAM; i++) {
+                u64 pick = next() % total, length = 0;
+                int kind = 1;
+
+                for (u64 c = 0; c < 32; c++)
+                        at[c] = "abcdefghijklmnopqrstuvwxyz_=$\"{"[next() % 31];
+                for (u64 c = 0; c < sizeof(common) / sizeof(common[0]) && !length; c++) {
+                        if (pick < common[c].weight) {
+                                u64 have = 0;
+                                while (common[c].word[have])
+                                        have++;
+                                memcpy(at, common[c].word, have);
+                                length = common[c].length;
+                        } else
+                                pick -= common[c].weight;
+                }
+                for (u64 l = 1; l < 13 && !length; l++) {
+                        if (pick < other[l])
+                                length = l == 12 ? 12 + next() % 12 : l;
+                        else
+                                pick -= other[l];
+                }
+                if (!length)
+                        kind = 2, length = 1;
+                stream[i] = (keyword_token){kind, 0, 0, at, length, 0, 0, 1};
+                at += length + 1 + next() % 3;
+        }
+
+        for (u64 i = 0; i < STREAM; i++) {
+                int want = former(stream + i), got = parse_keyword_of(stream + i);
+
+                checks++;
+                if (want != got && bad++ < 8)
+                        printf("  FAIL token %lu length %lu: %d want %d\n", i, stream[i].length, got, want);
+        }
+
+        u64 best_former = ~0ul, best_body = ~0ul, sink = 0, sink_body = 0;
+        for (int trial = 0; trial < 9; trial++) {
+                u64 start = ticks();
+                for (int r = 0; r < 20; r++)
+                        for (u64 i = 0; i < STREAM; i++)
+                                sink += former(stream + i);
+                u64 took = ticks() - start;
+                best_former = took < best_former ? took : best_former;
+                start = ticks();
+                for (int r = 0; r < 20; r++)
+                        for (u64 i = 0; i < STREAM; i++)
+                                sink_body += parse_keyword_of(stream + i);
+                took = ticks() - start;
+                best_body = took < best_body ? took : best_body;
+        }
+        checks++;
+        if (sink != sink_body)
+                bad++;
+        printf("  %d tokens drawn as the parser meets them, 20 times: length switch %lu ticks, assembly %lu, asm/C %lu%%\n",
+               STREAM, best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+        printf("arm64 parse_keyword_of: %lu checks | %lu failures\n", checks, bad);
+        return bad ? 1 : 0;
+}
+#endif /* CHECK_native_keyword */
 
 #ifdef CHECK_native_floodlight
 /* ARM64 floodlight_status_clear lifted verbatim from src/sh/builtin.c,

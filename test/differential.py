@@ -21041,6 +21041,23 @@ def harness_edit_driver(argv):
     return 0
 
 
+def print_used_defines(lines, body, skip=()):
+    """Print each #define of a tool's source file that the lifted lines name,
+    with its continuation lines, so a body written over a table or a shared
+    compare compiles. lib.c's own macros are the harness's to provide."""
+    text = '\n'.join(body)
+    i = 0
+    while i < len(lines):
+        m = re.match(r'#define ([A-Z][A-Z0-9_]*)(?:\s|\(|$)', lines[i])
+        if m and not m.group(1).startswith(skip) and re.search(r'\b' + m.group(1) + r'\b', text):
+            while True:
+                print(lines[i])
+                if not lines[i].rstrip().endswith('\\'):
+                    break
+                i += 1
+        i += 1
+
+
 def harness_native_extract(argv):
     """Lift an arm64 routine out of lib.c, or out of a tool's source, so it
     can be run here.
@@ -21080,6 +21097,7 @@ def harness_native_extract(argv):
         lib, names = argv[1], list(argv[2:])
         lines = open(lib).read().split('\n')
         print(f'// Lifted from {lib} by test/differential.py --harness native_extract --source -- do not edit.')
+        blocks = []
         for name in names:
             at = next((i for i, l in enumerate(lines)
                        if l.strip() == f'ASM_FUNC({name})'), None)
@@ -21094,7 +21112,13 @@ def harness_native_extract(argv):
                     depth -= 1
                     if not depth:
                         break
-            print('\n'.join(lines[start:stop + 1]))
+            blocks.append(lines[start:stop + 1])
+        # A block written over a macro of its own file -- a table of slots
+        # spelled once for all three machines -- takes the macro along.
+        if os.path.basename(lib) != 'lib.c':
+            print_used_defines(lines, [l for block in blocks for l in block])
+        for block in blocks:
+            print('\n'.join(block))
         return 0
 
     lib, names = argv[0], list(argv[1:])
@@ -21356,6 +21380,9 @@ def harness_native_extract(argv):
                     break
                 i += 1
         i += 1
+    if os.path.basename(lib) != 'lib.c':
+        print_used_defines(lines, [l for b in bodies.values() for l in b],
+                           skip=('NEON_', 'WIDE_'))
 
     for n in names:
         if n in aliases:

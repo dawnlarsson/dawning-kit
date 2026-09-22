@@ -540,74 +540,140 @@ enum
 };
 
 /*
-        Classify once instead of asking fifteen exact string comparisons.
-        Ordinary commands are overwhelmingly not keywords, so length rejects
-        them immediately; packed loads verify the few equal-length candidates.
+        Which reserved word a token is, if any: one question per token the
+        parser meets, a million and a half of them in reading five configure
+        scripts, test/run and two ltmain.sh.
+
+        The C asked by length first, a jump table over lengths one to six
+        and then a compare or two, and the lengths of real words arrive in
+        no order a predictor can follow. Here nothing waits on the length:
+        the word's first eight bytes are read at once -- whenever they lie
+        in its page, and byte by byte in the rare case they would not --
+        and cut to its length, and that key is multiplied into one of 32
+        slots that hold the twenty reserved words each in a slot of its own.
+        The slot's word is compared with the key, and a word longer than six
+        or a slot holding another word both answer none with a conditional
+        move. No word holds a NUL, so the key alone names the word.
+
+        ]] answers as a keyword here; parse_keyword keeps it one only for
+        bash, as the reserved words of POSIX mode do not include it.
 */
-static PURE HOT b32 parse_keyword(b32 ahead)
+PURE b32 parse_keyword_of(const parse_token address_to token);
+
+_Static_assert(__builtin_offsetof(parse_token, kind) == 0 &&
+               __builtin_offsetof(parse_token, text) == 16 &&
+               __builtin_offsetof(parse_token, length) == 24 && PT_WORD == 1,
+               "parse_keyword_of reads the token at these offsets");
+_Static_assert(PARSE_KEYWORD_IF == 1 && PARSE_KEYWORD_WHILE == 2 &&
+               PARSE_KEYWORD_UNTIL == 3 && PARSE_KEYWORD_FOR == 4 &&
+               PARSE_KEYWORD_CASE == 5 && PARSE_KEYWORD_SELECT == 6 &&
+               PARSE_KEYWORD_TIME == 7 && PARSE_KEYWORD_COPROC == 8 &&
+               PARSE_KEYWORD_OPEN == 9 && PARSE_KEYWORD_THEN == 10 &&
+               PARSE_KEYWORD_ELSE == 11 && PARSE_KEYWORD_ELIF == 12 &&
+               PARSE_KEYWORD_FI == 13 && PARSE_KEYWORD_DO == 14 &&
+               PARSE_KEYWORD_DONE == 15 && PARSE_KEYWORD_ESAC == 16 &&
+               PARSE_KEYWORD_CLOSE == 17 && PARSE_KEYWORD_IN == 18 &&
+               PARSE_KEYWORD_BANG == 19 && PARSE_KEYWORD_DEND == 20,
+               "the slots of parse_keyword_of spell these numbers");
+
+/* Slot = (key * 0xd1ea041814d4954f) >> 59; each row is two slots, the
+   little-endian word and its keyword. */
+#define PARSE_KEYWORD_SLOTS \
+    ".quad 0x6c69746e75, 3, 0x21, 19\n" \
+    ".quad 0x0, 0, 0x0, 0\n" \
+    ".quad 0x6e656874, 10, 0x0, 0\n" \
+    ".quad 0x65736163, 5, 0x7463656c6573, 6\n" \
+    ".quad 0x5d5d, 20, 0x0, 0\n" \
+    ".quad 0x6669, 1, 0x656d6974, 7\n" \
+    ".quad 0x636f72706f63, 8, 0x0, 0\n" \
+    ".quad 0x6f64, 14, 0x7d, 17\n" \
+    ".quad 0x0, 0, 0x0, 0\n" \
+    ".quad 0x0, 0, 0x6966, 13\n" \
+    ".quad 0x6e69, 18, 0x0, 0\n" \
+    ".quad 0x656c696877, 2, 0x656e6f64, 15\n" \
+    ".quad 0x0, 0, 0x63617365, 16\n" \
+    ".quad 0x66696c65, 12, 0x7b, 9\n" \
+    ".quad 0x65736c65, 11, 0x726f66, 4\n" \
+    ".quad 0x0, 0, 0x0, 0\n"
+
+#if X64
+__asm__(
+    ASM_FUNC(parse_keyword_of)
+    "cmpl $1, (%rdi)\n   jne 3f\n"
+    "mov 16(%rdi), %rsi\n   mov 24(%rdi), %r8\n   lea .Lparse_keyword_x64_slots(%rip), %r10\n"
+    // An empty word may point anywhere, so it reads the slots instead.
+    "test %r8, %r8\n   cmovz %r10, %rsi\n"
+    "mov %esi, %eax\n   and $4095, %eax\n   cmp $4088, %eax\n   ja 4f\n"
+    "mov (%rsi), %rdx\n"
+    // The key: the word's bytes, the rest cut away.
+    "1:  lea (,%r8,8), %ecx\n   mov $-1, %rax\n   shl %cl, %rax\n   not %rax\n   and %rax, %rdx\n"
+    "movabs $0xd1ea041814d4954f, %rax\n   imul %rdx, %rax\n   shr $59, %rax\n   shl $4, %eax\n"
+    "mov %r10, %rcx\n   xor %r9d, %r9d\n"
+    "cmp (%rcx,%rax), %rdx\n   mov 8(%rcx,%rax), %eax\n   cmovne %r9d, %eax\n"
+    "cmp $6, %r8\n   cmova %r9d, %eax\n"
+    ASM_RET
+    "3:  xor %eax, %eax\n"
+    ASM_RET
+    // Eight bytes would leave the page: a word of one to six, byte by byte.
+    "4:  lea -1(%r8), %rcx\n   cmp $5, %rcx\n   ja 3b\n   xor %edx, %edx\n   mov %r8, %rcx\n"
+    "5:  shl $8, %rdx\n   movzbl -1(%rsi,%rcx), %eax\n   or %rax, %rdx\n   dec %rcx\n   jnz 5b\n"
+    "jmp 1b\n"
+    ".pushsection .rodata\n   .balign 16\n.Lparse_keyword_x64_slots:\n"
+    PARSE_KEYWORD_SLOTS
+    ".popsection\n"
+    ASM_END(parse_keyword_of)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(parse_keyword_of)
+    "ldr w2, [x0]\n   cmp w2, #1\n   b.ne 3f\n"
+    "ldr x1, [x0, #16]\n   ldr x3, [x0, #24]\n   adr x10, 6f\n"
+    // An empty word may point anywhere, so it reads the slots instead.
+    "cmp x3, #0\n   csel x1, x10, x1, eq\n"
+    "and x4, x1, #4095\n   cmp x4, #4088\n   b.hi 4f\n   ldr x5, [x1]\n"
+    // The key: the word's bytes, the rest cut away.
+    "1:  lsl x6, x3, #3\n   mov x7, #-1\n   lsl x7, x7, x6\n   bic x5, x5, x7\n"
+    "mov x8, #0x954f\n   movk x8, #0x14d4, lsl #16\n   movk x8, #0x0418, lsl #32\n   movk x8, #0xd1ea, lsl #48\n"
+    "mul x9, x5, x8\n   lsr x9, x9, #59\n   add x10, x10, x9, lsl #4\n"
+    "ldp x11, x12, [x10]\n   cmp x11, x5\n   csel w0, w12, wzr, eq\n"
+    "cmp x3, #6\n   csel w0, w0, wzr, ls\n"
+    ASM_RET
+    "3:  mov w0, #0\n"
+    ASM_RET
+    // Eight bytes would leave the page: a word of one to six, byte by byte.
+    "4:  sub x6, x3, #1\n   cmp x6, #5\n   b.hi 3b\n   mov x5, #0\n   mov x6, x3\n"
+    "5:  sub x6, x6, #1\n   ldrb w7, [x1, x6]\n   orr x5, x7, x5, lsl #8\n   cbnz x6, 5b\n   b 1b\n"
+    ".balign 16\n6:\n"
+    PARSE_KEYWORD_SLOTS
+    ASM_END(parse_keyword_of)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(parse_keyword_of)
+    "lw t0, 0(a0)\n   li t1, 1\n   bne t0, t1, 3f\n"
+    "ld a1, 16(a0)\n   ld a2, 24(a0)\n   addi t2, a2, -1\n   li t1, 5\n   bgtu t2, t1, 3f\n"
+    // Byte by byte: a misaligned load is not something every core does.
+    "li a3, 0\n   mv t2, a2\n"
+    "1:  addi t2, t2, -1\n   add t3, a1, t2\n   lbu t4, 0(t3)\n   slli a3, a3, 8\n   or a3, a3, t4\n   bnez t2, 1b\n"
+    "li t0, 0xd1ea041814d4954f\n   mul t0, a3, t0\n   srli t0, t0, 59\n   slli t0, t0, 4\n"
+    "lla t1, .Lparse_keyword_riscv_slots\n   add t1, t1, t0\n"
+    "ld t2, 0(t1)\n   lw a0, 8(t1)\n   bne t2, a3, 3f\n"
+    ASM_RET
+    "3:  li a0, 0\n"
+    ASM_RET
+    ".pushsection .rodata\n   .balign 16\n.Lparse_keyword_riscv_slots:\n"
+    PARSE_KEYWORD_SLOTS
+    ".popsection\n"
+    ASM_END(parse_keyword_of)
+);
+#endif
+
+static PURE inline INLINE b32 parse_keyword(b32 ahead)
 {
-        parse_token address_to token = parse_look(ahead);
-        string_address text;
+        b32 keyword = parse_keyword_of(parse_look(ahead));
 
-        if (token->kind != PT_WORD)
-                return PARSE_KEYWORD_NONE;
-
-        text = token->text;
-
-        switch (token->length)
-        {
-        case 1:
-                switch (text[0])
-                {
-                case '!': return PARSE_KEYWORD_BANG;
-                case '{': return PARSE_KEYWORD_OPEN;
-                case '}': return PARSE_KEYWORD_CLOSE;
-                default: return PARSE_KEYWORD_NONE;
-                }
-        case 2:
-                switch (memory_load_unaligned(p16, text))
-                {
-                case byte_word_2('i', 'f'): return PARSE_KEYWORD_IF;
-                case byte_word_2('f', 'i'): return PARSE_KEYWORD_FI;
-                case byte_word_2('d', 'o'): return PARSE_KEYWORD_DO;
-                case byte_word_2('i', 'n'): return PARSE_KEYWORD_IN;
-                case byte_word_2(']', ']'):
-                        return shell_bash_compat ? PARSE_KEYWORD_DEND
-                                                 : PARSE_KEYWORD_NONE;
-                default: return PARSE_KEYWORD_NONE;
-                }
-        case 3:
-                return memory_is_2(text, 'f', 'o') && text[2] == 'r'
-                           ? PARSE_KEYWORD_FOR : PARSE_KEYWORD_NONE;
-        case 4:
-                switch (memory_load_unaligned(p32, text))
-                {
-                case byte_word_4('t', 'h', 'e', 'n'): return PARSE_KEYWORD_THEN;
-                case byte_word_4('e', 'l', 's', 'e'): return PARSE_KEYWORD_ELSE;
-                case byte_word_4('e', 'l', 'i', 'f'): return PARSE_KEYWORD_ELIF;
-                case byte_word_4('d', 'o', 'n', 'e'): return PARSE_KEYWORD_DONE;
-                case byte_word_4('c', 'a', 's', 'e'): return PARSE_KEYWORD_CASE;
-                case byte_word_4('e', 's', 'a', 'c'): return PARSE_KEYWORD_ESAC;
-                case byte_word_4('t', 'i', 'm', 'e'): return PARSE_KEYWORD_TIME;
-                default: return PARSE_KEYWORD_NONE;
-                }
-        case 5:
-                if (memory_is_4(text, 'w', 'h', 'i', 'l') && text[4] == 'e')
-                        return PARSE_KEYWORD_WHILE;
-                if (memory_is_4(text, 'u', 'n', 't', 'i') && text[4] == 'l')
-                        return PARSE_KEYWORD_UNTIL;
-                return PARSE_KEYWORD_NONE;
-        case 6:
-                if (memory_is_4(text, 's', 'e', 'l', 'e') &&
-                    memory_is_2(text + 4, 'c', 't'))
-                        return PARSE_KEYWORD_SELECT;
-                if (memory_is_4(text, 'c', 'o', 'p', 'r') &&
-                    memory_is_2(text + 4, 'o', 'c'))
-                        return PARSE_KEYWORD_COPROC;
-                return PARSE_KEYWORD_NONE;
-        default:
-                return PARSE_KEYWORD_NONE;
-        }
+        return keyword == PARSE_KEYWORD_DEND && !shell_bash_compat
+                   ? PARSE_KEYWORD_NONE : keyword;
 }
 
 /*
