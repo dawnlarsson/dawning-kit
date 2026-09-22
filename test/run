@@ -10056,8 +10056,40 @@ lane_boot()
 (
 image=${MOONWATER_IMAGE:-dist/bootx64.efi}
 
-if ! command -v qemu-system-x86_64 > /dev/null 2>&1; then
-        echo "  boot         NOT RUN -- no qemu-system-x86_64"
+#
+#       The image says which machine. bootaa64.efi is arch/arm's, booted on
+#       QEMU's virt machine with its console on the PL011, virtio-gpu for the
+#       display and a virtio NIC and generator, since virt has no default
+#       display and no NIC to fall back on; natively accelerated when this is
+#       an arm64 machine, emulated otherwise:
+#
+#           MOONWATER_IMAGE=dist/bootaa64.efi sh test/run boot
+#
+case "$image" in
+*aa64.efi)
+        boot_emulator=qemu-system-aarch64
+        boot_console=ttyAMA0
+        # pauth-impdef: emulating the architected QARMA pointer
+        # authentication makes an emulated boot several times slower, and
+        # past the timeout below before the checks with waits in them end.
+        set -- -machine virt,gic-version=3 -cpu max,pauth-impdef=on \
+                -device virtio-gpu-pci,xres=1600,yres=1200 \
+                -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+                -device virtio-rng-pci
+        case "$(uname -s):$(uname -m)" in
+        Darwin:arm64) set -- "$@" -accel hvf -cpu host ;;
+        Linux:aarch64) [ -w /dev/kvm ] && set -- "$@" -accel kvm -cpu host ;;
+        esac
+        ;;
+*)
+        boot_emulator=qemu-system-x86_64
+        boot_console=ttyS0
+        set -- -cpu Nehalem -vga none -device VGA,xres=1600,yres=1200
+        ;;
+esac
+
+if ! command -v "$boot_emulator" > /dev/null 2>&1; then
+        echo "  boot         NOT RUN -- no $boot_emulator"
         exit 2
 fi
 
@@ -10348,11 +10380,25 @@ COMMANDS
 #       mode its EDID prefers, and QEMU's default EDID leaves it 640x480,
 #       which holds 78 columns: the terminal opens, as 78x24, and the check
 #       below cannot see it. 1600x1200 gives 1024x768.
-timeout 180 qemu-system-x86_64 -m 2G -smp 2 -cpu Nehalem \
-        -vga none -device VGA,xres=1600,yres=1200 \
-        -kernel "$image" -no-reboot -display none -serial stdio \
-        -append "console=ttyS0 drm_client_lib.active=" \
-        < "$work/commands" > "$work/transcript" 2>&1 || true
+#
+#       The PL011 is fed only once the shell is up. Everything piped into it
+#       while the kernel is still booting is gone by the time the shell reads
+#       -- not the first line, as on the 8250, but the whole file -- so the
+#       arm64 machine waits, and gets longer for it, since emulated it is
+#       several times slower than the x86 one under kvm.
+#
+if [ "$boot_emulator" = qemu-system-x86_64 ]; then
+        timeout 180 "$boot_emulator" -m 2G -smp 2 "$@" \
+                -kernel "$image" -no-reboot -display none -serial stdio \
+                -append "console=$boot_console drm_client_lib.active=" \
+                < "$work/commands" > "$work/transcript" 2>&1 || true
+else
+        { sleep 15; cat "$work/commands"; } |
+                timeout 360 "$boot_emulator" -m 2G -smp 2 "$@" \
+                -kernel "$image" -no-reboot -display none -serial stdio \
+                -append "console=$boot_console drm_client_lib.active=" \
+                > "$work/transcript" 2>&1 || true
+fi
 
 #
 #       The two that say the machine rejected what we shipped it.
@@ -10523,7 +10569,11 @@ never transcript 'no missing command' 'failed with error: No such file or direct
 #       than failed where there is no KVM -- a Mac has none -- because the
 #       floor pass above is the one that must always run.
 #
-if [ -r /dev/kvm ]; then
+#       Both this and the power button below are the x86 machine's.
+#
+if [ "$boot_emulator" != qemu-system-x86_64 ]; then
+        printf '  %-24s an arm64 image, the x86 host passes did not run\n' 'this host'
+elif [ -r /dev/kvm ]; then
         timeout 180 qemu-system-x86_64 -m 2G -smp 2 -cpu host -enable-kvm \
                 -kernel "$image" -no-reboot -display none -serial stdio \
                 -append "console=ttyS0 drm_client_lib.active=" \
@@ -10550,7 +10600,8 @@ fi
 #       reversed or counted so the command echo on this console cannot pass
 #       for one.
 #
-if [ -r /dev/kvm ] && command -v python3 > /dev/null 2>&1; then
+if [ "$boot_emulator" = qemu-system-x86_64 ] && [ -r /dev/kvm ] &&
+        command -v python3 > /dev/null 2>&1; then
         MOONWATER_BOOT_WORK=$work python3 - "$image" > "$work/power-answers" 2> "$work/power-why" <<'PY'
 import json, os, socket, subprocess, sys, time
 
@@ -10775,6 +10826,8 @@ PY
         while IFS='|' read -r name got want; do
                 same "$name" "$want" "$got"
         done < "$work/power-answers"
+elif [ "$boot_emulator" != qemu-system-x86_64 ]; then
+        printf '  %-24s an arm64 image, the power button pass did not run\n' 'power button'
 else
         printf '  %-24s no /dev/kvm, the power button pass did not run\n' 'power button'
 fi

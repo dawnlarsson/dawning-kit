@@ -166,9 +166,33 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
         {"emulator_flags", "-m 2G -smp 2 -cpu Nehalem"},
         {"emulator_devices",
          "-vga none -device virtio-gpu-pci -device qemu-xhci"
-         " -device usb-tablet -device usb-kbd -no-reboot"},
+         " -device usb-tablet -device usb-kbd"
+         " -netdev user,id=net0 -device virtio-net-pci,netdev=net0"
+         " -device virtio-rng-pci -no-reboot"},
         {"kernel_cmdline", "console=ttyS0 drm_client_lib.active="},
+
+        /*      The same for the other two, on QEMU's virt machine: no default
+                display to turn off, a PL011 on arm64, and a GICv3 there so
+                hvf and kvm can accelerate the interrupt controller. */
+        {"emulator_arm64", "qemu-system-aarch64"},
+        {"emulator_flags_arm64", "-machine virt,gic-version=3 -cpu max,pauth-impdef=on -m 2G -smp 2"},
+        {"emulator_devices_arm64",
+         "-device virtio-gpu-pci -device qemu-xhci"
+         " -device usb-tablet -device usb-kbd"
+         " -netdev user,id=net0 -device virtio-net-pci,netdev=net0"
+         " -device virtio-rng-pci -no-reboot"},
+        {"kernel_cmdline_arm64", "console=ttyAMA0 drm_client_lib.active="},
+        {"emulator_riscv64", "qemu-system-riscv64"},
+        {"emulator_flags_riscv64", "-machine virt -cpu rv64 -m 2G -smp 2"},
+        {"emulator_devices_riscv64",
+         "-device virtio-gpu-pci -device qemu-xhci"
+         " -device usb-tablet -device usb-kbd"
+         " -netdev user,id=net0 -device virtio-net-pci,netdev=net0"
+         " -device virtio-rng-pci -no-reboot"},
+        {"kernel_cmdline_riscv64", "console=ttyS0 drm_client_lib.active="},
         {"default_image", "dist/bootx64.efi"},
+        {"default_image_arm64", "dist/bootaa64.efi"},
+        {"default_image_riscv64", "dist/kernel-riscv64.img"},
         {"module_root", "src"},
         {"clean_patterns",
          "[!.]*.a [!.]*.o [!.]*.o.d [!.]*.cmd [!.]*.order"
@@ -199,9 +223,12 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
          " dev/floodlight c 10 249"},
 
         /*      The profiles composed ahead of whatever was asked for, in this
-                order, so the last two win the choices the earlier ones touch. */
+                order, so the last two win the choices the earlier ones touch.
+                The architecture's profile follows them and is not in either
+                list: it is the machine's own unless --arch or an arch/ profile
+                on the line says otherwise. */
         {"profiles_always", "any general gpu guests latency prod"},
-        {"profiles_default", "arch/x64 debug_none limbo desktop wifi serial"},
+        {"profiles_default", "debug_none limbo desktop wifi serial"},
 
         {null, null},
 };
@@ -4057,7 +4084,8 @@ static b32 build_userspace()
         return 0;
 }
 
-static b32 build_local(string_address address_to profiles, positive count)
+static b32 build_local(string_address address_to profiles, positive count,
+                       string_address arch_profile)
 {
         string_address artifacts = build_setting_get("artifacts");
         string_address image = build_setting_get("image_root");
@@ -4186,6 +4214,11 @@ static b32 build_local(string_address address_to profiles, positive count)
                 chosen_count = build_add_split((string_address address_to)chosen,
                                                chosen_count, BUILD_ARGUMENT_ROOM,
                                                build_setting_get("profiles_always"));
+
+                //      Null when an arch/ profile is on the line, which is
+                //      then the whole answer.
+                if (arch_profile)
+                        chosen[chosen_count++] = arch_profile;
 
                 if (!count)
                 {
@@ -4559,6 +4592,54 @@ static string_address build_quote(string_address address_to words, positive coun
 }
 
 /*
+        Architectures, by the three names each goes by: what --arch and uname
+        say, the profile that builds it, and back from a profile named on the
+        line. The shell half of build.sh keeps the same table for the Mac.
+*/
+static string_address build_arch_name(string_address word)
+{
+        if (word_is(word, "x64") || word_is(word, "x86_64") ||
+            word_is(word, "amd64") || word_is(word, "x86-64"))
+                return "x64";
+        if (word_is(word, "arm64") || word_is(word, "aarch64") ||
+            word_is(word, "arm"))
+                return "arm64";
+        if (word_is(word, "riscv64") || word_is(word, "riscv"))
+                return "riscv64";
+        return null;
+}
+
+static string_address build_arch_profile(string_address arch)
+{
+        if (word_is(arch, "arm64"))
+                return "arch/arm";
+        if (word_is(arch, "riscv64"))
+                return "arch/riscv";
+        return "arch/x64";
+}
+
+static string_address build_arch_of_profile(string_address profile)
+{
+        if (string_has_prefix(profile, "arch/arm"))
+                return "arm64";
+        if (string_has_prefix(profile, "arch/riscv"))
+                return "riscv64";
+        return "x64";
+}
+
+//      This machine, which is also the default for anything booted on it.
+static string_address build_arch_here(void)
+{
+        file_machine machine;
+        string_address name;
+
+        if (!file_machine_read(address_of machine))
+                return "x64";
+        name = build_arch_name((string_address)machine.machine);
+        return name ? name : (string_address)"x64";
+}
+
+/*
         Building somewhere else.
 
         Only reached when a host was named. The remote command carries no host
@@ -4585,6 +4666,7 @@ static string_address build_remote_stage_script =
     "parent=$(dirname -- \"$stage\") || exit 73\n"
     "name=$(basename -- \"$stage\") || exit 73\n"
     "case $name in \"\"|.|..) fail ;; esac\n"
+    "[ -d \"$parent\" ] || (umask 077; mkdir -p -- \"$parent\") || fail\n"
     "parent=$(CDPATH= cd -P -- \"$parent\" && pwd -P) || fail\n"
     "uid=$(id -u) || fail\n"
     "parent_owner=$(owner_of \"$parent\") || fail\n"
@@ -4858,22 +4940,81 @@ static b32 build_remote_fetch(string_address host, string_address remote,
 }
 
 static b32 build_remote(string_address host, string_address remote,
-                        string_address address_to profiles, positive count)
+                        string_address address_to profiles, positive count,
+                        string_address target, string_address profile_arch)
 {
         string_address arguments;
         string_address stock = string_get_environment(environ, "MOONWATER_STOCK");
+        string_address sent[BUILD_ARGUMENT_ROOM];
+        positive many = 0;
 
-        /* Five fixed build words plus the five-word staging front must fit. */
-        if (count + 10 >= BUILD_ARGUMENT_ROOM)
+        /* Five fixed build words, --arch and its name, plus the five-word
+           staging front must fit. */
+        if (count + 12 >= BUILD_ARGUMENT_ROOM)
                 return build_die("too many remote build arguments");
-        arguments = build_quote(profiles, count);
 
         build_say(build_join("Checking ", host, null));
 
-        if (build_run("ssh", "-n", "-o", "BatchMode=yes", "-o",
-                      "ConnectTimeout=20", host, "true", null))
+        /*
+                Asked only when nothing on this side decided: a plain build is
+                for the machine doing it.
+        */
+        if (!target)
+        {
+                string_address words[] = {
+                    "ssh", "-n", "-o", "BatchMode=yes", "-o",
+                    "ConnectTimeout=20", host, "uname", "-m", null};
+                bipolar got = build_capture_words(words, build_file_two,
+                                                  BUILD_FILE_ROOM);
+                positive length;
+
+                if (got < 0)
+                        return build_die(build_join("cannot reach ", host,
+                                                    " over ssh", null));
+                length = string_length((string_address)build_file_two);
+                while (length && (build_file_two[length - 1] == '\n' ||
+                                  build_file_two[length - 1] == '\r'))
+                        build_file_two[--length] = end;
+                target = build_arch_name((string_address)build_file_two);
+                if (!target)
+                        target = "x64";
+        }
+        else if (build_run("ssh", "-n", "-o", "BatchMode=yes", "-o",
+                           "ConnectTimeout=20", host, "true", null))
                 return build_die(build_join("cannot reach ", host,
                                             " over ssh", null));
+
+        /*
+                Under the build host's ~/.cache, relative to the home an ssh
+                command starts in, and one per architecture's profile, as
+                build.sh names it.
+        */
+        if (!remote || !*remote)
+        {
+                string_address flavour = profile_arch ? profile_arch
+                                                      : build_arch_profile(target);
+
+                remote = build_join(".cache/", build_setting_get("name"), "/",
+                                    build_name_of(build_working_directory()),
+                                    "-",
+                                    build_number(build_path_mark(
+                                            build_working_directory())),
+                                    "-", flavour + 5, null);
+        }
+
+        //      The architecture travels as --arch rather than as a profile,
+        //      which would replace the default set rather than swap its arch/
+        //      member.
+        if (!profile_arch)
+        {
+                sent[many++] = "--arch";
+                sent[many++] = target;
+        }
+        for (positive which = 0; which < count; which++)
+                sent[many++] = profiles[which];
+        profiles = (string_address address_to)sent;
+        count = many;
+        arguments = build_quote(profiles, count);
 
         build_say(build_join("Copying the tree to ", host, ":", remote, null));
 
@@ -4963,7 +5104,7 @@ static b32 build_remote(string_address host, string_address remote,
         /*
                 The host which built the configured profile is authoritative
                 about its export. A stale local configuration may describe
-                another architecture entirely -- an ARM Mac commonly names
+                another architecture entirely -- bootaa64.efi, or a Pi's
                 kernel8.img.
         */
         {
@@ -5111,7 +5252,16 @@ static b32 build_usb(string_address image)
                       "  sudo mkfs.vfat -F32 /dev/sdX1        # after partitioning it GPT/ESP\n");
         string_format(log, "  sudo mount /dev/sdX1 /mnt\n");
         string_format(log, "  sudo mkdir -p /mnt/EFI/BOOT\n");
-        string_format(log, "  sudo cp %s /mnt/EFI/BOOT/BOOTX64.EFI\n", image);
+        {
+                //      bootx64.efi or bootaa64.efi: the removable-media name
+                //      for the machine the image is for is its own, in capitals.
+                string_address name = build_join(build_name_of(image), null);
+
+                for (positive at = 0; name[at]; at++)
+                        if (name[at] >= 'a' && name[at] <= 'z')
+                                name[at] -= 'a' - 'A';
+                string_format(log, "  sudo cp %s /mnt/EFI/BOOT/%s\n", image, name);
+        }
         string_format(log, "  sudo umount /mnt\n");
         string_format(log, "\n");
         string_format(log,
@@ -5147,9 +5297,20 @@ static b32 build_usb(string_address image)
         claiming the display. It has to be built, but it must not take the
         screen, or the compositor is drawing underneath something else.
 */
-static b32 build_boot(string_address image, bool console)
+static string_address build_boot_setting(string_address name,
+                                         string_address arch)
 {
-        string_address emulator = build_setting_get("emulator");
+        string_address value = null;
+
+        if (!word_is(arch, "x64"))
+                value = build_setting_get(build_join(name, "_", arch, null));
+        return value ? value : build_setting_get(name);
+}
+
+static b32 build_boot(string_address image, bool console, string_address arch)
+{
+        string_address emulator = build_boot_setting("emulator", arch);
+        bool native = word_is(build_arch_here(), arch);
         string_address words[BUILD_ARGUMENT_ROOM];
         string_address accelerators = "";
         string_address display = null;
@@ -5158,22 +5319,31 @@ static b32 build_boot(string_address image, bool console)
         if (!build_have(emulator))
                 return build_die(build_join(emulator, " is not installed", null));
 
-        build_say(build_join("Booting ", image, null));
+        positive length = string_length(image);
+
+        if (length >= 12 && !memory_compare(image + length - 12, "/kernel8.img", 12))
+                return build_die(build_join(
+                        image, " is a Raspberry Pi image; QEMU's virt machine "
+                        "cannot boot it -- build --arch arm64 for a VM", null));
+
+        build_say(build_join("Booting ", image, " (", arch, ")", null));
         build_size(image);
 
         words[count++] = emulator;
         count = build_add_split((string_address address_to)words, count,
                                 BUILD_ARGUMENT_ROOM,
-                                build_setting_get("emulator_flags"));
+                                build_boot_setting("emulator_flags", arch));
         words[count++] = "-kernel";
         words[count++] = image;
         count = build_add_split((string_address address_to)words, count,
                                 BUILD_ARGUMENT_ROOM,
-                                build_setting_get("emulator_devices"));
+                                build_boot_setting("emulator_devices", arch));
 
-        //      Hardware acceleration where this QEMU has it. -cpu host
-        //      replaces the model above, which is what you want when the guest
-        //      is running on the real one.
+        //      Hardware acceleration where this QEMU has it and the guest is
+        //      this machine's own architecture; anything else is emulated.
+        //      -cpu host replaces the model above, which is what you want
+        //      when the guest is running on the real one.
+        if (native)
         {
                 string_address ask[4];
 
@@ -5204,7 +5374,7 @@ static b32 build_boot(string_address image, bool console)
         }
 
         words[count++] = "-append";
-        words[count++] = build_setting_get("kernel_cmdline");
+        words[count++] = build_boot_setting("kernel_cmdline", arch);
 
         if (console)
         {
@@ -5283,6 +5453,13 @@ static fn build_usage()
                       "    build --usb                 build, then write a USB stick\n"
                       "    build --clean               remove what a build produced\n"
                       "    build --host box            build on another machine over ssh\n"
+                      "    build --arch arm64 --run    build and boot another architecture\n"
+                      "\n"
+                      "The architecture defaults to the machine that will run the image:\n"
+                      "this one for --run and --boot, even when --host compiles it, and\n"
+                      "otherwise the machine building it. --arch x64, arm64 or riscv64\n"
+                      "(also x86_64, amd64, aarch64, arm, riscv) picks one, and an arch/\n"
+                      "profile on the line wins over both.\n"
                       "\n"
                       "Build operations:\n"
                       "\n"
@@ -5471,6 +5648,9 @@ b32 main()
                 bool clean = false;
                 bool usb = false;
                 bool console = false;
+                string_address arch_asked = null;
+                string_address profile_arch = null;
+                string_address target = null;
 
                 build_is_safe();
 
@@ -5501,6 +5681,25 @@ b32 main()
                         }
                         else if (string_has_prefix(word, "--host="))
                                 host = word + 7;
+                        else if (word_is(word, "--arch") ||
+                                 string_has_prefix(word, "--arch="))
+                        {
+                                string_address name = word + 7;
+
+                                if (!word[6])
+                                {
+                                        if (at + 1 >= count)
+                                                return build_die(
+                                                        "--arch wants x64, arm64 or riscv64");
+                                        name = arguments[++at];
+                                }
+
+                                arch_asked = build_arch_name(name);
+                                if (!arch_asked)
+                                        return build_die(build_join(
+                                                "unknown architecture ", name,
+                                                " -- x64, arm64 or riscv64", null));
+                        }
                         else if (word[0] == '-' && word[1] == '-')
                                 return build_die(build_join("unknown option ",
                                                             word, null));
@@ -5510,14 +5709,23 @@ b32 main()
 
                 profiles[chosen] = null;
 
-                if (!remote || !*remote)
-                        remote = build_join("/tmp/", build_setting_get("name"),
-                                            "-",
-                                            build_name_of(build_working_directory()),
-                                            "-",
-                                            build_number(build_path_mark(
-                                                    build_working_directory())),
-                                            null);
+                /*
+                        Which architecture. An arch/ profile on the line is the
+                        whole answer. Otherwise --arch, and otherwise this
+                        machine -- except for a remote build that is not going
+                        to be booted here, which is for the machine building
+                        it and is asked of that machine.
+                */
+                for (positive which = 0; which < chosen; which++)
+                        if (string_has_prefix(profiles[which], "arch/"))
+                                profile_arch = profiles[which];
+
+                if (profile_arch)
+                        target = build_arch_of_profile(profile_arch);
+                else if (arch_asked)
+                        target = arch_asked;
+                else if (!(host && *host) || run)
+                        target = build_arch_here();
 
                 if (clean)
                         return build_clean();
@@ -5530,13 +5738,15 @@ b32 main()
                         {
                                 if (build_remote(host, remote,
                                                  (string_address address_to)profiles,
-                                                 chosen))
+                                                 chosen, target, profile_arch))
                                         return 1;
 
                                 image = build_remote_image;
                         }
                         else if (build_local((string_address address_to)profiles,
-                                             chosen))
+                                             chosen,
+                                             profile_arch ? null
+                                                          : build_arch_profile(target)))
                                 return 1;
                 }
 
@@ -5551,11 +5761,32 @@ b32 main()
                         rewrites it -- and finally falls back to the default
                         export.
                 */
+                if (!image && !make)
+                {
+                        /*
+                                --boot boots the architecture asked for, or
+                                else whatever the local configuration last
+                                built, told by its arch line.
+                        */
+                        string_address built = build_key_one("arch", null);
+
+                        if (arch_asked || !built || !*built ||
+                            !build_arch_name(built))
+                                image = build_boot_setting("default_image",
+                                                           target ? target : (string_address)"x64");
+                        else
+                        {
+                                target = build_arch_name(built);
+                                image = build_key_one("kernel_export", null);
+                        }
+                }
+
                 if (!image)
                         image = build_key_one("kernel_export", null);
 
                 if (!image || !*image)
-                        image = build_setting_get("default_image");
+                        image = build_boot_setting("default_image",
+                                                   target ? target : (string_address)"x64");
 
                 if (!build_is_file(image))
                         return build_die(build_join("no image at ", image,
@@ -5565,6 +5796,6 @@ b32 main()
                 if (usb)
                         return build_usb(image);
 
-                return build_boot(image, console);
+                return build_boot(image, console, target ? target : (string_address)"x64");
         }
 }

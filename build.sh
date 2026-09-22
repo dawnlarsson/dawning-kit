@@ -11,6 +11,15 @@
 #           sh build.sh --usb                 build, then write a USB stick
 #           sh build.sh --clean               remove what a build produced
 #           sh build.sh --host box            build on another machine over ssh
+#           sh build.sh --arch arm64 --run    build and boot another architecture
+#
+#       The architecture defaults to the machine that will run the image. A
+#       build that boots (--run, --boot) is for this machine, so on an Apple
+#       Silicon Mac it is arm64 and boots in a native arm64 VM under hvf, even
+#       when the compiling happens on an x86 box over --host. A build that only
+#       builds is for the machine doing it: the build host's own architecture.
+#       --arch x64, arm64 or riscv64 (also x86_64, amd64, aarch64, arm, riscv)
+#       picks one, and an arch/ profile named on the line wins over both.
 #
 #       The build itself is one C program, src/build/build.c, built on this
 #       project's own freestanding stack. This file compiles it with one
@@ -106,6 +115,48 @@ die() {
 
 say() { printf '%s%s%s\n' "$CYAN$BOLD" "$*" "$RESET"; }
 
+usage() {
+        sed -n '/^#       Usage:/,/^#       The build itself/p' "$here/build.sh" |
+                sed '$d' | sed 's/^#       //; s/^#$//'
+}
+
+#
+#       Architectures, by the three names each has: what --arch and uname say,
+#       the profile that builds it, and the image that profile exports.
+#
+arch_name() {
+        case $1 in
+        x64 | x86_64 | amd64 | x86-64) echo x64 ;;
+        arm64 | aarch64 | arm) echo arm64 ;;
+        riscv64 | riscv) echo riscv64 ;;
+        *) return 1 ;;
+        esac
+}
+
+arch_profile() {
+        case $1 in
+        x64) echo arch/x64 ;;
+        arm64) echo arch/arm ;;
+        riscv64) echo arch/riscv ;;
+        esac
+}
+
+arch_of_profile() {
+        case $1 in
+        arch/x64*) echo x64 ;;
+        arch/arm*) echo arm64 ;;
+        arch/riscv*) echo riscv64 ;;
+        esac
+}
+
+arch_image() {
+        case $1 in
+        x64) echo dist/bootx64.efi ;;
+        arm64) echo dist/bootaa64.efi ;;
+        riscv64) echo dist/kernel-riscv64.img ;;
+        esac
+}
+
 #
 #       Arguments.
 #
@@ -114,14 +165,22 @@ say() { printf '%s%s%s\n' "$CYAN$BOLD" "$*" "$RESET"; }
 #
 host=${MOONWATER_BUILD_HOST:-}
 #
-#       One build directory per source tree, not one per machine. The suffix
-#       is a checksum of this tree's own path, so the same checkout always
-#       gets the same directory and two checkouts never share one. The tool
-#       computes the same number with the same checksum, so a directory made
-#       by one is found by the other.
+#       One build directory per source tree and architecture, not one per
+#       machine. The suffix is a checksum of this tree's own path, so the same
+#       checkout always gets the same directory and two checkouts never share
+#       one; the architecture's profile comes last, so switching between arm64
+#       and x64 does not throw one kernel build away for the other. The tool
+#       computes the same name with the same checksum, so a directory made by
+#       one is found by the other.
+#
+#       It lives under the build host's ~/.cache, relative to the home an ssh
+#       command starts in, rather than /tmp: the build runs as root and leaves
+#       a couple of gigabytes of root-owned files, and on a box whose /tmp is
+#       a RAM disk those filled it and could not be removed without sudo.
 #
 tree_mark=$(printf '%s' "$here" | cksum | cut -d' ' -f1)
-remote=${MOONWATER_BUILD_DIR:-/tmp/moonwater-$(basename "$here")-$tree_mark}
+remote=${MOONWATER_BUILD_DIR:-}
+arch_asked=""
 do_run=0
 do_build=1
 do_clean=0
@@ -147,10 +206,48 @@ while [ "$remaining" -gt 0 ]; do
                 remaining=$((remaining - 1))
                 ;;
         --host=*) host=${argument#--host=} ;;
+        --arch)
+                [ "$remaining" -gt 0 ] || die "--arch wants x64, arm64 or riscv64"
+                arch_asked=$(arch_name "$1") || die "unknown architecture $1 -- x64, arm64 or riscv64"
+                shift
+                remaining=$((remaining - 1))
+                ;;
+        --arch=*)
+                arch_asked=$(arch_name "${argument#--arch=}") ||
+                        die "unknown architecture ${argument#--arch=} -- x64, arm64 or riscv64"
+                ;;
+        -h | --help) usage; exit 0 ;;
         --*) die "unknown option $argument" ;;
         *) set -- "$@" "$argument" ;;
         esac
 done
+
+#       Which architecture.
+#
+#       An arch/ profile on the line is the whole answer, and the build is
+#       handed the line as it is. Otherwise --arch, and otherwise this machine
+#       when the image is going to be booted here. When neither holds, target
+#       stays empty until the build host has been asked what it is.
+#
+profile_arch=""
+for argument do
+        case "$argument" in
+        arch/*) profile_arch=$argument ;;
+        esac
+done
+
+if [ -n "$profile_arch" ]; then
+        target=$(arch_of_profile "$profile_arch")
+        [ -z "$arch_asked" ] || [ "$arch_asked" = "$target" ] ||
+                say "$profile_arch on the line wins over --arch $arch_asked"
+elif [ -n "$arch_asked" ]; then
+        target=$arch_asked
+elif [ "$do_run" -eq 1 ]; then
+        target=$(arch_name "$(uname -m)") ||
+                die "this machine is $(uname -m), which nothing here builds for -- name one with --arch"
+else
+        target=""
+fi
 
 #       Building somewhere else.
 #
@@ -161,6 +258,21 @@ done
 #
 build_remote() {
         carriage_return=$(printf '\r')
+
+        # Asked only when nothing on this side decided: a plain build is for
+        # the machine doing it.
+        if [ -z "$target" ]; then
+                built_on=$(ssh -n -o BatchMode=yes -o ConnectTimeout=20 \
+                        "$host" uname -m 2>/dev/null) ||
+                        die "cannot reach $host over ssh"
+                target=$(arch_name "$built_on") || target=x64
+        fi
+
+        if [ -z "$remote" ]; then
+                flavour=${profile_arch:-$(arch_profile "$target")}
+                remote=.cache/moonwater/$(basename "$here")-$tree_mark-${flavour#arch/}
+        fi
+
         case "$remote" in
         *'
 '*|*"$carriage_return"*)
@@ -186,6 +298,7 @@ shift
 parent=$(dirname -- "$stage") || exit 73
 name=$(basename -- "$stage") || exit 73
 case $name in ""|.|..) fail ;; esac
+[ -d "$parent" ] || (umask 077; mkdir -p -- "$parent") || fail
 parent=$(CDPATH= cd -P -- "$parent" && pwd -P) || fail
 uid=$(id -u) || fail
 parent_owner=$(owner_of "$parent") || fail
@@ -248,6 +361,12 @@ exec "$@"'
                 --exclude 'dist' \
                 ./ "$host:$remote_target" || die "copying the tree failed"
 
+        # The architecture travels as --arch rather than as a profile, which
+        # would replace the default set rather than swap its arch/ member.
+        if [ -z "$profile_arch" ]; then
+                set -- --arch "$target" "$@"
+        fi
+
         say "Building on $host: $*"
         # -n so the build does not swallow this script's stdin. Without it the
         # USB prompts below read nothing, because ssh forwards whatever is on
@@ -267,7 +386,7 @@ exec "$@"'
 
         # The host which built the configured profile is authoritative about
         # its export.  A stale local artifacts/.config may describe another
-        # architecture entirely (an ARM Mac commonly names kernel8.img).
+        # architecture entirely (bootaa64.efi, or a Pi's kernel8.img).
         image=$(ssh -n "$host" \
                 "$(remote_command ./build key-one kernel_export)") ||
                 die "could not identify the built image"
@@ -435,16 +554,20 @@ fi
 
 #
 #       Where the image ended up. A remote build sets this from its own
-#       generated configuration. A local build, or --boot without a build,
-#       asks the local configuration and finally falls back to x86 EFI.
+#       generated configuration. --boot without a build takes the image the
+#       architecture's profile exports, since a Mac keeps no configuration of
+#       its own, and otherwise asks the local one and falls back to x86 EFI.
 #
+if [ -z "$image" ] && [ -n "$target" ] && [ -z "$profile_arch" ]; then
+        image=$(arch_image "$target")
+fi
 if [ -z "$image" ]; then
         image=$(key_one kernel_export 2>/dev/null || true)
 fi
 [ -n "$image" ] || image="dist/bootx64.efi"
 
 [ -f "$image" ] ||
-        die "no image at $image -- build one first, or drop --boot"
+        die "no image at $image -- build one first, or drop --boot${target:+ (this is the $target image; --arch picks another)}"
 
 #
 #       Writing to a USB stick.
@@ -456,6 +579,12 @@ fi
 #       which is what a machine looks for when told to boot from USB.
 #
 if [ "$do_usb" -eq 1 ]; then
+        # bootx64.efi or bootaa64.efi: the removable-media name for the
+        # machine the image is for is the image's own name, upper case.
+        case "$image" in
+        *.efi) efi_name=$(basename "$image" | tr '[:lower:]' '[:upper:]') ;;
+        *) die "$image is not an EFI application, so firmware cannot boot it from a stick" ;;
+        esac
         #
         #       On anything without diskutil this lists the candidates and
         #       prints the command rather than running it. Writing to a raw
@@ -478,7 +607,7 @@ if [ "$do_usb" -eq 1 ]; then
                 echo "  sudo mkfs.vfat -F32 /dev/sdX1        # after partitioning it GPT/ESP"
                 echo "  sudo mount /dev/sdX1 /mnt"
                 echo "  sudo mkdir -p /mnt/EFI/BOOT"
-                echo "  sudo cp $image /mnt/EFI/BOOT/BOOTX64.EFI"
+                echo "  sudo cp $image /mnt/EFI/BOOT/$efi_name"
                 echo "  sudo umount /mnt"
                 echo
                 echo "Check the device name twice. This erases whatever it names."
@@ -555,7 +684,7 @@ if [ "$do_usb" -eq 1 ]; then
 
         say "Writing the image"
         mkdir -p "$volume/EFI/BOOT" || die "could not create $volume/EFI/BOOT"
-        cp "$image" "$volume/EFI/BOOT/BOOTX64.EFI" || die "could not copy the image"
+        cp "$image" "$volume/EFI/BOOT/$efi_name" || die "could not copy the image"
         sync
 
         diskutil eject "$target" >/dev/null 2>&1
@@ -571,15 +700,32 @@ fi
 #
 #       Booting it here.
 #
-command -v qemu-system-x86_64 >/dev/null 2>&1 ||
-        die "qemu-system-x86_64 is not installed"
+#       The machine is the architecture the image was built for: q35-style x86
+#       under qemu-system-x86_64, or QEMU's virt machine for arm64 and riscv64.
+#       Each gets hardware acceleration when the host is the same architecture
+#       -- hvf on a Mac, kvm on Linux -- and full emulation otherwise, which
+#       works and is slow: an x86 image on an Apple Silicon Mac is TCG.
+#
+[ -n "$target" ] || target=x64
+
+case "$target" in
+x64) emulator=qemu-system-x86_64; console_device=ttyS0 ;;
+arm64) emulator=qemu-system-aarch64; console_device=ttyAMA0 ;;
+riscv64) emulator=qemu-system-riscv64; console_device=ttyS0 ;;
+esac
+case "$image" in
+*/kernel8.img) die "$image is a Raspberry Pi image; QEMU's virt machine cannot boot it -- build --arch arm64 for a VM" ;;
+esac
+
+command -v "$emulator" >/dev/null 2>&1 ||
+        die "$emulator is not installed"
 
 #       drm_client_lib.active= stops the fbdev client claiming the display.
 #       It has to be built (DRM_CLIENT_LIB depends on it) but it must not take
 #       the screen, or the compositor is drawing underneath something else.
-cmdline="console=ttyS0 drm_client_lib.active="
+cmdline="console=$console_device drm_client_lib.active="
 
-say "Booting $image"
+say "Booting $image ($target)"
 size "$image"
 
 #       virtio-gpu rather than the default VGA: it is the only device here that
@@ -589,9 +735,10 @@ size "$image"
 #       usb-tablet reports absolute positions, so the pointer inside the guest
 #       follows the one on the host instead of drifting.
 #
-#       -vga none matters: without it QEMU also creates a standard VGA device,
-#       the window shows that one because it is the boot VGA, and the
+#       -vga none matters on x86: without it QEMU also creates a standard VGA
+#       device, the window shows that one because it is the boot VGA, and the
 #       compositor ends up drawing on the other card where nobody can see it.
+#       The virt machines have no default display to turn off.
 #
 #       -cpu Nehalem, not the default, and this is a requirement rather than a
 #       preference. The kernel is compiled -march=x86-64-v2, whose floor is
@@ -609,7 +756,9 @@ size "$image"
 #       which is seventy percent of the DIP screen on a Retina panel.
 #
 #       virtio-net on QEMU user networking is how the guest reaches the
-#       bowl mirrors. Without a NIC, setup cannot wget.
+#       bowl mirrors. Without a NIC, setup cannot wget. virtio-rng feeds the
+#       kernel's generator on a processor with no instruction for it, which
+#       is most arm64 ones and every x86 model before Ivy Bridge.
 gpu_device=virtio-gpu-pci
 screen_px=$(osascript -l JavaScript -e '
 ObjC.import("AppKit");
@@ -631,37 +780,56 @@ if [ -n "$xres" ] && [ -n "$yres" ] && [ "$xres" -ge 640 ] && [ "$yres" -ge 480 
         gpu_device=virtio-gpu-pci,xres=$xres,yres=$yres
 fi
 
-set -- \
+accelerators=$("$emulator" -accel help 2>/dev/null || true)
+native=no
+[ "$(arch_name "$(uname -m)" 2>/dev/null)" = "$target" ] && native=yes
+
+case "$target" in
+x64)
+        set -- -cpu Nehalem -vga none
+        ;;
+arm64)
+        # gic-version=3: a GICv2 stops at eight CPUs and has no ITS.
+        # pauth-impdef only matters emulated, where the architected pointer
+        # authentication algorithm makes a boot several times slower; with
+        # hvf or kvm -cpu host below replaces the model.
+        set -- -machine virt,gic-version=3 -cpu max,pauth-impdef=on
+        ;;
+riscv64)
+        set -- -machine virt -cpu rv64
+        ;;
+esac
+
+set -- "$@" \
         -m 2G \
         -smp 2 \
-        -cpu Nehalem \
         -kernel "$image" \
-        -vga none \
         -device "$gpu_device" \
         -device qemu-xhci -device usb-tablet -device usb-kbd \
         -netdev user,id=net0 \
         -device virtio-net-pci,netdev=net0 \
+        -device virtio-rng-pci \
         -no-reboot
 
-# Hardware acceleration where this QEMU has it: hvf on macOS, kvm on Linux.
-# -cpu host replaces the model above, which is what you want when the guest is
-# running on the real one.
-accelerators=$(qemu-system-x86_64 -accel help 2>/dev/null || true)
-if echo "$accelerators" | grep -qw hvf; then
+# Hardware acceleration where this QEMU has it and the guest is this
+# machine's own architecture: hvf on macOS, kvm on Linux. -cpu host
+# replaces the model above, which is what you want when the guest is running
+# on the real one.
+if [ "$native" = yes ] && echo "$accelerators" | grep -qw hvf; then
         set -- "$@" -accel hvf -cpu host
-elif echo "$accelerators" | grep -qw kvm && [ -w /dev/kvm ]; then
+elif [ "$native" = yes ] && echo "$accelerators" | grep -qw kvm && [ -w /dev/kvm ]; then
         set -- "$@" -accel kvm -cpu host
 fi
 
 if [ "$console" -eq 1 ]; then
         say "Console on this terminal, ctrl-a x to quit"
-        exec qemu-system-x86_64 "$@" -append "$cmdline" -display none -serial mon:stdio
+        exec "$emulator" "$@" -append "$cmdline" -display none -serial mon:stdio
 fi
 
 # cocoa is the macOS window; elsewhere prefer gtk and fall back to sdl.
 display=cocoa
 if [ "$(uname)" != "Darwin" ]; then
-        displays=$(qemu-system-x86_64 -display help 2>/dev/null || true)
+        displays=$("$emulator" -display help 2>/dev/null || true)
         if echo "$displays" | grep -qw gtk; then
                 display=gtk
         elif echo "$displays" | grep -qw sdl; then
@@ -672,4 +840,4 @@ if [ "$(uname)" != "Darwin" ]; then
 fi
 
 say "Window opening, ctrl-alt-g releases the mouse"
-exec qemu-system-x86_64 "$@" -append "$cmdline" -display "$display" -serial mon:stdio
+exec "$emulator" "$@" -append "$cmdline" -display "$display" -serial mon:stdio
