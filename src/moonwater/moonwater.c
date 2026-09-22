@@ -199,6 +199,9 @@ struct script_read {
         unsigned long length;
         unsigned long at;
         unsigned short line;
+        unsigned char heredoc_tabs;     // <<- strips leading tabs
+        unsigned char heredoc_length;   // a body waits for the next newline
+        char heredoc[SCRIPT_WORD];      // the line that ends it
 };
 
 struct script_token {
@@ -228,6 +231,89 @@ static int script_punct_is(const struct script_token *token, unsigned char value
         return token->kind == SCRIPT_TOK_PUNCT && token->punct == value;
 }
 
+/*
+        A here-document's body is text, not script: a function spelled in one
+        is no function, and bash defines none. <<WORD, <<'WORD', <<"WORD" and
+        <<-WORD note the ending line; the body is skipped at the newline that
+        ends the command, through the line that is the word alone.
+*/
+static void script_heredoc_start(struct script_read *scan)
+{
+        unsigned char quote = 0;
+        unsigned int used = 0;
+
+        scan->at += 2;
+        scan->heredoc_tabs = scan->at < scan->length && scan->text[scan->at] == '-';
+        if (scan->heredoc_tabs)
+                scan->at++;
+        while (scan->at < scan->length &&
+               (scan->text[scan->at] == ' ' || scan->text[scan->at] == '\t'))
+                scan->at++;
+        while (scan->at < scan->length) {
+                unsigned char value = scan->text[scan->at];
+
+                if (!quote && (value == '\'' || value == '"')) {
+                        quote = value;
+                        scan->at++;
+                        continue;
+                }
+                if (quote && value == quote) {
+                        quote = 0;
+                        scan->at++;
+                        continue;
+                }
+                if (value == '\n' ||
+                    (!quote && (value == ' ' || value == '\t' || value == ';' ||
+                                value == '|' || value == '&' || value == '>' ||
+                                value == '<' || value == ')')))
+                        break;
+                if (value != '\\' && used + 1 < SCRIPT_WORD)
+                        scan->heredoc[used++] = (char)value;
+                scan->at++;
+        }
+        scan->heredoc[used] = 0;
+        scan->heredoc_length = (unsigned char)used;
+}
+
+static void script_skip_heredoc(struct script_read *scan)
+{
+        //      A << that no line ever closes is not taken as a here-document
+        //      -- a shift in $(( )) reads the same -- and nothing is skipped.
+        unsigned long at = scan->at;
+        unsigned short lines = 0;
+
+        while (at < scan->length) {
+                unsigned long start = ++at, stop = start, from;
+
+                lines++;
+                while (stop < scan->length && scan->text[stop] != '\n')
+                        stop++;
+                from = start;
+                if (scan->heredoc_tabs)
+                        while (from < stop && scan->text[from] == '\t')
+                                from++;
+                at = stop;
+                if (stop - from == scan->heredoc_length) {
+                        unsigned long k = 0;
+
+                        while (k < scan->heredoc_length &&
+                               scan->text[from + k] == (unsigned char)scan->heredoc[k])
+                                k++;
+                        if (k == scan->heredoc_length) {
+                                scan->at = at;
+                                scan->line += lines;
+                                break;
+                        }
+                }
+        }
+        if (scan->at != at) {
+                //      Unclosed: the newline is an ordinary one.
+                scan->at++;
+                scan->line++;
+        }
+        scan->heredoc_length = 0;
+}
+
 static void script_next(struct script_read *scan, struct script_token *token)
 {
         unsigned char value, quote, kind;
@@ -240,6 +326,10 @@ static void script_next(struct script_read *scan, struct script_token *token)
         while (scan->at < scan->length) {
                 value = scan->text[scan->at];
                 kind = script_kind[value];
+                if (kind == SK_NL && scan->heredoc_length) {
+                        script_skip_heredoc(scan);
+                        continue;
+                }
                 if (kind == SK_NL || kind == SK_SPACE) {
                         scan->line += kind == SK_NL;
                         scan->at++;
@@ -271,6 +361,14 @@ static void script_next(struct script_read *scan, struct script_token *token)
             scan->text[scan->at + 1] == ';') {
                 scan->at += 2;
                 token->kind = SCRIPT_TOK_DSEMI;
+                return;
+        }
+        if (value == '<' && scan->at + 2 < scan->length &&
+            scan->text[scan->at + 1] == '<' && scan->text[scan->at + 2] != '<') {
+                script_heredoc_start(scan);
+                token->kind = SCRIPT_TOK_PUNCT;
+                token->punct = '<';
+                token->word[0] = '<';
                 return;
         }
         if (kind == SK_PUNCT || kind == SK_SEMI) {
@@ -306,7 +404,9 @@ static void script_next(struct script_read *scan, struct script_token *token)
         if (kind == SK_WORD) {
                 while (scan->at < scan->length) {
                         kind = script_kind[scan->text[scan->at]];
-                        if (kind != SK_WORD && kind != SK_WORD2)
+                        //      Inside a word # is a letter; only at the
+                        //      start of one does it open a comment.
+                        if (kind != SK_WORD && kind != SK_WORD2 && kind != SK_HASH)
                                 break;
                         if (used + 1 < SCRIPT_WORD)
                                 token->word[used++] = (char)scan->text[scan->at];
@@ -523,6 +623,8 @@ static void moonwater_scan(const char *text, unsigned long length,
         scan.length = length;
         scan.at = 0;
         scan.line = 1;
+        scan.heredoc_tabs = 0;
+        scan.heredoc_length = 0;
 
         while (scan.at < scan.length) {
                 script_next(&scan, &token);

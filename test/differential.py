@@ -28799,6 +28799,183 @@ def harness_tls_chains(argv):
     return checks.verdict("tls chains", "tls-chains")
 
 
+def harness_machine_scan(argv):
+    """The kernel's machine-script scanner against bash, over generated scripts.
+
+    moonwater_scan runs in ring 0 on /root/main.moonwater.sh and decides which
+    rows the machine process owns: the three hooks and the moonwater_<event>
+    functions by name, and the case arms inside moonwater_event. CHECK_machine
+    holds it to thirty scripts somebody wrote. Here it is compiled natively
+    under AddressSanitizer and walked over scripts drawn from a grammar of the
+    things a script holds -- both function spellings, comments whole-line and
+    trailing, # inside a word, quotes of three kinds, heredocs, $( ), nested
+    case, line continuations -- and over random bytes. bash sources each
+    generated script and says which functions exist; the scanner has to name
+    the same hooks and the same event functions, at the line of the first
+    definition, and the arms the generator put in moonwater_event's case. Any
+    input at all may not read out of bounds.
+    """
+    import random
+    import shutil
+    import subprocess
+    import tempfile
+    root = HARNESS_ROOT
+    bash = shutil.which("bash")
+    cc = shutil.which(os.environ.get("CC", "cc")) or shutil.which("cc")
+    if not bash or not cc:
+        print("machine scan: NOT RUN -- needs bash and a C compiler")
+        return 2
+    spark = (root / "src/moonwater/spark.c").read_text()
+    machine = (root / "src/moonwater/moonwater.c").read_text()
+
+    def section(source, first, following):
+        return source[source.index(first):source.index(following, source.index(first))]
+
+    source = ("#include <stdio.h>\n#include <stdlib.h>\n#define MOONWATER_SCAN\n" +
+              section(spark, "#define SPARK_BIND_NAME_MAX", "#define SPARK_BIND_GET") +
+              section(spark, "#define SPARK_BIND_POWEROFF", "static const unsigned char spark_bind_stop") +
+              section(machine, "#define MOONWATER_HOOK_INIT", "#define MOONWATER_SCRIPT_BYTES") +
+              section(machine, "#define MOONWATER_PAIRS", "static inline int moonwater_same_pair") +
+              section(machine, "struct moonwater_overlay {", "static inline unsigned short moonwater_bind_line") +
+              section(machine, "#if defined(STANDARD_MODERN_C_KERNEL) || defined(MOONWATER_SCAN)",
+                      "#endif /* scan */") + "#endif\n" + r"""
+int main(int argc, char **argv)
+{
+        for (int i = 1; i < argc; i++) {
+                FILE *f = fopen(argv[i], "rb");
+                static char text[1 << 20];
+                unsigned long n = f ? fread(text, 1, sizeof text, f) : 0;
+                char *exact = malloc(n ? n : 1);
+                struct moonwater_overlay o;
+
+                if (f)
+                        fclose(f);
+                for (unsigned long k = 0; k < n; k++)
+                        exact[k] = text[k];
+                moonwater_scan(exact, n, &o);
+                free(exact);
+                printf("%u %u %u %u %u", o.hooks, o.init_line, o.event_line, o.end_line, o.star_line);
+                for (unsigned e = 0; e < SPARK_BIND_EVENTS; e++)
+                        printf(" %u", o.bind_line[e]);
+                printf("\n");
+        }
+        return 0;
+}
+""")
+    checks = Checks()
+    events = [line.strip().strip('",') for line in
+              section(spark, "spark_bind_event_name[SPARK_BIND_EVENTS][SPARK_BIND_NAME_MAX] = {",
+                      "};").split("\n")[1:] if line.strip().startswith('"')]
+    rng = random.Random(0x5ca9)
+
+    with tempfile.TemporaryDirectory(prefix="machine-scan-") as temporary:
+        work = Path(temporary)
+        (work / "scan.c").write_text(source)
+        built = subprocess.run([cc, "-O1", "-g", "-fsanitize=address,undefined",
+                                "-fno-sanitize-recover=all", "-w", "-o", str(work / "scan"),
+                                str(work / "scan.c")], capture_output=True, text=True)
+        if built.returncode:
+            print(built.stderr[-3000:])
+            return 1
+
+        def script(number):
+            """A script, and what bash and the scanner should both find in it."""
+            lines, hooks, first, arms = [], set(), {}, set()
+
+            def define(name, body, spelling):
+                at = sum(line.count("\n") + 1 for line in lines) + 1
+                head = {0: f"{name}() {{", 1: f"function {name} {{", 2: f"function {name}() {{",
+                        3: f"{name} () {{"}[spelling]
+                lines.append(head)
+                lines.extend(body)
+                lines.append("}")
+                first.setdefault(name, at)
+
+            noise = [
+                lambda: lines.append("# moonwater_init() { :; }"),
+                lambda: lines.append("x=1 # moonwater_end() {"),
+                lambda: lines.append("echo 'moonwater_init() {'"),
+                lambda: lines.append('echo "function moonwater_end {"'),
+                lambda: lines.append("y=a#b"),
+                lambda: lines.append("z=$(printf '%s' 'q(') # )"),
+                lambda: lines.append("echo \\\n  continued"),
+                lambda: lines.extend(["cat <<'EOF' >/dev/null", "moonwater_end() {", "}", "EOF"]),
+                lambda: lines.append("true && false || :"),
+                lambda: lines.extend(["\tcat <<-END >/dev/null", "\tmoonwater_init() {", "\t}", "\tEND"]),
+                lambda: lines.append("n=$((1<<3)); m=$(( n << 2 ))"),
+                lambda: lines.append("q=a#b; helper2() { :; }"),
+            ]
+            names = ["moonwater_init", "moonwater_event", "moonwater_end", "helper", "moonwater_poweroff",
+                     "moonwater_volume_up", "moonwater_canvas", "moonwater_lid_close", "moonwater_", "moonwater_nosuch"]
+            for _ in range(rng.randint(1, 7)):
+                if rng.random() < 0.4:
+                    rng.choice(noise)()
+                    continue
+                name = rng.choice(names)
+                if rng.random() < 0.1:
+                    #   A definition behind a # that is part of a word.
+                    first.setdefault(name, sum(line.count("\n") + 1 for line in lines) + 1)
+                    lines.append(f"q=a#b; {name}() {{ :; }}")
+                    continue
+                body = ["        :"]
+                if name == "moonwater_event" and rng.random() < 0.8:
+                    chosen = rng.sample(events + ["*", "canvas", "dock", "unknown"], rng.randint(1, 4))
+                    body = ['        case "$1" in']
+                    for pattern in chosen:
+                        spelled = pattern.replace(" ", "_") if " " in pattern and rng.random() < 0.5 else pattern
+                        quoted = f'"{spelled}"' if " " in spelled else spelled
+                        body.append(f"        {quoted}) : ;;")
+                        if "event" not in first:
+                            arms.add(pattern)
+                    body.append("        esac")
+                define(name, body, rng.randrange(4))
+            text = "\n".join(lines) + "\n"
+            return text, first, arms
+
+        cases, texts = [], []
+        for number in range(400):
+            text, first, arms = script(number)
+            path = work / f"s{number}.sh"
+            path.write_text(text)
+            cases.append((path, text, first, arms))
+        for number in range(200):
+            path = work / f"r{number}.sh"
+            blob = bytes(rng.choice(b"(){};|#\\\"'`\n abcmoonwater_initevent$*?[]-") for _ in range(rng.randint(0, 400)))
+            path.write_bytes(blob)
+            cases.append((path, None, None, None))
+
+        scanned = subprocess.run([str(work / "scan"), *[str(c[0]) for c in cases]],
+                                 capture_output=True, text=True, timeout=300)
+        checks(scanned.returncode == 0, "the scanner ran every input under ASan -- " +
+               scanned.stderr[-1500:])
+        answers = scanned.stdout.split("\n")
+        for (path, text, first, arms), answer in zip(cases, answers):
+            if text is None:
+                continue
+            fields = [int(x) for x in answer.split()] if answer else []
+            probe = subprocess.run([bash, "-c", 'source "$1" >/dev/null 2>&1; declare -F', "x", str(path)],
+                                   capture_output=True, text=True, timeout=10)
+            defined = {line.split()[-1] for line in probe.stdout.splitlines()}
+            want_hooks = sum(bit for bit, name in ((1, "moonwater_init"), (2, "moonwater_event"),
+                                                   (4, "moonwater_end")) if name in defined)
+            lines_want = [first.get(name, 0) if name in defined else 0
+                          for name in ("moonwater_init", "moonwater_event", "moonwater_end")]
+            ok = len(fields) == 5 + len(events) and fields[0] == want_hooks and fields[1:4] == lines_want
+            checks(ok, f"{path.name}: bash defines {sorted(defined)}, scanner says {answer}\n{text}")
+            if not ok:
+                continue
+            for index, event in enumerate(events):
+                own = f"moonwater_{event.replace(' ', '_')}" in defined or \
+                      (event.split(" ")[0] in ("canvas", "tablet", "headphone", "dock") and
+                       f"moonwater_{event.split(' ')[0]}" in defined)
+                armed = event in arms or (event.split(" ")[0] in arms and " " in event)
+                want = own or armed
+                checks(bool(fields[5 + index]) == want,
+                       f"{path.name}: event {event!r} owned {bool(fields[5 + index])}, "
+                       f"bash and the arms say {want}\n{text}")
+    return checks.verdict("machine scan", "machine-scan")
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -28825,6 +29002,7 @@ HARNESS_CHECKS = {
     "moonwater_cli": harness_moonwater_cli,
     "machine_reap": harness_machine_reap,
     "tls_chains": harness_tls_chains,
+    "machine_scan": harness_machine_scan,
 }
 
 

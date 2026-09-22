@@ -9454,6 +9454,7 @@ python3 test/differential.py --harness audit_shell_functions || kit_failed=1
 python3 test/differential.py --harness spark_entry || kit_failed=1
 python3 test/differential.py --harness objtool_shape || kit_failed=1
 python3 test/differential.py --harness machine_reap || kit_failed=1
+python3 test/differential.py --harness machine_scan || kit_failed=1
 if [ "$(uname -s)" = Darwin ]; then
         python3 test/differential.py --harness macos_read_retry || kit_failed=1
 fi
