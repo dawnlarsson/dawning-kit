@@ -202,6 +202,11 @@ CONFIG_BLK_DEV_SD=y
 CONFIG_CHR_DEV_ST=y
 CONFIG_BLK_DEV_SR=y
 CONFIG_BLK_DEV_RAM=y
+# None made at boot, the loop devices' rule: sixteen idle RAM disks were 1,185
+# sysfs nodes, sixteen queues and backing devices and a millisecond of boot,
+# and nothing in the image opens one. A node made by hand (mknod /dev/ramN b
+# 1 N) makes that disk when it is opened.
+CONFIG_BLK_DEV_RAM_COUNT=0
 CONFIG_BLK_DEV_WRITE_MOUNTED=y
 CONFIG_BLK_DEV_ZONED=y
 CONFIG_DNOTIFY=y
