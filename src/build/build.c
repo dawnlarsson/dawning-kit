@@ -192,7 +192,7 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
         {"kernel_cmdline_riscv64", "console=ttyS0 drm_client_lib.active="},
         {"default_image", "dist/bootx64.efi"},
         {"default_image_arm64", "dist/bootaa64.efi"},
-        {"default_image_riscv64", "dist/kernel-riscv64.img"},
+        {"default_image_riscv64", "dist/bootriscv64.efi"},
         {"module_root", "src"},
         {"clean_patterns",
          "[!.]*.a [!.]*.o [!.]*.o.d [!.]*.cmd [!.]*.order"
@@ -5253,7 +5253,7 @@ static b32 build_usb(string_address image)
         string_format(log, "  sudo mount /dev/sdX1 /mnt\n");
         string_format(log, "  sudo mkdir -p /mnt/EFI/BOOT\n");
         {
-                //      bootx64.efi or bootaa64.efi: the removable-media name
+                //      bootx64.efi, bootaa64.efi or bootriscv64.efi: the removable-media name
                 //      for the machine the image is for is its own, in capitals.
                 string_address name = build_join(build_name_of(image), null);
 

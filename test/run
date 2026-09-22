@@ -10273,7 +10273,19 @@ image=${MOONWATER_IMAGE:-dist/bootx64.efi}
 #
 #           MOONWATER_IMAGE=dist/bootaa64.efi sh test/run boot
 #
+#       bootriscv64.efi is arch/riscv's, on the same virt board with its
+#       console on the 16550 and the same devices, and emulated everywhere:
+#       rv64 is QEMU's model of the rv64gc floor the profile builds for.
+#
 case "$image" in
+*riscv64.efi)
+        boot_emulator=qemu-system-riscv64
+        boot_console=ttyS0
+        set -- -machine virt -cpu rv64 \
+                -device virtio-gpu-pci,xres=1600,yres=1200 \
+                -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+                -device virtio-rng-pci
+        ;;
 *aa64.efi)
         boot_emulator=qemu-system-aarch64
         boot_console=ttyAMA0
@@ -10780,7 +10792,7 @@ never transcript 'no missing command' 'failed with error: No such file or direct
 #       Both this and the power button below are the x86 machine's.
 #
 if [ "$boot_emulator" != qemu-system-x86_64 ]; then
-        printf '  %-24s an arm64 image, the x86 host passes did not run\n' 'this host'
+        printf '  %-24s not an x86 image, the x86 host passes did not run\n' 'this host'
 elif [ -r /dev/kvm ]; then
         timeout 180 qemu-system-x86_64 -m 2G -smp 2 -cpu host -enable-kvm \
                 -kernel "$image" -no-reboot -display none -serial stdio \
@@ -11035,7 +11047,7 @@ PY
                 same "$name" "$want" "$got"
         done < "$work/power-answers"
 elif [ "$boot_emulator" != qemu-system-x86_64 ]; then
-        printf '  %-24s an arm64 image, the power button pass did not run\n' 'power button'
+        printf '  %-24s not an x86 image, the power button pass did not run\n' 'power button'
 else
         printf '  %-24s no /dev/kvm, the power button pass did not run\n' 'power button'
 fi
@@ -11068,7 +11080,71 @@ lane_install()
 (
 image=${MOONWATER_IMAGE:-dist/bootx64.efi}
 
-for tool in qemu-system-x86_64 timeout truncate; do
+#
+#       The machine the image is for, which is the one it installs on: its
+#       emulator and console, the removable-media name its firmware starts
+#       (and the short name FAT gives it), its firmware, and how much longer
+#       than a KVM x86 boot an emulated one takes. The board is named apart
+#       from the processor because x86 starts the kernel on QEMU's default
+#       board and the firmware on q35.
+#
+case "$image" in
+*aa64.efi)
+        install_emulator=qemu-system-aarch64
+        install_console=ttyAMA0
+        install_loader=BOOTAA64.EFI
+        install_short='BOOTAA64EFI'
+        install_board="-machine virt,gic-version=3"
+        install_firmware_board=$install_board
+        install_machine="-cpu max,pauth-impdef=on"
+        install_slow=3
+        case "$(uname -s):$(uname -m)" in
+        Darwin:arm64) install_machine="-accel hvf -cpu host"; install_slow=1 ;;
+        Linux:aarch64) [ -w /dev/kvm ] && install_machine="-enable-kvm -cpu host" && install_slow=1 ;;
+        esac
+        install_firmwares="/usr/share/edk2/aarch64/QEMU_EFI.fd:/usr/share/edk2/aarch64/QEMU_VARS.fd"
+        install_started='BdsDxe: starting Boot'
+        install_from='NVMe Ctrl moonwater'
+        ;;
+*riscv64.efi)
+        install_emulator=qemu-system-riscv64
+        install_console=ttyS0
+        install_loader=BOOTRISCV64.EFI
+        install_short='BOOTRI~1EFI'
+        install_board="-machine virt"
+        install_firmware_board=$install_board
+        install_machine="-cpu rv64"
+        install_slow=2
+        install_firmwares="/usr/share/edk2/riscv64/RISCV_VIRT_CODE.fd:/usr/share/edk2/riscv64/RISCV_VIRT_VARS.fd"
+        #       Its edk2 says nothing of what it boots, and the kernel it
+        #       started says both: an EFI start, of an image with Moonwater's
+        #       table, with nothing attached but the disk.
+        install_started='efi: EFI v'
+        install_from=' Moonwater=0x'
+        ;;
+*)
+        install_emulator=qemu-system-x86_64
+        install_console=ttyS0
+        install_loader=BOOTX64.EFI
+        install_short='BOOTX64 EFI'
+        install_board=""
+        install_firmware_board="-machine q35"
+        install_machine="-cpu Nehalem -vga none"
+        [ -r /dev/kvm ] && [ -w /dev/kvm ] &&
+                install_machine="-enable-kvm -cpu host -vga none"
+        install_slow=1
+        install_started='BdsDxe: starting Boot'
+        install_from='NVMe Ctrl moonwater'
+        install_firmwares=""
+        for candidate in /usr/share/edk2/x64/OVMF_CODE.4m.fd \
+                /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
+                /usr/share/edk2-ovmf/x64/OVMF_CODE.fd; do
+                install_firmwares="$install_firmwares $candidate:${candidate%CODE*}VARS${candidate##*CODE}"
+        done
+        ;;
+esac
+
+for tool in "$install_emulator" timeout truncate; do
         if ! command -v "$tool" > /dev/null 2>&1; then
                 echo "  install      NOT RUN -- no $tool"
                 exit 2
@@ -11115,9 +11191,11 @@ said('aligned', all(va % section_align == 0 and raw % file_align == 0
                     for _, vs, va, rs, raw in rows))
 said('inside', image_size % section_align == 0 and
      all(raw + rs <= len(d) and va + vs <= image_size for _, vs, va, rs, raw in rows))
+#       Two slots, or on arm64 the 64 KiB its sections are aligned to.
 found = [r for r in rows if r[0] == b'.mwset']
 said('settings', len(found) == 1 and found[0][2] == found[0][4] and
-     found[0][4] % 4096 == 0 and found[0][1] == found[0][3] == 32768 and
+     found[0][4] % 4096 == 0 and found[0][1] == found[0][3] and
+     found[0][1] in (32768, section_align) and
      all(struct.unpack_from('<Q', d, found[0][4] + k)[0] == 0x474e54544553574d
          for k in (0, 16384)))
 PY
@@ -11129,11 +11207,25 @@ PY
 fi
 
 mkdir -p "$work/stick/EFI/BOOT" &&
-        cp "$image" "$work/stick/EFI/BOOT/BOOTX64.EFI" &&
+        cp "$image" "$work/stick/EFI/BOOT/$install_loader" &&
         truncate -s 4G "$work/disk.img" || exit 1
 
-cpu="-cpu Nehalem"
-[ -r /dev/kvm ] && [ -w /dev/kvm ] && cpu="-enable-kvm -cpu host"
+#       Another build is this one with a byte of its version changed: in the
+#       x86 setup header, which the disk commands find themselves, or in the
+#       release that begins the numbered banner an arm64 or riscv64 image
+#       carries, which is found here.
+install_patch=""
+if [ "$install_loader" != BOOTX64.EFI ]; then
+        install_banner=$(python3 - "$image" <<'PY'
+import re, sys
+d = open(sys.argv[1], 'rb').read()
+m = re.search(rb'Linux version [^\n]*\) #[0-9][^\n]*\n', d)
+print(m.start() + len(b'Linux version ') if m else '')
+PY
+) && [ -n "$install_banner" ] || { lost 'install image' 'no numbered banner in the image'; exit 1; }
+        install_patch="s|^at=\$(od -An -tu2 -j526 -N2 .*)\$|at=$((install_banner - 512))|"
+fi
+
 stick="-drive if=none,id=stick,format=raw,file=fat:ro:$work/stick,readonly=on"
 stick="$stick -device usb-storage,bus=xhci.0,drive=stick,removable=on"
 
@@ -11160,9 +11252,9 @@ install_boot()
         rm -f "$work/serial.in"
         mkfifo "$work/serial.in" || exit 1
         # shellcheck disable=SC2086
-        timeout 240 qemu-system-x86_64 -m 2G -smp 2 $cpu \
-                -kernel "$image" -no-reboot -display none -vga none -serial stdio \
-                -append "console=ttyS0 drm_client_lib.active=" \
+        timeout $((240 * install_slow)) "$install_emulator" -m 2G -smp 2 $install_board $install_machine \
+                -kernel "$image" -no-reboot -display none -serial stdio \
+                -append "console=$install_console drm_client_lib.active=" \
                 -device qemu-xhci,id=xhci \
                 -drive if=none,id=disk,format=raw,file="$work/disk.img" \
                 -device nvme,serial=moonwater,drive=disk \
@@ -11173,12 +11265,21 @@ install_boot()
         waited=0
         until grep -q -F ' $ ' "$work/$name" 2>/dev/null; do
                 kill -0 "$booting" 2>/dev/null || break
-                [ "$waited" -lt 180 ] || break
+                [ "$waited" -lt $((180 * install_slow)) ] || break
                 sleep 1
                 waited=$((waited + 1))
         done
 
-        cat "$work/$name.commands" >&9
+        #       The image's own name on its machine, and where a byte of its
+        #       version is to make it another build.
+        #       And after boot's verdict: emulated, the prompt can come while
+        #       moonwater boot is still settling the disks.
+        {
+                sed -n 1p "$work/$name.commands"
+                echo 'until [ -e /run/moonwater/verdict ]; do sleep 1; done'
+                sed 1d "$work/$name.commands"
+        } | sed -e "s|/EFI/BOOT/BOOTX64.EFI|/EFI/BOOT/$install_loader|g" \
+                -e "$install_patch" >&9
         exec 9>&-
         wait "$booting" 2>/dev/null || true
 
@@ -11348,7 +11449,7 @@ disk_checks update
 #
 disk_settings()
 {
-        python3 - "$work/disk.img" > "$work/$1" 2>&1 <<'PY'
+        python3 - "$work/disk.img" "$install_short" > "$work/$1" 2>&1 <<'PY'
 import struct, sys, zlib
 f = open(sys.argv[1], 'rb')
 def at(offset, size):
@@ -11378,7 +11479,7 @@ def find(directory, name):
             if blob[o:o + 11] == name:
                 return struct.unpack_from('<H', blob, o + 20)[0] << 16 | struct.unpack_from('<H', blob, o + 26)[0]
 runs = [data + (c - 2) * cluster
-        for c in chain(find(find(find(root, b'EFI        '), b'BOOT       '), b'BOOTX64 EFI'))]
+        for c in chain(find(find(find(root, b'EFI        '), b'BOOT       '), sys.argv[2].encode()))]
 def read(offset, size):
     out = b''
     while size:
@@ -11461,10 +11562,10 @@ disk_checks use
 #       firmware to init to moonwater boot, and nothing else could have done it.
 #
 firmware=""
-for candidate in /usr/share/edk2/x64/OVMF_CODE.4m.fd \
-        /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
-        /usr/share/edk2-ovmf/x64/OVMF_CODE.fd; do
-        [ -f "$candidate" ] && firmware=$candidate && break
+firmware_vars=""
+for candidate in $install_firmwares; do
+        [ -f "${candidate%%:*}" ] && [ -f "${candidate#*:}" ] &&
+                firmware=${candidate%%:*} && firmware_vars=${candidate#*:} && break
 done
 
 #       The superblock is 1024 bytes into the partition: s_mnt_count is at
@@ -11478,12 +11579,12 @@ mounts_of()
                 od -An -tu2 -j $((offset + 1076)) -N 2 "$work/disk.img" | tr -d ' '
 }
 
-if [ -z "$firmware" ] || [ ! -f "${firmware%CODE*}VARS${firmware##*CODE}" ]; then
-        printf '  %-30s no OVMF here, the firmware boot did not run\n' 'firmware'
+if [ -z "$firmware" ]; then
+        printf '  %-30s no UEFI firmware here, the firmware boot did not run\n' 'firmware'
 elif ! command -v sfdisk > /dev/null 2>&1; then
         printf '  %-30s no sfdisk here to find the data partition\n' 'firmware'
 else
-        cp "${firmware%CODE*}VARS${firmware##*CODE}" "$work/vars.fd"
+        cp "$firmware_vars" "$work/vars.fd"
 
         #
         #       Settings an image carries, read by the kernel it boots.
@@ -11536,13 +11637,14 @@ PY
                 name=$1
                 rm -f "$work/serial.in"
                 mkfifo "$work/serial.in" || exit 1
-                cp "${firmware%CODE*}VARS${firmware##*CODE}" "$work/$name.vars"
+                cp "$firmware_vars" "$work/$name.vars"
                 # shellcheck disable=SC2086
-                timeout 180 qemu-system-x86_64 -m 2G -smp 2 $cpu -machine q35 \
+                timeout $((180 * install_slow)) "$install_emulator" -m 2G -smp 2 \
+                        $install_firmware_board $install_machine \
                         -drive if=pflash,format=raw,readonly=on,file="$firmware" \
                         -drive if=pflash,format=raw,file="$work/$name.vars" \
-                        -kernel "$work/$name.efi" -no-reboot -display none -vga none \
-                        -serial stdio -append "console=ttyS0 drm_client_lib.active=" \
+                        -kernel "$work/$name.efi" -no-reboot -display none \
+                        -serial stdio -append "console=$install_console drm_client_lib.active=" \
                         < "$work/serial.in" > "$work/$name" 2>&1 &
                 booting=$!
                 exec 9> "$work/serial.in"
@@ -11550,7 +11652,7 @@ PY
                 waited=0
                 until grep -q -F ' $ ' "$work/$name" 2>/dev/null; do
                         kill -0 "$booting" 2>/dev/null || break
-                        [ "$waited" -lt 150 ] || break
+                        [ "$waited" -lt $((150 * install_slow)) ] || break
                         sleep 1
                         waited=$((waited + 1))
                 done
@@ -11565,7 +11667,7 @@ PY
 
         cp "$image" "$work/preset.efi" &&
                 settings_write "$work/preset.efi" @0 1 0x2 good \
-                        init "printf 'init-%s\n' \"\$(printf nar | rev)\" > /dev/ttyS0" \
+                        init "printf 'init-%s\n' \"\$(printf nar | rev)\" > /dev/$install_console" \
                         exit "true" || exit 1
         cat > "$work/preset.commands" <<'COMMANDS'
 this line is eaten by the console
@@ -11587,8 +11689,8 @@ COMMANDS
 
         cp "$image" "$work/damaged.efi" &&
                 settings_write "$work/damaged.efi" \
-                        @0 5 0 bad init "printf 'init-%s\n' \"\$(printf gnorw | rev)\" > /dev/ttyS0" \
-                        @1 4 0 bad init "printf 'init-%s\n' \"\$(printf gnorw | rev)\" > /dev/ttyS0" || exit 1
+                        @0 5 0 bad init "printf 'init-%s\n' \"\$(printf gnorw | rev)\" > /dev/$install_console" \
+                        @1 4 0 bad init "printf 'init-%s\n' \"\$(printf gnorw | rev)\" > /dev/$install_console" || exit 1
         cat > "$work/damaged.commands" <<'COMMANDS'
 this line is eaten by the console
 sleep 2
@@ -11603,8 +11705,8 @@ COMMANDS
 
         cp "$image" "$work/torn.efi" &&
                 settings_write "$work/torn.efi" \
-                        @0 2 0 good init "printf 'init-%s\n' \"\$(printf dlo | rev)\" > /dev/ttyS0" \
-                        @1 3 0 bad init "printf 'init-%s\n' \"\$(printf wen | rev)\" > /dev/ttyS0" || exit 1
+                        @0 2 0 good init "printf 'init-%s\n' \"\$(printf dlo | rev)\" > /dev/$install_console" \
+                        @1 3 0 bad init "printf 'init-%s\n' \"\$(printf wen | rev)\" > /dev/$install_console" || exit 1
         cat > "$work/torn.commands" <<'COMMANDS'
 this line is eaten by the console
 sleep 2
@@ -11628,7 +11730,8 @@ COMMANDS
         stops_before=$(data_lines /root/stops stop)
         before=$(mounts_of)
         # shellcheck disable=SC2086
-        timeout 60 qemu-system-x86_64 -m 2G -smp 2 $cpu -machine q35 \
+        timeout $((60 * install_slow)) "$install_emulator" -m 2G -smp 2 \
+                $install_firmware_board $install_machine \
                 -drive if=pflash,format=raw,readonly=on,file="$firmware" \
                 -drive if=pflash,format=raw,file="$work/vars.fd" \
                 -drive if=none,id=disk,format=raw,file="$work/disk.img" \
@@ -11637,9 +11740,12 @@ COMMANDS
                 < /dev/null > "$work/firmware" 2>&1 || true
         after=$(mounts_of)
 
-        says firmware 'the firmware loads it from the disk' 'BdsDxe: starting Boot'
-        says firmware 'from the NVMe disk'               'NVMe Ctrl moonwater'
-        never firmware 'the image loads'                 'failed to load'
+        says firmware 'the firmware loads it from the disk' "$install_started"
+        says firmware 'from the NVMe disk'               "$install_from"
+        #       The firmware's own words: an arm64 kernel started this way
+        #       logs to the serial line too, cfg80211's "failed to load
+        #       regulatory.db" among it.
+        never firmware 'the image loads'                 'BdsDxe: failed to load'
         never firmware 'nothing falls through'           'EFI Internal Shell'
 
         if [ -n "$before" ] && [ -n "$after" ] && [ "$after" -gt "$before" ]; then

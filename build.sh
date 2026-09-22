@@ -153,7 +153,7 @@ arch_image() {
         case $1 in
         x64) echo dist/bootx64.efi ;;
         arm64) echo dist/bootaa64.efi ;;
-        riscv64) echo dist/kernel-riscv64.img ;;
+        riscv64) echo dist/bootriscv64.efi ;;
         esac
 }
 
@@ -579,7 +579,7 @@ fi
 #       which is what a machine looks for when told to boot from USB.
 #
 if [ "$do_usb" -eq 1 ]; then
-        # bootx64.efi or bootaa64.efi: the removable-media name for the
+        # bootx64.efi, bootaa64.efi or bootriscv64.efi: the removable-media name for the
         # machine the image is for is the image's own name, upper case.
         case "$image" in
         *.efi) efi_name=$(basename "$image" | tr '[:lower:]' '[:upper:]') ;;

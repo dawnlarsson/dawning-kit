@@ -1,7 +1,7 @@
 #> compiler riscv64-linux-gnu-gcc
 
 #> kernel_image linux/arch/riscv/boot/Image
-#> kernel_export dist/kernel-riscv64.img
+#> kernel_export dist/bootriscv64.efi
 
 #> arch riscv64
 #> make_flags ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu-
