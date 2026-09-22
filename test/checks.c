@@ -7525,6 +7525,59 @@ static void ns_malformed(void)
                 ns_puts(pieces[ns_below(sizeof pieces / sizeof pieces[0])]);
 }
 
+/*
+        The listed inputs, which block 0 takes before any drawn case: every
+        string CHECK_number once pinned glibc 2.44's strtod and strtof answers
+        for -- the boundaries, the subnormals, the classic hard cases, the
+        hexadecimal corners and the malformed strings whose end pointer has
+        to come back at the original text.
+*/
+static const char *const ns_listed[] = {
+    "0", "-0", "0.0", "-0.0", "1", "-1", "1.5", "-1.5", "0.1", "-0.1", "0.2",
+    "0.3", "3.14159265358979323846",
+    "2.718281828459045235360287471352662497757", "1e0", "1e1", "1e-1", "1e10",
+    "1e-10", "1e22", "1e23", "1e-22", "1e-23", "1e100", "1e-100", "1e300",
+    "1e-300", "1e308", "1e-308", "1e309", "1e-309", "1e-320", "1e-323",
+    "1e-324", "1e-325", "1e400", "1e-400", "4.9406564584124654e-324",
+    "4.9406564584124655e-324", "2.4703282292062327e-324",
+    "2.4703282292062328e-324", "2.2250738585072011e-308",
+    "2.2250738585072012e-308", "2.2250738585072013e-308",
+    "2.2250738585072014e-308", "1.7976931348623157e308",
+    "1.7976931348623158e308", "1.7976931348623159e308", "9007199254740992",
+    "9007199254740993", "9007199254740994", "9007199254740995",
+    "18446744073709551615", "18446744073709551616",
+    "340282366920938463463374607431768211456", "123456789012345678901234567890",
+    "0.000000000000000000000000000001",
+    "1234567890123456789012345678901234567890e-40", "7.8459735791271921e65",
+    "3.571e266", "3.08984926168550152811e-32", "8.98846567431158e307",
+    "1.00000000000000005",
+    "0.5000000000000000166533453693773481063544750213623046875",
+    "3.518437208883201171875e13", "62.5364939768271845828", "8.10109172351e-33",
+    "1.50000000000000011102230246251565404236316680908203125",
+    "9007199254740991.4999999999999999999999999999999999", "5e-324",
+    "7.4109846876186981626485318930233205854758970392148714663837852375101326090531312779794975454245398856969484704316857659638998506553390969459816219401617281718945106978546710679176872575177347315553307795408549809608457500958111373034747658096871009590975442271004757307809711118935784838675653998783503015228055934046593739791790738723868299395818481660169122019456499931289798411362062484498678713572180352209017023903285791732520220528974020802906854021606612375549983402671300035812486479041385743401875520901590172592547146296175134159774938718574737870961645638908718119841271673056017045493004705269590165763776884908267986972573366521765567941072508764337560846003984904972149117463085539556354188641513168478436313080237596295773983001708984374999e-324",
+    "5e-324", "inf", "-inf", "INFINITY", "-INFINITY", "InF", "infi", "nan",
+    "-nan", "NaN", "nan(1)", "nan(0x7)", "nan()", "nan(zz)", "0x1p0", "0x1p1",
+    "-0x1p-1", "0x1.8p3", "0x1.fffffffffffffp1023", "0x1.fffffffffffff8p0",
+    "0x1.0000000000001p0", "0x1p-1074", "0x1p-1075", "0x1p-1076", "0x1p1024",
+    "0x0p0", "-0x0p0", "0x.8p1", "0x8.p-1", "0X1P+2", "0xabcdefp-20",
+    "0x1.00000000000008p0", "0x1.00000000000018p0", "0x435p-1073", "0x", "0X",
+    "0xp3", "0x.p1", "0x1", "0x1.8", "", " ", "+", "-", ".", "e5", ".e3",
+    "+.e-3", "1e", "1e+", "1e-", "1.5e", "1.5e+x", "  \t\n\r\f\v12.5xyz", "--1",
+    "+-1", ".5", "5.", "+.5", "-.5", "00000000000000000000000000000000000001",
+    "0.00000000000000000000000000000000000001",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+    "1.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+    "1e1000000000", "1e-1000000000", "1e2147483647", "1e-2147483647",
+    "1e99999999999999999999", "1e-99999999999999999999",
+    "2.2250738585072012e-308", "1e-45", "1.4e-45", "3.4028235e38",
+    "3.4028236e38", "1.1754944e-38", "1.1754942e-38", "5.877472e-39",
+    "16777217", "16777216", "33554433", "2.49113510e7", "3.99578460e7",
+    "1.19209289550781250e-7",
+};
+
+#define NS_LISTED (sizeof ns_listed / sizeof ns_listed[0])
+
 //      One case into ns_text.
 static void ns_case(void)
 {
@@ -7625,7 +7678,16 @@ static ns_u64 ns_block(ns_u64 block, int verbose)
                 ns_u64 wide_errno;
                 ns_u64 narrow_errno;
 
-                ns_case();
+                if (block == 0 && index < NS_LISTED)
+                {
+                        ns_at = 0;
+                        ns_puts(ns_listed[index]);
+                        ns_text[ns_at] = 0;
+                }
+                else
+                {
+                        ns_case();
+                }
 
                 NS_ERRNO = 0;
                 wide.bits = 0;
@@ -33507,16 +33569,12 @@ static int number_widest_limbs;
         thing that can prove the declarations are right, because a wrong one
         does not link and a missing one does not compile.
 
-        THE FLOAT ANSWERS ARE BAKED, AND THEY CAME FROM GLIBC. A freestanding
-        program has nothing to compare a conversion against, so the table
-        below carries the bit pattern, the end pointer and the errno that
-        glibc 2.44 produced for each of a hundred and fifty five inputs, taken
-        on x86_64 and written down. They are bit patterns rather than decimal
-        literals so that nothing about the expected answer depends on the
-        compiler's own parser. The list is not a sample: it is the boundaries,
-        the subnormals, the classic hard cases from the literature, the
-        hexadecimal corners, and the two dozen malformed strings where an end
-        pointer has to come back pointing at the ORIGINAL text.
+        THE FLOAT ANSWERS ARE GLIBC'S, ASKED LIVE. The numbers lane runs
+        every listed input of SHARED_number_stream -- the boundaries, the
+        subnormals, the classic hard cases, the hexadecimal corners and the
+        malformed strings -- and every drawn one against the machine's glibc,
+        bits, end pointer and errno. Here only where the three conversions
+        stop is held together.
 
         THE THREE TIERS ARE CHECKED AGAINST EACH OTHER. numbers.c answers a
         conversion three ways depending on the input -- an exact multiply, a
@@ -33650,329 +33708,6 @@ static const number_integer_range_case number_unsigned_range_cases[] = {
 //      making the errno-preservation check below true without a runtime call.
 static int (*volatile number_atoi_call)(const char address_to) = atoi;
 
-typedef struct
-{
-        const char address_to text;
-        p64 wide_bits;
-        positive wide_end;
-        b32 wide_errno;
-        p32 narrow_bits;
-        positive narrow_end;
-        b32 narrow_errno;
-} number_float_case;
-
-static const number_float_case number_float_cases[] = {
-        {"0",
-         0x0000000000000000ULL, 1, 0, 0x00000000U, 1, 0},
-        {"-0",
-         0x8000000000000000ULL, 2, 0, 0x80000000U, 2, 0},
-        {"0.0",
-         0x0000000000000000ULL, 3, 0, 0x00000000U, 3, 0},
-        {"-0.0",
-         0x8000000000000000ULL, 4, 0, 0x80000000U, 4, 0},
-        {"1",
-         0x3ff0000000000000ULL, 1, 0, 0x3f800000U, 1, 0},
-        {"-1",
-         0xbff0000000000000ULL, 2, 0, 0xbf800000U, 2, 0},
-        {"1.5",
-         0x3ff8000000000000ULL, 3, 0, 0x3fc00000U, 3, 0},
-        {"-1.5",
-         0xbff8000000000000ULL, 4, 0, 0xbfc00000U, 4, 0},
-        {"0.1",
-         0x3fb999999999999aULL, 3, 0, 0x3dcccccdU, 3, 0},
-        {"-0.1",
-         0xbfb999999999999aULL, 4, 0, 0xbdcccccdU, 4, 0},
-        {"0.2",
-         0x3fc999999999999aULL, 3, 0, 0x3e4ccccdU, 3, 0},
-        {"0.3",
-         0x3fd3333333333333ULL, 3, 0, 0x3e99999aU, 3, 0},
-        {"3.14159265358979323846",
-         0x400921fb54442d18ULL, 22, 0, 0x40490fdbU, 22, 0},
-        {"2.718281828459045235360287471352662497757",
-         0x4005bf0a8b145769ULL, 41, 0, 0x402df854U, 41, 0},
-        {"1e0",
-         0x3ff0000000000000ULL, 3, 0, 0x3f800000U, 3, 0},
-        {"1e1",
-         0x4024000000000000ULL, 3, 0, 0x41200000U, 3, 0},
-        {"1e-1",
-         0x3fb999999999999aULL, 4, 0, 0x3dcccccdU, 4, 0},
-        {"1e10",
-         0x4202a05f20000000ULL, 4, 0, 0x501502f9U, 4, 0},
-        {"1e-10",
-         0x3ddb7cdfd9d7bdbbULL, 5, 0, 0x2edbe6ffU, 5, 0},
-        {"1e22",
-         0x4480f0cf064dd592ULL, 4, 0, 0x64078678U, 4, 0},
-        {"1e23",
-         0x44b52d02c7e14af6ULL, 4, 0, 0x65a96816U, 4, 0},
-        {"1e-22",
-         0x3b5e392010175ee6ULL, 5, 0, 0x1af1c901U, 5, 0},
-        {"1e-23",
-         0x3b282db34012b251ULL, 5, 0, 0x19416d9aU, 5, 0},
-        {"1e100",
-         0x54b249ad2594c37dULL, 5, 0, 0x7f800000U, 5, 34},
-        {"1e-100",
-         0x2b2bff2ee48e0530ULL, 6, 0, 0x00000000U, 6, 34},
-        {"1e300",
-         0x7e37e43c8800759cULL, 5, 0, 0x7f800000U, 5, 34},
-        {"1e-300",
-         0x01a56e1fc2f8f359ULL, 6, 0, 0x00000000U, 6, 34},
-        {"1e308",
-         0x7fe1ccf385ebc8a0ULL, 5, 0, 0x7f800000U, 5, 34},
-        {"1e-308",
-         0x000730d67819e8d2ULL, 6, 34, 0x00000000U, 6, 34},
-        {"1e309",
-         0x7ff0000000000000ULL, 5, 34, 0x7f800000U, 5, 34},
-        {"1e-309",
-         0x0000b8157268fdafULL, 6, 34, 0x00000000U, 6, 34},
-        {"1e-320",
-         0x00000000000007e8ULL, 6, 34, 0x00000000U, 6, 34},
-        {"1e-323",
-         0x0000000000000002ULL, 6, 34, 0x00000000U, 6, 34},
-        {"1e-324",
-         0x0000000000000000ULL, 6, 34, 0x00000000U, 6, 34},
-        {"1e-325",
-         0x0000000000000000ULL, 6, 34, 0x00000000U, 6, 34},
-        {"1e400",
-         0x7ff0000000000000ULL, 5, 34, 0x7f800000U, 5, 34},
-        {"1e-400",
-         0x0000000000000000ULL, 6, 34, 0x00000000U, 6, 34},
-        {"4.9406564584124654e-324",
-         0x0000000000000001ULL, 23, 34, 0x00000000U, 23, 34},
-        {"4.9406564584124655e-324",
-         0x0000000000000001ULL, 23, 34, 0x00000000U, 23, 34},
-        {"2.4703282292062327e-324",
-         0x0000000000000000ULL, 23, 34, 0x00000000U, 23, 34},
-        {"2.4703282292062328e-324",
-         0x0000000000000001ULL, 23, 34, 0x00000000U, 23, 34},
-        {"2.2250738585072011e-308",
-         0x000fffffffffffffULL, 23, 34, 0x00000000U, 23, 34},
-        {"2.2250738585072012e-308",
-         0x0010000000000000ULL, 23, 34, 0x00000000U, 23, 34},
-        {"2.2250738585072013e-308",
-         0x0010000000000000ULL, 23, 0, 0x00000000U, 23, 34},
-        {"2.2250738585072014e-308",
-         0x0010000000000000ULL, 23, 0, 0x00000000U, 23, 34},
-        {"1.7976931348623157e308",
-         0x7fefffffffffffffULL, 22, 0, 0x7f800000U, 22, 34},
-        {"1.7976931348623158e308",
-         0x7fefffffffffffffULL, 22, 0, 0x7f800000U, 22, 34},
-        {"1.7976931348623159e308",
-         0x7ff0000000000000ULL, 22, 34, 0x7f800000U, 22, 34},
-        {"9007199254740992",
-         0x4340000000000000ULL, 16, 0, 0x5a000000U, 16, 0},
-        {"9007199254740993",
-         0x4340000000000000ULL, 16, 0, 0x5a000000U, 16, 0},
-        {"9007199254740994",
-         0x4340000000000001ULL, 16, 0, 0x5a000000U, 16, 0},
-        {"9007199254740995",
-         0x4340000000000002ULL, 16, 0, 0x5a000000U, 16, 0},
-        {"18446744073709551615",
-         0x43f0000000000000ULL, 20, 0, 0x5f800000U, 20, 0},
-        {"18446744073709551616",
-         0x43f0000000000000ULL, 20, 0, 0x5f800000U, 20, 0},
-        {"340282366920938463463374607431768211456",
-         0x47f0000000000000ULL, 39, 0, 0x7f800000U, 39, 34},
-        {"123456789012345678901234567890",
-         0x45f8ee90ff6c373eULL, 30, 0, 0x6fc77488U, 30, 0},
-        {"0.000000000000000000000000000001",
-         0x39b4484bfeebc2a0ULL, 32, 0, 0x0da24260U, 32, 0},
-        {"1234567890123456789012345678901234567890e-40",
-         0x3fbf9add3746f65fULL, 44, 0, 0x3dfcd6eaU, 44, 0},
-        {"7.8459735791271921e65",
-         0x4d9dcd0089c1314eULL, 21, 0, 0x7f800000U, 21, 34},
-        {"3.571e266",
-         0x77462644c61d41aaULL, 9, 0, 0x7f800000U, 9, 34},
-        {"3.08984926168550152811e-32",
-         0x39640de48676653bULL, 26, 0, 0x0b206f24U, 26, 0},
-        {"8.98846567431158e307",
-         0x7fe0000000000000ULL, 20, 0, 0x7f800000U, 20, 34},
-        {"1.00000000000000005",
-         0x3ff0000000000000ULL, 19, 0, 0x3f800000U, 19, 0},
-        {"0.5000000000000000166533453693773481063544750213623046875",
-         0x3fe0000000000000ULL, 57, 0, 0x3f000000U, 57, 0},
-        {"3.518437208883201171875e13",
-         0x42c0000000000002ULL, 26, 0, 0x56000000U, 26, 0},
-        {"62.5364939768271845828",
-         0x404f44abd5aa7ca4ULL, 22, 0, 0x427a255fU, 22, 0},
-        {"8.10109172351e-33",
-         0x394508195549f5feULL, 17, 0, 0x0a2840cbU, 17, 0},
-        {"1.50000000000000011102230246251565404236316680908203125",
-         0x3ff8000000000000ULL, 55, 0, 0x3fc00000U, 55, 0},
-        {"9007199254740991.4999999999999999999999999999999999",
-         0x433fffffffffffffULL, 51, 0, 0x5a000000U, 51, 0},
-        {"5e-324",
-         0x0000000000000001ULL, 6, 34, 0x00000000U, 6, 34},
-        {"7.4109846876186981626485318930233205854758970392148714663837852375101326090531312779794975454245398856969484704316857659638998506553390969459816219401617281718945106978546710679176872575177347315553307795408549809608457500958111373034747658096871009590975442271004757307809711118935784838675653998783503015228055934046593739791790738723868299395818481660169122019456499931289798411362062484498678713572180352209017023903285791732520220528974020802906854021606612375549983402671300035812486479041385743401875520901590172592547146296175134159774938718574737870961645638908718119841271673056017045493004705269590165763776884908267986972573366521765567941072508764337560846003984904972149117463085539556354188641513168478436313080237596295773983001708984374999e-324",
-         0x0000000000000001ULL, 761, 34, 0x00000000U, 761, 34},
-        {"5e-324",
-         0x0000000000000001ULL, 6, 34, 0x00000000U, 6, 34},
-        {"inf",
-         0x7ff0000000000000ULL, 3, 0, 0x7f800000U, 3, 0},
-        {"-inf",
-         0xfff0000000000000ULL, 4, 0, 0xff800000U, 4, 0},
-        {"INFINITY",
-         0x7ff0000000000000ULL, 8, 0, 0x7f800000U, 8, 0},
-        {"-INFINITY",
-         0xfff0000000000000ULL, 9, 0, 0xff800000U, 9, 0},
-        {"InF",
-         0x7ff0000000000000ULL, 3, 0, 0x7f800000U, 3, 0},
-        {"infi",
-         0x7ff0000000000000ULL, 3, 0, 0x7f800000U, 3, 0},
-        {"nan",
-         0x7ff8000000000000ULL, 3, 0, 0x7fc00000U, 3, 0},
-        {"-nan",
-         0xfff8000000000000ULL, 4, 0, 0xffc00000U, 4, 0},
-        {"NaN",
-         0x7ff8000000000000ULL, 3, 0, 0x7fc00000U, 3, 0},
-        {"nan(1)",
-         0x7ff8000000000001ULL, 6, 0, 0x7fc00001U, 6, 0},
-        {"nan(0x7)",
-         0x7ff8000000000007ULL, 8, 0, 0x7fc00007U, 8, 0},
-        {"nan()",
-         0x7ff8000000000000ULL, 5, 0, 0x7fc00000U, 5, 0},
-        {"nan(zz)",
-         0x7ff8000000000000ULL, 7, 0, 0x7fc00000U, 7, 0},
-        {"0x1p0",
-         0x3ff0000000000000ULL, 5, 0, 0x3f800000U, 5, 0},
-        {"0x1p1",
-         0x4000000000000000ULL, 5, 0, 0x40000000U, 5, 0},
-        {"-0x1p-1",
-         0xbfe0000000000000ULL, 7, 0, 0xbf000000U, 7, 0},
-        {"0x1.8p3",
-         0x4028000000000000ULL, 7, 0, 0x41400000U, 7, 0},
-        {"0x1.fffffffffffffp1023",
-         0x7fefffffffffffffULL, 22, 0, 0x7f800000U, 22, 34},
-        {"0x1.fffffffffffff8p0",
-         0x4000000000000000ULL, 20, 0, 0x40000000U, 20, 0},
-        {"0x1.0000000000001p0",
-         0x3ff0000000000001ULL, 19, 0, 0x3f800000U, 19, 0},
-        {"0x1p-1074",
-         0x0000000000000001ULL, 9, 0, 0x00000000U, 9, 34},
-        {"0x1p-1075",
-         0x0000000000000000ULL, 9, 34, 0x00000000U, 9, 34},
-        {"0x1p-1076",
-         0x0000000000000000ULL, 9, 34, 0x00000000U, 9, 34},
-        {"0x1p1024",
-         0x7ff0000000000000ULL, 8, 34, 0x7f800000U, 8, 34},
-        {"0x0p0",
-         0x0000000000000000ULL, 5, 0, 0x00000000U, 5, 0},
-        {"-0x0p0",
-         0x8000000000000000ULL, 6, 0, 0x80000000U, 6, 0},
-        {"0x.8p1",
-         0x3ff0000000000000ULL, 6, 0, 0x3f800000U, 6, 0},
-        {"0x8.p-1",
-         0x4010000000000000ULL, 7, 0, 0x40800000U, 7, 0},
-        {"0X1P+2",
-         0x4010000000000000ULL, 6, 0, 0x40800000U, 6, 0},
-        {"0xabcdefp-20",
-         0x402579bde0000000ULL, 12, 0, 0x412bcdefU, 12, 0},
-        {"0x1.00000000000008p0",
-         0x3ff0000000000000ULL, 20, 0, 0x3f800000U, 20, 0},
-        {"0x1.00000000000018p0",
-         0x3ff0000000000002ULL, 20, 0, 0x3f800000U, 20, 0},
-        {"0x435p-1073",
-         0x000000000000086aULL, 11, 0, 0x00000000U, 11, 34},
-        {"0x",
-         0x0000000000000000ULL, 1, 0, 0x00000000U, 1, 0},
-        {"0X",
-         0x0000000000000000ULL, 1, 0, 0x00000000U, 1, 0},
-        {"0xp3",
-         0x0000000000000000ULL, 1, 0, 0x00000000U, 1, 0},
-        {"0x.p1",
-         0x0000000000000000ULL, 1, 0, 0x00000000U, 1, 0},
-        {"0x1",
-         0x3ff0000000000000ULL, 3, 0, 0x3f800000U, 3, 0},
-        {"0x1.8",
-         0x3ff8000000000000ULL, 5, 0, 0x3fc00000U, 5, 0},
-        {"",
-         0x0000000000000000ULL, 0, 0, 0x00000000U, 0, 0},
-        {" ",
-         0x0000000000000000ULL, 0, 0, 0x00000000U, 0, 0},
-        {"+",
-         0x0000000000000000ULL, 0, 0, 0x00000000U, 0, 0},
-        {"-",
-         0x0000000000000000ULL, 0, 0, 0x00000000U, 0, 0},
-        {".",
-         0x0000000000000000ULL, 0, 0, 0x00000000U, 0, 0},
-        {"e5",
-         0x0000000000000000ULL, 0, 0, 0x00000000U, 0, 0},
-        {".e3",
-         0x0000000000000000ULL, 0, 0, 0x00000000U, 0, 0},
-        {"+.e-3",
-         0x0000000000000000ULL, 0, 0, 0x00000000U, 0, 0},
-        {"1e",
-         0x3ff0000000000000ULL, 1, 0, 0x3f800000U, 1, 0},
-        {"1e+",
-         0x3ff0000000000000ULL, 1, 0, 0x3f800000U, 1, 0},
-        {"1e-",
-         0x3ff0000000000000ULL, 1, 0, 0x3f800000U, 1, 0},
-        {"1.5e",
-         0x3ff8000000000000ULL, 3, 0, 0x3fc00000U, 3, 0},
-        {"1.5e+x",
-         0x3ff8000000000000ULL, 3, 0, 0x3fc00000U, 3, 0},
-        {"  \t\n\r\f\v12.5xyz",
-         0x4029000000000000ULL, 11, 0, 0x41480000U, 11, 0},
-        {"--1",
-         0x0000000000000000ULL, 0, 0, 0x00000000U, 0, 0},
-        {"+-1",
-         0x0000000000000000ULL, 0, 0, 0x00000000U, 0, 0},
-        {".5",
-         0x3fe0000000000000ULL, 2, 0, 0x3f000000U, 2, 0},
-        {"5.",
-         0x4014000000000000ULL, 2, 0, 0x40a00000U, 2, 0},
-        {"+.5",
-         0x3fe0000000000000ULL, 3, 0, 0x3f000000U, 3, 0},
-        {"-.5",
-         0xbfe0000000000000ULL, 3, 0, 0xbf000000U, 3, 0},
-        {"00000000000000000000000000000000000001",
-         0x3ff0000000000000ULL, 38, 0, 0x3f800000U, 38, 0},
-        {"0.00000000000000000000000000000000000001",
-         0x380b38fb9daa78e4ULL, 40, 0, 0x006ce3eeU, 40, 34},
-        {"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
-         0x3ff0000000000000ULL, 351, 0, 0x3f800000U, 351, 0},
-        {"1.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
-         0x3ff0000000000000ULL, 353, 0, 0x3f800000U, 353, 0},
-        {"1e1000000000",
-         0x7ff0000000000000ULL, 12, 34, 0x7f800000U, 12, 34},
-        {"1e-1000000000",
-         0x0000000000000000ULL, 13, 34, 0x00000000U, 13, 34},
-        {"1e2147483647",
-         0x7ff0000000000000ULL, 12, 34, 0x7f800000U, 12, 34},
-        {"1e-2147483647",
-         0x0000000000000000ULL, 13, 34, 0x00000000U, 13, 34},
-        {"1e99999999999999999999",
-         0x7ff0000000000000ULL, 22, 34, 0x7f800000U, 22, 34},
-        {"1e-99999999999999999999",
-         0x0000000000000000ULL, 23, 34, 0x00000000U, 23, 34},
-        {"2.2250738585072012e-308",
-         0x0010000000000000ULL, 23, 34, 0x00000000U, 23, 34},
-        {"1e-45",
-         0x3696d601ad376ab9ULL, 5, 0, 0x00000001U, 5, 34},
-        {"1.4e-45",
-         0x369ff868bf4d956aULL, 7, 0, 0x00000001U, 7, 34},
-        {"3.4028235e38",
-         0x47efffffe54daff8ULL, 12, 0, 0x7f7fffffU, 12, 0},
-        {"3.4028236e38",
-         0x47effffff514a7bcULL, 12, 0, 0x7f800000U, 12, 34},
-        {"1.1754944e-38",
-         0x381000000b3aeeabULL, 13, 0, 0x00800000U, 13, 0},
-        {"1.1754942e-38",
-         0x380fffffbb1dd6a1ULL, 13, 0, 0x007fffffU, 13, 34},
-        {"5.877472e-39",
-         0x380000000b3aeeabULL, 12, 0, 0x00400000U, 12, 34},
-        {"16777217",
-         0x4170000010000000ULL, 8, 0, 0x4b800000U, 8, 0},
-        {"16777216",
-         0x4170000000000000ULL, 8, 0, 0x4b800000U, 8, 0},
-        {"33554433",
-         0x4180000008000000ULL, 8, 0, 0x4c000000U, 8, 0},
-        {"2.49113510e7",
-         0x4177c1df70000000ULL, 12, 0, 0x4bbe0efcU, 12, 0},
-        {"3.99578460e7",
-         0x41830daab0000000ULL, 12, 0, 0x4c186d56U, 12, 0},
-        {"1.19209289550781250e-7",
-         0x3e80000000000000ULL, 22, 0, 0x34000000U, 22, 0},
-};
 
 /*
         The integer half, which is the half that had no declarations.
@@ -34238,59 +33973,6 @@ number_case(integers)
         number_say((address_any)address_of strtol != null &&
                            (address_any)address_of strtod != null,
                    text("addresses of the names"));
-
-        return number_failures == 0;
-}
-
-/*
-        The baked table, three answers to each line: the bits, where the scan
-        stopped, and what errno the call left behind.
-*/
-number_case(against_glibc)
-{
-        positive index;
-        positive total = sizeof number_float_cases / sizeof number_float_cases[0];
-
-        for (index = 0; index < total; index++)
-        {
-                const number_float_case address_to entry = address_of number_float_cases[index];
-                string_address input = (string_address)entry->text;
-                string_address stop;
-                number_wide_shape wide;
-                number_narrow_shape narrow;
-                b32 seen;
-
-                errno = 0;
-                stop = null;
-                wide.value = strtod(input, (char address_to address_to)address_of stop);
-                seen = errno;
-
-                number_note(wide.bits == entry->wide_bits, input, wide.bits,
-                            entry->wide_bits);
-                number_note((positive)(stop - input) == entry->wide_end, input,
-                            (positive)(stop - input), entry->wide_end);
-                number_note(seen == entry->wide_errno, input, (positive)seen,
-                            (positive)entry->wide_errno);
-
-                errno = 0;
-                stop = null;
-                narrow.value = strtof(input, (char address_to address_to)address_of stop);
-                seen = errno;
-
-                number_note(narrow.bits == entry->narrow_bits, input,
-                            narrow.bits, entry->narrow_bits);
-                number_note((positive)(stop - input) == entry->narrow_end, input,
-                            (positive)(stop - input), entry->narrow_end);
-                number_note(seen == entry->narrow_errno, input, (positive)seen,
-                            (positive)entry->narrow_errno);
-
-                //      The three conversions share one parser, so wherever
-                //      they stop they stop together.
-                stop = null;
-                strtold(input, (char address_to address_to)address_of stop);
-                number_note((positive)(stop - input) == entry->wide_end, input,
-                            (positive)(stop - input), entry->wide_end);
-        }
 
         return number_failures == 0;
 }
@@ -34816,6 +34498,30 @@ number_case(small_integers)
 #include "checks.c"
 #undef SHARED_number_stream
 
+/*
+        What glibc answers for the listed inputs is the numbers lane's to
+        compare. What stays here needs no reference: the three conversions
+        share one parser, so wherever they stop they stop together.
+*/
+number_case(listed_ends)
+{
+        for (positive index = 0; index < NS_LISTED; index++)
+        {
+                string_address input = (string_address)ns_listed[index];
+                string_address wide_stop = null;
+                string_address narrow_stop = null;
+                string_address widest_stop = null;
+
+                strtod(input, (char address_to address_to)address_of wide_stop);
+                strtof(input, (char address_to address_to)address_of narrow_stop);
+                strtold(input, (char address_to address_to)address_of widest_stop);
+                number_note(narrow_stop == wide_stop && widest_stop == wide_stop, input,
+                            (positive)(widest_stop - input), (positive)(wide_stop - input));
+        }
+
+        return number_failures == 0;
+}
+
 number_case(short_agrees)
 {
         positive taken = 0;
@@ -34955,7 +34661,7 @@ static const number_entry number_entries[] = {
         {"short agrees", number_test_short_agrees},
         {"compared agrees", number_test_compared_agrees},
         {"integers", number_test_integers},
-        {"against glibc", number_test_against_glibc},
+        {"listed ends", number_test_listed_ends},
         {"extended", number_test_extended},
         {"page-edge names", number_test_page_edge_names},
         {"shift table", number_test_shift_table},
