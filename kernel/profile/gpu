@@ -58,7 +58,21 @@ CONFIG_CMDLINE_BOOL=y
 # idle=poll refuses to halt at all. It is not here: it costs every core
 # spinning at full power for the whole uptime.
 #
-CONFIG_CMDLINE="drm_client_lib.active= intel_pstate=active amd_pstate=active intel_pstate.hwp_dynamic_boost=1"
+# The network's and the mount table's hashes are held small. The kernel sizes
+# them from memory, so a 16 GiB desktop carried megabytes of TCP established
+# and bind buckets, UDP and mount buckets for the handful of sockets and mounts
+# it has; with these, used memory at the first prompt of an idle guest is about
+# 0.8 MiB lower at 2 GiB and 4 MiB lower at 16 GiB, twice that at 32.
+# thash_entries is 4096 rather than 2 GiB's 16384 because naming it also sizes
+# the TCP listen hash, which otherwise scales at one slot per 2 MiB: 16384 grew
+# that table from 16 to 256 KiB at 2 GiB. 4096 buckets is still more than a
+# desktop's connections. The dentry and inode hashes are left to scale:
+# capping them at 2 GiB's size too frees another 21 MiB at 16 GiB, but stat
+# over a million names in a tmpfs went from about 500 to 750-820 ns. A machine
+# that is a server takes the server profile, which has a command line of its
+# own.
+#
+CONFIG_CMDLINE="drm_client_lib.active= intel_pstate=active amd_pstate=active intel_pstate.hwp_dynamic_boost=1 thash_entries=4096 uhash_entries=1024 mhash_entries=4096 mphash_entries=4096"
 
 #
 # Core modesetting
