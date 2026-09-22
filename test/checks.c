@@ -29842,27 +29842,13 @@ static fn error_test_messages(void)
         string_format(log, "TRANSCRIPT strerror %b [%s]\n", (bipolar)1000,
                       strerror(1000));
 
-        //      Two known messages, one long and one short, at every size
-        //      around their length; then the two holes in the numbering,
-        //      where EINVAL has to beat ERANGE.
-        error_test_strerror_r_line(2, 64);
-        error_test_strerror_r_line(2, 26);
-        error_test_strerror_r_line(2, 25);
-        error_test_strerror_r_line(2, 24);
-        error_test_strerror_r_line(2, 10);
-        error_test_strerror_r_line(2, 1);
-        error_test_strerror_r_line(2, 0);
-        error_test_strerror_r_line(0, 8);
-        error_test_strerror_r_line(0, 7);
-        error_test_strerror_r_line(84, 49);
-        error_test_strerror_r_line(84, 48);
-        error_test_strerror_r_line(41, 64);
-        error_test_strerror_r_line(41, 10);
-        error_test_strerror_r_line(41, 0);
-        error_test_strerror_r_line(58, 64);
-        error_test_strerror_r_line(133, 64);
-        error_test_strerror_r_line(134, 64);
-        error_test_strerror_r_line(-7, 64);
+        //      Every code the table knows and a few either side of it, at
+        //      every size from nothing to past the longest message: the
+        //      bytes written, the terminator, what is left alone, and the
+        //      answer -- EINVAL beating ERANGE in the holes of the numbering.
+        for (number = -8; number <= 141; number++)
+                for (positive size = 0; size <= 64; size++)
+                        error_test_strerror_r_line(number == 141 ? 1000 : number, size);
 }
 
 static fn error_test_perror(void)
@@ -30853,24 +30839,9 @@ static void messages(void)
         printf("TRANSCRIPT strerror %d [%s]\n", -7, strerror(-7));
         printf("TRANSCRIPT strerror %d [%s]\n", 1000, strerror(1000));
 
-        strerror_r_line(2, 64);
-        strerror_r_line(2, 26);
-        strerror_r_line(2, 25);
-        strerror_r_line(2, 24);
-        strerror_r_line(2, 10);
-        strerror_r_line(2, 1);
-        strerror_r_line(2, 0);
-        strerror_r_line(0, 8);
-        strerror_r_line(0, 7);
-        strerror_r_line(84, 49);
-        strerror_r_line(84, 48);
-        strerror_r_line(41, 64);
-        strerror_r_line(41, 10);
-        strerror_r_line(41, 0);
-        strerror_r_line(58, 64);
-        strerror_r_line(133, 64);
-        strerror_r_line(134, 64);
-        strerror_r_line(-7, 64);
+        for (number = -8; number <= 141; number++)
+                for (size_t size = 0; size <= 64; size++)
+                        strerror_r_line(number == 141 ? 1000 : number, size);
 }
 
 static void perror_lines(void)

@@ -2213,7 +2213,41 @@ scan_differential_one()
 lane_process()   { freestanding_checks_lane process process; }
 lane_signal()    { freestanding_checks_lane signal signal; }
 lane_lock()      { freestanding_checks_lane lock lock; }
-lane_error()     { freestanding_checks_lane error error; }
+#
+#       errno and strerror. CHECK_error's TRANSCRIPT lines are the half a
+#       reference shows: CHECK_error_reference prints the same lines over the
+#       machine's glibc, and every target's lines have to be those.
+#
+lane_error()
+{
+        freestanding_checks_lane error error
+        error_outcome=$?
+
+        if ! ${CC:-gcc} -O2 -w -o "$work/error_reference" \
+                -DCHECK_error_reference test/checks.c ||
+                ! "$work/error_reference" > "$work/error_reference.out" 2>&1
+        then
+                note "error transcript: the glibc reference did not build or finish"
+                return 1
+        fi
+
+        grep TRANSCRIPT "$work/error_reference.out" > "$work/error_reference.lines"
+        for error_target in x86_64 arm64 riscv64; do
+                [ -f "$work/error.$error_target.out" ] || continue
+                grep TRANSCRIPT "$work/error.$error_target.out" > "$work/error.$error_target.lines"
+                error_same=$(awk 'NR == FNR { want[FNR] = $0; next }
+                        $0 == want[FNR] { same++ } END { print same + 0 }' \
+                        "$work/error_reference.lines" "$work/error.$error_target.lines")
+                tally "error-glibc-$error_target" "$error_same" \
+                        "$(wc -l < "$work/error_reference.lines")"
+                cmp -s "$work/error_reference.lines" "$work/error.$error_target.lines" && continue
+                note "error transcript on $error_target differs from glibc:"
+                diff "$work/error_reference.lines" "$work/error.$error_target.lines" |
+                        head -10 | sed 's/^/    /'
+                error_outcome=1
+        done
+        return "$error_outcome"
+}
 lane_strings()   { freestanding_checks_lane strings strings; }
 #
 #       The environment against glibc's. CHECK_environment walks seeded
