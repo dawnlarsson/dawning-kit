@@ -534,6 +534,9 @@ void canvas_cell(u32 *at, unsigned long pitch, const u8 *bits,
 void canvas_cell2(u32 *at, unsigned long pitch, const u8 *bits,
                   unsigned long rows, u32 ink, u32 paper);
 void canvas_row_blit(u32 *at, const u32 *from, unsigned long count, u32 opaque);
+void canvas_cells(u32 *at, unsigned long pitch, const u8 *font,
+                  const struct window_cell *cells, unsigned long count,
+                  u32 ink, u32 paper);
 
 /*
         Somewhere to draw, and the only thing the drawing code is given.
@@ -3929,6 +3932,55 @@ static void cell_draw(const struct target *t, const struct shape *shape,
 }
 
 /*
+        A run of printable ASCII in one pair of colours from column, scale one
+        and wholly inside the damage: one call, one table of colour pairs,
+        drawn a scanline at a time. Answers the cells drawn, or 0 for a run of
+        one, which is canvas_cell's -- it builds the same table for one cell
+        without the walk, and text whose colour changes every character is
+        all runs of one. A space inside the run is the face's blank glyph;
+        two in a row end it, so a stretch of blanks is still a rectangle.
+
+        Out of line, because compose_row's loop is every other kind of cell
+        as well, and a run's walk laid out inside it cost those a tenth.
+*/
+static noinline int compose_run(const struct target *t, int x, int y,
+                                const struct window_cell *cells, int column,
+                                int used, const unsigned char *font_data,
+                                _Bool space_blank)
+{
+        unsigned char ink_index = cells[column].ink;
+        unsigned char paper_index = cells[column].paper;
+        int left = x + column * canvas_cell_w;
+        int stop = min(used, (min(t->clip.x2, t->width) - x) / canvas_cell_w);
+        int run;
+
+        if (left < max(t->clip.x1, 0) || stop <= column + 1 ||
+            cells[column + 1].flags || cells[column + 1].ink != ink_index ||
+            cells[column + 1].paper != paper_index ||
+            cells[column + 1].character - 33 >= 94)
+                return 0;
+
+        for (run = column + 2; run < stop; run++)
+        {
+                unsigned int next = cells[run].character;
+
+                if (cells[run].flags || cells[run].ink != ink_index ||
+                    cells[run].paper != paper_index || next - 32 >= 95 ||
+                    (next == ' ' && (!space_blank || run + 1 >= stop ||
+                                     cells[run + 1].character <= ' ')))
+                        break;
+        }
+
+        target_mark((unsigned long)(run - column) *
+                    (unsigned long)canvas_cell_w * (unsigned long)canvas_cell_h);
+        canvas_cells(t->pixels + (size_t)y * t->pitch + left, t->pitch,
+                     font_data, cells + column, (unsigned long)(run - column),
+                     cell_palette(ink_index, t->opaque),
+                     cell_palette(paper_index, t->opaque));
+        return run - column;
+}
+
+/*
         One row of a window made of text.
 
         A cell with a letter in it is drawn whole, one pixel one store. Runs of
@@ -3944,6 +3996,7 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
         int cell_w = canvas_cell_w;
         const unsigned char *font_data = NULL;
         size_t glyph_size = 0;
+        _Bool space_blank = false, runs;
         _Bool direct = glyph_is_cell() &&
                        (desktop.scale == 1 || desktop.scale == 2) &&
                        y >= max(t->clip.y1, 0) &&
@@ -3957,6 +4010,21 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
                 font_data = font_data_buf(canvas_font->data);
                 glyph_size = font_glyph_size(canvas_font->width,
                                              canvas_font->height);
+        }
+
+        runs = direct && font_data && desktop.scale == 1;
+
+        /*
+                A space is paper whatever the face has at ' ', so a run takes
+                one in only where the face's own space is blank, which the
+                kernel's fonts all are.
+        */
+        if (runs)
+        {
+                u64 space[2];
+
+                memory_copy(space, font_data + ' ' * WINDOW_CELL_H, sizeof(space));
+                space_blank = !(space[0] | space[1]);
         }
 
         while (column < used)
@@ -3974,6 +4042,25 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
                                    WINDOW_CELL_UNDERLINE | WINDOW_CELL_STRIKE |
                                    WINDOW_CELL_HIDDEN | WINDOW_CELL_DIM |
                                    WINDOW_CELL_BAR)) != 0;
+
+                // The neighbour first, here: text whose colour changes every
+                // character never pays for the call.
+                if (runs && !flags && character - 33 < 94 &&
+                    column + 1 < used &&
+                    !((cells[column + 1].ink ^ cells[column].ink) |
+                      (cells[column + 1].paper ^ cells[column].paper) |
+                      cells[column + 1].flags) &&
+                    cells[column + 1].character - 33 < 94)
+                {
+                        run = compose_run(t, x, y, cells, column, used,
+                                          font_data, space_blank);
+
+                        if (run)
+                        {
+                                column += run;
+                                continue;
+                        }
+                }
 
                 if (character <= ' ' && !styled)
                 {

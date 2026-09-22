@@ -118,12 +118,13 @@ signal_jump_mark signal_jump_to_mark
      'three machines; timed before and after in the commit that made them asm')
 
 cover('correctness_only', 'test/checks.c#CHECK_canvas_cells', '''
-canvas_cell canvas_cell2 canvas_glyph canvas_glyph2 canvas_rect_fill
-canvas_row_blit
+canvas_cell canvas_cell2 canvas_cells canvas_glyph canvas_glyph2
+canvas_rect_fill canvas_row_blit
 ''', 'the kernel-only Canvas pixel loops, lifted out of lib.c and linked '
      'into the canvas cells check, which compares what the compositor draws '
      'with them against a per-pixel reference; canvas_cell and canvas_cell2 '
-     'are also driven directly over 36 colour pairs and 256 bit patterns. '
+     'are also driven directly over 36 colour pairs and 256 bit patterns, '
+     'and canvas_cells against canvas_cell once a cell over 4,096 runs. '
      'No timing row here')
 
 cover('correctness_only', 'test/checks.c#CHECK_number', 'string_to_decimal_short',

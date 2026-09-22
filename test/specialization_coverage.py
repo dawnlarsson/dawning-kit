@@ -674,8 +674,8 @@ memory_span_byte_wide memory_offsets_range_x64
 ''', 'a private core with no declaration, so C cannot name it and no call '
      'site can hand it a literal; its wrappers carry the classification')
 cover('nothing_to_fold', None, '''
-canvas_cell canvas_cell2 canvas_glyph canvas_glyph2 canvas_rect_fill
-canvas_row_blit
+canvas_cell canvas_cell2 canvas_cells canvas_glyph canvas_glyph2
+canvas_rect_fill canvas_row_blit
 ''', 'pointers into a framebuffer, a font and a palette, with the pitch, '
      'sizes and colours of an output and a pane at run time; the literals that '
      'do reach them -- WINDOW_CELL_H rows at both cell call sites, INK_COUNT for '

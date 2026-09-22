@@ -61163,6 +61163,7 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 #define HOT
+#define noinline __attribute__((noinline))
 #define PURE
 #define CONST
 #define true 1
@@ -61213,6 +61214,7 @@ void canvas_glyph2(u32 *,unsigned long,const u8 *,unsigned long,unsigned long,u3
 void canvas_cell(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
 void canvas_cell2(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
 void canvas_row_blit(u32 *,const u32 *,unsigned long,u32);
+void canvas_cells(u32 *,unsigned long,const u8 *,const struct window_cell *,unsigned long,u32,u32);
 // The ring reads the program's line lengths through the kernel's single-load
 // spelling; hosted, one load is all there is.
 #define READ_ONCE(a) (a)
@@ -61455,12 +61457,28 @@ int main(void) {
         canvas_cell2(pixels+align,pitch,bits,rows,colors[a],colors[b]);
         check(!memcmp(pixels,expected,1200*sizeof(*pixels)));
     }
+    // A run is canvas_cell once a cell, at either alignment of a pixel pair.
+    for(unsigned trial=0;trial<4096;trial++) {
+        unsigned count=1+trial%23,pitch=count*8+(trial/23)%5,align=(trial/115)%2;
+        struct window_cell run[23];static u8 face[256*16];
+        u32 ink=colors[trial%6],paper=colors[(trial/6)%6];
+        for(unsigned i=0;i<sizeof(face);i++)face[i]=(i*131+trial*7)&255;
+        for(unsigned i=0;i<count;i++)
+            run[i]=(struct window_cell){32+(trial*13+i*29)%95,(u8)i,(u8)trial,(unsigned short)i};
+        memset(pixels,0xa5,4096*sizeof(*pixels));memset(expected,0xa5,4096*sizeof(*expected));
+        canvas_cells(pixels+align,pitch,face,run,count,ink,paper);
+        for(unsigned i=0;i<count;i++)
+            canvas_cell(expected+align+i*8,pitch,face+run[i].character*16,16,ink,paper);
+        check(!memcmp(pixels,expected,4096*sizeof(*pixels)));
+    }
     struct font_desc face={8,16,font_bits};canvas_font=&face;
     check_pane_layout();
     for(unsigned i=0;i<sizeof(font_bits);i++)font_bits[i]=(i*29+i/16*73)&255;
     struct window_cell cells[96];unsigned seed=123;
     for(unsigned trial=0;trial<2400;trial++) {
         desktop.scale=1+trial%2;
+        // A face whose space is blank lets a run of text take its spaces in.
+        for(unsigned i=' '*16;i<' '*16+16;i++)font_bits[i]=trial&4?0:(i*29+i/16*73)&255;
         struct target t={.pixels=pixels,.pitch=1024,.width=1024,.height=64,
             .opaque=trial&2?0xff000000:0,.clip={0,0,1024,64}};
         int used=trial%65,last=used+trial%9,first=min((int)(trial%5),used);
