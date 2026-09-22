@@ -25975,6 +25975,117 @@ static fn shell_asm_functions(p8 address_to pages)
         }
 }
 
+/*
+        shell_assignment_kind from src/sh/shell.c against the C it replaced,
+        string_span over the name set and a look at what follows, over words
+        drawn from the bytes a name, an assignment and a subscript are made
+        of, at every alignment and ending on the last byte before a page
+        nobody may read. The subscript walk is the lexer's and not what is
+        under test: both take the same stand-in here, which closes at the
+        first ] that an = or += follows.
+*/
+p8 shell_assignment_kind(string_address word, positive address_to name_length);
+
+static string_address shell_asm_subscript_end(string_address at)
+{
+        for (; string_get(at); at++)
+                if (string_is(at, ']') &&
+                    (string_is(at + 1, '=') || (string_is(at + 1, '+') && string_is(at + 2, '='))))
+                        return at + 1;
+        return null;
+}
+
+p8 shell_assignment_subscript(string_address word, positive length,
+                              positive address_to name_length)
+{
+        string_address stop = shell_asm_subscript_end(word + length + 1);
+
+        if (stop && stop - (word + length) > 2)
+                length = (positive)(stop - word);
+        if (name_length)
+                address_to name_length = length;
+        if (string_get(word + length) == '=')
+                return 1;
+        return string_get(word + length) == '+' && string_get(word + length + 1) == '=' ? 2 : 0;
+}
+
+static p8 shell_asm_assignment_former(string_address word, positive address_to name_length)
+{
+        positive length = string_span(word, string_set_name);
+
+        if (!length || (string_get(word) >= '0' && string_get(word) <= '9'))
+        {
+                if (name_length)
+                        address_to name_length = length;
+                return 0;
+        }
+        if (string_get(word + length) == '[')
+        {
+                string_address stop = shell_asm_subscript_end(word + length + 1);
+
+                if (stop && stop - (word + length) > 2)
+                        length = (positive)(stop - word);
+        }
+        if (name_length)
+                address_to name_length = length;
+        if (string_get(word + length) == '=')
+                return 1;
+        return string_get(word + length) == '+' && string_get(word + length + 1) == '=' ? 2 : 0;
+}
+
+static fn shell_asm_assignment_one(const p8 address_to word)
+{
+        positive want_length = 77, got_length = 77;
+        p8 want = shell_asm_assignment_former((string_address)word, address_of want_length);
+        p8 got = shell_assignment_kind((string_address)word, address_of got_length);
+        p8 bare = shell_assignment_kind((string_address)word, null);
+
+        checks++;
+        if (want != got || want != bare || want_length != got_length)
+        {
+                failures++;
+                if (failures < 10)
+                        string_format(log, "FAIL shell_assignment_kind %s: %p/%p want %p/%p\n",
+                                      (string_address)word, (positive)got, got_length,
+                                      (positive)want, want_length);
+        }
+}
+
+static fn shell_asm_assignments(p8 address_to pages)
+{
+        static p8 room[96];
+        static const p8 bytes[] = "aZ_09=+[]$'\"- x\x80\xff";
+
+        for (positive round = 0; round < 300000; round++)
+        {
+                positive length = shell_asm_next() % (shell_asm_next() % 4 ? 12 : 60);
+                positive offset = shell_asm_next() % 16;
+                positive named = shell_asm_next() % 3 ? shell_asm_next() % (length + 1) : 0;
+                p8 address_to word = room + offset;
+
+                for (positive i = 0; i < length; i++)
+                        word[i] = i < named ? "aZ_09bc"[shell_asm_next() % 7]
+                                            : bytes[shell_asm_next() % (sizeof(bytes) - 1)];
+                word[length] = 0;
+                shell_asm_assignment_one(word);
+        }
+        if (pages)
+                for (positive length = 0; length < 24; length++)
+                        for (positive shape = 0; shape < 8; shape++)
+                        {
+                                p8 address_to word = pages + 8192 - length - 1;
+
+                                for (positive i = 0; i < length; i++)
+                                        word[i] = "ab_9"[(i + shape) % 4];
+                                if (length && shape & 1)
+                                        word[length - 1] = shape & 2 ? '=' : '+';
+                                if (length > 1 && shape & 4)
+                                        word[length - 2] = '[';
+                                word[length] = 0;
+                                shell_asm_assignment_one(word);
+                        }
+}
+
 b32 main(void)
 {
         static p8 built[4096];
@@ -26027,6 +26138,7 @@ b32 main(void)
         shell_asm_keywords((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_variables((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_functions((bipolar)(positive)pages > 0 ? pages : null);
+        shell_asm_assignments((bipolar)(positive)pages > 0 ? pages : null);
 
         string_format(log, "shell assembly: %p checks, %p failures\n", checks, failures);
         log_flush();
@@ -64230,6 +64342,188 @@ int main(void)
         return bad ? 1 : 0;
 }
 #endif /* CHECK_native_funcslot */
+
+#ifdef CHECK_native_assignment
+/* ARM64 shell_assignment_kind lifted verbatim from src/sh/shell.c, against
+   the C it replaced calling string_span lifted from lib.c, over words drawn
+   the way the parser meets them: the commonest of 1.36 million words met
+   reading five configure scripts, test/run and two ltmain.sh, as often as
+   they came, and the rest made in its proportions -- over half beginning
+   with a byte no name can, a tenth assignments -- then both timed. */
+#include "assignment.h"
+#include "assignment_lib.h"
+
+#define NATIVE_SEED 0x243f6a8885a308d3ull
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
+
+unsigned char shell_assignment_kind(const char *, u64 *);
+u64 string_span(const char *, const unsigned char *);
+void *memcpy(void *, const void *, u64);
+unsigned char string_set_name[256];
+
+static u64 checks, bad;
+
+unsigned char shell_assignment_subscript(const char *word, u64 length, u64 *name_length)
+{
+        const char *at = word + length + 1, *stop = 0;
+
+        for (; *at; at++)
+                if (*at == ']' && (at[1] == '=' || (at[1] == '+' && at[2] == '='))) {
+                        stop = at + 1;
+                        break;
+                }
+        if (stop && stop - (word + length) > 2)
+                length = (u64)(stop - word);
+        if (name_length)
+                *name_length = length;
+        if (word[length] == '=')
+                return 1;
+        return word[length] == '+' && word[length + 1] == '=' ? 2 : 0;
+}
+
+__attribute__((noinline)) static unsigned char former(const char *word, u64 *name_length)
+{
+        u64 length = string_span(word, string_set_name);
+
+        if (!length || (word[0] >= '0' && word[0] <= '9')) {
+                if (name_length)
+                        *name_length = length;
+                return 0;
+        }
+        if (word[length] == '[')
+                return shell_assignment_subscript(word, length, name_length);
+        if (name_length)
+                *name_length = length;
+        if (word[length] == '=')
+                return 1;
+        return word[length] == '+' && word[length + 1] == '=' ? 2 : 0;
+}
+
+static const struct { const char *word; u64 weight; } common[] = {
+        {"e", 567},
+        {"printf", 358},
+        {"test", 303},
+        {"\"%s\\n\"", 271},
+        {"=", 146},
+        {"fi", 141},
+        {"*", 140},
+        {":", 139},
+        {"if", 93},
+        {"%s", 85},
+        {"\"$host_os\"", 77},
+        {"6", 74},
+        {"else", 73},
+        {"}", 67},
+        {"yes", 62},
+        {"\"$LINENO\"", 59},
+        {"-f", 58},
+        {"eval", 57},
+        {"then", 56},
+        {"rm", 55},
+        {"mingw*", 52},
+        {"confdefs.h", 50},
+        {"''", 50},
+        {"$host_os", 45},
+        {"as_dir", 43},
+        {"conftest.$ac_ext", 42},
+        {"{", 42},
+        {"func_mode_link", 41},
+        {"-n", 41},
+        {"conftest.$ac_objext", 41},
+        {"conftest.beam", 40},
+        {"core", 40},
+        {"windows*", 40},
+        {"-z", 40},
+        {"cat", 39},
+        {"echo", 38},
+        {"-", 33},
+        {"$as_nop", 33},
+        {"*yes", 32},
+        {"xyes", 31},
+        {"darwin*", 31},
+        {"\"(cached) \"", 31},
+        {"conftest.err", 30},
+        {"1", 30},
+        {"$PATH", 29},
+        {"no", 29},
+};
+
+#define STREAM 65536
+
+int main(void)
+{
+        static char words[STREAM][40];
+        u64 total = 0;
+
+        for (int c = 0; c < 256; c++)
+                string_set_name[c] = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                                     (c >= '0' && c <= '9') || c == '_';
+        for (u64 i = 0; i < sizeof(common) / sizeof(common[0]); i++)
+                total += common[i].weight;
+        for (u64 i = 0; i < STREAM; i++) {
+                char *word = words[i];
+                u64 pick = next() % (total * 100 / 29);
+
+                if (pick < total) {
+                        u64 c = 0, length = 0;
+
+                        while (pick >= common[c].weight)
+                                pick -= common[c++].weight;
+                        while (common[c].word[length])
+                                length++;
+                        memcpy(word, common[c].word, length + 1);
+                        continue;
+                }
+                u64 kind = next() % 100, length = 1 + next() % 16, at = 0;
+
+                if (kind < 55)
+                        word[at++] = "\"$-*'.{"[next() % 7];
+                for (; at < length; at++)
+                        word[at] = "abcdefgh_ACDLNOS0123$."[next() % 22];
+                if (kind >= 85) {
+                        word[at++] = '=';
+                        word[at++] = '$';
+                        word[at++] = 'x';
+                }
+                word[at] = 0;
+        }
+
+        for (u64 i = 0; i < STREAM; i++) {
+                u64 want_length = 7, got_length = 7;
+                unsigned char want = former(words[i], &want_length);
+                unsigned char got = shell_assignment_kind(words[i], &got_length);
+
+                checks++;
+                if ((want != got || want_length != got_length) && bad++ < 8)
+                        printf("  FAIL %s: %d/%lu want %d/%lu\n", words[i], got, got_length, want, want_length);
+        }
+
+        u64 best_former = ~0ul, best_body = ~0ul, sink = 0, sink_body = 0, length;
+        for (int trial = 0; trial < 9; trial++) {
+                u64 start = ticks();
+                for (int r = 0; r < 10; r++)
+                        for (u64 i = 0; i < STREAM; i++)
+                                sink += former(words[i], &length) + length;
+                u64 took = ticks() - start;
+                best_former = took < best_former ? took : best_former;
+                start = ticks();
+                for (int r = 0; r < 10; r++)
+                        for (u64 i = 0; i < STREAM; i++)
+                                sink_body += shell_assignment_kind(words[i], &length) + length;
+                took = ticks() - start;
+                best_body = took < best_body ? took : best_body;
+        }
+        checks++;
+        if (sink != sink_body)
+                bad++;
+        printf("  %d words drawn as the parser meets them, 10 times: C with string_span %lu ticks, assembly %lu, asm/C %lu%%\n",
+               STREAM, best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+        printf("arm64 shell_assignment_kind: %lu checks | %lu failures\n", checks, bad);
+        return bad ? 1 : 0;
+}
+#endif /* CHECK_native_assignment */
 
 #ifdef CHECK_native_floodlight
 /* ARM64 floodlight_status_clear lifted verbatim from src/sh/builtin.c,

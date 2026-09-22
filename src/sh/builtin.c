@@ -9112,8 +9112,8 @@ static COLD b32 shell_declare_functions(writer write, positive index,
 
 /* Declarations share one mutation engine with explicit value destinations.
    Local and global ownership retain their own failure and metadata policy. */
-static p8 shell_assignment_kind(string_address word,
-                                positive address_to name_length);
+p8 shell_assignment_kind(string_address word,
+                         positive address_to name_length);
 static env_variable address_to exec_declare_global_destination(string_address name,
     positive length, shell_declare_state address_to state, string_address value,
     bool address_to address_to promoted);

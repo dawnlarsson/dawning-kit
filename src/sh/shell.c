@@ -1185,34 +1185,34 @@ static fn token_push_bytes(address_any data, positive length)
         token_used += length;
 }
 
-/* Assignment syntax is a property of the parsed word, not of an execution.
-   Return one for NAME= and two for NAME+=, together with the stable name
-   length so the executor can reuse its hash metadata. */
-static p8 shell_assignment_kind(string_address word,
-                                positive address_to name_length)
+/*
+        Assignment syntax is a property of the parsed word, not of an
+        execution. Return one for NAME= and two for NAME+=, together with the
+        stable name length so the executor can reuse its hash metadata.
+
+        The parser asks this of every word it makes, 1.36 million words in
+        reading five configure scripts, test/run and two ltmain.sh, and more
+        than half of them begin with a byte no name can: the C called
+        string_span for the name and looked at what followed. Here the name
+        is walked two bytes a turn in the body, through the same table, and
+        the answer taken from the byte it stops at. A subscript, a[i]=v, is
+        the lexer's walk to make, and one word in 250 goes on to
+        shell_assignment_subscript for it.
+*/
+p8 shell_assignment_kind(string_address word, positive address_to name_length);
+
+KEEP __attribute__((externally_visible, noinline)) p8
+shell_assignment_subscript(string_address word, positive length,
+                           positive address_to name_length)
 {
-        positive length = string_span(word, string_set_name);
-
-        if (!length || (string_get(word) >= '0' && string_get(word) <= '9'))
-        {
-                if (name_length)
-                        address_to name_length = length;
-
-                return 0;
-        }
-
         /* A subscript is part of the name being assigned to. a[i+1]=v and
            m[a key]=v each name one element. The lexer's walk says where it
            closes -- a ] held in quotes or a substitution closes nothing --
            and whether = or += follows. An empty subscript names nothing. */
-        if (string_get(word + length) == '[')
-        {
-                string_address stop =
-                    lex_assignment_subscript_end(word + length + 1);
+        string_address stop = lex_assignment_subscript_end(word + length + 1);
 
-                if (stop && stop - (word + length) > 2)
-                        length = (positive)(stop - word);
-        }
+        if (stop && stop - (word + length) > 2)
+                length = (positive)(stop - word);
 
         if (name_length)
                 address_to name_length = length;
@@ -1225,6 +1225,69 @@ static p8 shell_assignment_kind(string_address word,
                    ? 2
                    : 0;
 }
+
+#if X64
+__asm__(
+    ASM_FUNC(shell_assignment_kind)
+    "lea string_set_name(%rip), %r8\n   xor %eax, %eax\n"
+    "1:  movzbl (%rdi,%rax), %ecx\n   cmpb $0, (%r8,%rcx)\n   je 2f\n"
+    "movzbl 1(%rdi,%rax), %ecx\n   cmpb $0, (%r8,%rcx)\n   je 3f\n   add $2, %rax\n   jmp 1b\n"
+    "3:  inc %rax\n"
+    // The name is %rax bytes and %ecx the byte after it.
+    "2:  test %rax, %rax\n   jz 6f\n   movzbl (%rdi), %edx\n   sub $48, %edx\n   cmp $9, %edx\n   jbe 6f\n"
+    "cmp $91, %ecx\n   je 8f\n   test %rsi, %rsi\n   jz 4f\n   mov %rax, (%rsi)\n"
+    "4:  cmp $61, %ecx\n   je 5f\n   cmp $43, %ecx\n   jne 7f\n   cmpb $61, 1(%rdi,%rax)\n   jne 7f\n"
+    "mov $2, %eax\n"
+    ASM_RET
+    "5:  mov $1, %eax\n"
+    ASM_RET
+    "6:  test %rsi, %rsi\n   jz 7f\n   mov %rax, (%rsi)\n"
+    "7:  xor %eax, %eax\n"
+    ASM_RET
+    "8:  mov %rsi, %rdx\n   mov %rax, %rsi\n   jmp shell_assignment_subscript\n"
+    ASM_END(shell_assignment_kind)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(shell_assignment_kind)
+    "adrp x8, string_set_name\n   add x8, x8, :lo12:string_set_name\n   mov x2, #0\n"
+    "1:  ldrb w3, [x0, x2]\n   ldrb w4, [x8, x3]\n   cbz w4, 2f\n   add x2, x2, #1\n"
+    "ldrb w3, [x0, x2]\n   ldrb w4, [x8, x3]\n   cbz w4, 2f\n   add x2, x2, #1\n   b 1b\n"
+    // The name is x2 bytes and w3 the byte after it.
+    "2:  cbz x2, 6f\n   ldrb w5, [x0]\n   sub w5, w5, #48\n   cmp w5, #9\n   b.ls 6f\n"
+    "cmp w3, #91\n   b.eq 8f\n   cbz x1, 4f\n   str x2, [x1]\n"
+    "4:  cmp w3, #61\n   b.eq 5f\n   cmp w3, #43\n   b.ne 7f\n   add x5, x0, x2\n   ldrb w5, [x5, #1]\n"
+    "cmp w5, #61\n   b.ne 7f\n   mov w0, #2\n"
+    ASM_RET
+    "5:  mov w0, #1\n"
+    ASM_RET
+    "6:  cbz x1, 7f\n   str x2, [x1]\n"
+    "7:  mov w0, #0\n"
+    ASM_RET
+    "8:  mov x5, x1\n   mov x1, x2\n   mov x2, x5\n   b shell_assignment_subscript\n"
+    ASM_END(shell_assignment_kind)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(shell_assignment_kind)
+    "lla t0, string_set_name\n   li t1, 0\n"
+    "1:  add t2, a0, t1\n   lbu t3, 0(t2)\n   add t4, t0, t3\n   lbu t4, 0(t4)\n   beqz t4, 2f\n"
+    "addi t1, t1, 1\n   j 1b\n"
+    // The name is t1 bytes and t3 the byte after it, at t2.
+    "2:  beqz t1, 6f\n   lbu t5, 0(a0)\n   addi t5, t5, -48\n   li t6, 9\n   bleu t5, t6, 6f\n"
+    "li t6, 91\n   beq t3, t6, 8f\n   beqz a1, 4f\n   sd t1, 0(a1)\n"
+    "4:  li t6, 61\n   beq t3, t6, 5f\n   li t6, 43\n   bne t3, t6, 7f\n   lbu t5, 1(t2)\n"
+    "li t6, 61\n   bne t5, t6, 7f\n   li a0, 2\n"
+    ASM_RET
+    "5:  li a0, 1\n"
+    ASM_RET
+    "6:  beqz a1, 7f\n   sd t1, 0(a1)\n"
+    "7:  li a0, 0\n"
+    ASM_RET
+    "8:  mv a2, a1\n   mv a1, t1\n   tail shell_assignment_subscript\n"
+    ASM_END(shell_assignment_kind)
+);
+#endif
 
 // The builtins still take the rest of the line as a single string, so the
 // words are handed back joined. Quoting survives as far as argv, no further.

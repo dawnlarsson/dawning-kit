@@ -2130,7 +2130,9 @@ shell_asm_one()
           python3 test/differential.py --harness native_extract --source \
                 src/sh/parse.c parse_keyword_of &&
           python3 test/differential.py --harness native_extract --source \
-                src/sh/exec.c exec_function_slot; } > "$work/shell_asm.h" || return 1
+                src/sh/exec.c exec_function_slot &&
+          python3 test/differential.py --harness native_extract --source \
+                src/sh/shell.c shell_assignment_kind; } > "$work/shell_asm.h" || return 1
         target_build freestanding_check shell_asm "$work/shell_asm.$target" "$target" \
                 "-I$work" || return 1
         $target_runner "$work/shell_asm.$target" > "$work/shell_asm.$target.out" 2>&1
@@ -3461,14 +3463,15 @@ trap 'rm -rf "$work"' EXIT INT TERM
 #       a reference itself -- the decimal tail of positive_into_base, human.c's
 #       buffer adapters, fields.c's positive_into, reserve.c's allocator calls
 #       -- it is left out. text_blank_field comes from the tool's own source,
-#       floodlight_status_clear, env_find_hashed_span_probe, parse_keyword_of
-#       and exec_function_slot from the shell's.
+#       floodlight_status_clear, env_find_hashed_span_probe, parse_keyword_of,
+#       exec_function_slot and shell_assignment_kind from the shell's.
 while read -r lifted_header lifted_source lifted_routines; do
         case $lifted_source in
         text) lifted_source=$text ;;
         builtin) lifted_source=src/sh/builtin.c ;;
         parse) lifted_source=src/sh/parse.c ;;
         exec) lifted_source=src/sh/exec.c ;;
+        shell) lifted_source=src/sh/shell.c ;;
         *) lifted_source=$lib ;;
         esac
         # shellcheck disable=SC2086 # the routines are separate arguments
@@ -3487,6 +3490,8 @@ floodlight builtin floodlight_status_clear
 keyword parse parse_keyword_of
 envprobe builtin env_find_hashed_span_probe
 funcslot exec exec_function_slot
+assignment shell shell_assignment_kind
+assignment_lib lib string_span
 floodlight_lib lib memory_first_of memory_compare
 wide lib string_length string_length_max string_first_of string_first_of_or_end string_first_of_max string_last_of string_last_of_or_end memory_first_of
 bases lib positive_into_base
@@ -3500,7 +3505,7 @@ reserve lib memory_growth memory_reserve memory_release
 LIFTED
 
 status=0
-for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets hash join floodlight keyword envprobe funcslot series wide bases base_field human human_nearest fields input_bases network reserve; do
+for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets hash join floodlight keyword envprobe funcslot assignment series wide bases base_field human human_nearest fields input_bases network reserve; do
         cc -O2 -w -I"$work" "-DCHECK_native_$case" test/checks.c -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done
