@@ -2425,6 +2425,51 @@ lane_process()   { freestanding_checks_lane process process; }
 lane_signal()    { freestanding_checks_lane signal signal && glibc_twin signal -no-pie; }
 lane_lock()      { freestanding_checks_lane lock lock; }
 #
+#       A section's lines against glibc's: the section built by the host
+#       compiler over the machine's glibc with the given flags prints the
+#       lines every target's run of it printed, and the sed range names the
+#       lines both have to share. A failure the reference reports is glibc's
+#       own and fails the lane too, since a check glibc fails asks the wrong
+#       question.
+#
+transcript_against_glibc()
+{
+        tg_name=$1 tg_range=$2
+        shift 2
+        [ "$host_system" = Linux ] || {
+                note "$tg_name: the glibc reference needs Linux -- not run"
+                return 2
+        }
+        tg_reference=$work/$tg_name.reference
+        if ! gcc -O2 -std=gnu17 -w "$@" -o "$tg_reference" test/checks.c -lm \
+                2> "$tg_reference.log"
+        then
+                note "$tg_name: the glibc reference did not build"
+                sed 's/^/    /' "$tg_reference.log" | head -10
+                return 1
+        fi
+        tg_failed=0
+        "$tg_reference" > "$tg_reference.out" || {
+                note "$tg_name: glibc itself failed a check, which is a bug here"
+                sed -n '/FAIL/p' "$tg_reference.out" | head -10
+                tg_failed=1
+        }
+        sed -n "$tg_range" "$tg_reference.out" > "$tg_reference.lines"
+        for tg_target in x86_64 arm64 riscv64; do
+                tg_out=$work/$tg_name.$tg_target.out
+                [ -f "$tg_out" ] || continue
+                sed -n "$tg_range" "$tg_out" > "$tg_out.lines"
+                tally "$tg_name-glibc-$tg_target" "$(awk 'NR == FNR { want[FNR] = $0; next }
+                        $0 == want[FNR] { same++ } END { print same + 0 }' \
+                        "$tg_reference.lines" "$tg_out.lines")" "$(wc -l < "$tg_reference.lines")"
+                cmp -s "$tg_reference.lines" "$tg_out.lines" && continue
+                note "$tg_name on $tg_target differs from glibc:"
+                diff "$tg_reference.lines" "$tg_out.lines" | head -20 | sed 's/^/    /'
+                tg_failed=1
+        done
+        return "$tg_failed"
+}
+#
 #       errno and strerror. CHECK_error's TRANSCRIPT lines are the half a
 #       reference shows: CHECK_error_reference prints the same lines over the
 #       machine's glibc, and every target's lines have to be those.
@@ -2434,30 +2479,11 @@ lane_error()
         freestanding_checks_lane error error
         error_outcome=$?
 
-        if ! ${CC:-gcc} -O2 -w -o "$work/error_reference" \
-                -DCHECK_error_reference test/checks.c ||
-                ! "$work/error_reference" > "$work/error_reference.out" 2>&1
-        then
-                note "error transcript: the glibc reference did not build or finish"
-                return 1
-        fi
-
-        grep TRANSCRIPT "$work/error_reference.out" > "$work/error_reference.lines"
-        for error_target in x86_64 arm64 riscv64; do
-                [ -f "$work/error.$error_target.out" ] || continue
-                grep TRANSCRIPT "$work/error.$error_target.out" > "$work/error.$error_target.lines"
-                error_same=$(awk 'NR == FNR { want[FNR] = $0; next }
-                        $0 == want[FNR] { same++ } END { print same + 0 }' \
-                        "$work/error_reference.lines" "$work/error.$error_target.lines")
-                tally "error-glibc-$error_target" "$error_same" \
-                        "$(wc -l < "$work/error_reference.lines")"
-                cmp -s "$work/error_reference.lines" "$work/error.$error_target.lines" && continue
-                note "error transcript on $error_target differs from glibc:"
-                diff "$work/error_reference.lines" "$work/error.$error_target.lines" |
-                        head -10 | sed 's/^/    /'
-                error_outcome=1
-        done
-        return "$error_outcome"
+        transcript_against_glibc error /TRANSCRIPT/p -DCHECK_error_reference
+        case $error_outcome$? in
+        *1*) return 1 ;;
+        *2*) return 2 ;;
+        esac
 }
 lane_strings()   { freestanding_checks_lane strings strings && glibc_twin strings -no-pie; }
 #
@@ -2466,68 +2492,14 @@ lane_strings()   { freestanding_checks_lane strings strings && glibc_twin string
 #       every answer and what environ holds after it; the three machines must
 #       print what glibc prints for the same calls.
 #
-environment_against_glibc()
-(
-[ "$host_system" = Linux ] || {
-        note "environment: the glibc reference needs Linux -- not run"
-        exit 2
-}
-
-failed=0
-
-note()
-{
-        printf '%s\n' "$*"
-}
-
-if ! gcc -O2 -std=gnu17 -w -DCHECK_environment -DENVIRONMENT_REFERENCE \
-        -o "$work/environment.reference" test/checks.c \
-        2> "$work/environment.reference.log"
-then
-        note "environment: the glibc reference did not build"
-        cat "$work/environment.reference.log"
-        exit 1
-fi
-
-if ! "$work/environment.reference" > "$work/environment.reference.out"
-then
-        note "environment: glibc itself failed a check, which is a bug here"
-        sed -n '/^FAIL/p' "$work/environment.reference.out"
-        failed=1
-fi
-
-sed -n '1,/^shared-end$/p' "$work/environment.reference.out" \
-        > "$work/environment.reference.shared"
-
-for name in x86_64 arm64 riscv64; do
-        out=$work/environment.$name.out
-        [ -f "$out" ] || continue
-
-        sed -n '1,/^shared-end$/p' "$out" > "$out.shared"
-
-        if ! diff -u "$work/environment.reference.shared" "$out.shared" \
-                > "$out.diff"
-        then
-                note "environment $name: differs from glibc"
-                head -60 "$out.diff"
-                failed=1
-                continue
-        fi
-
-        note "environment $name: agrees with glibc over $(sed -n 's/^calls //p' "$out") calls"
-done
-
-tally environment-glibc "$((1 - failed))" 1
-exit $failed
-)
-
 lane_stdlib()
 {
         freestanding_checks_lane stdlib stdlib
         stdlib_outcome=$?
         freestanding_checks_lane environment environment
         environment_outcome=$?
-        environment_against_glibc
+        transcript_against_glibc environment '1,/^shared-end$/p' \
+                -DCHECK_environment -DENVIRONMENT_REFERENCE
         case $stdlib_outcome$environment_outcome$? in
         *1*) return 1 ;;
         *2*) return 2 ;;
@@ -2542,61 +2514,6 @@ lane_clock()     { freestanding_checks_lane clock clock; }
 #       reference's fmod as an x87 fprem loop and the lane would compare
 #       against the compiler rather than against glibc.
 #
-modulo_against_glibc()
-(
-[ "$host_system" = Linux ] || {
-        note "modulo: the glibc reference needs Linux -- not run"
-        exit 2
-}
-
-failed=0
-
-note()
-{
-        printf '%s\n' "$*"
-}
-
-if ! gcc -O2 -std=gnu17 -w -fno-builtin -DCHECK_modulo -DMODULO_REFERENCE \
-        -o "$work/modulo.reference" test/checks.c -lm \
-        2> "$work/modulo.reference.log"
-then
-        note "modulo: the glibc reference did not build"
-        cat "$work/modulo.reference.log"
-        exit 1
-fi
-
-if ! "$work/modulo.reference" > "$work/modulo.reference.out"
-then
-        note "modulo: glibc itself failed a check, which is a bug here"
-        sed -n '/^FAIL/p' "$work/modulo.reference.out"
-        failed=1
-fi
-
-sed -n '/^pairs /,/^shared-end$/p' "$work/modulo.reference.out" \
-        > "$work/modulo.reference.shared"
-
-for name in x86_64 arm64 riscv64; do
-        out=$work/modulo.$name.out
-        [ -f "$out" ] || continue
-
-        sed -n '/^pairs /,/^shared-end$/p' "$out" > "$out.shared"
-
-        if ! diff -u "$work/modulo.reference.shared" "$out.shared" \
-                > "$out.diff"
-        then
-                note "modulo $name: differs from glibc"
-                cat "$out.diff"
-                failed=1
-                continue
-        fi
-
-        note "modulo $name: agrees with glibc on $(sed -n 's/^pairs //p' "$out") pairs"
-done
-
-tally modulo-glibc "$((1 - failed))" 1
-exit $failed
-)
-
 #       The math lane's differential half reads glibc's long double answers,
 #       from CHECK_math_differential_reference built by the host compiler, on
 #       its standard input.
@@ -2621,7 +2538,8 @@ lane_math()
         fi
         freestanding_checks_lane modulo modulo
         modulo_outcome=$?
-        modulo_against_glibc
+        transcript_against_glibc modulo '/^pairs /,/^shared-end$/p' \
+                -fno-builtin -DCHECK_modulo -DMODULO_REFERENCE
         case $math_outcome$modulo_outcome$? in
         *1*) return 1 ;;
         *2*) return 2 ;;
