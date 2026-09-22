@@ -3748,13 +3748,47 @@ static const b8 cat_special_set[8][256] = {
     {[0 ... 31] = 1, [127 ... 255] = 1},
 };
 
+/*
+        -E spells the carriage return that ends a line as ^M, and only that
+        one: a return anywhere else is copied as it is, and -v already spells
+        every return. So a return is decided about only when -E asked without
+        -v, and the answer needs the byte after it, which may be the first of
+        the next read or of the next file -- GNU carries the held return
+        across both and writes it out only when something that is not a
+        newline follows, the end of the last file included.
+*/
+static const b8 cat_ends_set[2][256] = {
+    {['\n'] = 1, ['\r'] = 1},
+    {['\t'] = 1, ['\n'] = 1, ['\r'] = 1},
+};
+
+static bool cat_pending_cr;
+
+static fn cat_release_cr()
+{
+        if (!cat_pending_cr)
+                return;
+
+        cat_pending_cr = false;
+
+        p8 address_to field = text_reserve(1);
+
+        if (field)
+                *field = '\r';
+}
+
 // A byte as -v spells it: control characters as ^X, the high half as M- and
 // then the same rule again. Tab and newline are touched separately by -T.
 static fn cat_walked()
 {
-        const b8 address_to set = cat_special_set[
-            ((cat_flags & CAT_SHOW) ? 4 : 0) | ((cat_flags & CAT_TABS) ? 2 : 0) |
-            ((cat_flags & (CAT_NUMBER | CAT_NUMBER_FULL | CAT_SQUEEZE | CAT_ENDS)) != 0)];
+        bool cr_held = (cat_flags & CAT_ENDS) && !(cat_flags & CAT_SHOW);
+        const b8 address_to set =
+            cr_held
+                ? cat_ends_set[(cat_flags & CAT_TABS) ? 1 : 0]
+                : cat_special_set[((cat_flags & CAT_SHOW) ? 4 : 0) |
+                                  ((cat_flags & CAT_TABS) ? 2 : 0) |
+                                  ((cat_flags & (CAT_NUMBER | CAT_NUMBER_FULL |
+                                                 CAT_SQUEEZE | CAT_ENDS)) != 0)];
 
         while (!text_out_failed && text_fill())
         {
@@ -3772,6 +3806,7 @@ static fn cat_walked()
                 p8 address_to into = field;
                 p8 address_to limit = field + room;
                 bool line_start = cat_at_line_start, blank_before = cat_blank_before;
+                bool held = cat_pending_cr;
                 positive number = cat_line_number;
                 text_scan scan = {.scanned = at, .set = set};
                 while (at < stop && (positive)(limit - into) >= positive_char_max + 6)
@@ -3798,6 +3833,11 @@ static fn cat_walked()
 
                         if (special > at)
                         {
+                                if (held)
+                                {
+                                        *into++ = '\r';
+                                        held = false;
+                                }
                                 positive run = min((positive)(special - at), (positive)(limit - into));
                                 memory_copy_apart(into, at, run);
                                 into += run;
@@ -3808,30 +3848,53 @@ static fn cat_walked()
                         if (value == '\n')
                         {
                                 if (cat_flags & CAT_ENDS)
+                                {
+                                        if (held)
+                                        {
+                                                *into++ = '^';
+                                                *into++ = 'M';
+                                                held = false;
+                                        }
                                         *into++ = '$';
+                                }
                                 *into++ = '\n';
                                 line_start = true;
                         }
-                        else if (value == '\t')
+                        else if (value == '\r' && cr_held)
                         {
-                                if (cat_flags & CAT_TABS)
-                                {
-                                        *into++ = '^';
-                                        *into++ = 'I';
-                                }
-                                else
-                                        *into++ = '\t';
+                                if (held)
+                                        *into++ = '\r';
+                                held = true;
                         }
-                        else if (cat_flags & CAT_SHOW)
-                                into += text_visible(into, value);
                         else
-                                *into++ = value;
+                        {
+                                if (held)
+                                {
+                                        *into++ = '\r';
+                                        held = false;
+                                }
+                                if (value == '\t')
+                                {
+                                        if (cat_flags & CAT_TABS)
+                                        {
+                                                *into++ = '^';
+                                                *into++ = 'I';
+                                        }
+                                        else
+                                                *into++ = '\t';
+                                }
+                                else if (cat_flags & CAT_SHOW)
+                                        into += text_visible(into, value);
+                                else
+                                        *into++ = value;
+                        }
                 }
                 text_input.position = (positive)(at - text_input.buffer);
                 text_out_used -= room - (positive)(into - field);
                 cat_line_number = number;
                 cat_at_line_start = line_start;
                 cat_blank_before = blank_before;
+                cat_pending_cr = held;
         }
 }
 
@@ -4067,6 +4130,7 @@ static b32 text_cat()
         cat_line_number = 1;
         cat_blank_before = false;
         cat_at_line_start = true;
+        cat_pending_cr = false;
 
         if (flags & FILE_FLAG('b'))
                 cat_flags |= CAT_NUMBER_FULL;
@@ -4109,6 +4173,7 @@ static b32 text_cat()
                         cat_one((string_address) "-");
 
                 text_close();
+                cat_release_cr();
                 return text_done(text_status);
         }
 
@@ -4123,6 +4188,7 @@ static b32 text_cat()
                 text_close();
         }
 
+        cat_release_cr();
         return text_done(text_status);
 }
 

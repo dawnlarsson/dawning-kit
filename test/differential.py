@@ -336,6 +336,11 @@ INPUTS = {
     "edge_131072": _boundary(131072),
     "many_lines": b"".join(b"line %06d\n" % n for n in range(5000)),
     "blank_runs": b"x\n\n\ny\n\n\n\nz\n\n",
+    #       A return that ends a line is spelled ^M by cat -E, and the byte
+    #       after it decides: here one falls on the last byte of a 64 KiB
+    #       read, one is the last byte of the input, and one is followed by
+    #       something that is not a newline.
+    "crlf_edge": b"x" * 65535 + b"\r\n" + b"ab\r\ncd\re\r\n\r\n\r",
 }
 
 _BASIC = {
@@ -14928,7 +14933,16 @@ TEXT_UTILITIES = (
                       ("link",), ("two words",), ("a.txt", "missing", "b.txt"), ("big",), ("wide",)),
             stdin=("text", "empty", "nonl", "blanks", "tabs", "controls", "high", "edge_65536",
                    "blank_runs", "crlf", "nul_lines", "text_uniq", "long", "edge_65535", "edge_65537", "text_utf8"),
-            fixture="text", extra=(("-Z", "a.txt"), ("--nosuchflag", "a.txt"), ("--", "-n"))),
+            fixture="text", extra=(("-Z", "a.txt"), ("--nosuchflag", "a.txt"), ("--", "-n"),
+                                   {"argv": ("-E",), "stdin": "crlf", "fixture": "text"},
+                                   {"argv": ("-E", "-"), "stdin": "crlf", "fixture": "text"},
+                                   {"argv": ("-nE",), "stdin": "crlf", "fixture": "text"},
+                                   {"argv": ("-sE",), "stdin": "crlf", "fixture": "text"},
+                                   {"argv": ("-bE",), "stdin": "crlf", "fixture": "text"},
+                                   {"argv": ("-TE",), "stdin": "crlf", "fixture": "text"},
+                                   {"argv": ("-E",), "stdin": "crlf_edge", "fixture": "text"},
+                                   {"argv": ("-sE",), "stdin": "crlf_edge", "fixture": "text"},
+                                   {"argv": ("-vE",), "stdin": "crlf_edge", "fixture": "text"})),
     Utility("cmp",
             options=(Option("-b"), Option("--print-bytes"), Option("-l"), Option("--verbose"),
                      Option("-s"), Option("--quiet"), Option("--silent"),
