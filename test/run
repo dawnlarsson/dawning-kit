@@ -2126,7 +2126,7 @@ lane_text_asm() { target_lane text_asm_one; }
 shell_asm_one()
 {
         { python3 test/differential.py --harness native_extract --source \
-                src/sh/builtin.c floodlight_status_clear &&
+                src/sh/builtin.c floodlight_status_clear env_find_hashed_span_probe &&
           python3 test/differential.py --harness native_extract --source \
                 src/sh/parse.c parse_keyword_of; } > "$work/shell_asm.h" || return 1
         target_build freestanding_check shell_asm "$work/shell_asm.$target" "$target" \
@@ -3459,7 +3459,8 @@ trap 'rm -rf "$work"' EXIT INT TERM
 #       a reference itself -- the decimal tail of positive_into_base, human.c's
 #       buffer adapters, fields.c's positive_into, reserve.c's allocator calls
 #       -- it is left out. text_blank_field comes from the tool's own source,
-#       floodlight_status_clear and parse_keyword_of from the shell's.
+#       floodlight_status_clear, env_find_hashed_span_probe and
+#       parse_keyword_of from the shell's.
 while read -r lifted_header lifted_source lifted_routines; do
         case $lifted_source in
         text) lifted_source=$text ;;
@@ -3481,6 +3482,7 @@ hash lib string_hash_33_length
 join text text_blank_field
 floodlight builtin floodlight_status_clear
 keyword parse parse_keyword_of
+envprobe builtin env_find_hashed_span_probe
 floodlight_lib lib memory_first_of memory_compare
 wide lib string_length string_length_max string_first_of string_first_of_or_end string_first_of_max string_last_of string_last_of_or_end memory_first_of
 bases lib positive_into_base
@@ -3494,7 +3496,7 @@ reserve lib memory_growth memory_reserve memory_release
 LIFTED
 
 status=0
-for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets hash join floodlight keyword series wide bases base_field human human_nearest fields input_bases network reserve; do
+for case in byte_hunts bounded riscv_bits bulk reverse squeeze offsets hash join floodlight keyword envprobe series wide bases base_field human human_nearest fields input_bases network reserve; do
         cc -O2 -w -I"$work" "-DCHECK_native_$case" test/checks.c -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done

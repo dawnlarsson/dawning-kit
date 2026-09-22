@@ -25581,6 +25581,263 @@ static fn shell_asm_keywords(p8 address_to pages)
                 }
 }
 
+/*
+        env_find_hashed_span_probe from src/sh/builtin.c against the C probe
+        it replaced, with memory_compare, which keeps its own copy of the last
+        hit so the two can be compared after every call as well as their
+        answers, alone and behind the C check of the name found last. The tables are built here: names
+        from a few letters so neighbours differ by a byte, a real hash and one
+        that collides on purpose, tombstones, slots that name a variable past
+        the count, no index at all, and names and texts that end on the last
+        byte before a page nobody may read.
+*/
+typedef struct
+{
+        string_address text;
+        positive hash, name_length, value_length;
+        bool owned, permanent, declared;
+        p8 attributes;
+        b32 array;
+} shell_asm_variable;
+
+typedef struct
+{
+        positive hash, length, index_plus_one;
+} shell_asm_slot;
+
+typedef struct
+{
+        positive generation, hit_generation, hit_hash, hit_length, hit_index;
+} shell_asm_lookup;
+
+shell_asm_variable address_to shell_vars;
+positive shell_var_count;
+shell_asm_lookup env_lookup;
+shell_asm_slot address_to env_index;
+positive env_index_slots;
+
+positive env_find_hashed_span_probe(const_string name, positive length, positive hash);
+
+/* The check of the name found last, which stays C in the shell. */
+static bool shell_asm_found_last(shell_asm_lookup address_to lookup, const_string name,
+                                 positive length, positive hash)
+{
+        if (lookup->hit_generation && lookup->hit_generation == lookup->generation &&
+            lookup->hit_hash == hash && lookup->hit_length == length &&
+            lookup->hit_index < shell_var_count)
+        {
+                positive at = 0;
+
+                while (at < length && shell_vars[lookup->hit_index].text[at] == name[at])
+                        at++;
+                return at == length;
+        }
+        return false;
+}
+
+static positive shell_asm_find_former(shell_asm_lookup address_to lookup, const_string name,
+                                      positive length, positive hash)
+{
+        if (env_index_slots)
+        {
+                positive at = hash & (env_index_slots - 1);
+
+                for (positive probes = 0; probes < env_index_slots; probes++)
+                {
+                        shell_asm_slot address_to slot = env_index + at;
+
+                        if (!slot->index_plus_one)
+                                return shell_var_count;
+                        if (slot->index_plus_one != positive_max && slot->hash == hash &&
+                            slot->length == length)
+                        {
+                                positive index = slot->index_plus_one - 1;
+
+                                if (index < shell_var_count &&
+                                    !memory_compare(shell_vars[index].text, (address_any)name, length))
+                                {
+                                        if (!lookup->generation)
+                                                lookup->generation = 1;
+                                        lookup->hit_generation = lookup->generation;
+                                        lookup->hit_hash = hash;
+                                        lookup->hit_length = length;
+                                        lookup->hit_index = index;
+                                        return index;
+                                }
+                        }
+                        at = (at + 1) & (env_index_slots - 1);
+                }
+                return shell_var_count;
+        }
+        for (positive index = 0; index < shell_var_count; index++)
+                if (shell_vars[index].hash == hash && shell_vars[index].name_length == length &&
+                    !memory_compare(shell_vars[index].text, (address_any)name, length))
+                {
+                        if (!lookup->generation)
+                                lookup->generation = 1;
+                        lookup->hit_generation = lookup->generation;
+                        lookup->hit_hash = hash;
+                        lookup->hit_length = length;
+                        lookup->hit_index = index;
+                        return index;
+                }
+        return shell_var_count;
+}
+
+static positive shell_asm_weak;
+
+static positive shell_asm_name_hash(const p8 address_to name, positive length)
+{
+        return shell_asm_weak ? length * 0x9e3779b97f4a7c15ull >> (shell_asm_weak * 8)
+                              : memory_hash_33((address_any)name, length);
+}
+
+/* The probe alone, and the whole lookup as the shell makes it. */
+static fn shell_asm_find_one(const p8 address_to name, positive length, positive hash)
+{
+        for (positive whole = 0; whole < 2; whole++)
+        {
+                shell_asm_lookup former = env_lookup, held = env_lookup;
+                bool last = whole && shell_asm_found_last(address_of former, (const_string)name, length, hash);
+                positive want = last ? former.hit_index
+                                     : shell_asm_find_former(address_of former, (const_string)name, length, hash);
+                positive got = last ? env_lookup.hit_index
+                                    : env_find_hashed_span_probe((const_string)name, length, hash);
+
+                checks++;
+                if (want != got || memory_compare(address_of former, address_of env_lookup, sizeof(former)))
+                {
+                        failures++;
+                        if (failures < 10)
+                                string_format(log, "FAIL env_find_hashed_span_probe length %p count %p slots %p: %p want %p\n",
+                                              length, shell_var_count, env_index_slots, got, want);
+                }
+                env_lookup = whole ? former : held;
+        }
+}
+
+static fn shell_asm_variables(p8 address_to pages)
+{
+        static shell_asm_variable variables[96];
+        static shell_asm_slot slots[256];
+        static p8 texts[96][64];
+        static p8 query[128];
+        static const p8 letters[] = "ab_Z9";
+
+        shell_vars = variables;
+        env_index = slots;
+        for (positive round = 0; round < 6000; round++)
+        {
+                positive count = shell_asm_next() % 90;
+                positive shape = shell_asm_next() % 4;
+
+                shell_asm_weak = shell_asm_next() % 3;
+                shell_var_count = count;
+                env_index_slots = shape == 0 ? 0 : shape == 1 ? 256 : 128;
+                memory_fill(slots, 0, sizeof(slots));
+                for (positive i = 0; i < count; i++)
+                {
+                        positive length = 1 + shell_asm_next() % (shell_asm_next() % 4 ? 12 : 40);
+                        p8 address_to text = texts[i] + shell_asm_next() % 8;
+
+                        for (positive c = 0; c < length; c++)
+                                text[c] = letters[shell_asm_next() % 5];
+                        text[length] = shell_asm_next() % 4 ? '=' : 0;
+                        text[length + 1] = 0;
+                        variables[i] = (shell_asm_variable){(string_address)text,
+                                                            shell_asm_name_hash(text, length), length};
+                        if (env_index_slots)
+                        {
+                                positive at = variables[i].hash & (env_index_slots - 1);
+
+                                while (slots[at].index_plus_one)
+                                        at = (at + 1) & (env_index_slots - 1);
+                                slots[at] = (shell_asm_slot){variables[i].hash, length, i + 1};
+                        }
+                }
+                // Tombstones, and slots that outlived the variables they named.
+                if (env_index_slots)
+                        for (positive i = 0; i < 12; i++)
+                        {
+                                positive at = shell_asm_next() % env_index_slots;
+
+                                if (shell_asm_next() % 2)
+                                        slots[at].index_plus_one = positive_max;
+                                else if (!slots[at].index_plus_one)
+                                        slots[at] = (shell_asm_slot){shell_asm_next() % 7, 1 + shell_asm_next() % 9,
+                                                                     count + 1 + shell_asm_next() % 3};
+                        }
+                // A full table walks every slot.
+                if (shape == 3)
+                        for (positive at = 0; at < env_index_slots; at++)
+                                if (!slots[at].index_plus_one)
+                                        slots[at].index_plus_one = positive_max;
+
+                for (positive q = 0; q < 24; q++)
+                {
+                        positive offset = shell_asm_next() % 16, length;
+                        p8 address_to name = query + offset;
+
+                        if (count && shell_asm_next() % 3)
+                        {
+                                shell_asm_variable address_to held = variables + shell_asm_next() % count;
+
+                                length = held->name_length;
+                                memory_copy_apart(name, held->text, length);
+                                if (shell_asm_next() % 3 == 0)
+                                        name[shell_asm_next() % length] ^= 1;
+                                if (shell_asm_next() % 4 == 0)
+                                        length -= shell_asm_next() % (length + 1);
+                        }
+                        else
+                        {
+                                length = shell_asm_next() % 20;
+                                for (positive c = 0; c < length; c++)
+                                        name[c] = letters[shell_asm_next() % 5];
+                        }
+                        name[length] = '=';
+                        // The last hit: this name, another, stale, or none.
+                        env_lookup.generation = shell_asm_next() % 3;
+                        env_lookup.hit_generation = shell_asm_next() % 2 ? env_lookup.generation
+                                                                          : shell_asm_next() % 3;
+                        env_lookup.hit_index = count ? shell_asm_next() % (count + 2) : 0;
+                        env_lookup.hit_hash = shell_asm_name_hash(name, length);
+                        env_lookup.hit_length = shell_asm_next() % 4 ? length : length + 1;
+                        shell_asm_find_one(name, length, shell_asm_name_hash(name, length));
+                        shell_asm_find_one(name, length, shell_asm_name_hash(name, length));
+                }
+
+                /* A name, and a variable's text, ending on the last byte before
+                   the page nobody may read. */
+                if (pages && count)
+                        for (positive length = 0; length < 12; length++)
+                        {
+                                p8 address_to name = pages + 8192 - length;
+                                shell_asm_variable address_to held = variables + shell_asm_next() % count;
+                                string_address text = held->text;
+
+                                memory_copy_apart(name, held->text, held->name_length < length
+                                                                        ? held->name_length : length);
+                                shell_asm_find_one(name, length, shell_asm_name_hash(name, length));
+                                if (held->name_length < 12)
+                                {
+                                        p8 address_to moved = pages + 8192 - held->name_length;
+
+                                        memory_copy_apart(moved, text, held->name_length);
+                                        held->text = (string_address)moved;
+                                        shell_asm_find_one(name, length, shell_asm_name_hash(name, length));
+                                        // Found last: the hit names this variable and its length.
+                                        env_lookup.generation = env_lookup.hit_generation = 1;
+                                        env_lookup.hit_index = (positive)(held - variables);
+                                        env_lookup.hit_hash = held->hash;
+                                        env_lookup.hit_length = held->name_length;
+                                        shell_asm_find_one(moved, held->name_length, held->hash);
+                                        held->text = text;
+                                }
+                        }
+        }
+}
+
 b32 main(void)
 {
         static p8 built[4096];
@@ -25631,6 +25888,7 @@ b32 main(void)
         }
 
         shell_asm_keywords((bipolar)(positive)pages > 0 ? pages : null);
+        shell_asm_variables((bipolar)(positive)pages > 0 ? pages : null);
 
         string_format(log, "shell assembly: %p checks, %p failures\n", checks, failures);
         log_flush();
@@ -63439,6 +63697,267 @@ int main(void)
         return bad ? 1 : 0;
 }
 #endif /* CHECK_native_keyword */
+
+#ifdef CHECK_native_envprobe
+/* ARM64 env_find_hashed_span_probe lifted verbatim from src/sh/builtin.c,
+   with the C check of the name found last in front of it as the shell has
+   it, against the C probe it replaced calling memory_compare lifted from
+   lib.c: a table the size make's configure builds, 972 variables in 2048
+   slots, and lookups drawn from the 60,241 that configure made, its
+   sixty four commonest names as often as they came and a third of them the
+   name looked up just before, then both timed over that stream. */
+#include "envprobe.h"
+#include "floodlight_lib.h"
+
+#define NATIVE_SEED 0x243f6a8885a308d3ull
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
+
+typedef struct { const char *text; u64 hash, name_length, value_length; unsigned char owned, permanent, declared, attributes; int array; } envprobe_variable;
+typedef struct { u64 hash, length, index_plus_one; } envprobe_slot;
+typedef struct { u64 generation, hit_generation, hit_hash, hit_length, hit_index; } envprobe_lookup;
+
+envprobe_variable *shell_vars;
+u64 shell_var_count;
+envprobe_lookup env_lookup;
+envprobe_slot *env_index;
+u64 env_index_slots;
+
+u64 env_find_hashed_span_probe(const char *, u64, u64);
+int memory_compare(const void *, const void *, u64);
+void *memcpy(void *, const void *, u64);
+
+static u64 checks, bad;
+static envprobe_lookup former_lookup;
+
+__attribute__((noinline, cold)) static u64 former_probe(const char *name, u64 length, u64 hash)
+{
+        u64 at = hash & (env_index_slots - 1);
+
+        for (u64 probes = 0; probes < env_index_slots; probes++) {
+                envprobe_slot *slot = env_index + at;
+
+                if (!slot->index_plus_one)
+                        return shell_var_count;
+                if (slot->index_plus_one != ~0ul && slot->hash == hash && slot->length == length) {
+                        u64 index = slot->index_plus_one - 1;
+
+                        if (index < shell_var_count && !memory_compare(shell_vars[index].text, name, length)) {
+                                if (!former_lookup.generation)
+                                        former_lookup.generation = 1;
+                                former_lookup.hit_generation = former_lookup.generation;
+                                former_lookup.hit_hash = hash;
+                                former_lookup.hit_length = length;
+                                former_lookup.hit_index = index;
+                                return index;
+                        }
+                }
+                at = (at + 1) & (env_index_slots - 1);
+        }
+        return shell_var_count;
+}
+
+static inline int same(const char *held, const char *name, u64 length)
+{
+        if (length == 1)
+                return held[0] == name[0];
+        for (u64 at = 0; at < length; at++)
+                if (held[at] != name[at])
+                        return 0;
+        return 1;
+}
+
+/* The check of the name found last, the shell's C, in front of each probe. */
+#define FIND(lookup, probe)                                                     \
+        __attribute__((noinline)) static u64 find_##probe(const char *name, u64 length, u64 hash) \
+        {                                                                       \
+                if (lookup.hit_generation && lookup.hit_generation == lookup.generation && \
+                    lookup.hit_hash == hash && lookup.hit_length == length &&    \
+                    lookup.hit_index < shell_var_count &&                        \
+                    same(shell_vars[lookup.hit_index].text, name, length))       \
+                        return lookup.hit_index;                                 \
+                return probe(name, length, hash);                                \
+        }
+FIND(former_lookup, former_probe)
+FIND(env_lookup, env_find_hashed_span_probe)
+
+static const struct { const char *name; u64 weight; } common[] = {
+        {"IFS", 6453},
+        {"ac_val", 5370},
+        {"as_lineno", 2942},
+        {"ac_var", 2154},
+        {"LINENO", 2128},
+        {"as_lineno_stack", 1994},
+        {"as_nl", 1663},
+        {"PATH", 1589},
+        {"PIPESTATUS", 1329},
+        {"ac_try_echo", 1215},
+        {"presentlang", 960},
+        {"desiredlang", 901},
+        {"CPPFLAGS", 896},
+        {"as_me", 862},
+        {"ac_status", 752},
+        {"CFLAGS", 717},
+        {"ac_ext", 717},
+        {"ac_retval", 608},
+        {"LDFLAGS", 606},
+        {"ac_try", 553},
+        {"HOME", 456},
+        {"XDG_RUNTIME_DIR", 456},
+        {"ac_res", 443},
+        {"ac_exeext", 407},
+        {"CC", 391},
+        {"SHELL", 367},
+        {"ac_objext", 352},
+        {"LOGNAME", 344},
+        {"USER", 344},
+        {"SHLVL", 344},
+        {"TMPDIR", 344},
+        {"LANG", 343},
+        {"OPTIND", 343},
+        {"as_nop", 278},
+        {"ac_compile", 274},
+        {"LIBS", 259},
+        {"PWD", 248},
+        {"as_dir", 234},
+        {"useit", 212},
+        {"lang", 210},
+        {"ac_link", 194},
+        {"ac_delim", 180},
+        {"LC_ALL", 165},
+        {"ac_cache", 165},
+        {"ac_header", 137},
+        {"OLDPWD", 136},
+        {"ac_executable_extension", 136},
+        {"ac_c_werror_flag", 133},
+        {"DUALCASE", 131},
+        {"LANGUAGE", 131},
+        {"ac_file", 126},
+        {"CONFIG_SHELL", 125},
+        {"INST_LINGUAS", 125},
+        {"POFILES", 124},
+        {"UPDATEPOFILES", 124},
+        {"DUMMYPOFILES", 124},
+        {"GMOFILES", 124},
+        {"CATALOGS", 124},
+        {"desiredlanguages", 121},
+        {"XDG_SESSION_TYPE", 120},
+        {"MOTD_SHOWN", 120},
+        {"SSH_CONNECTION", 120},
+        {"XDG_SESSION_CLASS", 120},
+        {"XDG_SESSION_ID", 120},
+};
+
+static u64 hash_of(const char *p, u64 n)
+{
+        u64 h = 5381;
+
+        for (u64 i = 0; i < n; i++)
+                h = h * 33 + (unsigned char)p[i];
+        return h;
+}
+
+#define STREAM 65536
+
+int main(void)
+{
+        static envprobe_variable variables[1024];
+        static envprobe_slot slots[2048];
+        static char texts[1024][40], queries[STREAM][24];
+        static u64 lengths[STREAM], hashes[STREAM];
+        u64 count = 0, total = 0;
+
+        for (u64 i = 0; i < sizeof(common) / sizeof(common[0]); i++, count++) {
+                u64 length = 0;
+
+                while (common[i].name[length])
+                        length++;
+                memcpy(texts[count], common[i].name, length);
+                texts[count][length] = '=';
+                variables[count] = (envprobe_variable){texts[count], hash_of(texts[count], length), length};
+                total += common[i].weight;
+        }
+        for (; count < 972; count++) {
+                u64 length = 4 + next() % 20;
+
+                for (u64 c = 0; c < length; c++)
+                        texts[count][c] = "abcdefghijklmnop_ACDEFLS"[next() % 24];
+                texts[count][length] = '=';
+                variables[count] = (envprobe_variable){texts[count], hash_of(texts[count], length), length};
+        }
+        shell_vars = variables;
+        shell_var_count = count;
+        env_index = slots;
+        env_index_slots = 2048;
+        for (u64 i = 0; i < count; i++) {
+                u64 at = variables[i].hash & 2047;
+
+                while (slots[at].index_plus_one)
+                        at = (at + 1) & 2047;
+                slots[at] = (envprobe_slot){variables[i].hash, variables[i].name_length, i + 1};
+        }
+
+        for (u64 i = 0; i < STREAM; i++) {
+                u64 pick = next() % (total + total / 3), length = 0;
+                const char *from = 0;
+
+                if (i && pick >= total) {
+                        memcpy(queries[i], queries[i - 1], 24);
+                        lengths[i] = lengths[i - 1];
+                        hashes[i] = hashes[i - 1];
+                        continue;
+                }
+                for (u64 c = 0; c < sizeof(common) / sizeof(common[0]) && !from; c++) {
+                        if (pick < common[c].weight)
+                                from = common[c].name;
+                        else
+                                pick -= common[c].weight;
+                }
+                if (!from)
+                        from = common[0].name;
+                while (from[length])
+                        length++;
+                memcpy(queries[i], from, length);
+                queries[i][length] = '=';
+                lengths[i] = length;
+                hashes[i] = hash_of(queries[i], length);
+        }
+
+        env_lookup.generation = former_lookup.generation = 1;
+        for (u64 i = 0; i < STREAM; i++) {
+                u64 want = find_former_probe(queries[i], lengths[i], hashes[i]);
+                u64 got = find_env_find_hashed_span_probe(queries[i], lengths[i], hashes[i]);
+
+                checks++;
+                if ((want != got || memory_compare(&former_lookup, &env_lookup, sizeof(env_lookup))) && bad++ < 8)
+                        printf("  FAIL query %lu length %lu: %lu want %lu\n", i, lengths[i], got, want);
+        }
+
+        u64 best_former = ~0ul, best_body = ~0ul, sink = 0, sink_body = 0;
+        for (int trial = 0; trial < 9; trial++) {
+                u64 start = ticks();
+                for (int r = 0; r < 10; r++)
+                        for (u64 i = 0; i < STREAM; i++)
+                                sink += find_former_probe(queries[i], lengths[i], hashes[i]);
+                u64 took = ticks() - start;
+                best_former = took < best_former ? took : best_former;
+                start = ticks();
+                for (int r = 0; r < 10; r++)
+                        for (u64 i = 0; i < STREAM; i++)
+                                sink_body += find_env_find_hashed_span_probe(queries[i], lengths[i], hashes[i]);
+                took = ticks() - start;
+                best_body = took < best_body ? took : best_body;
+        }
+        checks++;
+        if (sink != sink_body)
+                bad++;
+        printf("  %d lookups drawn as configure makes them, 10 times: C probe %lu ticks, assembly %lu, asm/C %lu%%\n",
+               STREAM, best_former, best_body, best_body * 100 / (best_former ? best_former : 1));
+        printf("arm64 env_find_hashed_span_probe: %lu checks | %lu failures\n", checks, bad);
+        return bad ? 1 : 0;
+}
+#endif /* CHECK_native_envprobe */
 
 #ifdef CHECK_native_floodlight
 /* ARM64 floodlight_status_clear lifted verbatim from src/sh/builtin.c,

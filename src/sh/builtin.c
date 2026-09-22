@@ -1264,9 +1264,9 @@ typedef struct
         b32 array;
 } env_variable;
 
-static env_variable address_to shell_vars;
+KEEP __attribute__((externally_visible)) env_variable address_to shell_vars;
 static positive shell_vars_room;
-static positive shell_var_count;
+KEEP __attribute__((externally_visible)) positive shell_var_count;
 /*
         The last name that was found.
 
@@ -1278,7 +1278,7 @@ static positive shell_var_count;
         env_locale_generation, which only tracks LC_ALL / LC_CTYPE / LANG.
         One record so the hit check stays on a single line of cache.
 */
-static struct
+KEEP __attribute__((externally_visible)) struct
 {
         positive generation;
         positive hit_generation;
@@ -1312,9 +1312,9 @@ typedef struct
         positive index_plus_one;
 } name_index_slot;
 
-static name_index_slot address_to env_index;
+KEEP __attribute__((externally_visible)) name_index_slot address_to env_index;
 static positive env_index_room;
-static positive env_index_slots;
+KEEP __attribute__((externally_visible)) positive env_index_slots;
 static positive env_index_tombstones;
 
 static inline INLINE fn env_index_touch()
@@ -1493,54 +1493,6 @@ static bool env_index_rebuild(positive count)
         return true;
 }
 
-static COLD positive env_find_hashed_span_probe(const_string name,
-                                                positive length, positive hash)
-{
-        if (env_index_slots)
-        {
-                positive at = hash & (env_index_slots - 1);
-
-                for (positive probes = 0; probes < env_index_slots; probes++)
-                {
-                        name_index_slot address_to slot = env_index + at;
-
-                        if (!slot->index_plus_one)
-                                return shell_var_count;
-
-                        if (slot->index_plus_one != positive_max &&
-                            slot->hash == hash && slot->length == length)
-                        {
-                                positive index = slot->index_plus_one - 1;
-
-                                if (index < shell_var_count &&
-                                    !memory_compare(shell_vars[index].text,
-                                                    (address_any)name, length))
-                                {
-                                        env_hit_remember(hash, length, index);
-                                        return index;
-                                }
-                        }
-
-                        at = (at + 1) & (env_index_slots - 1);
-                }
-
-                return shell_var_count;
-        }
-
-        /* Allocation failure leaves correctness, but not the acceleration. */
-        for (positive index = 0; index < shell_var_count; index++)
-                if (shell_vars[index].hash == hash &&
-                    shell_vars[index].name_length == length &&
-                    !memory_compare(shell_vars[index].text,
-                                    (address_any)name, length))
-                {
-                        env_hit_remember(hash, length, index);
-                        return index;
-                }
-
-        return shell_var_count;
-}
-
 static inline INLINE bool env_name_same(string_address held, const_string name,
                                         positive length)
 {
@@ -1551,6 +1503,161 @@ static inline INLINE bool env_name_same(string_address held, const_string name,
                         return false;
         return true;
 }
+
+/*
+        The variable a name and its hash stand for, when it is not the one
+        found last: the index probed slot after slot, or every variable in
+        turn when a failed allocation left no index. A name found here is
+        remembered for the next call.
+
+        The C was out of line and compiled for size, as COLD, with a call to
+        memory_compare for each candidate, and every name a configure script
+        reads that is not the one it read last came here. The name compare
+        is in this body: eight bytes a turn and the last eight again, byte
+        by byte under eight. The check of the
+        name found last stays C, in env_find_hashed_span below, where the
+        compiler takes it into the callers; a call into assembly for it cost
+        exec_simple more than the check saved.
+*/
+positive env_find_hashed_span_probe(const_string name, positive length, positive hash);
+
+_Static_assert(sizeof(env_variable) == 40 && __builtin_offsetof(env_variable, text) == 0 &&
+               __builtin_offsetof(env_variable, hash) == 8 &&
+               __builtin_offsetof(env_variable, name_length) == 16,
+               "env_find_hashed_span_probe reads a variable at these offsets");
+_Static_assert(sizeof(name_index_slot) == 24 && __builtin_offsetof(name_index_slot, hash) == 0 &&
+               __builtin_offsetof(name_index_slot, length) == 8 &&
+               __builtin_offsetof(name_index_slot, index_plus_one) == 16,
+               "env_find_hashed_span_probe reads a slot at these offsets");
+_Static_assert(sizeof(env_lookup) == 40, "env_find_hashed_span_probe writes the last hit as five words");
+
+#if X64
+// The name at %rdi, length %rsi, against the text at held: on to fail
+// unless they agree. Scratch: off and tmp, whose low byte is tmpb. Under
+// eight bytes a word read would straddle what an assignment has only just
+// stored, and wait for it, so those go byte by byte as memory_compare's do.
+#define ENV_NAME_SAME_X64(held, off, tmp, tmpb, fail)                        \
+    "cmp $8, %rsi\n   jb 61f\n   xor %" off ", %" off "\n"                   \
+    "60: mov (%" held ",%" off "), %" tmp "\n   cmp (%rdi,%" off "), %" tmp "\n"  \
+    "jne " fail "\n   add $8, %" off "\n   lea 8(%" off "), %" tmp "\n"       \
+    "cmp %rsi, %" tmp "\n   jbe 60b\n"                                      \
+    "mov -8(%" held ",%rsi), %" tmp "\n   cmp -8(%rdi,%rsi), %" tmp "\n"      \
+    "jne " fail "\n   jmp 63f\n"                                            \
+    "61: test %rsi, %rsi\n   jz 63f\n   xor %" off ", %" off "\n"           \
+    "64: movzbl (%" held ",%" off "), %" tmp "d\n   cmpb (%rdi,%" off "), %" tmpb "\n" \
+    "jne " fail "\n   inc %" off "\n   cmp %rsi, %" off "\n   jb 64b\n"        \
+    "63:\n"
+
+__asm__(
+    ASM_FUNC(env_find_hashed_span_probe)
+    "mov shell_var_count(%rip), %r8\n   mov shell_vars(%rip), %r9\n"
+    // The index, slot after slot from the hash's own.
+    "push %rbx\n   push %r12\n   push %r13\n   push %r14\n"
+    "mov env_index_slots(%rip), %rcx\n   test %rcx, %rcx\n   jz 40f\n"
+    "lea -1(%rcx), %r11\n   mov %rdx, %rax\n   and %r11, %rax\n   mov env_index(%rip), %r10\n"
+    "21: lea (%rax,%rax,2), %rbx\n   lea (%r10,%rbx,8), %rbx\n   mov 16(%rbx), %r12\n"
+    "test %r12, %r12\n   jz 30f\n   cmp $-1, %r12\n   je 22f\n"
+    "cmp (%rbx), %rdx\n   jne 22f\n   cmp 8(%rbx), %rsi\n   jne 22f\n"
+    "dec %r12\n   cmp %r8, %r12\n   jae 22f\n   lea (%r12,%r12,4), %rbx\n   mov (%r9,%rbx,8), %rbx\n"
+    ENV_NAME_SAME_X64("rbx", "r13", "r14", "r14b", "22f")
+    // Found: remembered for the next call.
+    "35: mov env_lookup(%rip), %rax\n   test %rax, %rax\n   jnz 36f\n   mov $1, %eax\n"
+    "mov %rax, env_lookup(%rip)\n"
+    "36: mov %rax, env_lookup+8(%rip)\n   mov %rdx, env_lookup+16(%rip)\n"
+    "mov %rsi, env_lookup+24(%rip)\n   mov %r12, env_lookup+32(%rip)\n   mov %r12, %rax\n"
+    "pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    "22: inc %rax\n   and %r11, %rax\n   dec %rcx\n   jnz 21b\n"
+    "30: mov %r8, %rax\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    // No index, which a failed allocation leaves: every variable in turn.
+    "40: xor %r12d, %r12d\n"
+    "41: cmp %r8, %r12\n   jae 30b\n   lea (%r12,%r12,4), %rbx\n   lea (%r9,%rbx,8), %rbx\n"
+    "cmp 8(%rbx), %rdx\n   jne 42f\n   cmp 16(%rbx), %rsi\n   jne 42f\n   mov (%rbx), %rbx\n"
+    ENV_NAME_SAME_X64("rbx", "r13", "r14", "r14b", "42f")
+    "jmp 35b\n"
+    "42: inc %r12\n   jmp 41b\n"
+    ASM_END(env_find_hashed_span_probe)
+);
+#elif ARM64
+// The name at x0, length x1, against the text at held: on to fail unless
+// they agree. Scratch: x3 to x6.
+#define ENV_NAME_SAME_ARM64(held, fail)                                     \
+    "cmp x1, #8\n   b.lo 61f\n   mov x5, #0\n"                               \
+    "60: ldr x3, [" held ", x5]\n   ldr x4, [x0, x5]\n   cmp x3, x4\n   b.ne " fail "\n" \
+    "add x5, x5, #8\n   add x6, x5, #8\n   cmp x6, x1\n   b.ls 60b\n"          \
+    "sub x5, x1, #8\n   ldr x3, [" held ", x5]\n   ldr x4, [x0, x5]\n"        \
+    "cmp x3, x4\n   b.ne " fail "\n   b 63f\n"                               \
+    "61: cbz x1, 63f\n   mov x5, #0\n"                                     \
+    "64: ldrb w3, [" held ", x5]\n   ldrb w4, [x0, x5]\n   cmp w3, w4\n   b.ne " fail "\n" \
+    "add x5, x5, #1\n   cmp x5, x1\n   b.lo 64b\n"                          \
+    "63:\n"
+
+__asm__(
+    ASM_FUNC(env_find_hashed_span_probe)
+    "adrp x8, shell_var_count\n   ldr x8, [x8, :lo12:shell_var_count]\n"
+    "adrp x9, shell_vars\n   ldr x9, [x9, :lo12:shell_vars]\n"
+    "adrp x10, env_lookup\n   add x10, x10, :lo12:env_lookup\n"
+    // The index, slot after slot from the hash's own.
+    "adrp x11, env_index_slots\n   ldr x11, [x11, :lo12:env_index_slots]\n   cbz x11, 40f\n"
+    "sub x13, x11, #1\n   and x14, x2, x13\n   adrp x15, env_index\n   ldr x15, [x15, :lo12:env_index]\n"
+    "21: mov x16, #24\n   madd x16, x14, x16, x15\n   ldr x17, [x16, #16]\n   cbz x17, 30f\n"
+    "cmn x17, #1\n   b.eq 22f\n   ldp x3, x4, [x16]\n   cmp x3, x2\n   ccmp x4, x1, #0, eq\n   b.ne 22f\n"
+    "sub x7, x17, #1\n   cmp x7, x8\n   b.hs 22f\n   mov x16, #40\n   madd x12, x7, x16, x9\n   ldr x12, [x12]\n"
+    ENV_NAME_SAME_ARM64("x12", "22f")
+    // Found: remembered for the next call.
+    "35: ldr x3, [x10]\n   cbnz x3, 36f\n   mov x3, #1\n   str x3, [x10]\n"
+    "36: stp x3, x2, [x10, #8]\n   stp x1, x7, [x10, #24]\n   mov x0, x7\n"
+    ASM_RET
+    "22: add x14, x14, #1\n   and x14, x14, x13\n   subs x11, x11, #1\n   b.ne 21b\n"
+    "30: mov x0, x8\n"
+    ASM_RET
+    // No index, which a failed allocation leaves: every variable in turn.
+    "40: mov x7, #0\n"
+    "41: cmp x7, x8\n   b.hs 30b\n   mov x16, #40\n   madd x16, x7, x16, x9\n"
+    "ldr x12, [x16]\n   ldp x3, x4, [x16, #8]\n   cmp x3, x2\n   ccmp x4, x1, #0, eq\n   b.ne 42f\n"
+    ENV_NAME_SAME_ARM64("x12", "42f")
+    "b 35b\n"
+    "42: add x7, x7, #1\n   b 41b\n"
+    ASM_END(env_find_hashed_span_probe)
+);
+#elif RISCV64
+// The name at a0, length a1, against the text at held, byte by byte: on to
+// fail unless they agree. Scratch: t3 to t5.
+#define ENV_NAME_SAME_RISCV(held, fail)                                     \
+    "li t5, 0\n   beqz a1, 63f\n"                                           \
+    "64: add t3, " held ", t5\n   lbu t3, 0(t3)\n   add t4, a0, t5\n   lbu t4, 0(t4)\n" \
+    "bne t3, t4, " fail "\n   addi t5, t5, 1\n   bltu t5, a1, 64b\n"          \
+    "63:\n"
+
+__asm__(
+    ASM_FUNC(env_find_hashed_span_probe)
+    "lla t0, shell_var_count\n   ld a3, 0(t0)\n   lla t0, shell_vars\n   ld a4, 0(t0)\n"
+    "lla a5, env_lookup\n"
+    // The index, slot after slot from the hash's own.
+    "lla t0, env_index_slots\n   ld a7, 0(t0)\n   beqz a7, 40f\n"
+    "addi t6, a7, -1\n   and t1, a2, t6\n   lla t0, env_index\n   ld t0, 0(t0)\n"
+    "21: li t2, 24\n   mul t2, t1, t2\n   add t2, t0, t2\n   ld a6, 16(t2)\n   beqz a6, 30f\n"
+    "li t3, -1\n   beq a6, t3, 22f\n   ld t3, 0(t2)\n   bne t3, a2, 22f\n   ld t3, 8(t2)\n   bne t3, a1, 22f\n"
+    "addi a6, a6, -1\n   bgeu a6, a3, 22f\n   li t2, 40\n   mul t2, a6, t2\n   add t2, a4, t2\n   ld t2, 0(t2)\n"
+    ENV_NAME_SAME_RISCV("t2", "22f")
+    // Found: remembered for the next call.
+    "35: ld t0, 0(a5)\n   bnez t0, 36f\n   li t0, 1\n   sd t0, 0(a5)\n"
+    "36: sd t0, 8(a5)\n   sd a2, 16(a5)\n   sd a1, 24(a5)\n   sd a6, 32(a5)\n   mv a0, a6\n"
+    ASM_RET
+    "22: addi t1, t1, 1\n   and t1, t1, t6\n   addi a7, a7, -1\n   bnez a7, 21b\n"
+    "30: mv a0, a3\n"
+    ASM_RET
+    // No index, which a failed allocation leaves: every variable in turn.
+    "40: li a6, 0\n"
+    "41: bgeu a6, a3, 30b\n   li t2, 40\n   mul t2, a6, t2\n   add t2, a4, t2\n"
+    "ld t3, 8(t2)\n   bne t3, a2, 42f\n   ld t3, 16(t2)\n   bne t3, a1, 42f\n   ld t2, 0(t2)\n"
+    ENV_NAME_SAME_RISCV("t2", "42f")
+    "j 35b\n"
+    "42: addi a6, a6, 1\n   j 41b\n"
+    ASM_END(env_find_hashed_span_probe)
+);
+#endif
 
 static positive env_find_hashed_span(const_string name, positive length,
                                      positive hash)
