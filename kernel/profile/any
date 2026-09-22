@@ -140,6 +140,15 @@ CONFIG_ZSWAP_COMPRESSOR_DEFAULT="zstd"
 CONFIG_ZONE_DMA=y
 CONFIG_ZONE_DMA32=y
 
+# Bounce buffers for devices that cannot reach all of memory grow when one is
+# short instead of being set aside whole at boot. x86 sets aside the pool on
+# any machine with memory above 4 GiB, which is nearly every desktop because
+# of the PCI hole, and no IOMMU here turns it off again: 64 MiB of an idle
+# 16 GiB machine that nothing used. With this the pool starts at the size the
+# command line in the gpu profile names, and a device that runs it dry gets
+# another pool made for it, or a transient one when it cannot wait.
+CONFIG_SWIOTLB_DYNAMIC=y
+
 
 #
 # IRQ subsystem

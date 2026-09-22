@@ -72,7 +72,13 @@ CONFIG_CMDLINE_BOOL=y
 # that is a server takes the server profile, which has a command line of its
 # own.
 #
-CONFIG_CMDLINE="drm_client_lib.active= intel_pstate=active amd_pstate=active intel_pstate.hwp_dynamic_boost=1 thash_entries=4096 uhash_entries=1024 mhash_entries=4096 mphash_entries=4096"
+# swiotlb=1024 starts the bounce buffers at 2 MiB (1024 slots of 2 KiB, more
+# where there are more processors to give each an area of its own). The
+# kernel's default set 64 MiB aside at boot on every machine with memory
+# above 4 GiB; with SWIOTLB_DYNAMIC, in the any profile, a device that runs
+# the pool dry gets another made for it.
+#
+CONFIG_CMDLINE="drm_client_lib.active= intel_pstate=active amd_pstate=active intel_pstate.hwp_dynamic_boost=1 thash_entries=4096 uhash_entries=1024 mhash_entries=4096 mphash_entries=4096 swiotlb=1024"
 
 #
 # Core modesetting
