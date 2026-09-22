@@ -61609,7 +61609,7 @@ static void check_wide_bodies(void) {
     }
     static u32 source[1100];
     for(unsigned i=0;i<1100;i++)source[i]=i*0x9e3779b9u;
-    for(unsigned count=0;count<=1030;count+=count<40?1:97)
+    for(unsigned count=0;count<=1060;count+=count<40?1:count>=1016&&count<1032?1:97)
     for(unsigned mask=0;mask<3;mask++)for(unsigned align=0;align<4;align++) {
         u32 opaque=mask==0?0:mask==1?0xff000000:0x00ff00ff;
         memset(got,0xa5,sizeof(got));memset(want,0xa5,sizeof(want));

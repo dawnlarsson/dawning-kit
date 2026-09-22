@@ -45161,8 +45161,49 @@ __asm__(
     ASM_FUNC(canvas_row_blit_wide)
     "        test    %ecx, %ecx\n"
     "        jnz     5f\n"
+        //
+        //       XRGB is a copy, and both ends are RAM here, so the copy is
+        //       ymm loads and stores: four a turn, then one at a time, then
+        //       the last thirty two bytes, read before anything is written,
+        //       over the end. rep movsb takes a row past 4 KiB, where it
+        //       writes whole lines without reading them first -- on Zen 5,
+        //       1 KiB in 28 cycles against 57, 2 KiB in 49 against 73, and
+        //       6400 bytes in 185 against 151.
+        //
     "        shl     $2, %rdx\n"
-    "        jmp     memory_copy_apart\n"
+    "        cmp     $32, %rdx\n"
+    "        jb      memory_copy_apart\n"
+    "        cmp     $4096, %rdx\n"
+    "        ja      memory_copy_apart\n"
+    "        vmovdqu -32(%rsi,%rdx), %ymm1   # the tail\n"
+    "        xor     %eax, %eax\n"
+    "        cmp     $128, %rdx\n"
+    "        jb      .Lrow_copy_x64_one\n"
+    "        lea     -128(%rdx), %r8\n"
+    ".Lrow_copy_x64_four:\n"
+    "        vmovdqu (%rsi,%rax), %ymm2\n"
+    "        vmovdqu 32(%rsi,%rax), %ymm3\n"
+    "        vmovdqu 64(%rsi,%rax), %ymm4\n"
+    "        vmovdqu 96(%rsi,%rax), %ymm5\n"
+    "        vmovdqu %ymm2, (%rdi,%rax)\n"
+    "        vmovdqu %ymm3, 32(%rdi,%rax)\n"
+    "        vmovdqu %ymm4, 64(%rdi,%rax)\n"
+    "        vmovdqu %ymm5, 96(%rdi,%rax)\n"
+    "        sub     $-128, %rax\n"
+    "        cmp     %r8, %rax\n"
+    "        jbe     .Lrow_copy_x64_four\n"
+    ".Lrow_copy_x64_one:\n"
+    "        lea     -32(%rdx), %r8\n"
+    "        cmp     %r8, %rax\n"
+    "        jae     .Lrow_copy_x64_tail\n"
+    "        vmovdqu (%rsi,%rax), %ymm2\n"
+    "        vmovdqu %ymm2, (%rdi,%rax)\n"
+    "        add     $32, %rax\n"
+    "        jmp     .Lrow_copy_x64_one\n"
+    ".Lrow_copy_x64_tail:\n"
+    "        vmovdqu %ymm1, -32(%rdi,%rdx)\n"
+    "        vzeroupper\n"
+    "        " ASM_RET
 
     "5:      vmovd   %ecx, %xmm0\n"
     "        vpbroadcastd %xmm0, %ymm0       # the mask in every lane\n"
