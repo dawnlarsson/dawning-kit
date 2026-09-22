@@ -2352,10 +2352,28 @@ tally modulo-glibc "$((1 - failed))" 1
 exit $failed
 )
 
+#       The math lane's differential half reads glibc's long double answers,
+#       from CHECK_math_differential_reference built by the host compiler, on
+#       its standard input.
 lane_math()
 {
         freestanding_checks_lane math math
         math_outcome=$?
+        if ${CC:-gcc} -O2 -w -o "$work/math_reference" \
+                -DCHECK_math_differential_reference test/checks.c -lm &&
+                "$work/math_reference" > "$work/math_reference.out"
+        then
+                check_input=$work/math_reference.out
+                freestanding_checks_lane math_differential math_differential
+                case $? in
+                1) math_outcome=1 ;;
+                2) [ "$math_outcome" != 0 ] || math_outcome=2 ;;
+                esac
+                check_input=
+        else
+                note "math_differential: the glibc reference did not build or finish"
+                math_outcome=1
+        fi
         freestanding_checks_lane modulo modulo
         modulo_outcome=$?
         modulo_against_glibc
@@ -2956,6 +2974,10 @@ freestanding_checks_one()
 
         if { [ "$suite" = reserve ] || [ "$suite" = lock ]; } && [ -n "$runner" ]; then
                 $runner "$work/$suite.$name" --emulated > "$work/$suite.$name.out" 2>&1
+                status=$?
+        elif [ -n "${check_input-}" ]; then
+                $runner "$work/$suite.$name" < "$check_input" \
+                        > "$work/$suite.$name.out" 2>&1
                 status=$?
         else
                 $runner "$work/$suite.$name" > "$work/$suite.$name.out" 2>&1
