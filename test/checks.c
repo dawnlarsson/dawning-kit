@@ -51933,8 +51933,9 @@ static fn json(void)
 static fn oci(void)
 {
         static const p8 manifest_type[] = "application/vnd.oci.image.manifest.v1+json";
-        static string_address layer_one[] = {"a", "opq", "d", null};
-        static string_address layer_two[] = {"a", "opq", "d", "new", null};
+        static string_address layer_one[] = {"a", "opq", "d", "esc", "lnk", null};
+        static string_address layer_two[] = {"a", "opq", "d", "new", "esc", "lnk",
+                                             ".wh.lnk", null};
         static string_address layout_members[] = {"index.json", "oci-layout", "blobs", null};
         p8 base[256];
         p8 root[256];
@@ -51947,10 +51948,12 @@ static fn oci(void)
         p8 document[2048];
         p8 descriptor[256] = "";
         p8 second[BOWL_DIGEST_HEX + 1] = "";
+        p8 outside[256];
 
         unpack_path(base, "ociwork", "");
         unpack_path(root, "oci", "");
         unpack_path(spoiled, "ocibad", "");
+        unpack_path(outside, "ociout", "");
         string_copy_bounded(layout, base, sizeof layout);
         string_append_bounded(layout, "/oci", sizeof layout);
         string_copy_bounded(image, base, sizeof image);
@@ -51968,6 +51971,7 @@ static fn oci(void)
         unpack_directory(base, "/oci/blobs/sha256");
         unpack_directory(root, "");
         unpack_directory(spoiled, "");
+        unpack_directory(outside, "");
 
         bool made = unpack_write(base, "/one/a/keep", "one", 0644) &&
                     unpack_write(base, "/one/a/gone", "gone", 0644) &&
@@ -51979,7 +51983,31 @@ static fn oci(void)
                     unpack_write(base, "/two/opq/.wh..wh..opq", "", 0644) &&
                     unpack_write(base, "/two/opq/new", "new", 0644) &&
                     unpack_write(base, "/two/new/.wh.ghost", "", 0644) &&
-                    unpack_write(base, "/two/new/n", "n", 0644);
+                    unpack_write(base, "/two/new/n", "n", 0644) &&
+                    unpack_write(outside, "/victim", "victim", 0644);
+
+        //      The lower layer's links point out of the bowl: one a directory
+        //      the upper layer writes into, one a file the upper layer both
+        //      whites out and writes again. Landing follows neither.
+        unpack_directory(base, "/two/esc");
+        made &= unpack_write(base, "/two/esc/pwned", "pwned", 0644) &&
+                unpack_write(base, "/two/lnk", "lnk", 0644) &&
+                unpack_write(base, "/two/.wh.lnk", "", 0644);
+        string_copy_bounded(path, base, sizeof path);
+        string_append_bounded(path, "/one", sizeof path);
+        {
+                bipolar one = system_open_at(AT_FDCWD, path,
+                                             FILE_READ | O_DIRECTORY | O_CLOEXEC);
+                p8 victim[256];
+
+                string_copy_bounded(victim, outside, sizeof victim);
+                string_append_bounded(victim, "/victim", sizeof victim);
+                made &= one >= 0 &&
+                        system_symbolic_link_at(outside, one, "esc") == 0 &&
+                        system_symbolic_link_at(victim, one, "lnk") == 0;
+                if (one >= 0)
+                        system_close(one);
+        }
 
         string_copy_bounded(path, base, sizeof path);
         string_append_bounded(path, "/two/d", sizeof path);
@@ -52052,6 +52080,10 @@ static fn oci(void)
                   !bowl_has(root, "/opq/.wh..wh..opq"));
         check("A whiteout in a new directory is dropped",
               unpack_says(root, "/new/n", "n") && !bowl_has(root, "/new/.wh.ghost"));
+        check("A lower layer's link out of the bowl is not written through",
+              !bowl_has(outside, "/pwned") && unpack_says(outside, "/victim", "victim") &&
+                  unpack_says(root, "/esc/pwned", "pwned") &&
+                  unpack_says(root, "/lnk", "lnk"));
         check("A directory in both layers takes the upper one's mode",
               unpack_mode(root, "/d") == 0700 && unpack_says(root, "/d/f", "f"));
         string_copy_bounded(path, root, sizeof path);
@@ -52067,6 +52099,7 @@ static fn oci(void)
         bowl_forget_path(root);
         bowl_forget_path(spoiled);
         bowl_forget_path(base);
+        bowl_forget_path(outside);
 }
 
 static fn nix(void)
