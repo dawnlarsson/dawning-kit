@@ -726,7 +726,14 @@ static DEFINE_SPINLOCK(bind_machine_lock);
 extern const char moonwater_machine_builtin[];
 extern const char moonwater_machine_builtin_end[];
 
-static char machine_script_text[MOONWATER_SCRIPT_BYTES];
+/*
+        The live script. The builtin one is read where the image keeps it,
+        and one set from disk is the copy SET took of it, held at its own
+        length: a 64 KiB array for a script of a few kilobytes was that much
+        of the kernel's memory from boot whichever one was live.
+*/
+static const char *machine_script_text;
+static char *machine_script_held;
 static unsigned int machine_script_length;
 static unsigned int machine_script_origin;
 static unsigned int machine_script_owned;
@@ -1178,15 +1185,20 @@ static long bind_machine_wait(struct file *file, struct machine_control *request
         }
 }
 
+/*
+        text becomes the live script: the builtin one, or a copy SET took,
+        which the script now owns and frees when it is replaced.
+*/
 static void machine_script_commit(const char *text, unsigned int length,
-                                  unsigned int origin)
+                                  unsigned int origin, char *held)
 {
         unsigned int bits = 0, event;
 
         if (length > MOONWATER_SCRIPT_BYTES)
                 length = MOONWATER_SCRIPT_BYTES;
-        if (text != machine_script_text)
-                memcpy(machine_script_text, text, length);
+        kfree(machine_script_held);
+        machine_script_held = held;
+        machine_script_text = text;
         machine_script_length = length;
         machine_script_origin = origin;
         moonwater_scan(machine_script_text, length, &machine_script_overlay);
@@ -1208,7 +1220,7 @@ static void machine_script_reset(void)
         }
         mutex_lock(&machine_script_lock);
         machine_script_commit(moonwater_machine_builtin, machine_script_builtin,
-                              MOONWATER_ORIGIN_BUILTIN);
+                              MOONWATER_ORIGIN_BUILTIN, NULL);
         mutex_unlock(&machine_script_lock);
 }
 
@@ -1345,14 +1357,13 @@ static long report_machine_script(struct machine_script __user *out)
                 mutex_lock(&machine_script_lock);
                 if (fresh)
                         machine_script_commit(fresh, request.length,
-                                              MOONWATER_ORIGIN_DISK);
+                                              MOONWATER_ORIGIN_DISK, fresh);
                 else
                         machine_script_commit(moonwater_machine_builtin,
                                               machine_script_builtin,
-                                              MOONWATER_ORIGIN_BUILTIN);
+                                              MOONWATER_ORIGIN_BUILTIN, NULL);
                 machine_script_answer(&request);
                 mutex_unlock(&machine_script_lock);
-                kfree(fresh);
                 break;
         }
         default:
@@ -1657,6 +1668,13 @@ static void bind_stop(void)
         cancel_work_sync(&bind_canvas_work);
         for (at = 0; at < SPARK_BIND_EVENTS; at++)
                 cancel_work_sync(&bind_table[at].work);
+
+        mutex_lock(&machine_script_lock);
+        kfree(machine_script_held);
+        machine_script_held = NULL;
+        machine_script_text = NULL;
+        machine_script_length = 0;
+        mutex_unlock(&machine_script_lock);
 }
 
 static void bind_answer(struct bind_control *request, struct bind_row *row)
