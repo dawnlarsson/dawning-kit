@@ -26465,6 +26465,30 @@ def harness_compression(argv):
                           made.returncode == unpacked.returncode == 0 and found == expected,
                           made.stderr.decode(errors='replace') + unpacked.stderr.decode(errors='replace'))
 
+            #       Who a member belongs to. An archive made here wrote uid
+            #       and gid 0 with no owner names at all, so every member came
+            #       out owned by root under an extraction allowed to restore
+            #       ownership. The reference tar reads the archive back and
+            #       must name this user and this group, by number and by name.
+            owned = root / (label + '-owner.tar')
+            made = call(runner + [str(farms[label] / 'tar'), '-cf', str(owned),
+                                  '-C', str(tree), 'tree'])
+            numeric = call([refs['tar'], '--numeric-owner', '-tvf', str(owned)])
+            named = call([refs['tar'], '-tvf', str(owned)])
+            want_numeric = ('%d/%d' % (os.geteuid(), os.getegid())).encode()
+            import grp, pwd
+            want_named = ('%s/%s' % (pwd.getpwuid(os.geteuid()).pw_name,
+                                     grp.getgrgid(os.getegid()).gr_name)).encode()
+            lines = [row for row in numeric.stdout.splitlines() if row]
+            named_lines = [row for row in named.stdout.splitlines() if row]
+            check(label + '/tar/owner',
+                  made.returncode == numeric.returncode == named.returncode == 0 and
+                  len(lines) >= 4 and
+                  all(want_numeric in row for row in lines) and
+                  all(want_named in row for row in named_lines),
+                  numeric.stdout.decode(errors='replace') +
+                  named.stdout.decode(errors='replace'))
+
             # The option parser: old-style keys, -f -, the last of repeated
             # options, the exact refusals, and option state that must not
             # outlive one run of tar inside one shell.

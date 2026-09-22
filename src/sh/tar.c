@@ -3421,9 +3421,34 @@ static b32 tar_read_archive(struct tar_options address_to options)
         return tar_status;
 }
 
+/*
+        Who owns a member, as the reference writes it: the numbers in the
+        ustar uid and gid fields and the names beside them, looked up in
+        /etc/passwd and /etc/group the way ls -l looks them up. Both went out
+        as zero with no names, so an archive made here lost its ownership
+        altogether and an extraction that is allowed to restore it -- root's,
+        or --same-owner -- gave every member to root.
+*/
+static fn tar_header_owner(p8 address_to block, p32 user, p32 group)
+{
+        p8 name[FILE_NAME_MAX];
+
+        tar_field_put(block + 108, 8, user);
+        tar_field_put(block + 116, 8, group);
+
+        //      Both fields are 32 bytes holding a terminated name, so 31
+        //      bytes of name at most: the bounded copy writes the terminator
+        //      past its bound, and a 32-byte name would put it in the first
+        //      byte of the field after.
+        if (file_user_name(user, name, sizeof(name)))
+                string_copy_max_end(block + 265, name, 31);
+        if (file_group_name(group, name, sizeof(name)))
+                string_copy_max_end(block + 297, name, 31);
+}
+
 static fn tar_header_ustar(p8 address_to block, string_address name,
                            p8 type, p64 size, p64 mode, p64 mtime,
-                           string_address link)
+                           string_address link, p32 user, p32 group)
 {
         p8 prefix[TAR_PREFIX + 1];
         p8 leaf[TAR_NAME + 1];
@@ -3456,8 +3481,6 @@ static fn tar_header_ustar(p8 address_to block, string_address name,
                 memory_copy(block + 345, prefix, string_length(prefix));
 
         tar_field_put_octal(block + 100, 8, mode);
-        tar_field_put_octal(block + 108, 8, 0);
-        tar_field_put_octal(block + 116, 8, 0);
         tar_field_put(block + 124, 12, size);
         tar_field_put(block + 136, 12, mtime);
         block[156] = type;
@@ -3468,6 +3491,7 @@ static fn tar_header_ustar(p8 address_to block, string_address name,
         memory_copy(block + 257, "ustar", 6);
         block[263] = '0';
         block[264] = '0';
+        tar_header_owner(block, user, group);
         tar_header_put_checksum(block);
 }
 
@@ -3493,14 +3517,15 @@ static bool tar_put_long(bipolar handle, p8 type, string_address text)
         if (tar_at + TAR_BLOCK > TAR_RECORD && !tar_flush(handle))
                 return false;
         tar_header_ustar(tar_record + tar_at, (string_address)"././@LongLink",
-                         type, length, 0644, 0, null);
+                         type, length, 0644, 0, null, 0, 0);
         tar_at += TAR_BLOCK;
         return tar_put(handle, (p8 address_to)text, length) &&
                tar_write_padding(handle, length);
 }
 
 static bool tar_put_header(bipolar handle, string_address name, p8 type,
-                           p64 size, p64 mode, p64 mtime, string_address link)
+                           p64 size, p64 mode, p64 mtime, string_address link,
+                           p32 user, p32 group)
 {
         p8 kept[TAR_NAME];
 
@@ -3519,7 +3544,7 @@ static bool tar_put_header(bipolar handle, string_address name, p8 type,
                 return false;
 
         tar_header_ustar(tar_record + tar_at, name, type, size, mode, mtime,
-                         link);
+                         link, user, group);
         if (tar_status == 2)
                 return false;
 
@@ -3588,7 +3613,8 @@ static b32 tar_add_directory(bipolar archive, bipolar directory,
                                                 sizeof(spelled))
                                 ? (string_address)spelled : member,
                             '5', 0, facts->mode & 07777,
-                            (p64)facts->modified.seconds, null))
+                            (p64)facts->modified.seconds, null,
+                            facts->owner, facts->group))
         {
                 file_walk_close(address_of walk);
                 return tar_status;
@@ -3706,7 +3732,8 @@ static b32 tar_add_named(bipolar archive, bipolar directory,
 
                 link[got] = end;
                 tar_put_header(archive, member, '2', 0, facts.mode & 07777,
-                               (p64)facts.modified.seconds, link);
+                               (p64)facts.modified.seconds, link,
+                               facts.owner, facts.group);
                 system_close(handle);
                 return tar_status;
         }
@@ -3715,7 +3742,8 @@ static b32 tar_add_named(bipolar archive, bipolar directory,
         if (prior)
         {
                 tar_put_header(archive, member, '1', 0, facts.mode & 07777,
-                               (p64)facts.modified.seconds, prior);
+                               (p64)facts.modified.seconds, prior,
+                               facts.owner, facts.group);
                 return tar_status;
         }
 
@@ -3737,7 +3765,8 @@ static b32 tar_add_named(bipolar archive, bipolar directory,
 
                 header = tar_record + tar_at;
                 tar_header_ustar(header, member, type, 0, facts.mode & 07777,
-                                 (p64)facts.modified.seconds, null);
+                                 (p64)facts.modified.seconds, null,
+                                 facts.owner, facts.group);
                 if (tar_status == 2)
                         return tar_status;
 
@@ -3763,7 +3792,7 @@ static b32 tar_add_named(bipolar archive, bipolar directory,
 
         if (!tar_put_header(archive, member, '0', facts.size,
                             facts.mode & 07777, (p64)facts.modified.seconds,
-                            null))
+                            null, facts.owner, facts.group))
         {
                 system_close(handle);
                 return tar_status;
