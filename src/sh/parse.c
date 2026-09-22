@@ -145,18 +145,33 @@ typedef struct
         positive body_length;
 } parse_redirect;
 
-#define PARSE_NODES 768
-#define PARSE_WORDS 768
-#define PARSE_REDIRECTS 192
-#define PARSE_KEPT_TEXT 8192
+/*
+        How much the tree may hold, which is address space and not memory.
 
-static parse_node parse_nodes[PARSE_NODES];
-static string_address parse_words[PARSE_WORDS];
-static positive parse_word_lengths[PARSE_WORDS];
-static positive parse_word_name_lengths[PARSE_WORDS];
-static positive parse_word_name_hashes[PARSE_WORDS];
-static p8 parse_word_flags[PARSE_WORDS];
-static parse_redirect parse_redirects[PARSE_REDIRECTS];
+        These were fixed arrays of 768 nodes and words, 192 redirections and
+        8 KiB of kept text, and a script met them long before it met anything
+        dash or bash would refuse: a function of a hundred lines had no room
+        to be kept, a hundred and ninety three redirections were a syntax
+        error, and so was an if block of 765 commands. Nothing may move --
+        a running command holds the address of its node while an eval parses
+        underneath it -- so the arrays are carved out of one reservation made
+        at the first parse, big enough for any script, and a page of it is
+        memory only once a parse has written there. Both ends are used as
+        before: the line's tree grows up from the bottom, kept bodies down
+        from the top.
+*/
+#define PARSE_NODES (1 << 18)
+#define PARSE_WORDS (1 << 18)
+#define PARSE_REDIRECTS (1 << 16)
+#define PARSE_KEPT_TEXT (1 << 23)
+
+static parse_node address_to parse_nodes;
+static string_address address_to parse_words;
+static positive address_to parse_word_lengths;
+static positive address_to parse_word_name_lengths;
+static positive address_to parse_word_name_hashes;
+static p8 address_to parse_word_flags;
+static parse_redirect address_to parse_redirects;
 
 #define PARSE_WORD_LITERAL 1
 #define PARSE_WORD_ASSIGNMENT 2
@@ -177,7 +192,8 @@ static b32 parse_word_top;
 static b32 parse_redirect_used;
 static b32 parse_redirect_top;
 
-static p8 parse_kept_text[PARSE_KEPT_TEXT];
+static p8 address_to parse_kept_text;
+static bool parse_arenas();
 
 #define PARSE_OK 0
 #define PARSE_INCOMPLETE 1
@@ -2801,11 +2817,10 @@ b32 parse_program()
 
         parse_want_used = 0;
 
-        if (!parse_node_top)
+        if (!parse_node_top && !parse_arenas())
         {
-                parse_node_top = PARSE_NODES;
-                parse_word_top = PARSE_WORDS;
-                parse_redirect_top = PARSE_REDIRECTS;
+                parse_state = PARSE_SYNTAX;
+                return 0;
         }
 
         parse_position = (b32)parse_token_base;
@@ -2947,17 +2962,68 @@ typedef struct
         positive references;
 } parse_kept_body;
 
-static parse_kept_body parse_kept_bodies[PARSE_NODES];
-static b8 parse_node_kept[PARSE_NODES], parse_word_kept[PARSE_WORDS];
-static b8 parse_redirect_kept[PARSE_REDIRECTS], parse_text_kept[PARSE_KEPT_TEXT];
-static const struct
+static parse_kept_body address_to parse_kept_bodies;
+static struct
 {
         b8 address_to occupied;
         b32 room;
 } parse_kept_arenas[] = {
-    {parse_node_kept, PARSE_NODES}, {parse_word_kept, PARSE_WORDS},
-    {parse_redirect_kept, PARSE_REDIRECTS}, {parse_text_kept, PARSE_KEPT_TEXT},
+    {null, PARSE_NODES}, {null, PARSE_WORDS},
+    {null, PARSE_REDIRECTS}, {null, PARSE_KEPT_TEXT},
 };
+
+/* Every array above, in one mapping the kernel fills a page at a time: 51
+   MiB of address space for 262,144 nodes and words, 65,536 redirections and
+   8 MiB of kept text, a list of some eighty thousand commands, where bash
+   and dash both run out of stack at a hundred thousand. MAP_NORESERVE keeps
+   the address space from being charged as memory. */
+#define PARSE_MAP_NORESERVE 0x4000
+
+static bool parse_arenas()
+{
+        positive sizes[] = {
+            PARSE_NODES * sizeof(parse_node), PARSE_NODES * sizeof(parse_kept_body),
+            PARSE_WORDS * sizeof(string_address), PARSE_WORDS * sizeof(positive),
+            PARSE_WORDS * sizeof(positive), PARSE_WORDS * sizeof(positive),
+            PARSE_REDIRECTS * sizeof(parse_redirect), PARSE_KEPT_TEXT,
+            PARSE_WORDS, PARSE_NODES, PARSE_WORDS, PARSE_REDIRECTS, PARSE_KEPT_TEXT,
+        };
+        address_any address_to places[] = {
+            (address_any address_to)address_of parse_nodes,
+            (address_any address_to)address_of parse_kept_bodies,
+            (address_any address_to)address_of parse_words,
+            (address_any address_to)address_of parse_word_lengths,
+            (address_any address_to)address_of parse_word_name_lengths,
+            (address_any address_to)address_of parse_word_name_hashes,
+            (address_any address_to)address_of parse_redirects,
+            (address_any address_to)address_of parse_kept_text,
+            (address_any address_to)address_of parse_word_flags,
+            (address_any address_to)address_of parse_kept_arenas[0].occupied,
+            (address_any address_to)address_of parse_kept_arenas[1].occupied,
+            (address_any address_to)address_of parse_kept_arenas[2].occupied,
+            (address_any address_to)address_of parse_kept_arenas[3].occupied,
+        };
+        positive total = 0;
+        bipolar mapped;
+
+        for (positive i = 0; i < array_count(sizes); i++)
+                total += (sizes[i] + 4095) & ~(positive)4095;
+        mapped = system_call_6(syscall(mmap), 0, total,
+                               FILE_PROTECT_READ | FILE_PROTECT_WRITE,
+                               FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS | PARSE_MAP_NORESERVE,
+                               (positive)-1, 0);
+        if (mapped < 0 && mapped > -4096)
+                return false;
+        for (positive i = 0; i < array_count(sizes); i++)
+        {
+                *places[i] = (address_any)mapped;
+                mapped += (bipolar)((sizes[i] + 4095) & ~(positive)4095);
+        }
+        parse_node_top = PARSE_NODES;
+        parse_word_top = PARSE_WORDS;
+        parse_redirect_top = PARSE_REDIRECTS;
+        return true;
+}
 
 static fn parse_kept_mark(parse_kept_body address_to body, p8 occupied)
 {
@@ -2966,11 +3032,19 @@ static fn parse_kept_mark(parse_kept_body address_to body, p8 occupied)
                             occupied, body->count[i]);
 }
 
-static fn parse_kept_frontiers()
+/* The lowest kept slot of each arena, found from a slot nothing below is
+   kept at: the old frontier, or a new body's start where that is lower. The
+   walk then covers the kept end and not the whole reservation, which would
+   touch a page of the map for every 4096 slots nobody ever used. */
+static fn parse_kept_frontiers(const b32 address_to from)
 {
-        parse_node_top = memory_span_byte(parse_node_kept, 0, PARSE_NODES);
-        parse_word_top = memory_span_byte(parse_word_kept, 0, PARSE_WORDS);
-        parse_redirect_top = memory_span_byte(parse_redirect_kept, 0, PARSE_REDIRECTS);
+        b32 address_to tops[] = {address_of parse_node_top, address_of parse_word_top,
+                                 address_of parse_redirect_top};
+
+        for (positive i = 0; i < array_count(tops); i++)
+                *tops[i] = from[i] + (b32)memory_span_byte(
+                    parse_kept_arenas[i].occupied + from[i], 0,
+                    parse_kept_arenas[i].room - from[i]);
 }
 
 static fn parse_release(b32 index)
@@ -2983,7 +3057,8 @@ static fn parse_release(b32 index)
         // word must not masquerade as text later reused by another body.
         memory_fill(parse_words + body->start[1], 0,
                     body->count[1] * sizeof(parse_words[0]));
-        parse_kept_frontiers();
+        b32 from[] = {parse_node_top, parse_word_top, parse_redirect_top};
+        parse_kept_frontiers(from);
 }
 
 static bool parse_keep_amount(parse_kept_body address_to body, positive arena,
@@ -2995,37 +3070,42 @@ static bool parse_keep_amount(parse_kept_body address_to body, positive arena,
         return true;
 }
 
+/* Both walks follow a list's commands through next in a loop and recurse
+   only into the three children, so a body of a hundred thousand commands in
+   one list is as deep on the stack as one command. */
 static bool parse_keep_measure(b32 index, parse_kept_body address_to body)
 {
-        if (!index)
-                return true;
-        parse_node address_to node = parse_nodes + index;
-        if (!parse_keep_amount(body, 0, 1) ||
-            !parse_keep_amount(body, 1, node->word_count) ||
-            !parse_keep_amount(body, 2, node->redirect_count))
-                return false;
-        for (b32 i = 0; i < node->word_count; i++)
+        for (; index; index = parse_nodes[index].next)
         {
-                positive length = parse_word_lengths[node->word + i];
-                if (length >= PARSE_KEPT_TEXT || !parse_keep_amount(body, 3, length + 1))
+                parse_node address_to node = parse_nodes + index;
+                if (!parse_keep_amount(body, 0, 1) ||
+                    !parse_keep_amount(body, 1, node->word_count) ||
+                    !parse_keep_amount(body, 2, node->redirect_count))
+                        return false;
+                for (b32 i = 0; i < node->word_count; i++)
+                {
+                        positive length = parse_word_lengths[node->word + i];
+                        if (length >= PARSE_KEPT_TEXT || !parse_keep_amount(body, 3, length + 1))
+                                return false;
+                }
+                for (b32 i = 0; i < node->redirect_count; i++)
+                {
+                        parse_redirect address_to redirect = parse_redirects + node->redirect + i;
+                        if (redirect->text_length >= PARSE_KEPT_TEXT ||
+                            !parse_keep_amount(body, 3, redirect->text_length + 1) ||
+                            (redirect->var_length &&
+                             (redirect->var_length >= PARSE_KEPT_TEXT ||
+                              !parse_keep_amount(body, 3, redirect->var_length + 1))) ||
+                            (redirect->body_length && (redirect->body_length >= PARSE_KEPT_TEXT ||
+                             !parse_keep_amount(body, 3, redirect->body_length + 1))))
+                                return false;
+                }
+                if (!parse_keep_measure(node->left, body) ||
+                    !parse_keep_measure(node->right, body) ||
+                    !parse_keep_measure(node->extra, body))
                         return false;
         }
-        for (b32 i = 0; i < node->redirect_count; i++)
-        {
-                parse_redirect address_to redirect = parse_redirects + node->redirect + i;
-                if (redirect->text_length >= PARSE_KEPT_TEXT ||
-                    !parse_keep_amount(body, 3, redirect->text_length + 1) ||
-                    (redirect->var_length &&
-                     (redirect->var_length >= PARSE_KEPT_TEXT ||
-                      !parse_keep_amount(body, 3, redirect->var_length + 1))) ||
-                    (redirect->body_length && (redirect->body_length >= PARSE_KEPT_TEXT ||
-                     !parse_keep_amount(body, 3, redirect->body_length + 1))))
-                        return false;
-        }
-        return parse_keep_measure(node->left, body) &&
-               parse_keep_measure(node->right, body) &&
-               parse_keep_measure(node->extra, body) &&
-               parse_keep_measure(node->next, body);
+        return true;
 }
 
 // Choose the highest fitting gap, leaving the low end for transient parsing.
@@ -3069,49 +3149,57 @@ static string_address parse_keep_text(b32 address_to cursor, string_address text
    and its source is either below the transient frontier or held by a call. */
 static b32 parse_keep_tree(b32 index, b32 address_to cursor)
 {
-        if (!index)
-                return 0;
-        b32 copy = cursor[0]++;
-        parse_node address_to from = parse_nodes + index;
-        parse_node address_to into = parse_nodes + copy;
-        *into = *from;
-        if (from->word_count)
-                into->word = cursor[1];
-        for (b32 i = 0; i < from->word_count; i++)
+        b32 first = 0, previous = 0;
+
+        for (; index; index = parse_nodes[index].next)
         {
-                b32 source = from->word + i;
-                b32 target = cursor[1]++;
-                parse_words[target] = parse_keep_text(cursor, parse_words[source],
-                                                       parse_word_lengths[source]);
-                parse_word_lengths[target] = parse_word_lengths[source];
-                parse_word_name_lengths[target] = parse_word_name_lengths[source];
-                parse_word_name_hashes[target] = parse_word_name_hashes[source];
-                parse_word_flags[target] = parse_word_flags[source];
-        }
-        if (from->redirect_count)
-                into->redirect = cursor[2];
-        for (b32 i = 0; i < from->redirect_count; i++)
-        {
-                parse_redirect address_to source = parse_redirects + from->redirect + i;
-                parse_redirect address_to target = parse_redirects + cursor[2]++;
-                *target = *source;
-                target->text = parse_keep_text(cursor, source->text, source->text_length);
-                if (source->var_length)
-                        target->var = parse_keep_text(cursor, source->var,
-                                                      source->var_length);
-                if (source->body_length)
+                b32 copy = cursor[0]++;
+                parse_node address_to from = parse_nodes + index;
+                parse_node address_to into = parse_nodes + copy;
+                *into = *from;
+                if (from->word_count)
+                        into->word = cursor[1];
+                for (b32 i = 0; i < from->word_count; i++)
                 {
-                        target->body = cursor[3];
-                        parse_keep_text(cursor, (source->kept ? parse_kept_text : here_text) +
-                                        source->body, source->body_length);
-                        target->kept = true;
+                        b32 source = from->word + i;
+                        b32 target = cursor[1]++;
+                        parse_words[target] = parse_keep_text(cursor, parse_words[source],
+                                                               parse_word_lengths[source]);
+                        parse_word_lengths[target] = parse_word_lengths[source];
+                        parse_word_name_lengths[target] = parse_word_name_lengths[source];
+                        parse_word_name_hashes[target] = parse_word_name_hashes[source];
+                        parse_word_flags[target] = parse_word_flags[source];
                 }
+                if (from->redirect_count)
+                        into->redirect = cursor[2];
+                for (b32 i = 0; i < from->redirect_count; i++)
+                {
+                        parse_redirect address_to source = parse_redirects + from->redirect + i;
+                        parse_redirect address_to target = parse_redirects + cursor[2]++;
+                        *target = *source;
+                        target->text = parse_keep_text(cursor, source->text, source->text_length);
+                        if (source->var_length)
+                                target->var = parse_keep_text(cursor, source->var,
+                                                              source->var_length);
+                        if (source->body_length)
+                        {
+                                target->body = cursor[3];
+                                parse_keep_text(cursor, (source->kept ? parse_kept_text : here_text) +
+                                                source->body, source->body_length);
+                                target->kept = true;
+                        }
+                }
+                into->left = parse_keep_tree(from->left, cursor);
+                into->right = parse_keep_tree(from->right, cursor);
+                into->extra = parse_keep_tree(from->extra, cursor);
+                into->next = 0;
+                if (previous)
+                        parse_nodes[previous].next = copy;
+                else
+                        first = copy;
+                previous = copy;
         }
-        into->left = parse_keep_tree(from->left, cursor);
-        into->right = parse_keep_tree(from->right, cursor);
-        into->extra = parse_keep_tree(from->extra, cursor);
-        into->next = parse_keep_tree(from->next, cursor);
-        return copy;
+        return first;
 }
 
 /* A uniquely held old body can contribute its space without risking a
@@ -3157,6 +3245,10 @@ static b32 parse_keep(b32 index, b32 replaced)
         b32 copy = parse_keep_tree(index, cursor);
         made.references = 1;
         parse_kept_bodies[copy] = made;
-        parse_kept_frontiers();
+        b32 from[] = {parse_node_top, parse_word_top, parse_redirect_top};
+        for (positive i = 0; i < array_count(from); i++)
+                if (made.count[i] && made.start[i] < from[i])
+                        from[i] = made.start[i];
+        parse_kept_frontiers(from);
         return copy;
 }

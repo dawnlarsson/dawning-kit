@@ -6826,10 +6826,14 @@ b32 exec_function_attributes_hashed(string_address name, positive2 named)
                (exec_functions[slot].exported ? DECLARE_EXPORT : 0);
 }
 
+/* The here-documents a line of function text still owes, by where their
+   redirection sits in the whole arena: a b32, since that is any slot. */
+#define EXEC_FUNCTION_HERE_MAX 192
+
 typedef struct
 {
-        p8 redirect;
-        p8 ordinal;
+        b32 redirect;
+        b32 ordinal;
 } exec_function_here;
 
 typedef struct
@@ -6838,7 +6842,7 @@ typedef struct
         positive address_to room;
         positive used;
         bool failed;
-        exec_function_here pending[PARSE_REDIRECTS];
+        exec_function_here pending[EXEC_FUNCTION_HERE_MAX];
         p8 pending_used;
 } exec_function_text;
 
@@ -7003,7 +7007,7 @@ static bool exec_function_text_redirects(exec_function_text address_to made,
                         positive length = exec_function_here_delimiter(
                             redirect, (positive)at, delimiter);
 
-                        if (made->pending_used >= PARSE_REDIRECTS)
+                        if (made->pending_used >= EXEC_FUNCTION_HERE_MAX)
                         {
                                 made->failed = true;
                                 return false;

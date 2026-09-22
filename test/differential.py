@@ -9523,6 +9523,60 @@ def shell_exec_deep_control(rng):
             str(depth))
 
 
+def shell_exec_long_construct(rng):
+    """One compound command of tens to thousands of lines -- a function, an
+    if, a loop, a case, a group, a subshell, or those nested -- run straight
+    from -c or read from a file by the dot command, sometimes with one line
+    replaced by a token out of place, whose line number is printed. The
+    parser's tree used to live in fixed pools, and a function of a hundred
+    lines had no room to be kept, 193 redirections and an if of 765
+    commands were syntax errors; dash and bash run them all."""
+    lines = rng.choice((rng.randrange(8, 60), rng.randrange(90, 260),
+                        rng.randrange(700, 820), rng.randrange(1200, 2200)))
+    body_forms = (
+        "x=$((x + 1)); echo \"$x\" > /dev/null",
+        "x=$((x + 1))",
+        ": > /dev/null 2>&1 < /dev/null",
+        "[ \"$x\" -ge 0 ] && x=$((x + 1))",
+        "case $x in *7) y=$((y + 1));; esac; x=$((x + 1))",
+        "echo \"$x\" >> out; x=$((x + 1))",
+    )
+    pick = rng.randrange(len(body_forms))
+    body = [body_forms[rng.randrange(len(body_forms)) if rng.randrange(4) == 0 else pick]
+            for _ in range(lines)]
+    shape = rng.choice(("function", "if", "while", "case", "group", "subshell",
+                        "nested", "for"))
+    fail = rng.randrange(4) == 0
+    if fail:
+        body[rng.randrange(len(body))] = rng.choice((")", "fi", "done", "esac", "then", ";;", "}"))
+    if shape == "function":
+        text = ["f() {"] + body + ["}", "f"]
+    elif shape == "if":
+        cut = rng.randrange(len(body))
+        text = ["if true; then"] + body[:cut] + ["else"] + body[cut:] + ["fi"]
+    elif shape == "while":
+        text = ["n=0", "while [ $n -lt 2 ]; do", "n=$((n + 1))"] + body + ["done"]
+    elif shape == "for":
+        text = ["for n in 1 2; do"] + body + ["done"]
+    elif shape == "case":
+        text = ["case a in", "a)"] + body + [";;", "*) echo no;;", "esac"]
+    elif shape == "group":
+        text = ["{"] + body + ["}"]
+    elif shape == "subshell":
+        text = ["("] + body + ["echo \"sub=$x\"", ")"]
+    else:
+        cut = rng.randrange(len(body))
+        text = (["g() {", "for n in 1; do", "if true; then"] + body[:cut] +
+                ["fi", "done"] + body[cut:] + ["}", "g"])
+    program = "\n".join(["x=0", "y=0"] + text + ["echo \"x=$x y=$y\""])
+    if fail or rng.randrange(2):
+        script = ("cat > long.sh <<'LONG_CONSTRUCT'\n" + program + "\nLONG_CONSTRUCT\n"
+                  "( . ./long.sh ) 2>e; echo \"status=$?\"\n"
+                  "IFS= read -r l < e; rm -f e; l=${l#*: }; l=${l%%:*}; echo \"line=${l#line }\"")
+        return ("long-construct-file-" + shape, shell_ALL, script)
+    return ("long-construct-" + shape, shell_ALL, program + "\necho \"status=$?\"")
+
+
 def shell_exec_special_scope(rng):
     bad = rng.choice(("1bad", "bad-name", "8bad"))
     operation = rng.choice((f"export {bad}=x", f"readonly {bad}=x",
@@ -13746,6 +13800,7 @@ SHELL_FAMILIES = (
     shell_exec_subshell_scope,
     shell_exec_composed_status,
     shell_exec_deep_control,
+    shell_exec_long_construct,
     shell_exec_special_scope,
     shell_exec_descriptor_order,
     shell_exec_readonly_scope,
@@ -21612,14 +21667,18 @@ printf '%s\\n' "$i"; /bin/bash -c f''',
 
     # Reservation can fail after earlier arenas were reserved. Measurement can
     # also reject the new body before reservation; both must preserve the old one.
+    # The kept text holds 8 MiB, so the words are doubled up to half of it and
+    # to all of it inside the script: an argument cannot carry that many bytes.
+    def doubled(name, letter, length):
+        return (name + '=' + letter + '; while test "${#' + name + '}" -lt '
+                + str(length) + '; do ' + name + '=$' + name + '$' + name + '; done\n')
     cases['failed_copy_preserves_definition'] = (
-        'a(){ printf "old\\n"; }; b(){ : ' + 'x' * 4000 + '; }\n'
-        + 'eval ' + shlex.quote('a(){ : ' + 'y' * 5000 + '; }')
-        + ' 2>/dev/null\nprintf "reject:%s\\n" "$?"; a; b')
+        'a(){ printf "old\\n"; }\n' + doubled('x', 'x', 1 << 22)
+        + 'eval "b(){ : $x; }"; unset x\n' + doubled('y', 'y', 1 << 22)
+        + 'eval "a(){ : $y; }" 2>/dev/null\nprintf "reject:%s\\n" "$?"; unset y; a; b')
     cases['failed_measure_preserves_definition'] = (
-        'a(){ printf "old\\n"; }\n'
-        + 'eval ' + shlex.quote('a(){ : ' + 'z' * 8192 + '; }')
-        + ' 2>/dev/null\nprintf "reject:%s\\n" "$?"; a')
+        'a(){ printf "old\\n"; }\n' + doubled('z', 'z', 1 << 23)
+        + 'eval "a(){ : $z; }" 2>/dev/null\nprintf "reject:%s\\n" "$?"; unset z; a')
     special_expected = {
         'failed_copy_preserves_definition': (0, 'reject:1\nold\n', ''),
         'failed_measure_preserves_definition': (0, 'reject:1\nold\n', ''),
@@ -21687,7 +21746,17 @@ call-frame lifetime are covered separately by harness shell_functions.
     #include <stdlib.h>
     #include <string.h>
     #include <assert.h>
+    #include <sys/mman.h>
     typedef int32_t b32;
+    typedef intptr_t bipolar;
+    typedef void *address_any;
+    #define null NULL
+    #define address_of &
+    #define syscall(name) 0
+    #define FILE_PROTECT_READ PROT_READ
+    #define FILE_PROTECT_WRITE PROT_WRITE
+    #define FILE_MAP_PRIVATE MAP_PRIVATE
+    #define FILE_MAP_ANONYMOUS MAP_ANONYMOUS
     typedef uint8_t b8;
     typedef char p8;
     typedef uintptr_t positive;
@@ -21702,11 +21771,18 @@ call-frame lifetime are covered separately by harness shell_functions.
     static void *memory_first_of(const void *p, int byte, positive n) { return memchr(p,byte,n); }
     static void *memory_last_of(const void *p, int byte, positive n) { const unsigned char *s=p;while(n) { n--;if(s[n]==byte)return (void *)(s+n); }return NULL; }
     static b32 injected_failure=-1;
+    /* The reservation parse_arenas asks for, made by the host's mmap. */
+    static bipolar system_call_6(positive call, positive hint, positive length, positive protection,
+                                 positive flags, positive handle, positive offset) {
+        (void)call; void *at = mmap((void *)hint, length, (int)protection,
+                                    (int)(flags & ~(positive)0x4000) | MAP_NORESERVE, (int)handle, (off_t)offset);
+        return at == MAP_FAILED ? -12 : (bipolar)at;
+    }
     '''
     state=r'''
     static b32 parse_node_used,parse_word_used,parse_redirect_used;
     static b32 parse_node_top=PARSE_NODES,parse_word_top=PARSE_WORDS,parse_redirect_top=PARSE_REDIRECTS;
-    static char parse_kept_text[PARSE_KEPT_TEXT],here_text[PARSE_KEPT_TEXT];
+    static char *parse_kept_text,here_text[PARSE_KEPT_TEXT];
     '''
     main=r'''
     static positive checks;
@@ -21746,7 +21822,10 @@ call-frame lifetime are covered separately by harness shell_functions.
     static uint64_t snapshot(void) {
         uint64_t h=1469598103934665603ULL;
     #define HASH(x) h=hash_bytes(x,sizeof(x),h)
-        HASH(parse_nodes);HASH(parse_words);HASH(parse_word_lengths);HASH(parse_word_name_lengths);HASH(parse_word_name_hashes);HASH(parse_word_flags);HASH(parse_redirects);HASH(parse_kept_text);HASH(parse_kept_bodies);HASH(parse_node_kept);HASH(parse_word_kept);HASH(parse_redirect_kept);HASH(parse_text_kept);
+    #define HASHN(x,n) h=hash_bytes(x,(n)*sizeof((x)[0]),h)
+        HASHN(parse_nodes,PARSE_NODES);HASHN(parse_words,PARSE_WORDS);HASHN(parse_word_lengths,PARSE_WORDS);HASHN(parse_word_name_lengths,PARSE_WORDS);HASHN(parse_word_name_hashes,PARSE_WORDS);HASHN(parse_word_flags,PARSE_WORDS);HASHN(parse_redirects,PARSE_REDIRECTS);HASHN(parse_kept_text,PARSE_KEPT_TEXT);HASHN(parse_kept_bodies,PARSE_NODES);
+        for(size_t a=0;a<array_count(parse_kept_arenas);a++)h=hash_bytes(parse_kept_arenas[a].occupied,parse_kept_arenas[a].room,h);
+    #undef HASHN
     #undef HASH
         return h;
     }
@@ -21755,28 +21834,38 @@ call-frame lifetime are covered separately by harness shell_functions.
         for(size_t a=0;a<array_count(parse_kept_arenas);a++)CHECK(memory_span_byte(parse_kept_arenas[a].occupied,0,parse_kept_arenas[a].room)==(positive)parse_kept_arenas[a].room);
         for(int i=0;i<PARSE_NODES;i++)CHECK(!parse_kept_bodies[i].references);
     }
+    /* Every slot below the top 16 stays occupied throughout, and the reserve
+       only ever writes an occupied mark, so the cases fill and compare the
+       top 16 alone: the map is a quarter of a million slots long. */
+    #define TOP 16
+    static b8 *parse_node_kept;
     static void reserve_bitmap_cases(void) {
-        unsigned char expected[PARSE_NODES];
+        unsigned char expected_top[TOP];
+    #define expected(at) expected_top[(at)-(PARSE_NODES-TOP)]
+        parse_node_kept=parse_kept_arenas[0].occupied;
+        memset(parse_node_kept,1,PARSE_NODES);
         for (int n=0;n<=10;n++)
             for (unsigned bits=0;bits<(1u<<n);bits++)
                 for (int low=0;low<=n;low++)
                     for (int count=0;count<=n+1;count++) {
-                        memset(parse_node_kept,1,sizeof(parse_node_kept));
+                        memset(parse_node_kept+PARSE_NODES-TOP,1,TOP);
                         for (int j=0;j<n;j++)parse_node_kept[PARSE_NODES-n+j]=(bits>>j)&1;
-                        memcpy(expected,parse_node_kept,sizeof expected);
+                        memcpy(expected_top,parse_node_kept+PARSE_NODES-TOP,TOP);
                         int floor=PARSE_NODES-n+low,wanted=count? -1:0;
                         for (int at=floor;count&&at<=PARSE_NODES-count;at++) {
                             int free=1;
-                            for (int j=0;j<count;j++)if(expected[at+j])free=0;
+                            for (int j=0;j<count;j++)if(expected(at+j))free=0;
                             if(free)wanted=at;
                         }
-                        if(count&&wanted>=0)memset(expected+wanted,1,count);
+                        if(count&&wanted>=0)memset(&expected(wanted),1,count);
                         CHECK(parse_keep_reserve(0,count,floor)==wanted);
-                        CHECK(!memcmp(expected,parse_node_kept,sizeof expected));
+                        CHECK(!memcmp(expected_top,parse_node_kept+PARSE_NODES-TOP,TOP));
                     }
-        memset(parse_node_kept,0,sizeof(parse_node_kept));
+        CHECK(memory_span_byte(parse_node_kept,1,PARSE_NODES-TOP)==PARSE_NODES-TOP);
+        memset(parse_node_kept,0,PARSE_NODES);
     }
     int main(void) {
+        CHECK(parse_arenas());
         reserve_bitmap_cases();
         prepare(1,3,1);int old=parse_keep(1,0);CHECK(old);check_body(old,1,3,1);
         for(injected_failure=0;injected_failure<4;injected_failure++) {
@@ -21815,7 +21904,7 @@ call-frame lifetime are covered separately by harness shell_functions.
         empty();
         // No words, redirects or text: zero extents must not pin unrelated frontiers.
         prepare(0,0,0);old=parse_keep(1,0);CHECK(old);CHECK(parse_word_top==PARSE_WORDS&&parse_redirect_top==PARSE_REDIRECTS);parse_release(old);empty();
-        printf("{\"checks\":%lu,\"body_table_bytes\":%lu,\"occupancy_bytes\":%lu}\n",(unsigned long)checks,(unsigned long)sizeof(parse_kept_bodies),(unsigned long)(sizeof(parse_node_kept)+sizeof(parse_word_kept)+sizeof(parse_redirect_kept)+sizeof(parse_text_kept)));
+        printf("{\"checks\":%lu,\"body_table_bytes\":%lu,\"occupancy_bytes\":%lu}\n",(unsigned long)checks,(unsigned long)(PARSE_NODES*sizeof(parse_kept_body)),(unsigned long)(PARSE_NODES+PARSE_WORDS+PARSE_REDIRECTS+PARSE_KEPT_TEXT));
     }
     '''
     code = prefix + types + state + engine + main
