@@ -64172,6 +64172,168 @@ b32 main(void)
 }
 #endif /* BENCH_unicode_width */
 
+#ifdef BENCH_link
+/*
+        Waterlink's transform, step by step, in the steady state of a stream:
+        a sender posts a frame, fills and seals a datagram; a receiver opens
+        it, asks the replay window, delivers it, and fills the acknowledgement
+        the sender then takes back. Every step is timed where it sits in that
+        loop, so its caches and branches are the ones a real stream has, and
+        reported as ticks a frame, the timer's own cost taken off. Two shapes:
+        bulk (1,139-byte frames, one to a datagram) and a keystroke (one byte,
+        urgent). With an argument it runs only the pipeline, that many frames
+        of the named shape, for perf stat to count.
+*/
+#include "../src/lib.util.c"
+#include "../src/net/net.c"
+#include "../src/waterlink/link.c"
+#include "../src/waterlink/seal.c"
+
+#define STEPS 8
+static struct waterlink_link sender, receiver;
+static struct waterlink_replay window;
+static crypto_aesgcm_key key;
+static p8 datagram[WATERLINK_DATAGRAM];
+static p8 acks[WATERLINK_DATAGRAM];
+static p8 payload[WATERLINK_FRAME_MAX];
+static p64 spent[STEPS];
+static p64 counter;
+static p64 stream_clock;
+static const char *step_name[STEPS] = {"post", "fill", "seal", "open", "replay",
+                                       "deliver", "fill ack", "take ack"};
+
+static fn frame_once(positive length, p16 flags, bool timed)
+{
+        p64 t[STEPS + 1];
+        positive used;
+        positive acked;
+        bool alone = false;
+        struct waterlink_datagram head = {WATERLINK_KIND_CARRY, 1, 0};
+
+        stream_clock += 20;
+        t[0] = timed ? get_cpu_time() : 0;
+        waterlink_post(address_of sender, 1, 0, flags, 0, 0, payload,
+                       (p16)length, stream_clock);
+        t[1] = timed ? get_cpu_time() : 0;
+        used = waterlink_fill(address_of sender, datagram + 16, stream_clock,
+                              address_of alone);
+        t[2] = timed ? get_cpu_time() : 0;
+        head.counter = counter++;
+        memory_copy(datagram, address_of head, 16);
+        waterlink_seal(address_of key, datagram, used);
+        t[3] = timed ? get_cpu_time() : 0;
+        (void)waterlink_open(address_of key, datagram);
+        t[4] = timed ? get_cpu_time() : 0;
+        (void)waterlink_replay_new(address_of window, head.counter);
+        t[5] = timed ? get_cpu_time() : 0;
+        (void)waterlink_deliver_at(address_of receiver, datagram + 16,
+                                   WATERLINK_PAYLOAD, stream_clock, null, null);
+        t[6] = timed ? get_cpu_time() : 0;
+        acked = waterlink_fill(address_of receiver, acks, stream_clock + 1,
+                               address_of alone);
+        t[7] = timed ? get_cpu_time() : 0;
+        if (acked)
+                (void)waterlink_deliver_at(address_of sender, acks, acked,
+                                           stream_clock + 2, null, null);
+        t[8] = timed ? get_cpu_time() : 0;
+
+        if (timed)
+                for (positive at = 0; at < STEPS; at++)
+                        spent[at] += t[at + 1] - t[at];
+}
+
+static fn stream_reset(void)
+{
+        p8 raw[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+
+        waterlink_link_reset(address_of sender);
+        waterlink_link_reset(address_of receiver);
+        memory_zero(address_of window, sizeof window);
+        crypto_aesgcm_prepare(address_of key, raw);
+        counter = 0;
+        stream_clock = 1000;
+        for (positive at = 0; at < sizeof payload; at++)
+                payload[at] = (p8)(at * 7);
+}
+
+static fn shape(string_address name, positive length, p16 flags)
+{
+        p64 overhead = ~0ull;
+        p64 best[STEPS];
+        p64 total = 0;
+
+        for (positive at = 0; at < 1000; at++)
+        {
+                p64 a = get_cpu_time();
+                p64 b = get_cpu_time();
+
+                if (b - a < overhead)
+                        overhead = b - a;
+        }
+
+        for (positive at = 0; at < STEPS; at++)
+                best[at] = ~0ull;
+
+        for (positive round = 0; round < 7; round++)
+        {
+                stream_reset();
+                for (positive at = 0; at < 2000; at++)
+                        frame_once(length, flags, false);
+                memory_zero(spent, sizeof spent);
+                for (positive at = 0; at < 20000; at++)
+                        frame_once(length, flags, true);
+                for (positive at = 0; at < STEPS; at++)
+                {
+                        p64 each = spent[at] / 20000;
+
+                        each = each > overhead ? each - overhead : 0;
+                        if (each < best[at])
+                                best[at] = each;
+                }
+        }
+
+        string_format(log, "  %s, ticks a frame:\n", name);
+        for (positive at = 0; at < STEPS; at++)
+        {
+                string_format(log, "    %s  %p\n", (string_address)step_name[at],
+                              (positive)best[at]);
+                total += best[at];
+        }
+        string_format(log, "    all  %p\n", (positive)total);
+}
+
+b32 main(void)
+{
+        string_address address_to words = program_argument_list();
+
+        if (program_argument_count() > 2)
+        {
+                bool keystroke = string_equals(words[1], "keystroke");
+                positive count = 0;
+
+                for (string_address at = words[2]; *at; at++)
+                        count = count * 10 + (positive)(*at - '0');
+                stream_reset();
+                for (positive at = 0; at < count; at++)
+                        frame_once(keystroke ? 1 : WATERLINK_FRAME_MAX,
+                                   keystroke ? WATERLINK_FRAME_DURABLE |
+                                                       WATERLINK_FRAME_URGENT
+                                             : WATERLINK_FRAME_DURABLE |
+                                                       WATERLINK_FRAME_BULK,
+                                   false);
+                string_format(log, "%p frames\n", count);
+                log_flush();
+                return 0;
+        }
+
+        shape("bulk", WATERLINK_FRAME_MAX,
+              WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_BULK);
+        shape("keystroke", 1, WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_URGENT);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_link */
+
 #ifdef CHECK_spark_entry
 #include "../src/lib.util.c"
 
