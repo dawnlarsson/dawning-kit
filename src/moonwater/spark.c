@@ -131,7 +131,34 @@ _Static_assert(sizeof(struct header) == SPARK_HEADER_SIZE,
 // as a path to open.
 #define SPARK_SPAWN_TOOL 0x2u
 
-#define SPARK_SPAWN_FLAGS (SPARK_SPAWN_SHELL | SPARK_SPAWN_TOOL)
+/*
+        Which ignored signals the program keeps.
+
+        execve carries an ignored signal across, and a spawn gives every one
+        its default back, because the shell asking ignores interrupt and quit
+        for its own sake, and the stop signals too under job control, and
+        passing that on would leave nothing it runs able to be cancelled or
+        stopped. But an ignore can also be somebody's choice that the program
+        is meant to inherit: trap '' in a script, nohup's hangup, whatever the
+        shell was itself started ignoring, an asynchronous list's interrupt.
+        Only the caller knows which is which, so it names what stays ignored;
+        a signal not named goes back to its default, and a request naming
+        none is the reset of every ignore it always was.
+*/
+#define SPARK_SPAWN_KEEP_INTERRUPT 0x4u
+#define SPARK_SPAWN_KEEP_QUIT 0x8u
+#define SPARK_SPAWN_KEEP_STOP_KEY 0x10u
+#define SPARK_SPAWN_KEEP_TTY_INPUT 0x20u
+#define SPARK_SPAWN_KEEP_TTY_OUTPUT 0x40u
+// Every ignored signal but those five.
+#define SPARK_SPAWN_KEEP_IGNORED 0x80u
+
+#define SPARK_SPAWN_FLAGS (SPARK_SPAWN_SHELL | SPARK_SPAWN_TOOL |                \
+                           SPARK_SPAWN_KEEP_INTERRUPT | SPARK_SPAWN_KEEP_QUIT |  \
+                           SPARK_SPAWN_KEEP_STOP_KEY |                           \
+                           SPARK_SPAWN_KEEP_TTY_INPUT |                          \
+                           SPARK_SPAWN_KEEP_TTY_OUTPUT |                         \
+                           SPARK_SPAWN_KEEP_IGNORED)
 
 /* What SPARK_SPAWN_TOOL runs. Part of the flag's meaning rather than a path
    the kernel picks, so it is written here beside it and nowhere else. */
@@ -1250,6 +1277,8 @@ struct spawn_work
         bool path_owned;
         // spawn_terminal's, whose first window takes the keyboard.
         bool terminal;
+        // SPARK_SPAWN_KEEP_*: the ignores the program keeps.
+        unsigned int keep;
         struct file *stdio[3];
 };
 
@@ -1334,9 +1363,22 @@ static int spawn_terminal(void)
         execve resets handled signals to default but carries ignored ones
         across, so a shell that ignores SIGINT so it survives control-C would
         hand that same deafness to everything it runs, and nothing could ever
-        be cancelled.
+        be cancelled. What the caller said to keep stays ignored.
 */
-static void spawn_default_signals(void)
+static bool spawn_keeps(unsigned int keep, int number)
+{
+        switch (number)
+        {
+        case SIGINT: return keep & SPARK_SPAWN_KEEP_INTERRUPT;
+        case SIGQUIT: return keep & SPARK_SPAWN_KEEP_QUIT;
+        case SIGTSTP: return keep & SPARK_SPAWN_KEEP_STOP_KEY;
+        case SIGTTIN: return keep & SPARK_SPAWN_KEEP_TTY_INPUT;
+        case SIGTTOU: return keep & SPARK_SPAWN_KEEP_TTY_OUTPUT;
+        default: return keep & SPARK_SPAWN_KEEP_IGNORED;
+        }
+}
+
+static void spawn_default_signals(unsigned int keep)
 {
         struct k_sigaction *action = current->sighand->action;
         int signal;
@@ -1344,7 +1386,8 @@ static void spawn_default_signals(void)
         spin_lock_irq(&current->sighand->siglock);
 
         for (signal = 0; signal < _NSIG; signal++)
-                if (action[signal].sa.sa_handler == SIG_IGN)
+                if (action[signal].sa.sa_handler == SIG_IGN &&
+                    !spawn_keeps(keep, signal + 1))
                         action[signal].sa.sa_handler = SIG_DFL;
 
         spin_unlock_irq(&current->sighand->siglock);
@@ -1360,7 +1403,7 @@ static int spawn_enter(void *data)
                 ? (const char *const *)work->environment->vector : empty_envp;
         int ret;
 
-        spawn_default_signals();
+        spawn_default_signals(work->keep);
 
 #ifdef CONFIG_MOONWATER_CANVAS
         /*
@@ -1528,6 +1571,7 @@ static long do_spawn(struct file *file, struct spawn __user *request)
         work = kzalloc(sizeof(*work), GFP_KERNEL);
         if (!work)
                 return -ENOMEM;
+        work->keep = args.flags;
 
         for (unsigned int i = 0; i < array_count(work->stdio); i++)
         {

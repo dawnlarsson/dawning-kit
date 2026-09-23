@@ -798,6 +798,11 @@ static fn job_monitor_start()
         if (!shell_is_interactive)
                 return;
 
+        /* Asked first, so that what the shell was started with is still
+           what is answered once these are its own ignores. */
+        (void)shell_was_ignored(JOB_SIGNAL_TTY_OUTPUT);
+        (void)shell_was_ignored(JOB_SIGNAL_TTY_INPUT);
+        (void)shell_was_ignored(JOB_SIGNAL_STOP_KEY);
         shell_ignore(JOB_SIGNAL_TTY_OUTPUT);
         shell_ignore(JOB_SIGNAL_TTY_INPUT);
         shell_ignore(JOB_SIGNAL_STOP_KEY);
@@ -2799,9 +2804,9 @@ static b32 job_foreground_wait(bipolar child, bipolar group, b32 node)
 static fn job_child_group_enter(bipolar group)
 {
         job_group_set(0, group);
-        shell_default(JOB_SIGNAL_STOP_KEY);
-        shell_default(JOB_SIGNAL_TTY_INPUT);
-        shell_default(JOB_SIGNAL_TTY_OUTPUT);
+        shell_child_default(JOB_SIGNAL_STOP_KEY);
+        shell_child_default(JOB_SIGNAL_TTY_INPUT);
+        shell_child_default(JOB_SIGNAL_TTY_OUTPUT);
 }
 
 /*
@@ -2834,8 +2839,8 @@ fn job_execute_tool(positive which, bool confined)
                 if (which == SHELL_TOOLS)
                         shell_thread_instance();
                 trap_default_all();
-                shell_default(SIGNAL_INTERRUPT);
-                shell_default(SIGNAL_QUIT);
+                shell_child_default(SIGNAL_INTERRUPT);
+                shell_child_default(SIGNAL_QUIT);
                 exec_child_began();
                 program_arguments_use(shell_argv, (b32)shell_argc);
                 exit(shell_tool_call_in(which, true));
@@ -5289,8 +5294,8 @@ static b32 history_edit_run_editor(string_address command)
         if (child == 0)
         {
                 trap_default_all();
-                shell_default(SIGNAL_INTERRUPT);
-                shell_default(SIGNAL_QUIT);
+                shell_child_default(SIGNAL_INTERRUPT);
+                shell_child_default(SIGNAL_QUIT);
                 exec_child_began();
                 exec_run_nested(command, true);
                 exec_child_leave(shell_status);
@@ -12896,8 +12901,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                         if (monitor)
                                 job_child_group_enter(group);
 
-                        if (!trap_ignored(SIGNAL_PIPE))
-                                shell_default(SIGNAL_PIPE);
+                        shell_child_default(SIGNAL_PIPE);
                         exec_asynchronous = background;
                         if (!exec_child_signals(
                                 background && !monitor,

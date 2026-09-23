@@ -22,6 +22,9 @@
 #define SIGNAL_INTERRUPT 2
 #define SIGNAL_QUIT 3
 #define SIGNAL_PIPE 13
+#define SIGNAL_STOP_KEY 20
+#define SIGNAL_TTY_INPUT 21
+#define SIGNAL_TTY_OUTPUT 22
 #define SIGNAL_IGNORE 1
 #define SIGNAL_DEFAULT 0
 
@@ -102,6 +105,30 @@ fn shell_signals_start()
                                 shell_signals_ignored |= mask;
                 }
         }
+}
+
+/*
+        Only a shell somebody is typing at stays deaf to control-C.
+
+        Every shell starts ignoring interrupt and quit, because until the
+        options are read nobody knows whether this one is interactive. A
+        script or a -c string that went on ignoring them could not be stopped
+        from the terminal at all: control-C took the command it was running
+        and the shell went on to the next line, a loop of builtins ran for
+        ever, and a utility run as the last command in the shell's own process
+        kept that deafness too. dash and bash leave a non-interactive shell
+        interruptible; what was already ignored when it started stays ignored.
+*/
+fn shell_signals_settle(bool interactive)
+{
+        b32 numbers[2] = {SIGNAL_INTERRUPT, SIGNAL_QUIT};
+
+        if (interactive)
+                return;
+
+        for (positive at = 0; at < 2; at++)
+                if (!(shell_signals_ignored & ((positive)1 << numbers[at])))
+                        shell_default(numbers[at]);
 }
 
 // Set where the signal landed, read where a command ends. A handler that ran
@@ -1557,6 +1584,34 @@ static bool shell_spawn_request(struct spawn address_to request,
         return true;
 }
 
+/* Which of its ignored signals a spawned program keeps: every one the
+   shell did not ignore for its own sake. That is interrupt and quit unless
+   a trap '', the shell's own start or an asynchronous list ignored them,
+   and the stop signals unless a trap '' or the start did. */
+static b32 shell_spawn_keeps()
+{
+        static const struct
+        {
+                b32 number;
+                b32 flag;
+        } own[] = {
+            {SIGNAL_INTERRUPT, SPARK_SPAWN_KEEP_INTERRUPT},
+            {SIGNAL_QUIT, SPARK_SPAWN_KEEP_QUIT},
+            {SIGNAL_STOP_KEY, SPARK_SPAWN_KEEP_STOP_KEY},
+            {SIGNAL_TTY_INPUT, SPARK_SPAWN_KEEP_TTY_INPUT},
+            {SIGNAL_TTY_OUTPUT, SPARK_SPAWN_KEEP_TTY_OUTPUT},
+        };
+        b32 keeps = SPARK_SPAWN_KEEP_IGNORED;
+
+        for (positive at = 0; at < array_count(own); at++)
+                if (trap_ignored((positive)own[at].number) ||
+                    shell_was_ignored(own[at].number) ||
+                    (at < 2 && exec_asynchronous))
+                        keeps |= own[at].flag;
+
+        return keeps;
+}
+
 /* Submit a launch whose Floodlight decision the caller already made. Keeping
    policy out of this sender lets paths which need the decision for their fork
    fallback make one stable choice before probing or opening /dev/spark. */
@@ -1578,7 +1633,7 @@ static bipolar shell_spawn_preflighted(b32 flags, string_address path,
         if (!shell_spawn_request(address_of request, path, arguments))
                 return -1;
 
-        request.flags = flags;
+        request.flags = flags | shell_spawn_keeps();
         request.stdio[0] = input;
         request.stdio[1] = output;
         request.stdio[2] = error;

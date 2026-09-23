@@ -12918,6 +12918,41 @@ if len(runs) >= 2:
                 else "%d pixels" % changed(after_interrupt, after_command),
                 "yes"))
 
+    #       Control-C at a shell the terminal's shell is running. The line
+    #       discipline sends the interrupt to the whole foreground group, a
+    #       non-interactive shell among it, and that shell used to ignore it
+    #       as if it were the one being typed at: the sleep died, the rest of
+    #       the string ran and the terminal's shell was told 0. The answers
+    #       go to the serial line, which the typed line never reaches.
+    def type_shell(line):
+        shifted = {'"': "apostrophe", "$": "4", ">": "dot", "?": "slash"}
+        plain = {" ": "spc", ".": "dot", "/": "slash", "-": "minus", ";": "semicolon",
+                 "\n": "ret"}
+        for character in line:
+            if character in shifted:
+                chord("shift", shifted[character])
+            elif character.isupper():
+                chord("shift", character.lower())
+            else:
+                key(plain.get(character, character))
+
+    type_shell('sh -c "sleep 20; echo stringran-on > /dev/ttyS0"\n')
+    time.sleep(2)
+    chord("ctrl", "c")
+    time.sleep(1)
+    type_shell("echo interrupted-$? > /dev/ttyS0\n")
+    serial_text = b""
+    for _ in range(40):
+        serial_text = open(work + "/serial", "rb").read()
+        if re.search(rb"interrupted-\d+", serial_text):
+            break
+        time.sleep(0.5)
+    stopped = re.findall(rb"interrupted-(\d+)", serial_text)
+    out.append(("Control-C stops a shell run from the terminal",
+                stopped[-1].decode() if stopped else "no answer", "130"))
+    out.append(("and the rest of its string never runs",
+                str(serial_text.count(b"stringran-on")), "0"))
+
     # A framed pixel window cannot grow beyond the mapping its client owns.
     # This used to maximize to desktop dimensions anyway, then compose read
     # those invented pixels past the end of the mapping. The window demo's

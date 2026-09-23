@@ -11549,8 +11549,6 @@ def shell_nesting_limits(farm):
     return passed, total, notes
 
 
-SHELL_CHECKS = (shell_restricted_function_import, shell_hostile_environment,
-                shell_nesting_limits)
 
 
 # ----------------------------------------------------------------------------
@@ -14687,6 +14685,181 @@ def shell_lang_personality_split(rng):
     }
     return ("personality-split-" + shape, shell_ALL,
             shell_program(scripts[shape] + " 2>&1", "echo \"end=$?\""))
+
+
+
+#       What a command starts with, read back from /proc by the command
+#       itself: an interactive shell ignores interrupt and quit, a
+#       non-interactive one does not, an asynchronous list without job
+#       control ignores both, trap '' and whatever was ignored when the
+#       shell started reach every child, and a caught trap does not. The
+#       shell under test is started once more through ./$shell_me -c, so a
+#       disposition ignored around that line is one it inherited, and the
+#       last command of the string is a real tail. A resident utility run
+#       as that tail is the shell's own process becoming the command, and
+#       used to keep the shell's ignored interrupt and quit.
+#
+#       SigIgn only: what a handler catches is the reader's own business --
+#       GNU grep catches SIGSEGV for its stack overflow report -- and a
+#       caught signal never crosses exec.
+shell_SIGNAL_READER = "grep '^SigIgn' /proc/self/status"
+#       The shell's own interrupt bit and nothing else: bash's own process
+#       ignores quit whether or not anybody types at it, dash's does not.
+shell_SIGNAL_SELF = ('m=$(sed -n \'s/^SigIgn:[[:space:]]*//p\' /proc/$$/status); '
+                     'echo "shell-int-ignored=$(( 0x$m & 2 ))"')
+shell_SIGNAL_SHAPES = {
+    "tail": "@R@",
+    "foreground": "@R@; :",
+    "background": "@R@ & wait",
+    "pipe-first": "@R@ | cat; :",
+    "pipe-last": ": | @R@; :",
+    "subshell": "(@R@); :",
+    "group-background": "{ @R@; } & wait",
+    "substitution": 'v=$(@R@); echo "$v"',
+    "function": "f() { @R@; }; f; :",
+    "self": "@S@",
+    "self-background": "(@S@) & wait",
+}
+shell_SIGNAL_ENTRIES = {"none": "", "int-quit": "trap '' INT QUIT; ", "pipe": "trap '' PIPE; ",
+                        "int-quit-pipe": "trap '' INT QUIT PIPE; "}
+shell_SIGNAL_TRAPS = ("", "trap '' INT; ", "trap 'echo caught' INT; ", "trap '' QUIT; ",
+                      "trap - INT; ", "trap 'echo caught' QUIT; trap '' PIPE; ")
+
+
+def shell_signal_script(shape, entry, trap):
+    inner = (shell_SIGNAL_SHAPES[shape].replace("@R@", shell_SIGNAL_READER)
+             .replace("@S@", shell_SIGNAL_SELF))
+    return shell_program(shell_SELF + shell_SIGNAL_ENTRIES[entry] +
+                         './"$shell_me" -c ' + shell_quote(trap + inner),
+                         'echo "end=$?"', 'rm -f "./$shell_me"')
+
+
+#       Control-C at a terminal while the shell there runs something that is
+#       itself a shell: a -c string or a script, a loop of builtins or a
+#       program with more to do after it. The line discipline sends the
+#       interrupt to the whole foreground group, and a non-interactive shell
+#       is part of it: it dies of the signal, the rest of its string never
+#       runs, and the interactive shell reports 130. It used to ignore the
+#       signal as if it were the one being typed at, so only the command it
+#       was running died and a loop of builtins could not be stopped at all.
+#       A child that handles interrupt and exits on its own is where the two
+#       references part -- bash waits and goes on, dash dies with it -- so no
+#       run here leaves the decision to a child's handler.
+shell_INTERRUPT_RUNS = {
+    "loop": "./\"$shell_me\" -c 'while :; do :; done; echo after'",
+    "then": "./\"$shell_me\" -c 'sleep 5; echo after'",
+    "tail": "./\"$shell_me\" -c 'sleep 5'",
+    "script": "./\"$shell_me\" loop.sh",
+    "trapped": "./\"$shell_me\" -c 'trap \"echo caught\" INT; sleep 5; echo after'",
+    "ignored": "./\"$shell_me\" -c 'trap \"\" INT; sleep 2; echo after'",
+    "pipeline": "./\"$shell_me\" -c 'sleep 5 | cat; echo after'",
+    "background": "./\"$shell_me\" -c 'sleep 5 & wait; echo after'",
+}
+
+
+def shell_interrupt_script(run):
+    steps = [('if [ -n "${BASH_VERSION+x}" ]; then shell_me=bash; else shell_me=dash; fi\n', 0.2),
+             ("printf 'while :; do :; done\\necho after\\n' > loop.sh\n", 0.3),
+             (shell_INTERRUPT_RUNS[run] + "\n", 0.8), (b"\x03", 3.0 if run == "ignored" else 1.0),
+             ("echo \"st=$?\"\n", 0.5), ("exit\n", 0.5)]
+    return shell_pty_script(steps, {"linger": 3.0}, ["-i"])
+
+
+def shell_reference_walk(farm, cases):
+    """Each (mode, label, script, timeout, normalize) run by the reference
+    shell and by this one under the same name, in a directory of its own,
+    and compared on status and output. A case whose two runs differ is run
+    once more on both sides before it counts: the sessions and kills keep
+    time with sleeps, and a loaded machine can move one of them."""
+    import concurrent.futures
+    import shutil
+    import tempfile
+    target = Path(farm) / "bash"
+    if not target.exists():
+        return 0, 1, ["the candidate's bash is missing from the farm"]
+    binary = target.resolve()
+    root = Path(tempfile.mkdtemp(prefix="shell-reference-walk-"))
+    names = root / "names"
+    names.mkdir()
+    for name in ("bash", "dash"):
+        (names / name).symlink_to(binary)
+
+    def one(argv, script, timeout, normalize, at):
+        directory = root / ("w%d" % at)
+        shutil.rmtree(directory, ignore_errors=True)
+        directory.mkdir()
+        environment = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "HOME": str(directory),
+                       "TMPDIR": str(directory), "TERM": "dumb"}
+        try:
+            ran = subprocess.run(argv + ["-c", script], cwd=directory, env=environment,
+                                 stdin=subprocess.DEVNULL, capture_output=True,
+                                 timeout=timeout, start_new_session=True)
+            out = ran.stdout if normalize is None else normalize("stdout", ran.stdout)
+            return ran.returncode, out
+        except subprocess.TimeoutExpired:
+            return "timeout", b""
+
+    def compare(index):
+        mode, label, script, timeout, normalize = cases[index]
+        reference, flags, name = SHELL_MODES[mode]
+        for attempt in range(2):
+            want = one([reference] + flags, script, timeout, normalize, 2 * index)
+            got = one([str(names / name)] + flags, script, timeout, normalize, 2 * index + 1)
+            if want == got:
+                return None
+        return "%s [%s]: bash/dash %r, this shell %r" % (label, mode, want, got)
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(24, os.cpu_count() or 4)) as pool:
+            misses = [note for note in pool.map(compare, range(len(cases))) if note]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return len(cases) - len(misses), len(cases), misses
+
+
+def shell_signal_dispositions(farm):
+    """Signals a command starts with, and Control-C, against bash and dash.
+
+    Two grammars walked whole, through shell_reference_walk under each
+    name (bash, bash --posix, dash). A check rather than a family because
+    the shell domain is held to a floor, and a floor's slack is wider than
+    a whole grammar going wrong: these hold or they do not.
+
+      signals    every shape a command is started in (the tail of a -c
+                 string, foreground, background, both ends of a pipeline,
+                 subshell, background group, substitution, function, and
+                 the shell's own process) x what was ignored when the shell
+                 started x the trap set in it; the command reads SigIgn.
+      interrupt  an interactive session on a pty runs a non-interactive
+                 shell, Control-C, then echo $?.
+    """
+    cases = []
+    for mode, (reference, flags, name) in sorted(SHELL_MODES.items()):
+        for shape in shell_SIGNAL_SHAPES:
+            for entry in shell_SIGNAL_ENTRIES:
+                for trap in shell_SIGNAL_TRAPS:
+                    #   bash's own process takes the default back on trap -
+                    #   for a signal it arrived ignoring, while what it
+                    #   starts keeps the ignore: the shell's deafness, not a
+                    #   command's, and not what these ask.
+                    if (name == "bash" and shape.startswith("self") and trap == "trap - INT; "
+                            and "int" in entry):
+                        continue
+                    cases.append((mode, "signals %s entry=%s %s" % (shape, entry, trap.strip() or "no-trap"),
+                                  shell_signal_script(shape, entry, trap), 10, None))
+        for run in shell_INTERRUPT_RUNS:
+            cases.append((mode, "interrupt %s" % run, shell_interrupt_script(run), 25,
+                          shell_terminal_normalize))
+    return shell_reference_walk(farm, cases)
+
+
+
+SHELL_CHECKS = (
+    shell_restricted_function_import,
+    shell_hostile_environment,
+    shell_nesting_limits,
+    shell_signal_dispositions,
+)
 
 
 SHELL_UTILITIES = (
@@ -18718,6 +18891,9 @@ static void *spawn_handed;
 #define get_cred(c) (c)
 #define put_cred(c) ((void)(c))
 #define refcount_inc(p) (++*(p))
+/* spawn_keeps names the signals the shell ignores for itself; glibc under
+   gcc does not bring them in through what is included above. */
+#include <signal.h>
 #undef SIGCHLD
 #define SIGCHLD 17
 /* gcc 16 does not pull these in through stdio the way an older
@@ -18733,6 +18909,7 @@ static long stat_task_ns, stat_spawns;
         ((void)(sig), spawn_handed=(arg), spawn_entered++, spawn_pid)
 '''
     source += section(spark, "struct spawn_work", "/*\n        Starts one program")
+    source += section(spark, "static bool spawn_keeps", "static void spawn_default_signals")
     source += section(spark, "static int copy_strings", "static long do_spawn")
     source += section(spark, "static long do_spawn", "static long report_stats")
     source += r'''
@@ -18775,7 +18952,10 @@ static void check_spawn_dispatch(void) {
     _Static_assert(offsetof(struct spawn,flags)==48 &&
                    offsetof(struct spawn,stdio)==52,
                    "spawn carries its flags and descriptors in the request");
-    _Static_assert(SPARK_SPAWN_FLAGS==(SPARK_SPAWN_SHELL|SPARK_SPAWN_TOOL),
+    _Static_assert(SPARK_SPAWN_FLAGS==(SPARK_SPAWN_SHELL|SPARK_SPAWN_TOOL|
+                                       SPARK_SPAWN_KEEP_INTERRUPT|SPARK_SPAWN_KEEP_QUIT|
+                                       SPARK_SPAWN_KEEP_STOP_KEY|SPARK_SPAWN_KEEP_TTY_INPUT|
+                                       SPARK_SPAWN_KEEP_TTY_OUTPUT|SPARK_SPAWN_KEEP_IGNORED),
                    "the accepted flag set is exactly the defined flags");
 
     char argv_block[]="/thing\0-v\0";
@@ -18785,7 +18965,7 @@ static void check_spawn_dispatch(void) {
     /* Every flag combination, defined and not. A bit this kernel does not
        define has to be refused rather than ignored, or a caller built against
        a later loader would silently get the default policy here. */
-    for (unsigned flags=0;flags<8;flags++) {
+    for (unsigned flags=0;flags<0x200;flags++) {
         struct spawn request={.path=(unsigned long)"/thing",
             .argv=(unsigned long)argv_block,.argv_bytes=sizeof(argv_block)-1,
             .argv_count=2,.flags=flags,.stdio={-1,-1,-1}};
@@ -18806,12 +18986,34 @@ static void check_spawn_dispatch(void) {
                nothing else, and the two are independent. */
             check(handed->shell_fallback==!!(flags & SPARK_SPAWN_SHELL),
                   "SHELL alone decides the ENOEXEC fallback");
+            check(handed->keep==flags,
+                  "the ignores to keep reach the launch as they were asked");
             if (flags & SPARK_SPAWN_TOOL)
                 check(!handed->path_owned && !strcmp(handed->path,"/shell"),
                       "TOOL launches the system image and borrows its path");
             else
                 check(handed->path_owned && !strcmp(handed->path,"/thing"),
                       "without TOOL the launch takes the path it was given");
+        }
+    }
+
+    /* Which ignores each keep bit holds across the launch. A request that
+       names none gives every ignored signal its default back, which is what
+       the terminal and the bind launches ask; each of the five the shell
+       ignores for itself is kept only by its own bit, and KEEP_IGNORED
+       keeps everything else and none of those five. */
+    {
+        static const int own[5]={SIGINT,SIGQUIT,SIGTSTP,SIGTTIN,SIGTTOU};
+        static const unsigned bit[5]={SPARK_SPAWN_KEEP_INTERRUPT,SPARK_SPAWN_KEEP_QUIT,
+            SPARK_SPAWN_KEEP_STOP_KEY,SPARK_SPAWN_KEEP_TTY_INPUT,SPARK_SPAWN_KEEP_TTY_OUTPUT};
+        static const int others[]={SIGHUP,SIGPIPE,SIGTERM,SIGUSR1,SIGALRM,SIGCHLD,SIGURG};
+        for (unsigned keep=0;keep<0x200;keep++) {
+            for (int i=0;i<5;i++)
+                check(spawn_keeps(keep,own[i])==!!(keep & bit[i]),
+                      "a signal the shell ignores for itself is kept only by its own bit");
+            for (unsigned i=0;i<sizeof(others)/sizeof(others[0]);i++)
+                check(spawn_keeps(keep,others[i])==!!(keep & SPARK_SPAWN_KEEP_IGNORED),
+                      "every other ignore is kept by KEEP_IGNORED alone");
         }
     }
 
@@ -33619,6 +33821,42 @@ def harness_guest_scenarios(argv):
         lines.append("printf '%%s' %s > /tmp/sc.want" % q("|".join(env) + "|"))
         lines.append("scen_same %s" % q("proc environ %d" % case))
     family("proc", lines)
+
+    # ----------------------------------------------------------- signals
+    #   What a command started from a non-interactive shell here finds
+    #   ignored, held to the rule dash and bash follow: interrupt and quit
+    #   are the shell's to ignore only while somebody types at it; an
+    #   asynchronous list ignores both; trap '' and an ignore the shell was
+    #   started with reach every child; a caught trap does not. Through the
+    #   image's own paths -- Spark spawns, resident utilities in the shell's
+    #   process -- which the reference boxes never run.
+    lines = []
+    reader = "sed -n 's/^SigIgn:[[:space:]]*//p' /proc/self/status"
+    self_reader = "sed -n 's/^SigIgn:[[:space:]]*//p' /proc/$$/status"
+    shapes = {"tail": "@R@", "foreground": "@R@; :", "background": "@R@ & wait",
+              "pipe-first": "@R@ | cat; :", "pipe-last": ": | @R@; :", "subshell": "(@R@); :",
+              "group-background": "{ @R@; } & wait", "substitution": 'v=$(@R@); echo "$v"',
+              "self": "@S@; :"}
+    for case in range(24):
+        shape = rng.choice(sorted(shapes))
+        entry = rng.choice(("", "INT QUIT", "QUIT"))
+        trap = rng.choice(("", "INT", "QUIT"))
+        kind = rng.choice(("ignore", "catch"))
+        inner = shapes[shape].replace("@R@", reader).replace("@S@", self_reader)
+        if trap:
+            inner = ("trap '' %s; " if kind == "ignore" else "trap 'echo caught' %s; ") % trap + inner
+        bits = {"": 0, "INT QUIT": 6, "QUIT": 4}[entry]
+        if trap and kind == "ignore":
+            bits |= {"INT": 2, "QUIT": 4}[trap]
+        if shape in ("background", "group-background"):
+            bits |= 6
+        run = "sh -c %s" % q(inner)
+        if entry:
+            run = "(trap '' %s; %s)" % (entry, run)
+        label = "signals %d: %s, started ignoring %s, trap %s %s" % (
+            case, shape, entry or "nothing", kind if trap else "none", trap)
+        lines.append("h=$( %s | tail -1); scen_count %s %d \"$((0x${h:-ff} & 6))\"" % (run, q(label), bits))
+    family("signals", lines)
 
     # -------------------------------------------------------------- pid1
     lines = []

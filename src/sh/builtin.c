@@ -393,6 +393,8 @@ static b32 exec_unset_prefix(const_string name, positive length);
 static PURE bool exec_special_builtin(string_address name);
 static fn exec_special_error_note();
 static bool exec_child_process();
+static bool exec_asynchronous;
+static fn shell_child_default(b32 number);
 static bool job_any_stopped();
 static bool exec_inplace_ready(bool restricted);
 static bool floodlight_parent_prepare(bool supervise);
@@ -13698,8 +13700,20 @@ fn trap_default_all()
                 string_address action = trap_table[at].action;
                 bool catch = string_get(action);
 
+                /* Only where the catcher is installed. dash keeps the
+                   string for a signal that arrived ignored and never caught
+                   it, bash keeps every entry across a fork, and an
+                   asynchronous child has ignored interrupt and quit since
+                   the first reset: each of those stays as it is. */
                 if (number && catch)
-                        shell_default((b32)number);
+                {
+                        positive action[4] = {0, 0, 0, 0};
+
+                        if (system_signal_action((b32)number, 0,
+                                                 address_of action, 8) < 0 ||
+                            action[0] > SIGNAL_IGNORE)
+                                shell_default((b32)number);
+                }
 
                 if (shell_bash_compat || !catch)
                 {
@@ -17054,6 +17068,15 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
            it and take the shell's own exec with it. */
         if (shell_tail_command && !confined)
         {
+                /* This process becomes the utility, so it gets what a child
+                   would: the default back unless a trap '' or whoever started
+                   the shell chose otherwise, and an asynchronous command
+                   keeps the ignore it was started with. */
+                if (!exec_asynchronous)
+                {
+                        shell_child_default(SIGNAL_INTERRUPT);
+                        shell_child_default(SIGNAL_QUIT);
+                }
                 program_arguments_use(shell_argv, (b32)shell_argc);
                 shell_answer(shell_tool_call(which));
                 return true;
@@ -17099,8 +17122,11 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
                         execs and this one has to undo for itself. Without it
                         a grep over a large tree could not be stopped.
                 */
-                shell_default(SIGNAL_INTERRUPT);
-                shell_default(SIGNAL_QUIT);
+                if (!exec_asynchronous)
+                {
+                        shell_child_default(SIGNAL_INTERRUPT);
+                        shell_child_default(SIGNAL_QUIT);
+                }
                 trap_default_all();
 
                 environment = shell_environment();

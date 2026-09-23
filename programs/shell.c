@@ -916,6 +916,7 @@ b32 main()
         interactive = shell_is_interactive = invocation.interactive >= 0
                           ? invocation.interactive
                           : (!script_file && shell_interactive());
+        shell_signals_settle(interactive);
         shell_options_started(interactive, invocation.monitor);
         if (interactive && shell_option_on(SHELL_OPTION_MONITOR) &&
             !job_terminal_owned)
