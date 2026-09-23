@@ -3668,7 +3668,15 @@ static void console_enqueue(const char *text, unsigned int count)
         raw_spin_unlock_irqrestore(&console_queue_lock, flags);
 }
 
-// The oldest record into console_record, and its length; false when none.
+/*
+        The oldest record into console_record, and its length; false when none.
+
+        The length is the ring's own u16, which the enqueue clamps to
+        CONSOLE_RECORD -- but it is read back as it lies, and a copy sized by
+        it goes into a 4 KiB static in ring 0. So it is held to the record and
+        to what the ring holds past it, and a ring that disagrees with itself
+        is emptied rather than read on from a position that is not a record's.
+*/
 static _Bool console_dequeue(unsigned int *count, unsigned long *dropped)
 {
         unsigned long flags;
@@ -3676,12 +3684,29 @@ static _Bool console_dequeue(unsigned int *count, unsigned long *dropped)
 
         raw_spin_lock_irqsave(&console_queue_lock, flags);
 
-        some = console_queue_head != console_queue_tail;
+        some = console_queue_head - console_queue_tail >= 2;
         if (some)
         {
+                unsigned int held = console_queue_head - console_queue_tail - 2;
+
                 *count = console_queue_length_at(console_queue_tail);
-                console_queue_get(console_queue_tail + 2, console_record, *count);
-                console_queue_tail += 2 + *count;
+                if (*count > CONSOLE_RECORD || *count > held)
+                {
+                        console_queue_dropped++;
+                        console_queue_tail = console_queue_head;
+                        *count = 0;
+                }
+                else
+                {
+                        console_queue_get(console_queue_tail + 2, console_record, *count);
+                        console_queue_tail += 2 + *count;
+                }
+        }
+        else if (console_queue_head != console_queue_tail)
+        {
+                console_queue_dropped++;
+                console_queue_tail = console_queue_head;
+                atomic_set(&console_queued, 0);
         }
         else
                 atomic_set(&console_queued, 0);
@@ -3755,7 +3780,12 @@ static void console_drain(void)
         if (!atomic_read(&console_queued) || !pane || !pane->cells)
                 return;
 
-        canvas_simd_begin(&simd, false);
+        /*
+                console_cells is a spinlock that sleeps on PREEMPT_RT, and
+                the bracket holds preemption off, so an RT build drains with
+                the general registers instead. No profile turns RT on today.
+        */
+        canvas_simd_begin(&simd, IS_ENABLED(CONFIG_PREEMPT_RT));
         spin_lock(&console_cells);
         term_simd = simd.on;
 
@@ -3836,7 +3866,19 @@ static void console_put_line(struct console *console, const char *text,
 
         // The general register bodies here, whatever a reader left behind.
         term_simd = false;
-        console_feed_queue();
+
+        /*
+                The ring is emptied only with console_cells held: its records
+                are copied through console_record, which the canvas thread
+                is parsing from when it holds the lock this could not take,
+                and a dying writer that went around it shares the emulator
+                with that thread already -- sharing its copy of the record as
+                well turned the line being drawn into another. What the ring
+                still holds is drawn after this one, by whoever next holds
+                the lock.
+        */
+        if (locked)
+                console_feed_queue();
         console_feed(text, count);
         console_moved(pane);
 

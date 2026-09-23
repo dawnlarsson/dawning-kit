@@ -29118,6 +29118,187 @@ int main(void) {
     return 1 if failures else 0
 
 
+def harness_console_queue(argv):
+    """The kernel console's ring of printk records, flooded and wrapped.
+
+    console_enqueue and console_dequeue are cut out of canvas.c between
+    #define CONSOLE_QUEUE and the feed that follows, with the locks and
+    atomics as no-ops, and driven by a seeded generator against a model:
+    bursts of records from 0 to 5000 bytes (the enqueue clamps at 4096),
+    drained at random points, with the ring's free-running positions started
+    just short of the 32-bit wrap so every run crosses it. The model says
+    which records survive a full ring, oldest dropped first, and how many
+    were dropped between two reads; each record read back has to be the
+    one the model holds, byte for byte.
+
+    Then one planted length. The length a record carries is the ring's own
+    u16 and is read back as it lies, into console_record[4096] in ring 0 --
+    so a ring that disagrees with itself must be emptied, not copied from.
+    console_record is given 64 KiB of guard bytes, and a length of 0xffff
+    planted at the oldest record must leave them as they were. The parent's
+    dequeue copies 65,535 bytes over them.
+    """
+    import subprocess
+    import tempfile
+    seeds = int(argv[0]) if argv else 64
+    text = (HARNESS_ROOT / "src/moonwater/canvas.c").read_text()
+    start = text.index("#define CONSOLE_QUEUE")
+    cut = text[start:text.index("// Every record the ring holds into the emulator", start)]
+    cut = cut.replace("static char console_record[CONSOLE_RECORD];",
+                      "static struct { char record[CONSOLE_RECORD]; unsigned char guard[65536]; }"
+                      " console_guarded;\n#define console_record console_guarded.record")
+    shim = r'''
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+typedef unsigned short u16;
+typedef void *address_any;
+typedef struct { int counter; } atomic_t;
+#define ATOMIC_INIT(v) { (v) }
+#define atomic_set(a, v) ((a)->counter = (v))
+#define atomic_read(a) ((a)->counter)
+#define DEFINE_RAW_SPINLOCK(name) int name
+#define raw_spin_lock_irqsave(lock, flags) ((void)(lock), (flags) = 0)
+#define raw_spin_unlock_irqrestore(lock, flags) ((void)(lock), (void)(flags))
+#define min(a, b) ((a) < (b) ? (a) : (b))
+#define PANE_HISTORY 512u
+static void memory_copy_apart(void *to, void *from, unsigned long count) {
+        memmove(to, from, count);
+}
+'''
+    driver = r'''
+static unsigned long draws = 1;
+static unsigned next_draw(void) {
+        draws = draws * 6364136223846793005ull + 1442695040888963407ull;
+        return (unsigned)(draws >> 33);
+}
+/* The model: record ids and lengths oldest first, and the bytes they take. */
+static unsigned model_id[65536], model_length[65536];
+static unsigned model_first, model_used;
+static unsigned long model_bytes, model_dropped;
+static unsigned failures, checks, records_read, records_dropped, wraps;
+
+static void check(int good, const char *what, unsigned id) {
+        checks++;
+        if (good) return;
+        if (++failures < 8) printf("  FAIL %s (record %u)\n", what, id);
+}
+static void fill(char *into, unsigned id, unsigned length) {
+        for (unsigned at = 0; at < length; at++) into[at] = (char)(id * 131 + at * 7);
+}
+static char record[8192], wanted[8192];
+
+static void put(unsigned id, unsigned asked) {
+        unsigned length = asked > CONSOLE_RECORD ? CONSOLE_RECORD : asked;
+        unsigned before = console_queue_head;
+        fill(record, id, length);
+        console_enqueue(record, asked);
+        if (console_queue_head < before) wraps++;
+        while (model_bytes + 2 + length > CONSOLE_QUEUE) {
+                model_bytes -= 2 + model_length[model_first % 65536];
+                model_first++;
+                model_used--;
+                model_dropped++;
+        }
+        model_id[(model_first + model_used) % 65536] = id;
+        model_length[(model_first + model_used) % 65536] = length;
+        model_used++;
+        model_bytes += 2 + length;
+}
+static void take(void) {
+        unsigned count;
+        unsigned long dropped;
+        while (console_dequeue(&count, &dropped)) {
+                unsigned id = model_id[model_first % 65536];
+                check(model_used > 0, "a record came out of an empty model", 0);
+                if (!model_used) return;
+                check(dropped == model_dropped, "the dropped count is the model's", id);
+                records_dropped += dropped;
+                model_dropped = 0;
+                check(count == model_length[model_first % 65536], "the length is the one put in", id);
+                fill(wanted, id, count);
+                check(count <= CONSOLE_RECORD && !memcmp(console_record, wanted, count),
+                      "the bytes are the ones put in", id);
+                model_bytes -= 2 + model_length[model_first % 65536];
+                model_first++;
+                model_used--;
+                records_read++;
+        }
+        check(!model_used, "the ring ran dry before the model", 0);
+        check(!atomic_read(&console_queued), "an empty ring says it is empty", 0);
+}
+int main(int argc, char **argv) {
+        unsigned seeds = argc > 1 ? (unsigned)atoi(argv[1]) : 64, id = 0;
+        for (unsigned seed = 1; seed <= seeds; seed++) {
+                draws = seed;
+                console_queue_head = console_queue_tail = 0xffffffffu - next_draw() % 400000u;
+                model_first = model_used = 0;
+                model_bytes = model_dropped = 0;
+                console_queue_dropped = 0;
+                atomic_set(&console_queued, 0);
+                for (unsigned round = 0; round < 60; round++) {
+                        unsigned burst = next_draw() % 300;
+                        for (unsigned n = 0; n < burst; n++) {
+                                unsigned shape = next_draw() % 10;
+                                unsigned asked = shape < 5 ? next_draw() % 120
+                                               : shape < 8 ? next_draw() % 1200
+                                               : shape < 9 ? 4090 + next_draw() % 12
+                                               : next_draw() % 5001;
+                                put(++id, asked);
+                        }
+                        if (next_draw() % 3) take();
+                }
+                take();
+        }
+        memset(console_guarded.guard, 0xa5, sizeof console_guarded.guard);
+        {
+                unsigned count = 0;
+                unsigned long dropped = 0;
+                u16 lie = 0xffff;
+                unsigned intact = 1;
+                console_queue_head = console_queue_tail = 0;
+                for (unsigned n = 0; n < 40; n++) {
+                        fill(record, n, 3000);
+                        console_enqueue(record, 3000);
+                }
+                console_queue_put(console_queue_tail, &lie, sizeof lie);
+                console_dequeue(&count, &dropped);
+                for (unsigned at = 0; at < sizeof console_guarded.guard; at++)
+                        intact &= console_guarded.guard[at] == 0xa5;
+                check(intact, "a planted length of 0xffff leaves the bytes past console_record alone", 0);
+                check(count <= CONSOLE_RECORD, "a planted length is not answered as a record's", 0);
+        }
+        printf("%u %u %u %u %u\n", checks - failures, checks, records_read, records_dropped, wraps);
+        return failures != 0;
+}
+'''
+    with tempfile.TemporaryDirectory(prefix="console-queue-") as temporary:
+        top = Path(temporary)
+        (top / "queue.c").write_text(shim + cut + driver)
+        built = subprocess.run(["cc", "-O2", "-w", "-o", str(top / "queue"), str(top / "queue.c")],
+                               capture_output=True, text=True)
+        if built.returncode:
+            print("  FAIL the queue did not build:\n" + built.stderr[-3000:])
+            return 1
+        ran = subprocess.run([str(top / "queue"), str(seeds)], capture_output=True, text=True,
+                             timeout=300)
+    lines = ran.stdout.rstrip().splitlines()
+    for line in lines[:-1]:
+        print(line)
+    try:
+        passed, total, read, dropped, wraps = (int(word) for word in lines[-1].split())
+    except (IndexError, ValueError):
+        print("  FAIL the queue said nothing it could be read by: %r" % ran.stdout[-500:])
+        return 1
+    print("console queue: %d of %d checks, %d records read, %d dropped oldest-first, "
+          "%d wraps of the positions, %d seeds" % (passed, total, read, dropped, wraps, seeds))
+    if not dropped or not wraps:
+        print("  FAIL the flood never filled the ring or never wrapped it")
+        passed = -1
+    write_tally("console-queue", max(passed, 0), total)
+    return 0 if passed == total and ran.returncode == 0 else 1
+
+
 def harness_terminfo_install(argv):
     """The terminfo blob is written into a directory, never through a name.
 
@@ -30307,6 +30488,7 @@ HARNESS_CHECKS = {
     "objtool_shape": harness_objtool_shape,
     "coverage_report": harness_coverage_report,
     "terminfo_install": harness_terminfo_install,
+    "console_queue": harness_console_queue,
     "host_writes": harness_host_writes,
     "moonwater_cli": harness_moonwater_cli,
     "machine_reap": harness_machine_reap,
