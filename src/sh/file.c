@@ -31789,12 +31789,13 @@ static b32 file_yes()
         With no command it prints the environment it would have used, which is
         also the only way anything here can look at its own environment.
 
-        The signal options are taken, say on the error stream that they
-        change nothing, and change nothing. Refusing them outright would fail
-        a shebang line whose command runs perfectly well without the mask it
-        asked for; accepting them in silence would be a lie about what the
-        command inherits. -v and --list-signal-handling are ignored in
-        silence, since all they ever wrote was the error stream itself.
+        The signal options set what the command inherits: --default-signal
+        and --ignore-signal its dispositions and --block-signal its mask, each
+        for the comma-separated signals named after = or for every signal when
+        nothing is, the later option winning for a signal both name. They take
+        effect only when there is a command to run, as GNU's do, and
+        --list-signal-handling then says on the error stream which signals the
+        command will find blocked or ignored. -v is taken in silence.
 */
 static const argument_option env_options[] = {
     {"argv0", 'a', ARGUMENT_REQUIRED},
@@ -31803,9 +31804,9 @@ static const argument_option env_options[] = {
     {"unset", 'u', ARGUMENT_REQUIRED},
     {"chdir", 'C', ARGUMENT_REQUIRED},
     {"split-string", 'S', ARGUMENT_REQUIRED},
-    {"block-signal", 'b', ARGUMENT_LONG_ONLY},
-    {"default-signal", 'd', ARGUMENT_LONG_ONLY},
-    {"ignore-signal", 'g', ARGUMENT_LONG_ONLY},
+    {"block-signal", 'b', ARGUMENT_LONG_ONLY | ARGUMENT_LONG_OPTIONAL},
+    {"default-signal", 'd', ARGUMENT_LONG_ONLY | ARGUMENT_LONG_OPTIONAL},
+    {"ignore-signal", 'g', ARGUMENT_LONG_ONLY | ARGUMENT_LONG_OPTIONAL},
     {"list-signal-handling", 'l', ARGUMENT_LONG_ONLY},
     {"debug", 'v'},
     {null},
@@ -31858,6 +31859,155 @@ static positive env_drops;
 
 static file_taking address_to env_taking_now;
 
+/*
+        What each signal is to be for the command. A signal named by the bare
+        form, which means all of them, carries ENV_SIGNAL_QUIET: the kernel
+        will not let KILL or STOP be caught or ignored, and GNU passes over
+        that for "all" but refuses it for a signal someone named.
+*/
+enum { ENV_SIGNAL_DEFAULT = 1, ENV_SIGNAL_IGNORE = 2, ENV_SIGNAL_QUIET = 4 };
+
+#define ENV_SIGNALS 64
+
+static p8 env_signal_wanted[ENV_SIGNALS + 1];
+static p64 env_signal_blocked;
+static bool env_signal_listed;
+
+static bipolar env_signal_of(string_address word);
+
+// One --*-signal option as it is read, so that a later one overrides an
+// earlier one signal by signal and a bad name stops env before anything runs.
+static bool env_signal_seen(p8 letter, string_address value)
+{
+        p8 want = letter == 'd' ? ENV_SIGNAL_DEFAULT : ENV_SIGNAL_IGNORE;
+
+        if (!value)
+        {
+                for (positive number = 1; number <= ENV_SIGNALS; number++)
+                        if (letter == 'b')
+                                env_signal_blocked |= (p64)1 << (number - 1);
+                        else
+                                env_signal_wanted[number] = want | ENV_SIGNAL_QUIET;
+                return true;
+        }
+
+        while (string_get(value))
+        {
+                string_address comma = string_first_of(value, ',');
+                positive length = comma ? (positive)(comma - value) : string_length(value);
+                p8 word[32];
+                bipolar number = -1;
+
+                if (!length)
+                {
+                        value++;
+                        continue;
+                }
+                if (length < sizeof(word))
+                {
+                        memory_copy(word, value, length);
+                        word[length] = 0;
+                        number = env_signal_of(word);
+                }
+                if (number < 1)
+                {
+                        log_error("env: '", 0);
+                        writer_terminal_quoted_name_span(log_error, value, length);
+                        log_error("': invalid signal\nTry 'env --help' for more information.\n", 0);
+                        return false;
+                }
+                if (letter == 'b')
+                        env_signal_blocked |= (p64)1 << (number - 1);
+                else
+                        env_signal_wanted[number] = want;
+                value += length;
+        }
+
+        return true;
+}
+
+// Each signal as sig2str writes it: the first name the table has for it,
+// or its place from the nearer end of the real-time range.
+static fn env_signal_name(positive number, p8 address_to into);
+
+/*
+        The dispositions and the mask, just before the command is run. 32 and
+        33 are the C library's own and it will not so much as report what
+        they are set to, which is the failure GNU's env passes on; KILL and
+        STOP the kernel refuses to have changed.
+*/
+static b32 env_signals_apply(void)
+{
+        for (positive number = 1; number <= ENV_SIGNALS; number++)
+        {
+                p8 wanted = env_signal_wanted[number];
+
+                if (!wanted)
+                        continue;
+                if (number == 32 || number == 33)
+                {
+                        if (wanted & ENV_SIGNAL_QUIET)
+                                continue;
+                        return string_report(log_error, 125,
+                                             "env: failed to get signal action for signal %p: %s\n",
+                                             number, file_reason(-ERROR_INVALID));
+                }
+                if (!system_signal_install((b32)number,
+                                           wanted & ENV_SIGNAL_IGNORE ? 1 : 0, 0, 0, null) &&
+                    !(wanted & ENV_SIGNAL_QUIET))
+                        return string_report(log_error, 125,
+                                             "env: failed to set signal action for signal %p: %s\n",
+                                             number, file_reason(-ERROR_INVALID));
+        }
+
+        //      glibc's full set leaves out the two it keeps for itself, and
+        //      the kernel quietly drops KILL and STOP from any mask.
+        p64 mask = env_signal_blocked & ~(((p64)1 << 31) | ((p64)1 << 32));
+
+        if (mask)
+                system_signal_mask(0, address_of mask, null, 8);
+
+        if (!env_signal_listed)
+                return 0;
+
+        p64 blocked = 0;
+
+        system_signal_mask(0, null, address_of blocked, 8);
+        for (positive number = 1; number <= ENV_SIGNALS; number++)
+        {
+                positive previous[4] = {0};
+                bool ignored = number != 32 && number != 33 &&
+                               system_signal_action(number, null, address_of previous, 8) >= 0 &&
+                               previous[0] == 1;
+                bool block = number != 32 && number != 33 &&
+                             (blocked >> (number - 1)) & 1;
+                p8 name[16];
+                p8 line[64];
+                positive at;
+
+                if (!ignored && !block)
+                        continue;
+                env_signal_name(number, name);
+                at = string_length(name);
+                memory_copy(line, name, at);
+                while (at < 10)
+                        line[at++] = ' ';
+                line[at++] = ' ';
+                line[at++] = '(';
+                line[at++] = number < 10 ? ' ' : (p8)('0' + number / 10);
+                line[at++] = (p8)('0' + number % 10);
+                line[at++] = ')';
+                line[at++] = ':';
+                line[at++] = ' ';
+                line[at] = 0;
+                string_format(log_error, "%s%s%s%s\n", (string_address)line,
+                              block ? (string_address) "BLOCK" : (string_address) "",
+                              block && ignored ? (string_address) "," : (string_address) "",
+                              ignored ? (string_address) "IGNORE" : (string_address) "");
+        }
+        return 0;
+}
+
 // -u is the one option here that means it every time it is given, and the
 // scanner keeps one value a letter, so each one is written down as it is read
 // and they are all applied once the environment to drop them from exists.
@@ -31865,6 +32015,15 @@ static file_taking address_to env_taking_now;
 // split string is spliced in, which is GNU's restart of getopt.
 static bool env_seen(p8 letter, string_address value)
 {
+        if (letter == 'b' || letter == 'd' || letter == 'g')
+                return env_signal_seen(letter, value);
+
+        if (letter == 'l')
+        {
+                env_signal_listed = true;
+                return true;
+        }
+
         if (letter == 'S')
         {
                 if (env_taking_now)
@@ -32138,6 +32297,9 @@ static b32 file_env()
 {
         env_have = 0;
         env_drops = 0;
+        env_signal_blocked = 0;
+        env_signal_listed = false;
+        memory_fill(env_signal_wanted, 0, sizeof(env_signal_wanted));
 
         file_taking taking = {
             .program = (string_address) "env",
@@ -32191,9 +32353,6 @@ static b32 file_env()
                 }
                 env_taking_now = null;
         }
-
-        if (taking.flags & (FILE_FLAG('b') | FILE_FLAG('d') | FILE_FLAG('g')))
-                log_error("env: the signal options are taken here and change nothing\n", 0);
 
         string_address address_to argv = taking.argv ? taking.argv
                                                      : program_argument_list();
@@ -32295,6 +32454,11 @@ static b32 file_env()
                                             writer_terminal_quoted_name, where,
                                             file_reason(changed));
         }
+
+        b32 refused = env_signals_apply();
+
+        if (refused)
+                return refused;
 
         string_address address_to arguments = env_words + at;
         string_address name = env_words[at];
@@ -34130,6 +34294,65 @@ static bipolar kill_real_time_of(string_address word)
         }
 
         return -1;
+}
+
+// A signal as env reads one, which is sig2str's inverse: 1 to 64, a name in
+// any case with or without SIG, RTMIN+n or RTMAX-n. 0 names no signal here.
+static bipolar env_signal_of(string_address word)
+{
+        positive number;
+
+        if (string_digits_checked_exact(word, 10, address_of number))
+                return number >= 1 && number <= ENV_SIGNALS ? (bipolar)number : -1;
+        if (!string_compare_folded_max(word, "SIG", 3))
+                word += 3;
+        for (positive i = 0; i < array_count(kill_table); i++)
+                if (!string_compare_folded(word, kill_table[i].name))
+                        return kill_table[i].number;
+        return kill_real_time_of(word);
+}
+
+// Two digits at most: every number asked for here is under 64.
+static fn env_signal_digits(p8 address_to into, positive number)
+{
+        positive at = 0;
+
+        if (number >= 10)
+                into[at++] = (p8)('0' + number / 10);
+        into[at++] = (p8)('0' + number % 10);
+        into[at] = 0;
+}
+
+static fn env_signal_name(positive number, p8 address_to into)
+{
+        //      glibc's table has POLL where this one lists IO first.
+        if (number == 29)
+        {
+                string_copy_bounded(into, "POLL", 16);
+                return;
+        }
+        for (positive i = 0; i < array_count(kill_table); i++)
+                if (kill_table[i].number == number && number < KILL_LEAST_REAL)
+                {
+                        string_copy_bounded(into, kill_table[i].name, 16);
+                        return;
+                }
+        if (number < KILL_LEAST_REAL)
+        {
+                env_signal_digits(into, number);
+                return;
+        }
+
+        positive from_least = number - KILL_LEAST_REAL;
+        positive from_most = KILL_MOST - number;
+        bool low = from_least <= (KILL_MOST - KILL_LEAST_REAL) / 2;
+
+        string_copy_bounded(into, low ? "RTMIN" : "RTMAX", 16);
+        if (low ? from_least : from_most)
+        {
+                into[5] = low ? '+' : '-';
+                env_signal_digits(into + 6, low ? from_least : from_most);
+        }
 }
 
 // A signal as a word: a number, a name, SIG in front of one, or an RT
