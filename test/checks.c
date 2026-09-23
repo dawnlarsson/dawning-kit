@@ -8594,12 +8594,24 @@ test(syscall_argument_four) {
 #define STAT_MODE_OFFSET 16
 #endif
 
+/*
+        A name of this process's own, gone before and after: a mode given to
+        openat reaches only a file it makes, so a file left at the one shared
+        name -- by an older run, or by another run at the same moment -- kept
+        whatever mode it had and this failed at "expected 420, got 493" for
+        a leftover at 0755, which is how the standard lane read on the box
+        for days.
+*/
 test(created_file_mode) {
-        string_address path = "/tmp/dawning_created_mode";
+        p8 path[64] = "/tmp/dawning_created_mode.";
         p8 status[256];
         p32 mode;
-        bipolar file = system_call_4(syscall(openat), AT_FDCWD, (positive)path,
-                                     FILE_CREATE | FILE_WRITE | O_TRUNC, 0644);
+        bipolar file;
+
+        path[26 + positive_into(path + 26, (positive)system_call(syscall(getpid)))] = end;
+        system_call_3(syscall(unlinkat), AT_FDCWD, (positive)path, 0);
+        file = system_call_4(syscall(openat), AT_FDCWD, (positive)path,
+                             FILE_CREATE | FILE_WRITE | O_TRUNC, 0644);
 
         fail(file >= 0);
         system_call_1(syscall(close), file);
@@ -8609,6 +8621,7 @@ test(created_file_mode) {
                                       (positive)status, 0), 0);
 
         memory_copy(address_of mode, status + STAT_MODE_OFFSET, sizeof(mode));
+        system_call_3(syscall(unlinkat), AT_FDCWD, (positive)path, 0);
 
         fail_not_equals(mode & 0777, 0644);
 
