@@ -7706,6 +7706,26 @@ static PURE string_address shell_where_self()
         return (string_address) "sh";
 }
 
+/*
+        Whether an interactive bash is reading a file it was told to source
+        rather than a line someone typed: its syntax errors then name the
+        file and the line and quote it, where every other diagnostic --
+        a command not found in that same file -- keeps the plain "bash: ".
+*/
+static PURE bool shell_interactive_sourcing()
+{
+        return shell_bash_compat && shell_is_interactive && shell_syntax_file &&
+               string_get(shell_syntax_file);
+}
+
+// $0, which is what an interactive bash calls itself whatever it is reading.
+static PURE string_address shell_where_invoked()
+{
+        return shell_script_name && string_get(shell_script_name)
+                   ? shell_script_name
+                   : (string_address) "sh";
+}
+
 static COLD fn shell_diagnostic_where_to(writer write)
 {
         string_address self = shell_where_self();
@@ -7715,7 +7735,7 @@ static COLD fn shell_diagnostic_where_to(writer write)
 
         if (shell_bash_compat && shell_is_interactive)
         {
-                string_format(write, "%s: ", self);
+                string_format(write, "%s: ", shell_where_invoked());
                 return;
         }
 
@@ -7750,9 +7770,19 @@ static COLD fn shell_syntax_where()
         string_address extra = shell_syntax_command;
         positive line;
 
+        if (shell_interactive_sourcing() && !extra)
+        {
+                string_format(log_error, "%s: %s: line %p: ", shell_where_invoked(),
+                              shell_syntax_file,
+                              shell_syntax_line_override
+                                  ? shell_syntax_line_override
+                                  : shell_line_number ? shell_line_number : 1);
+                return;
+        }
+
         if (shell_bash_compat && shell_is_interactive)
         {
-                string_format(log_error, "%s: ", self);
+                string_format(log_error, "%s: ", shell_where_invoked());
                 return;
         }
 

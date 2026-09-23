@@ -1988,8 +1988,14 @@ static fn run_line_inner(string_address line)
                                     "syntax error near unexpected token `%s'\n",
                                     tok->text);
                                 /* Bash repeats the prefix and quotes the
-                                   physical line the token came from. */
-                                if (line && string_get(line))
+                                   physical line the token came from --
+                                   except to a person at an interactive
+                                   prompt, who can still see it, which
+                                   takes in eval there too but not a file
+                                   being sourced. */
+                                if (line && string_get(line) &&
+                                    (!shell_is_interactive ||
+                                     shell_interactive_sourcing()))
                                 {
                                         shell_syntax_where();
                                         log_error("`", 1);

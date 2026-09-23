@@ -11429,7 +11429,11 @@ shell_TERMINAL_SESSION = Utility(
         Option("--fatal", values=tuple(str(n) for n in range(len(shell_SESSION_FATALS))), attached=True),
         Option("--heredoc"), Option("--continuation"), Option("--quote"), Option("--compound"),
         Option("--syntax", values=("}", "fi", "done", ";;", "echo 'open", "if true; then", "echo )",
-                                   "echo \"$(\"", "eval '}'"), attached=True),
+                                   "echo \"$(\"", "eval '}'",
+                                   #   A file sourced at the prompt is not the
+                                   #   prompt: its error names it, its line,
+                                   #   and quotes the line.
+                                   "printf '%s\\n' 'echo in' '}' > syn.sh; . ./syn.sh"), attached=True),
         Option("--comment"), Option("--trap"), Option("--interrupt"), Option("--suspend"),
         Option("--ignoreeof"), Option("--status"),
         Option("--end", values=("exit", "eof", "exit-3", "exit-bad"), attached=True),
