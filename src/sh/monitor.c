@@ -462,7 +462,7 @@ static fn monitor_caught(b32 number)
         The interval, cut short by a signal: one when it slept, zero when
         it was told to stop, negative when the kernel refused.
 
-        The three signals that stop the monitor are blocked while the flag
+        The four signals that stop the monitor are blocked while the flag
         is read and let through only inside ppoll, which swaps the mask in
         and sleeps as one step. A signal landing between the test and the
         call is then delivered inside the call and ends it, where nanosleep
@@ -474,7 +474,7 @@ static fn monitor_caught(b32 number)
 static b32 monitor_sleep(p64 address_to span)
 {
         positive stopping = ((positive)1 << 0) | ((positive)1 << 1) |
-                            ((positive)1 << 14);
+                            ((positive)1 << 2) | ((positive)1 << 14);
         positive previous = 0;
         b32 answer = -1;
 
@@ -561,6 +561,11 @@ static HOT b32 tools_monitor()
         system_signal_install(1, (positive)monitor_caught, SIGNAL_CATCH_FLAGS,
                               SIGNAL_CATCH_RESTORER, null);
         system_signal_install(2, (positive)monitor_caught, SIGNAL_CATCH_FLAGS,
+                              SIGNAL_CATCH_RESTORER, null);
+        //      Ctrl+\ as well: its default ends the process where it stands,
+        //      on the alternate screen with the cursor hidden, and the shell
+        //      prompt comes back on a screen nothing will give back.
+        system_signal_install(3, (positive)monitor_caught, SIGNAL_CATCH_FLAGS,
                               SIGNAL_CATCH_RESTORER, null);
         system_signal_install(15, (positive)monitor_caught, SIGNAL_CATCH_FLAGS,
                               SIGNAL_CATCH_RESTORER, null);

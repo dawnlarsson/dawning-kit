@@ -33001,8 +33001,8 @@ def harness_guest_scenarios(argv):
       monitor    frames drawn on the console (the image's stty sets no
                  size and script -c is not launched from the console, so
                  the small screen stays the Canvas lane's), the /proc
-                 fallback with /dev/spark covered, and the error said after
-                 the screen is given back.
+                 fallback with /dev/spark covered, the error said after the
+                 screen is given back, and Ctrl+\\.
       proc       /proc/PID/cmdline and environ of generated argument and
                  environment lists read back whole.
       pid1       signals to init, orphans reaped, no zombie left with init
@@ -33332,6 +33332,15 @@ def harness_guest_scenarios(argv):
     lines.append("scen_count 'monitor from /proc lists processes' 1 \"$(grep -q 'cpu%' /tmp/m.out && echo 1)\"")
     lines.append("unshare -m sh -c 'mount --bind /tmp/scen-nospark /dev/spark && mount --bind /proc/1/mem /proc/stat && exec monitor 0.05 1' > /tmp/m.out 2>&1; scen_status 'monitor with nothing to read fails' 1 $?")
     lines.append("scen_count 'and says why after the screen is back' 1 \"$(tail -n 1 /tmp/m.out | grep -c 'cannot read system snapshot')\"")
+    #   Ctrl+\\ as the monitor meets it here: a job started with & has QUIT
+    #   ignored from the start in a shell without job control, as POSIX has
+    #   it, and the console's shell passes its own ignored QUIT to what it
+    #   runs in front as well. Bounded, so a monitor that goes on ignoring
+    #   it ends by itself, having drawn every frame it was given.
+    lines.append("monitor 0.1 60 > /tmp/m.out 2>&1 & scen_pid=$!; sleep 0.7; kill -QUIT $scen_pid; "
+                 "wait $scen_pid; scen_status 'monitor ends on Ctrl+\\\\' 0 $?")
+    lines.append("scen_count 'before its frames run out' 1 \"$([ $(grep -o '?2026l' /tmp/m.out | wc -l) -lt 30 ] && echo 1)\"")
+    lines.append("scen_count 'and gives the screen back' 1 \"$(grep -c '?1049l' /tmp/m.out)\"")
     family("monitor", lines)
 
     # -------------------------------------------------------------- proc
