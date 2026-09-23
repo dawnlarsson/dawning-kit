@@ -551,6 +551,11 @@ static HOT b32 tools_monitor()
         static positive top_room;
         positive count = 0;
         b32 status = 0;
+        //      Said once the main screen is back: written while the
+        //      alternate one is up, a reason is on the screen the restore
+        //      then puts away, and the monitor seems to leave for nothing.
+        string_address failed_where = null;
+        string_address failed_why = null;
 
         monitor_stopping = 0;
         system_signal_install(1, (positive)monitor_caught, SIGNAL_CATCH_FLAGS,
@@ -564,7 +569,8 @@ static HOT b32 tools_monitor()
 
         if (!system_snapshot_take(old, SPARK_SNAPSHOT_ALL, false))
         {
-                string_diagnostic(&text_diagnostic, 0, "/proc", "cannot read system snapshot");
+                failed_where = "/proc";
+                failed_why = "cannot read system snapshot";
                 status = 1;
                 goto finished;
         }
@@ -579,7 +585,7 @@ static HOT b32 tools_monitor()
                         {
                                 if (slept < 0)
                                 {
-                                        string_diagnostic(&text_diagnostic, 0, null, "monitor: sleep failed");
+                                        failed_why = "sleep failed";
                                         status = 1;
                                 }
                                 break;
@@ -590,7 +596,8 @@ static HOT b32 tools_monitor()
                         if (!system_snapshot_take(sample, SPARK_SNAPSHOT_ALL,
                                                   false))
                         {
-                                string_diagnostic(&text_diagnostic, 0, "/proc", "cannot read system snapshot");
+                                failed_where = "/proc";
+                                failed_why = "cannot read system snapshot";
                                 status = 1;
                                 break;
                         }
@@ -665,6 +672,7 @@ static HOT b32 tools_monitor()
                                                process_rows, columns,
                                                elapsed_ns))
                         {
+                                failed_why = "cannot hold the process list";
                                 status = 1;
                                 break;
                         }
@@ -684,6 +692,9 @@ static HOT b32 tools_monitor()
 
 finished:
         text_put_string(MONITOR_RESTORE);
+        text_flush();
+        if (failed_why)
+                string_diagnostic(&text_diagnostic, 0, failed_where, failed_why);
         return text_done(status);
 }
 

@@ -33000,8 +33000,9 @@ def harness_guest_scenarios(argv):
       keyboard   layouts set and read back; unknown ones refused.
       monitor    frames drawn on the console (the image's stty sets no
                  size and script -c is not launched from the console, so
-                 the small screen stays the Canvas lane's), and the /proc
-                 fallback with /dev/spark covered.
+                 the small screen stays the Canvas lane's), the /proc
+                 fallback with /dev/spark covered, and the error said after
+                 the screen is given back.
       proc       /proc/PID/cmdline and environ of generated argument and
                  environment lists read back whole.
       pid1       signals to init, orphans reaped, no zombie left with init
@@ -33322,11 +33323,15 @@ def harness_guest_scenarios(argv):
                      "printf 'mon-%d-end-%%s\\n' $? | rev" % (index, rng.randrange(2, 9), frames, index))
         segments.append((index, 0, 0, frames))
     #   /dev/spark covered by an empty file, which sends the monitor to
-    #   /proc. Covering all of /dev takes floodlight's policy with it, and
-    #   then it refuses every launch.
+    #   /proc; and /proc/stat covered by init's memory, whose first page
+    #   reads as EIO, so the fallback cannot read the processors. Covering
+    #   all of /dev or /proc takes floodlight's policy with it, and then it
+    #   refuses every launch.
     lines.append(": > /tmp/scen-nospark")
     lines.append("unshare -m sh -c 'mount --bind /tmp/scen-nospark /dev/spark && exec monitor 0.05 2' > /tmp/m.out 2>&1; scen_status 'monitor from /proc exits 0' 0 $?")
     lines.append("scen_count 'monitor from /proc lists processes' 1 \"$(grep -q 'cpu%' /tmp/m.out && echo 1)\"")
+    lines.append("unshare -m sh -c 'mount --bind /tmp/scen-nospark /dev/spark && mount --bind /proc/1/mem /proc/stat && exec monitor 0.05 1' > /tmp/m.out 2>&1; scen_status 'monitor with nothing to read fails' 1 $?")
+    lines.append("scen_count 'and says why after the screen is back' 1 \"$(tail -n 1 /tmp/m.out | grep -c 'cannot read system snapshot')\"")
     family("monitor", lines)
 
     # -------------------------------------------------------------- proc
