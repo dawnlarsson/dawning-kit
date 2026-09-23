@@ -5038,6 +5038,51 @@ static fn expand_replace(expand_reference reference, string_address pattern_text
                 }
         }
 
+        /*
+                Whether the pattern can match anywhere, asked once of the
+                whole value as bash's match_upattern asks it -- "*pat*", or
+                "pat*" and "*pat" under an anchor -- and "pat*" at each
+                start before its every size is tried. Without them the loop
+                below asked the matcher about every cut of every position to
+                conclude there was nothing: ${x/*b/} over 50,000 bytes of a
+                value a script was handed ran past 30 s where bash takes
+                2 ms. A pattern ending in a lone backslash would have the
+                star read as a literal one, so it goes the long way.
+        */
+        positive pattern_length = string_length(pattern);
+        positive slashes = 0;
+
+        while (slashes < pattern_length &&
+               pattern[pattern_length - 1 - slashes] == '\\')
+                slashes++;
+
+        string_address starred = null;
+
+        if (!(slashes & 1))
+        {
+                p8 address_to built = shell_store_take(address_of expand_store,
+                                                       pattern_length + 3);
+
+                if (!built)
+                {
+                        expand_fail_state();
+                        return;
+                }
+                built[0] = '*';
+                memory_copy(built + 1, pattern, pattern_length);
+                built[pattern_length + 1] = anchor == '%' ? end : '*';
+                built[pattern_length + 2] = end;
+                starred = built;
+
+                if (!expand_replace_match(source, 0, length,
+                                          anchor == '#' ? starred + 1 : starred,
+                                          fold))
+                {
+                        expand_push_run(source, length, mark);
+                        return;
+                }
+        }
+
         bool utf8 = shell_utf8_on();
         // Bash's multibyte suffix search includes the terminal empty span;
         // its byte/ASCII search does not. Keep that observable distinction
@@ -5056,8 +5101,11 @@ static fn expand_replace(expand_reference reference, string_address pattern_text
                 for (; begin < starts;)
                 {
                         positive largest = length - begin;
+                        bool may = anchor == '%' || !starred ||
+                                   expand_replace_match(source, begin, largest,
+                                                        starred + 1, fold);
 
-                        for (size = largest;;)
+                        for (size = largest; may;)
                         {
                                 if (expand_replace_match(source, begin, size,
                                                          pattern, fold))
