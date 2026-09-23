@@ -11609,10 +11609,21 @@ static bool conditional_primary(bool invert)
 
         if (conditional_is("("))
         {
+                /* As deep as arithmetic may nest (ARITH_NESTING): each
+                   level is a descent through the whole ladder, and 30,000
+                   of them took the shell down with SIGSEGV. */
+                static positive nesting;
                 bool value;
 
+                if (nesting >= 1024)
+                {
+                        conditional_bad = true;
+                        return false;
+                }
                 conditional_at++;
+                nesting++;
                 value = conditional_expression();
+                nesting--;
 
                 if (!conditional_is(")"))
                         conditional_bad = true;

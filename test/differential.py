@@ -11363,7 +11363,59 @@ def shell_hostile_environment(farm):
     return passed, len(cases), notes
 
 
-SHELL_CHECKS = (shell_restricted_function_import, shell_hostile_environment)
+def shell_nesting_limits(farm):
+    """Deeply nested arithmetic and [[ ]] from a value, which crashed the shell.
+
+    Every parenthesis or prefix operator is a descent through the whole
+    precedence ladder, and nothing held it: 15,000 open parentheses in a
+    value -- $((x)) or [[ $x -eq 1 ]] on input a script was handed -- killed
+    this shell with SIGSEGV where bash answers. Below ARITH_NESTING the
+    answers are bash's; past it the expression is refused with a diagnostic
+    and the shell lives to report a status, never a signal.
+    """
+    import shutil
+    reference = shutil.which("bash")
+    target = Path(farm) / "bash"
+    if not reference or not target.exists():
+        return 0, 1, ["nesting limits need bash and the candidate's bash"]
+    passed, total, notes = 0, 0, []
+    with tempfile.TemporaryDirectory(prefix="nesting-") as work:
+        for depth in (1, 10, 200, 1000, 1100, 15000, 60000):
+            forms = {
+                "paren": "(" * depth + "1" + ")" * depth,
+                "minus": "-" * depth + "1",
+                "not": "!" * depth + "0",
+                "cond": "[[ " + "( " * depth + "1 -eq 1" + " )" * depth + " ]]",
+            }
+            for name, text in forms.items():
+                total += 1
+                (Path(work) / "v").write_text(text)
+                if name == "cond":
+                    (Path(work) / "s.sh").write_text(text + "; echo st=$?\n")
+                    command = ["s.sh"]
+                else:
+                    command = ["-c", 'x=$(cat v); echo "$((x))"; echo st=$?']
+                answers = []
+                for shell in (reference, str(target)):
+                    ran = subprocess.run([shell, *command], cwd=work, capture_output=True,
+                                         timeout=30, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+                    answers.append(ran)
+                want, got = answers
+                if depth <= 1000:
+                    good = (want.returncode, want.stdout) == (got.returncode, got.stdout)
+                else:
+                    good = got.returncode >= 0 and b"st=0" not in got.stdout and got.stderr != b""
+                if good:
+                    passed += 1
+                elif len(notes) < 6:
+                    notes.append("nesting %s at %d: bash %r/%d, ours %r/%d %r"
+                                 % (name, depth, want.stdout[-40:], want.returncode,
+                                    got.stdout[-40:], got.returncode, got.stderr[-80:]))
+    return passed, total, notes
+
+
+SHELL_CHECKS = (shell_restricted_function_import, shell_hostile_environment,
+                shell_nesting_limits)
 
 
 # ----------------------------------------------------------------------------

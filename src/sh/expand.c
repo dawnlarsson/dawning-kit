@@ -2839,7 +2839,34 @@ done:
         return value;
 }
 
+/*
+        How deep a parenthesis or a prefix operator may nest, which is bash's
+        MAX_EXPR_RECURSION_LEVEL. Every level is a descent through the whole
+        precedence ladder, some six hundred bytes of stack, and nothing held
+        it: 15,000 open parentheses in a value -- [[ $x -eq 1 ]] on input a
+        script was handed -- took the shell down with SIGSEGV where bash
+        answers. Past it the expression is refused and the stack is whole.
+*/
+#define ARITH_NESTING 1024
+static positive arith_nesting;
+static bipolar arith_primary_step();
+
 static bipolar arith_primary()
+{
+        bipolar value;
+
+        if (arith_nesting >= ARITH_NESTING)
+        {
+                arith_fail("expression recursion level exceeded");
+                return 0;
+        }
+        arith_nesting++;
+        value = arith_primary_step();
+        arith_nesting--;
+        return value;
+}
+
+static bipolar arith_primary_step()
 {
         bipolar value = 0;
 
