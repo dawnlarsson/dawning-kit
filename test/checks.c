@@ -59082,7 +59082,10 @@ static fn storage_test_net_files(void)
         storage_test_output_used = 0;
         string_format(storage_test_capture, "bad %w\n",
                       writer_terminal_quoted_name, unsafe);
-        static p8 escaped[] = "bad host\\x1b\n";
+        /* The control byte spelled the way the diagnostic writer spells it
+           since e1e04487 took GNU's octal escapes, rather than the \x1b this
+           asked for until then: what matters here is that it is spelled. */
+        static p8 escaped[] = "bad host\\033\n";
         check("network diagnostics escape terminal control bytes",
               storage_test_output_used == sizeof(escaped) - 1 &&
                   !memory_compare(storage_test_output, escaped,
