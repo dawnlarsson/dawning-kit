@@ -9588,6 +9588,7 @@ python3 test/differential.py --harness console_queue || kit_failed=1
 python3 test/differential.py --harness pane_restride || kit_failed=1
 python3 test/differential.py --harness sort_spill_names || kit_failed=1
 python3 test/differential.py --harness dhcp_packets || kit_failed=1
+python3 test/differential.py --harness inventory_mutations || kit_failed=1
 python3 test/differential.py --harness machine_reap || kit_failed=1
 python3 test/differential.py --harness machine_scan || kit_failed=1
 if [ "$(uname -s)" = Darwin ]; then

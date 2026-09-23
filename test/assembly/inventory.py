@@ -1041,31 +1041,143 @@ def macos_runtime_parity(sources):
     return gaps
 
 
-def expression_value(expression, defines):
+#       The values a condition compares, where a name stands for more than
+#       "defined": what lib.c defines BITS to on each target the gate reads.
+TARGET_VALUES = {
+    'linux': {'BITS': 64, '__STDC__': 1, '__STDC_VERSION__': 201710},
+    'macos': {'BITS': 64, '__STDC__': 1, '__STDC_VERSION__': 201710},
+    'windows': {'BITS': 64, '__STDC__': 1, '__STDC_VERSION__': 201710},
+}
+
+
+UNKNOWN = object()
+
+
+class ConditionError(ValueError):
+    """An #if this cannot read. It is raised, never read as false: a
+    condition taken as false turns an include off without a word, and the
+    routines behind it drop out of the parity count with it."""
+
+
+def expression_value(expression, defines, values=None):
+    """What the preprocessor makes of an #if, with C's own precedence.
+
+    defined(NAME) and defined NAME are 1 or 0 by the target's defines. A
+    name is its value when TARGET_VALUES knows one, 1 when it is defined
+    and 0 when it is not, as C has it -- except a compiler's own
+    double-underscore name, which the defines here do not list and whose
+    value this cannot know: that is unknown, && and || decide around it
+    when they can (defined(__CET__) && (__CET__ & 1)), and a condition
+    that still turns on it raises. Integers take their u and l suffixes.
+    Anything else -- a call, a string, an operator this does not know, a
+    condition left unbalanced -- raises ConditionError.
+    """
+    values = values or {}
     expression = re.sub(
         r'\bdefined\s*(?:\(\s*([A-Za-z_]\w*)\s*\)|([A-Za-z_]\w*))',
-        lambda match: '1' if (match.group(1) or match.group(2)) in defines else '0',
+        lambda match: ' 1 ' if (match.group(1) or match.group(2)) in defines else ' 0 ',
         expression)
-    pieces = re.findall(r'&&|\|\||!|\(|\)|0[xX][0-9A-Fa-f]+|\d+|[A-Za-z_]\w*',
-                        expression)
-    converted = []
-    for piece in pieces:
-        if piece == '&&':
-            converted.append('and')
-        elif piece == '||':
-            converted.append('or')
-        elif piece == '!':
-            converted.append('not')
-        elif re.fullmatch(r'[A-Za-z_]\w*', piece):
-            converted.append('1' if piece in defines else '0')
+    tokens = []
+    at = 0
+    pattern = re.compile(r'\s*(?:(0[xX][0-9A-Fa-f]+|\d+)[uUlL]*|([A-Za-z_]\w*)|'
+                         r'(\|\||&&|==|!=|<=|>=|<<|>>|[!~()<>+\-*/%&|^]))')
+    while at < len(expression):
+        if not expression[at:].strip():
+            break
+        found = pattern.match(expression, at)
+        if not found or found.end() == at:
+            raise ConditionError('cannot read #if %s' % expression.strip())
+        number, name, operator = found.groups()
+        if number is not None:
+            tokens.append(int(number, 0) if not number.startswith('0') or
+                          number.lower().startswith('0x') or number == '0'
+                          else int(number, 8))
+        elif name is not None:
+            if name in values:
+                tokens.append(values[name])
+            elif name in defines:
+                tokens.append(1)
+            elif name.startswith('__'):
+                tokens.append(UNKNOWN)
+            else:
+                tokens.append(0)
         else:
-            converted.append(piece)
-    try:
-        # The input alphabet above contains no calls, attributes, or operators
-        # other than boolean grouping and integer constants.
-        return bool(eval(' '.join(converted), {'__builtins__': {}}, {}))
-    except (SyntaxError, ValueError):
-        return False
+            tokens.append(operator)
+        at = found.end()
+
+    binary = [('||',), ('&&',), ('|',), ('^',), ('&',), ('==', '!='),
+              ('<', '<=', '>', '>='), ('<<', '>>'), ('+', '-'), ('*', '/', '%')]
+    position = [0]
+
+    def peek():
+        return tokens[position[0]] if position[0] < len(tokens) else None
+
+    def take():
+        token = peek()
+        if token is None:
+            raise ConditionError('#if %s ends early' % expression.strip())
+        position[0] += 1
+        return token
+
+    def unary():
+        token = take()
+        if token in ('!', '~', '-', '+'):
+            inner = unary()
+            if inner is UNKNOWN:
+                return UNKNOWN
+            return {'!': lambda: int(not inner), '~': lambda: ~inner,
+                    '-': lambda: -inner, '+': lambda: inner}[token]()
+        if token == '(':
+            inner = level(0)
+            if take() != ')':
+                raise ConditionError('#if %s is unbalanced' % expression.strip())
+            return inner
+        if token is UNKNOWN or (isinstance(token, int) and not isinstance(token, bool)):
+            return token
+        raise ConditionError('cannot read #if %s' % expression.strip())
+
+    def level(depth):
+        if depth == len(binary):
+            return unary()
+        left = level(depth + 1)
+        while peek() in binary[depth]:
+            operator = take()
+            right = level(depth + 1)
+            if operator == '||':
+                if left is UNKNOWN or right is UNKNOWN:
+                    left = 1 if (left is not UNKNOWN and left) or \
+                        (right is not UNKNOWN and right) else UNKNOWN
+                else:
+                    left = int(bool(left) or bool(right))
+            elif operator == '&&':
+                if left is UNKNOWN or right is UNKNOWN:
+                    left = 0 if (left is not UNKNOWN and not left) or \
+                        (right is not UNKNOWN and not right) else UNKNOWN
+                else:
+                    left = int(bool(left) and bool(right))
+            elif left is UNKNOWN or right is UNKNOWN:
+                left = UNKNOWN
+            elif operator in ('/', '%') and right == 0:
+                raise ConditionError('#if %s divides by zero' % expression.strip())
+            else:
+                left = int({'|': lambda: left | right, '^': lambda: left ^ right,
+                            '&': lambda: left & right, '==': lambda: left == right,
+                            '!=': lambda: left != right, '<': lambda: left < right,
+                            '<=': lambda: left <= right, '>': lambda: left > right,
+                            '>=': lambda: left >= right, '<<': lambda: left << right,
+                            '>>': lambda: left >> right, '+': lambda: left + right,
+                            '-': lambda: left - right, '*': lambda: left * right,
+                            '/': lambda: int(left / right),
+                            '%': lambda: left - right * int(left / right)}[operator]())
+        return left
+
+    result = level(0)
+    if position[0] != len(tokens):
+        raise ConditionError('cannot read #if %s' % expression.strip())
+    if result is UNKNOWN:
+        raise ConditionError('#if %s turns on a compiler value this cannot know'
+                             % expression.strip())
+    return bool(result)
 
 
 def active_includes(directives, target):
@@ -1074,6 +1186,7 @@ def active_includes(directives, target):
                 if literal_include(directive)]
 
     defines = TARGET_DEFINES[target]
+    values = TARGET_VALUES.get(target, {})
     active, stack, found = True, [], []
     for directive in directives:
         kind, rest = directive_parts(directive)
@@ -1083,12 +1196,16 @@ def active_includes(directives, target):
             elif kind == 'ifndef':
                 condition = rest not in defines
             else:
-                condition = expression_value(rest, defines)
+                #   Inside a branch already off, what this one says cannot
+                #   switch anything on, and it may name another machine's
+                #   values: __riscv_xlen under riscv is nothing on x86_64.
+                condition = active and expression_value(rest, defines, values)
             stack.append({'parent': active, 'taken': condition, 'else': False})
             active = active and condition
         elif kind == 'elif' and stack:
             frame = stack[-1]
-            condition = not frame['taken'] and expression_value(rest, defines)
+            condition = frame['parent'] and not frame['taken'] and \
+                expression_value(rest, defines, values)
             frame['taken'] = frame['taken'] or condition
             active = frame['parent'] and condition
         elif kind == 'else' and stack:

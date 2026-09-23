@@ -33374,6 +33374,70 @@ scen_find() { for p in /proc/[0-9]*; do c=$(tr '\000' ' ' < $p/cmdline 2>/dev/nu
     return 0
 
 
+def harness_inventory_mutations(argv):
+    """test/assembly/inventory.py held to the gaps it exists to find.
+
+    The parity gate reads lib.c's include graph and each architecture's
+    bodies without running a preprocessor, so it has to decide #if itself,
+    and it decided in silence: a condition it could not parse -- a
+    comparison, a compiler's own value -- read as false, which switched an
+    include off and took its routines out of the count with it. Each
+    mutation below is planted in a copy of src/, and the gate has to go
+    red naming what it lost -- or, for a condition it cannot know, refuse
+    to guess. The control plants the same probe behind a condition it
+    reads plainly, so a probe the gate never sees cannot pass for a fix.
+
+        inventory_mutations
+    """
+    del argv
+    import shutil
+    import subprocess
+    import tempfile
+    library = (HARNESS_ROOT / "src/lib.c").read_text()
+    probe = ('#if X64\n__asm__(\n    ASM_SECTION\n    ASM_FUNC(inventory_probe_only)\n'
+             '    ASM_RET\n    ASM_END(inventory_probe_only)\n);\n#endif\n')
+
+    def include_behind(condition):
+        return lambda text: text + "\n#if %s\n#include \"inventory_probe.inc\"\n#endif\n" % condition
+
+    #   (name, mutation, extra file, what the gate must say, how it must end)
+    cases = (
+        ("a probe behind a plain condition (control)", include_behind("defined(LINUX)"), probe,
+         ("inventory_probe_only",), "red"),
+        ("a probe behind a comparison", include_behind("defined(LINUX) && __STDC_VERSION__ >= 199901L"),
+         probe, ("inventory_probe_only",), "red"),
+        ("a probe behind a compiler value it cannot know",
+         include_behind("defined(LINUX) && __MOONWATER_UNSET_VALUE__ == 3"), probe,
+         ("cannot know",), "refused"),
+    )
+    passed = 0
+    with tempfile.TemporaryDirectory(prefix="inventory-mutations-") as temporary:
+        for name, mutation, extra, words, ending in cases:
+            copy = Path(temporary) / "".join(c if c.isalnum() else "_" for c in name)[:48]
+            shutil.copytree(HARNESS_ROOT / "src", copy / "src")
+            shutil.copytree(HARNESS_ROOT / "test" / "assembly", copy / "test" / "assembly")
+            (copy / "src" / "lib.c").write_text(mutation(library))
+            if extra:
+                (copy / "src" / "inventory_probe.inc").write_text(extra)
+            ran = subprocess.run([sys.executable, "test/assembly/inventory.py", "--check",
+                                  "--target", "all", "src/lib.c"],
+                                 cwd=copy, capture_output=True, text=True)
+            said = ran.stdout + ran.stderr
+            if ending == "red":
+                good = ran.returncode != 0 and "Traceback" not in said and \
+                    all(word in said for word in words)
+            else:
+                good = ran.returncode != 0 and all(word in said for word in words)
+            if good:
+                passed += 1
+            else:
+                print("  FAIL %s: status %d, %s" % (name, ran.returncode,
+                                                   said.strip().splitlines()[-1:] or ["nothing"]))
+    print("inventory mutations: %d of %d planted gaps found or refused" % (passed, len(cases)))
+    write_tally("inventory-mutations", passed, len(cases))
+    return 0 if passed == len(cases) else 1
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -33399,6 +33463,7 @@ HARNESS_CHECKS = {
     "objtool_shape": harness_objtool_shape,
     "coverage_report": harness_coverage_report,
     "guest_scenarios": harness_guest_scenarios,
+    "inventory_mutations": harness_inventory_mutations,
     "terminfo_install": harness_terminfo_install,
     "dhcp_packets": harness_dhcp_packets,
     "term_streams": harness_term_streams,
