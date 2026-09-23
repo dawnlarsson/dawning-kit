@@ -18778,8 +18778,10 @@ p8 address_to strptime(const char address_to input, const char address_to format
         say Europe/Stockholm without shipping zoneinfo. The rule is the one
         tzdata's own TZif footer carries, which governs every time after the
         zone's last recorded change: it is right from now on, not for dates
-        before that change. Unset TZ and a missing /root/timezone stay UTC,
-        which is what the calendar tests pin.
+        before that change. With TZ unset and no /root/timezone, the zone is
+        the rule in the footer of /etc/localtime, which is where glibc looks
+        on the same machine; with neither it is UTC. The calendar tests pin
+        TZ=UTC0 and so never reach either file.
 */
 #define CLOCK_ZONE_PATH "/root/timezone"
 #define CLOCK_TZ_NAME 16
@@ -20180,6 +20182,71 @@ static fn clock_tz_reset(void)
         string_copy_bounded(clock_dst_name, "UTC", CLOCK_TZ_NAME);
 }
 
+/*
+        The zone a TZif file ends with. Version 2 and later carry a footer
+        after the binary tables: a newline, the POSIX TZ string that governs
+        every time after the last transition, and a newline. That string is
+        the whole of what the zone table here holds for a zone, so reading it
+        agrees with glibc from the zone's last change on -- the same limit an
+        IANA name in /root/timezone has. A version 1 file, or one whose tail
+        is not a footer, leaves the zone as it was: UTC.
+*/
+#define CLOCK_LOCALTIME_PATH "/etc/localtime"
+
+static fn clock_tz_load_localtime(void)
+{
+        p8 text[128];
+        bipolar handle;
+        bipolar got;
+        bipolar size;
+        bipolar start;
+        positive used = 0;
+        positive line;
+
+        handle = system_call_4(syscall(openat), AT_FDCWD,
+                               (positive)(string_address)CLOCK_LOCALTIME_PATH,
+                               O_RDONLY | O_CLOEXEC, 0);
+        if (handle < 0)
+                return;
+        do
+                got = system_call_3(syscall(read), (positive)handle,
+                                    (positive)text, 5);
+        while (got == -4);
+        size = got == 5 && memory_compare(text, "TZif", 4) == 0 &&
+                      text[4] >= '2'
+                  ? system_seek(handle, 0, 2)
+                  : -1;
+        start = size > (bipolar)sizeof(text) - 1
+                   ? size - (bipolar)(sizeof(text) - 1)
+                   : 0;
+        if (size > 5 && system_seek(handle, start, 0) == start)
+        {
+                while (used < (positive)(size - start))
+                {
+                        got = system_call_3(syscall(read), (positive)handle,
+                                            (positive)(text + used),
+                                            (positive)(size - start) - used);
+                        if (got == -4)
+                                continue;
+                        if (got <= 0)
+                                break;
+                        used += (positive)got;
+                }
+        }
+        system_call_1(syscall(close), (positive)handle);
+        if (used < 3 || used != (positive)(size - start) ||
+            text[used - 1] != '\n')
+                return;
+        text[--used] = 0;
+        line = used;
+        while (line && text[line - 1] != '\n')
+                line--;
+        if (!line || line == used)
+                return;
+        if (!clock_tz_parse(text + line))
+                clock_tz_reset();
+}
+
 static fn clock_tz_load_file(void)
 {
         p8 text[80];
@@ -20191,7 +20258,10 @@ static fn clock_tz_load_file(void)
                                (positive)(string_address)CLOCK_ZONE_PATH,
                                O_RDONLY | O_CLOEXEC, 0);
         if (handle < 0)
+        {
+                clock_tz_load_localtime();
                 return;
+        }
         do
                 got = system_call_3(syscall(read), (positive)handle,
                                     (positive)(text + used),

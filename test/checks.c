@@ -36019,9 +36019,11 @@ int main(int words, char **word)
             holds it in an int. %G and %g both follow it over.
           - %Y, %C and %G are unpadded, which is what glibc 2.44 does and is
             not what musl does; see the note in src/standard/clock.c.
-          - localtime follows POSIX TZ (and /root/timezone). Unset, it is UTC.
-            glibc with TZ unset would disagree on a machine that is not in
-            London, which is why the reference side was pinned to TZ=UTC.
+          - localtime follows POSIX TZ, then /root/timezone, then the footer
+            of /etc/localtime, then UTC. glibc reads the whole of that file,
+            history included, and so disagrees about dates before the zone's
+            last rule change, which is one reason the reference side is
+            pinned to TZ=UTC.
 
         The other four are strptime, and three of the four are glibc defects
         rather than choices it made. Each of them is checked below by hand,

@@ -7268,7 +7268,27 @@ FILES_ZONES = (
     "Australia/Adelaide", "Pacific/Auckland", "Pacific/Chatham", "Asia/Kolkata",
     "Asia/Kathmandu", "Asia/Tehran", "Africa/Cairo", "EST5EDT,M3.2.0,M11.1.0",
     "<+0530>-5:30", "CET-1CEST,M3.5.0,M10.5.0/3",
+    #       No TZ at all, which both sides must take from the footer of
+    #       /etc/localtime (the candidate when there is no /root/timezone),
+    #       and an empty one, which is UTC to both. The unset case says
+    #       something only on a machine whose zone is not UTC; the box is in
+    #       Stockholm, where the candidate that ignored the file was an hour
+    #       or two out on every stamp.
+    None, "",
 )
+
+
+def files_zone_name(zone):
+    """The IANA name a zone case stands for: TZ itself, or for an unset TZ
+    the zone /etc/localtime links to, or None when it names none."""
+    if zone is not None:
+        return zone
+    try:
+        target = os.path.realpath("/etc/localtime")
+    except OSError:
+        return None
+    marker = "/zoneinfo/"
+    return target.split(marker, 1)[1] if marker in target else None
 
 
 def files_zone_instants(zone):
@@ -7277,7 +7297,7 @@ def files_zone_instants(zone):
     import datetime
     try:
         from zoneinfo import ZoneInfo
-        where = ZoneInfo(zone)
+        where = ZoneInfo(files_zone_name(zone))
     except Exception:  # a POSIX string zoneinfo cannot name: fixed instants only
         where = None
     #       Nothing before 2023: the candidate carries each zone's current
@@ -7287,7 +7307,7 @@ def files_zone_instants(zone):
     #       when they were in). Far instants check the rule is extended.
     fixed = [1700000000, 1735689599, 1782000000, 2000000000, 4102444800]
     instants, civil = list(fixed), []
-    if where is None:
+    if where is None or not zone:
         return instants, civil
 
     def offset(t):
@@ -7324,8 +7344,9 @@ def files_zones(farm):
     import tempfile
     from concurrent.futures import ThreadPoolExecutor
 
-    #       du is left out: --time is a column it has not got (ledger r98).
-    tools = ("date", "touch", "stat", "ls", "find", "pr", "tar", "truncate", "ps", "who", "last")
+    #       du --time is in since 8fe3380c gave it the column (ledger r98).
+    tools = ("date", "touch", "stat", "ls", "find", "pr", "tar", "truncate", "ps", "who", "last",
+             "du")
     reference = {tool: shutil.which(tool, path=os.defpath) for tool in tools}
     candidate = {tool: Path(farm) / tool for tool in tools}
     if not all(reference.values()) or not all(p.exists() for p in candidate.values()):
@@ -7358,6 +7379,9 @@ def files_zones(farm):
                                  ["find", ".", "-name", "f", "-printf",
                                   "%t|%TY-%Tm-%Td %TT %Tz %TZ|%T@|%A+|%Ta %Tb %Tp\\n"],
                                  ["pr", "f"],
+                                 ["du", "--time", "f"],
+                                 ["touch", "-d", f"@{t}", "."],
+                                 ["du", "--time", "--time-style=+%F %T %z", "."],
                                  ["tar", "cf", "f.tar", "f"],
                                  ["tar", "tvf", "f.tar"]]))
         for when in civil:
@@ -7371,7 +7395,9 @@ def files_zones(farm):
 
     def run(case, side):
         zone, commands = case
-        environment = {"PATH": os.defpath, "LC_ALL": "C", "TZ": zone}
+        environment = {"PATH": os.defpath, "LC_ALL": "C"}
+        if zone is not None:
+            environment["TZ"] = zone
         answers = []
         with tempfile.TemporaryDirectory(prefix="zones-") as directory:
             for command in commands:
@@ -7401,7 +7427,8 @@ def files_zones(farm):
                 zone, commands = case
                 for command, one, two in zip(commands, want, got):
                     if one != two:
-                        notes.append(f"TZ={zone} {' '.join(command)}: GNU {one!r} ours {two!r}")
+                        shown_zone = "TZ unset" if zone is None else f"TZ={zone}"
+                        notes.append(f"{shown_zone} {' '.join(command)}: GNU {one!r} ours {two!r}")
                         break
     return passed, len(cases), notes
 
