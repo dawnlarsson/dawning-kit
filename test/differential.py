@@ -6877,7 +6877,15 @@ FILES_UTILITIES = (
                    ("--attributes-only", "a.txt", "copy"), ("--attributes-only", "a.txt", "b.txt"), ("-b", "a.txt", "b.txt"),
                    ("-b", "-S", ".bak", "a.txt", "b.txt"), ("--backup=numbered", "a.txt", "b.txt"), ("--backup=numbered", "a.txt", "b.txt~"),
                    ("--remove-destination", "a.txt", "link"), ("-f", "a.txt", "link"), ("-d", "link", "kept"), ("-r", "dir", "copied", "extra"),
-                   ("-s", "a.txt", "./made"), ("-s", "a.txt", "dir/../made"), ("-sv", "a.txt", "dir/made")),
+                   ("-s", "a.txt", "./made"), ("-s", "a.txt", "dir/../made"), ("-sv", "a.txt", "dir/made"))
+            #   A directory copied into itself is made there before the
+            #   reference refuses it, and a tree linked with -s is refused
+            #   in the order the reference reads the directory.
+            + tuple(case for case in files_slash_destinations(
+                "cp", ("-r", "-l", "-s", "-P", "-d", "-v", "-n", "-f", "-b", "-T", "-u", "-a", "-L", "--attributes-only",
+                       "--remove-destination", "--strip-trailing-slashes", "--update=none-fail"),
+                ("a.txt", "dir", "link", "dirlink", "empty"))
+                if not ("dir" in case and ("-s" in case or "dirlink/" in case or "dir/new/" in case))),
             normalize=files_sorted_lines),
     Utility("install", options=(Option("-b"), Option("-c"), Option("-C"), Option("-d"), Option("-D"), Option("-p"), Option("-s"),
                                 Option("-T"), Option("-v"), Option("-Z"), Option("--backup"),
@@ -6905,7 +6913,10 @@ FILES_UTILITIES = (
                    ("-s", "a.txt", "made"), ("-s", "--strip-program=true", "a.txt", "made"), ("-T", "a.txt", "made"), ("-T", "a.txt", "dir"),
                    ("-d", "new", "new/a", "dir/x"), ("-t", "dir", "a.txt", "b.txt"), ("-d", "-v", "new/x"), ("-p", "-m", "600", "a.txt", "b.txt"),
                    ("-d", "dangling/x"), ("-d", "loop/x"), ("-d", "a.txt/x"), ("-d", "shut/new"), ("-D", "a.txt", "dangling/y"),
-                   ("-D", "a.txt", "loop/y"), ("-D", "a.txt", "a.txt/y"), ("-D", "a.txt", "shut/new/y"), ("-D", "-v", "a.txt", "new/deep/made"))),
+                   ("-D", "a.txt", "loop/y"), ("-D", "a.txt", "a.txt/y"), ("-D", "a.txt", "shut/new/y"), ("-D", "-v", "a.txt", "new/deep/made"))
+            + files_slash_destinations(
+                "install", ("-D", "-v", "-T", "-b", "-C", "-p", "--mode=0600", "--backup=numbered"),
+                ("a.txt", "link", "empty"))),
     Utility("mv", options=(Option("-b"), Option("-f"), Option("-i"), Option("-n"), Option("-u"), Option("-v"), Option("-T"),
                            Option("--backup"), Option("--backup", ("numbered", "simple", "none", "existing", "bogus"), True),
                            Option("--force"), Option("--interactive"), Option("--no-clobber"), Option("--update"),
@@ -6928,7 +6939,13 @@ FILES_UTILITIES = (
                    ("-T", "dir/sub", "elsewhere"), ("-T", "a.txt", "b.txt", "dir"), ("-t", "dir/sub", "a.txt"), ("-v", "a.txt", "renamed"),
                    ("-b", "a.txt", "b.txt"), ("--backup=numbered", "a.txt", "b.txt"), ("-u", "a.txt", "b.txt"), ("-u", "b.txt", "a.txt"),
                    ("--exchange", "a.txt", "b.txt"), ("--exchange", "dir", "a.txt"), ("--exchange", "a.txt", "missing"),
-                   ("--strip-trailing-slashes", "dir/", "moved"), ("-W", "a.txt", "renamed"))),
+                   ("--strip-trailing-slashes", "dir/", "moved"), ("-W", "a.txt", "renamed"))
+            #   A dangling link is left out: the reference reads the stat
+            #   of a name it never looked up and answers either way.
+            + tuple(case for case in files_slash_destinations(
+                "mv", ("-f", "-n", "-u", "-v", "-b", "-T", "--update=none-fail", "--no-copy", "--debug"),
+                ("a.txt", "dir", "link", "dirlink", "dangling"))
+                if "dangling/" not in case)),
     Utility("rm", options=(Option("-f"), Option("-i"), Option("-I"), Option("-r"), Option("-R"), Option("-d"), Option("-v"),
                            Option("--force"), Option("--interactive"), Option("--interactive", ("always", "once", "never", "bogus"), True),
                            Option("--one-file-system"), Option("--no-preserve-root"), Option("--preserve-root"),

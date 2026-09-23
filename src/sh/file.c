@@ -27381,6 +27381,73 @@ copied_without_metadata:
                                      0, address_of facts);
 }
 
+/*
+        A destination spelled with a slash on the end names a directory, and
+        the reference hands that spelling to the kernel, which holds it to
+        that: a name that is there and is not a directory cannot be looked
+        up at all, and a name that is not there can be made only as a
+        directory. The walk here opens the parent and works on a bare leaf,
+        which forgets the slash -- so without this cp file missing/ made a
+        file called missing and mv file f2/ put file in f2's place. The
+        words are GNU's for each thing the kernel refused to make: an
+        ordinary copy says Not a directory, a link or a symbolic link names
+        the name already there or missing, as linkat and symlinkat answer,
+        and every one but the refused lookup still writes its -v arrow,
+        which the reference writes before it tries.
+*/
+static bool cp_slash_allowed(string_address source, string_address given,
+                             positive kind, bipolar directory,
+                             string_address leaf)
+{
+        file_facts through;
+        file_facts entry;
+        bipolar reached = file_look_code(directory, leaf, 0, address_of through);
+
+        if (reached == 0 && (through.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                return true;
+        if (reached == 0 || reached == -ERROR_NOT_DIRECTORY)
+                return string_report(log_error, false, "cp: cannot stat %w: %s\n",
+                                     writer_shell_quoted_name, given,
+                                     file_reason(-ERROR_NOT_DIRECTORY));
+        if (reached != -ERROR_NO_ENTRY)
+                return true;
+
+        bipolar held = file_look(directory, leaf, AT_SYMLINK_NOFOLLOW,
+                                 address_of entry)
+                           ? -ERROR_EXISTS
+                           : -ERROR_NO_ENTRY;
+
+        if (kind == MODE_DIRECTORY)
+                return held == -ERROR_NO_ENTRY ||
+                       string_report(log_error, false,
+                                     "cp: cannot create directory %w: %s\n",
+                                     writer_shell_quoted_name, given,
+                                     file_reason(held));
+        if (cp_loud)
+                file_backup_told(source, given, (string_address) "'",
+                                 (string_address) "' -> '");
+        if (cp_symbolic && !string_is(source, '/') && !cp_link_here(given))
+                return string_report(log_error, false, "cp: %w: can make relative symbolic links only in current directory\n",
+                                     writer_terminal_name, given);
+        if (cp_hard || cp_symbolic)
+                return string_report(log_error, false,
+                                     cp_symbolic
+                                         ? (string_address) "cp: cannot create symbolic link %w to %w: %s\n"
+                                         : (string_address) "cp: cannot create hard link %w to %w: %s\n",
+                                     writer_shell_quoted_name, given,
+                                     writer_shell_quoted_name, source,
+                                     file_reason(held));
+        if (kind == MODE_LINK)
+                return string_report(log_error, false,
+                                     "cp: cannot create symbolic link %w: %s\n",
+                                     writer_shell_quoted_name, given,
+                                     file_reason(held));
+        return string_report(log_error, false,
+                             "cp: cannot create regular file %w: %s\n",
+                             writer_shell_quoted_name, given,
+                             file_reason(-ERROR_NOT_DIRECTORY));
+}
+
 // file_copy_one carries the walk depth and whether the name was written on the
 // command line; the pair walker cp shares with mv carries neither, and every
 // pair it hands over is a named one at full depth.
@@ -27403,6 +27470,7 @@ static fn cp_pair(string_address source, string_address destination)
         }
         source = named;
 
+        string_address given = destination;
         string_address dest_named = destination;
         if (!file_dest_slash(destination, dest_stripped, address_of dest_named))
         {
@@ -27463,6 +27531,15 @@ static fn cp_pair(string_address source, string_address destination)
         {
                 string_format(log_error, "cp: -r not specified; omitting directory '%w'\n",
                               writer_terminal_quoted_name, source);
+                system_close(source_directory);
+                system_close(destination_directory);
+                cp_status = 1;
+                return;
+        }
+        if (file_name_has_trailing_slash(given) &&
+            !cp_slash_allowed(source, given, kind, destination_directory,
+                              destination_leaf))
+        {
                 system_close(source_directory);
                 system_close(destination_directory);
                 cp_status = 1;
@@ -28245,13 +28322,22 @@ static fn install_pair(string_address source, string_address destination)
                 return;
         }
 
+        //      A slash on the end is held to naming a directory, as
+        //      cp_slash_allowed says; the leading directories -D makes
+        //      are made first, as the reference makes them.
         static p8 destination_leaf[FILE_PATH_MAX];
+        static p8 destination_bare[FILE_PATH_MAX];
+        bool slashed = file_name_has_trailing_slash(destination) &&
+                       file_name_without_trailing_slashes(destination_bare,
+                                                          destination);
+        string_address opened = slashed ? (string_address)destination_bare
+                                        : destination;
         bipolar destination_directory = install_parents
                                             ? install_leading(
-                                                  destination,
+                                                  opened,
                                                   destination_leaf)
                                             : file_parent_open(
-                                                  destination,
+                                                  opened,
                                                   destination_leaf);
         if (destination_directory < 0)
         {
@@ -28265,11 +28351,45 @@ static fn install_pair(string_address source, string_address destination)
                 install_status = 1;
                 return;
         }
+        if (slashed)
+        {
+                file_facts through;
+                bipolar reached = file_look_code(destination_directory,
+                                                 destination_leaf, 0,
+                                                 address_of through);
+
+                if (reached == 0 &&
+                    (through.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                        reached = -ERROR_NOT_DIRECTORY;
+                if (reached == -ERROR_NOT_DIRECTORY ||
+                    reached == -ERROR_NO_ENTRY)
+                {
+                        if (reached == -ERROR_NOT_DIRECTORY)
+                                string_format(log_error, "install: cannot stat %w: %s\n",
+                                              writer_shell_quoted_name, destination,
+                                              file_reason(reached));
+                        else
+                        {
+                                if (install_loud)
+                                        file_backup_told(source, destination,
+                                                         (string_address) "'",
+                                                         (string_address) "' -> '");
+                                string_format(log_error,
+                                              "install: cannot create regular file %w: %s\n",
+                                              writer_shell_quoted_name, destination,
+                                              file_reason(-ERROR_NOT_DIRECTORY));
+                        }
+                        system_close(destination_directory);
+                        system_close(source_handle);
+                        install_status = 1;
+                        return;
+                }
+        }
 
         file_facts to;
         bipolar to_looked = file_look_code(
             destination_directory, destination_leaf,
-            AT_SYMLINK_NOFOLLOW, address_of to);
+            slashed ? 0 : AT_SYMLINK_NOFOLLOW, address_of to);
         bool destination_exists = to_looked >= 0;
         if (to_looked < 0 && to_looked != -ERROR_NO_ENTRY)
         {
@@ -28643,6 +28763,7 @@ static fn mv_one(string_address source, string_address destination)
         }
         source = named;
 
+        bool slashed_destination = file_name_has_trailing_slash(destination);
         string_address dest_named = destination;
         if (!file_dest_slash(destination, dest_stripped, address_of dest_named))
         {
@@ -28682,10 +28803,73 @@ static fn mv_one(string_address source, string_address destination)
                 goto finished;
         }
 
-        // -f is the default and asks nothing; -n, -u and -i are cp's.
+        /* The rename the reference makes is given the slash, and the
+           kernel refuses it: see cp_slash_allowed. -n and
+           --update=none-fail ask for a rename that replaces nothing, which
+           is refused for a name already there before the slash is looked
+           at, and that refusal is the one they answer. */
+        if (slashed_destination &&
+            !((mv_update_policy == 'n' || mv_update_policy == 'F') &&
+              file_look(destination_directory, destination_leaf,
+                        AT_SYMLINK_NOFOLLOW, address_of through)))
+        {
+                bipolar reached = file_look_code(destination_directory,
+                                                 destination_leaf, 0,
+                                                 address_of through);
+                bool moving_directory =
+                    (from.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+                if (reached == 0 &&
+                    (through.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                        reached = -ERROR_NOT_DIRECTORY;
+                //      --strip-trailing-slashes renames the bare name, and
+                //      GNU still refuses one that is not there at all.
+                if (file_strip_trailing)
+                        reached = file_look(destination_directory, destination_leaf,
+                                            AT_SYMLINK_NOFOLLOW, address_of through)
+                                      ? 1 : -ERROR_NO_ENTRY;
+                if (reached == -ERROR_NOT_DIRECTORY)
+                {
+                        string_format(log_error, "mv: cannot stat %w: %s\n",
+                                      writer_shell_quoted_name, destination,
+                                      file_reason(reached));
+                        mv_status = 1;
+                        goto finished;
+                }
+                if (reached == -ERROR_NO_ENTRY && !moving_directory)
+                {
+                        string_format(log_error, "mv: cannot move %w to %w: %s\n",
+                                      writer_shell_quoted_name, source,
+                                      writer_shell_quoted_name, destination,
+                                      file_reason(-ERROR_NOT_DIRECTORY));
+                        mv_status = 1;
+                        goto finished;
+                }
+                slashed_destination = reached == 0;
+
+                //      A backup renames the name, and the name with its
+                //      slash is a link that is not a directory.
+                if (slashed_destination && file_backup_kind &&
+                    file_look(destination_directory, destination_leaf,
+                              AT_SYMLINK_NOFOLLOW, address_of through) &&
+                    (through.mode & MODE_FORMAT) == MODE_LINK)
+                {
+                        string_format(log_error, "mv: cannot backup %w: %s\n",
+                                      writer_shell_quoted_name, destination,
+                                      file_reason(-ERROR_NOT_DIRECTORY));
+                        mv_status = 1;
+                        goto finished;
+                }
+        }
+        else
+                slashed_destination = false;
+
+        // -f is the default and asks nothing; -n, -u and -i are cp's. A
+        // slash that reached a directory through a link names the
+        // directory, and it is the directory the answers below are about.
         bool destination_exists = file_look(
-            destination_directory, destination_leaf, AT_SYMLINK_NOFOLLOW,
-            address_of to);
+            destination_directory, destination_leaf,
+            slashed_destination ? 0 : AT_SYMLINK_NOFOLLOW, address_of to);
         /* GNU same_file_ok runs before -u/-i skip, and is itself skipped
            only for UPDATE_NONE / UPDATE_NONE_FAIL. A later --update must
            still see two names for one file. */
