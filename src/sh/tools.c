@@ -1538,6 +1538,25 @@ static positive login_field(p8 address_to into, positive room,
         return length;
 }
 
+/*
+        who, users and pinky write utmp's names as coreutils does, whole --
+        and a host is whatever the peer's reverse lookup answered, a user
+        whatever was typed at a login prompt, so an ESC in either reached
+        the terminal of whoever asked who was on. At STRICT_SAFE a byte a
+        terminal acts on is a '?', the length kept so the columns hold; last
+        already spells them its own way. STRICT_REFERENCE writes them whole.
+*/
+static fn login_field_spelled(p8 address_to text)
+{
+#if MOONWATER_STRICT >= STRICT_SAFE
+        for (; *text; text++)
+                if (*text < ' ' || *text == 0x7f)
+                        *text = '?';
+#else
+        (void)text;
+#endif
+}
+
 static fn login_put_width(string_address value, positive length,
                           positive width, bool right)
 {
@@ -3570,6 +3589,8 @@ static bool login_who_visit(login_record address_to record)
                     false);
         login_field(host, sizeof(host), record->host, sizeof(record->host),
                     false);
+        login_field_spelled(user);
+        login_field_spelled(host);
 
         if (record->type == LOGIN_BOOT_TIME)
                 login_who.boottime = (b64)record->seconds;
@@ -3803,6 +3824,7 @@ static bool login_users_visit(login_record address_to record)
 
         login_field(node->text, sizeof(node->text), record->user,
                     sizeof(record->user), true);
+        login_field_spelled(node->text);
         login_name address_to address_to at = address_of login_users_head;
 
         while (*at && string_compare((*at)->text, node->text) <= 0)
@@ -3945,6 +3967,8 @@ static bool login_pinky_visit(login_record address_to record)
             line, sizeof(line), record->line, sizeof(record->line), false);
         positive host_length = login_field(
             host, sizeof(host), record->host, sizeof(record->host), false);
+        login_field_spelled(user);
+        login_field_spelled(host);
         positive time_length = tools_clock_text(time, sizeof(time), "%b %e %H:%M",
                                                 record->seconds);
         login_terminal terminal = login_terminal_facts(line);
