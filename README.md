@@ -147,6 +147,9 @@ mode beside it was set by hand before auto existed and stays manual until
 Canvas layouts other than US are the compositor's table, switched live.
 Steam Deck radios (RTL8822CE, MT7921) also need the matching linux-firmware files
 under `/lib/firmware`; the drivers are in the image, the blobs are not.
+Besides PCI ethernet, the desktop image drives USB ethernet
+adapters -- Realtek RTL8152/8153 (the Steam Deck dock's port and most USB-C
+adapters), CDC ECM and NCM, and ASIX AX88179.
 
 The same one-line shape covers the rest of the machine through bind events already:
 `mute`, `micmute`, `volume_up`, `volume_down`, `brightness_up`, `brightness_down`,

@@ -102,6 +102,24 @@ CONFIG_MEDIA_USB_SUPPORT=y
 CONFIG_USB_VIDEO_CLASS=y
 CONFIG_USB_VIDEO_CLASS_INPUT_EVDEV=n
 
+#
+# USB ethernet
+#
+# The Steam Deck dock's port and most USB-C adapters are Realtek RTL8152
+# or RTL8153, the rest mostly speak CDC ECM or NCM or are ASIX AX88179;
+# a cable is how a machine with no screen is reached when the wifi is not.
+#
+CONFIG_USB_NET_DRIVERS=y
+CONFIG_USB_RTL8152=y
+CONFIG_USB_USBNET=y
+CONFIG_USB_NET_CDCETHER=y
+CONFIG_USB_NET_CDC_NCM=y
+CONFIG_USB_NET_AX88179_178A=y
+CONFIG_USB_NET_AX8817X=n
+CONFIG_USB_NET_NET1080=n
+CONFIG_USB_NET_CDC_SUBSET=n
+CONFIG_USB_NET_ZAURUS=n
+
 # Above BITS_PER_LONG, small_cpumask_bits becomes the runtime nr_cpu_ids and
 # disables the single-word bitmap/find inlines: 727/1232 call sites reload it.
 # Keeping a desktop in one word measured 1.55x on its profiled _find_next_bit.
