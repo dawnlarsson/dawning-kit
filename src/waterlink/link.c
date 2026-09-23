@@ -1592,10 +1592,7 @@ bool waterlink_deliver_at(struct waterlink_link address_to link,
                 //      where the frames stop. The padding is inside the tag,
                 //      so this is the sender's statement and not a guess.
                 if (!head.flags && !head.key && !head.length)
-                {
-                        at = length;
                         break;
-                }
 
                 at += WATERLINK_HEADER;
 
@@ -1664,7 +1661,11 @@ bool waterlink_deliver_at(struct waterlink_link address_to link,
                 at += head.length;
         }
 
-        good = at == length;
+        //      Where the frames stop, the rest is the seal's padding and
+        //      all zeros -- a tail too short for a header included, which
+        //      every box of acknowledgements alone has, cut to whole blocks.
+        for (good = true; at < length; at++)
+                good = good && !bytes[at];
         if (good && framed)
                 link->owed_count++;
         return good;

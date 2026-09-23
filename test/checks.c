@@ -52732,9 +52732,13 @@ static fn sim_send(positive from, p8 address_to body, positive used, p64 now,
                 d->arrive = depart + edge->delay +
                             (edge->jitter ? sim_next() % edge->jitter : 0);
                 d->counter = edge->counter;
-                d->used = used;
+                //      The box as the seal leaves it: zeros to the full
+                //      payload, or to whole blocks for acknowledgements alone.
+                d->used = short_ack ? (used + 15) & ~(positive)15
+                                    : WATERLINK_PAYLOAD;
                 d->to = (p8)(1 - from);
                 memory_copy(d->body, body, used);
+                memory_zero(d->body + used, d->used - used);
                 sim_heap_push(at);
         }
 }
