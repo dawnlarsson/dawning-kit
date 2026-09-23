@@ -5794,6 +5794,29 @@ FIXTURES["files"] = {
     ".": files_dir(1650000000),
 }
 
+#       A tree cp merges into, with links a user planted where the source has
+#       directories: T/sub and T/src/a point at victim, dl at dl.t. GNU looks
+#       at a directory's destination without following it and refuses;
+#       followed, cp -a wrote the source into victim and gave it the source's
+#       mode and times. A trailing slash and a target directory still resolve.
+FIXTURES["files_planted"] = {
+    "src/sub/s1": files_file(b"one\n", 1150000000),
+    "src/a/b/f": files_file(b"f\n", 1151000000),
+    "src/a/b": files_dir(1152000000),
+    "src/a": files_dir(1153000000),
+    "src/sub": files_dir(1154000000, 0o700),
+    "src": files_dir(1155000000),
+    "victim/keep": files_file(b"keep\n", 1160000000),
+    "victim": files_dir(1161000000),
+    "T/sub": files_link("../victim", 1170000000),
+    "T/src/a": files_link("../../victim", 1171000000),
+    "T/src": files_dir(1172000000),
+    "T/a": files_dir(1173000000),
+    "T": files_dir(1174000000),
+    "dl.t": files_dir(1180000000),
+    "dl": files_link("dl.t", 1181000000),
+}
+
 files_UID = str(os.getuid())
 files_GID = str(os.getgid())
 
@@ -6815,6 +6838,11 @@ FILES_UTILITIES = (
             stdin=("files_yes", "files_no"), fixture="files", stderr="exact", max_flags=4,
             extra=(("-rL", "dir", "copied"), ("-rL", ".", "copied"), ("-rL", "dir/sub/back", "copied"), ("-rp", "dir", "kept"), ("-a", "dir", "arch"),
                    ("-a", "link", "arch"), ("-rl", "dir", "linked"), ("-rs", "dir", "linked"), ("-r", "dir", "dirlink/x"), ("-r", "dir", "dir/sub/x"),
+                   *({"fixture": "files_planted", "argv": argv} for argv in (
+                       ("-a", "src/.", "T"), ("-r", "src/.", "T"), ("-rp", "src/.", "T"), ("-rL", "src/.", "T"),
+                       ("-r", "src", "T"), ("-a", "src/sub", "T"), ("-r", "-t", "T", "src/sub"),
+                       ("-rT", "src/sub", "T/sub"), ("-rT", "src/sub", "T/sub/"), ("-r", "src/sub", "T/sub"),
+                       ("-rT", "src", "dl"), ("-rT", "src", "dl/"), ("-r", "src/.", "dl"), ("-a", "src", "dl"))),
                    ("-P", "-H", "link", "kept"), ("-H", "-P", "link", "kept"), ("-n", "-i", "a.txt", "b.txt"), ("-i", "-n", "a.txt", "b.txt"),
                    ("-rv", "dir", "copied"), ("-T", "-t", "dir", "a.txt"), ("-f", "a.txt", "missing/copy"), ("-l", "missing", "a.txt", "dir"),
                    ("-rT", "dir/sub", "aimed"), ("-u", "a.txt", "b.txt"), ("-u", "b.txt", "a.txt"), ("-r", "unreadable", "dir", "copied"),

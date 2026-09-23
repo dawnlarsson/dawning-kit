@@ -5599,11 +5599,12 @@ static bipolar file_rename_decided_at(
 static bipolar file_copy_directory_open(
     system_path_stage address_to protected, bipolar directory,
     string_address name, bool exists, file_facts address_to expected,
-    bool stage)
+    bool stage, bool slashed)
 {
         if (exists && !stage)
                 return file_open_same(directory, name, expected,
-                                      FILE_READ | O_DIRECTORY);
+                                      FILE_READ | O_DIRECTORY |
+                                          (slashed ? 0 : O_NOFOLLOW));
         if (!stage)
                 return -ERROR_INVALID;
 
@@ -25100,6 +25101,8 @@ static positive file_copy_creation_mode(file_facts address_to facts)
    itself, so there is nothing to compare it against. */
 #define FILE_COPY_FRESH 1
 #define FILE_COPY_FACTS_HELD 2
+// The destination was written with a trailing slash, which resolves a link.
+#define FILE_COPY_SLASHED 4
 
 /* A directory made inside a fresh one.  Owner bits the umask would take
    away are kept the way the stage keeps them, or the copy could not write
@@ -26551,9 +26554,19 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 return false;
 
         positive kind = facts.mode & MODE_FORMAT;
-        positive destination_flags = moving ||
-                                             (kind == MODE_LINK && !follow)
-                                         ? AT_SYMLINK_NOFOLLOW : 0;
+        /*      A directory is looked at where it would go, never through
+                it: a link standing there is a link, as GNU's lstat has it,
+                and cannot be overwritten by a directory. Followed, a link a
+                user planted in a tree cp -a merges into led the copy into
+                wherever it pointed and gave that the source's mode, owner
+                and times. Only a target directory is resolved, and a
+                destination named with a trailing slash, which the kernel
+                follows whatever the flag says. */
+        bool slashed = (how & FILE_COPY_SLASHED) != 0;
+        positive destination_flags =
+            moving || (kind == MODE_DIRECTORY && !slashed) ||
+                    (kind == MODE_LINK && !follow)
+                ? AT_SYMLINK_NOFOLLOW : 0;
         file_facts destination_entry;
         bool destination_exists = false;
         bool destination_entry_exists = false;
@@ -26989,7 +27002,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
             ? file_copy_directory_fresh(destination_directory, destination)
             : file_copy_directory_open(
                   address_of protected, destination_directory, destination,
-                  destination_exists, address_of there, staged);
+                  destination_exists, address_of there, staged,
+                  (how & FILE_COPY_SLASHED) != 0);
         if (destination_handle < 0)
         {
                 if (!facts_held)
@@ -27280,8 +27294,14 @@ static fn cp_pair(string_address source, string_address destination)
                 cp_status = 1;
                 return;
         }
-        positive destination_flags = kind == MODE_LINK && !follow
-                                         ? AT_SYMLINK_NOFOLLOW : 0;
+        // As file_copy_one looks, so the decision and the copy agree.
+        positive destination_length = string_length(destination);
+        bool destination_slashed =
+            destination_length && destination[destination_length - 1] == '/';
+        positive destination_flags =
+            (kind == MODE_DIRECTORY && !destination_slashed) ||
+                    (kind == MODE_LINK && !follow)
+                ? AT_SYMLINK_NOFOLLOW : 0;
         bool destination_exists = file_look(
             destination_directory, destination_leaf, destination_flags,
             address_of destination_facts);
@@ -27383,7 +27403,8 @@ static fn cp_pair(string_address source, string_address destination)
         if (!file_copy_one(source_directory, source_leaf, source,
                            destination_directory, destination_leaf,
                            destination, FILE_MAX_DEPTH, true, false, false,
-                           address_of source_facts, source_pinned, 0))
+                           address_of source_facts, source_pinned,
+                           destination_slashed ? FILE_COPY_SLASHED : 0))
                 cp_status = 1;
         system_close(source_pinned);
         system_close(source_directory);
