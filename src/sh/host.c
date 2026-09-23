@@ -224,14 +224,41 @@ static bipolar host_read_text(string_address path, p8 address_to into,
         return got;
 }
 
+/*
+        A state file this writes as root, under /run/moonwater or /root, is
+        opened where it is and never through a link: a name planted there
+        first made the write truncate whatever it pointed at, with the
+        secret some of these files carry (the wifi passwords, the settings)
+        going into it. And its mode is set as well as asked for, since a
+        mode given to open reaches only a file it creates: /root/wifi left
+        at 0644 by anything before kept the passwords readable by all.
+*/
+static bipolar host_open_state(bipolar directory, string_address path,
+                               positive mode)
+{
+        bipolar handle = system_open_output_at(directory, path, true, mode);
+        bipolar moded;
+
+        if (handle < 0)
+                return handle;
+
+        moded = system_call_2(syscall(fchmod), (positive)handle, mode);
+        if (moded < 0)
+        {
+                system_close(handle);
+                return moded;
+        }
+
+        return handle;
+}
+
 /* Bytes over a state file, made if it is not there. A choice that has to
    survive the power going is synced; a /run file that only says what this
    session is doing does not need to be. */
 static bipolar host_write_file(string_address path, p8 address_to bytes,
                                positive length, positive mode, bool sync)
 {
-        bipolar handle = system_open_at_mode(AT_FDCWD, path,
-                                             FILE_WRITE | O_CLOEXEC, mode);
+        bipolar handle = host_open_state(AT_FDCWD, path, mode);
         bipolar failed;
 
         if (handle < 0)
@@ -301,10 +328,31 @@ static fn host_each_entry(string_address path, host_entry_visitor visit,
         file_walk_close(address_of walk);
 }
 
+/*      A directory this keeps state in, made if it is not there -- and made
+        again if what is there is a link, which every write under it would
+        otherwise have followed, since a mkdir that fails because the name
+        exists says nothing about what the name is. */
+static fn host_state_directory(string_address path, positive mode)
+{
+        bipolar opened;
+
+        system_make_directory_at(AT_FDCWD, path, mode);
+        opened = system_open_at(AT_FDCWD, path,
+                                FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (opened >= 0)
+        {
+                system_close(opened);
+                return;
+        }
+
+        if (system_remove_at(AT_FDCWD, path, 0) >= 0)
+                system_make_directory_at(AT_FDCWD, path, mode);
+}
+
 static fn host_state_ready(void)
 {
         system_make_directory_at(AT_FDCWD, "/run", 0755);
-        system_make_directory_at(AT_FDCWD, HOST_STATE, 0755);
+        host_state_directory(HOST_STATE, 0755);
 }
 
 static fn host_verdict_set(string_address kind, string_address disk)
@@ -2303,8 +2351,7 @@ static fn host_settings_keep(host_settings address_to settings)
         (void)host_spark_once(SPARK_IOCTL_SETTINGS_SET, address_of request,
                               FILE_READ_WRITE);
 
-        handle = system_open_at_mode(AT_FDCWD, HOST_SETTINGS_NEXT,
-                                     FILE_WRITE | O_CLOEXEC, 0600);
+        handle = host_open_state(AT_FDCWD, HOST_SETTINGS_NEXT, 0600);
         if (handle < 0)
                 return;
 
@@ -3133,7 +3180,8 @@ static fn host_events_boot(host_settings address_to settings)
 
         //      The runner, from here on: its own session, outliving boot.
         system_call(syscall(setsid));
-        system_make_directory_at(AT_FDCWD, HOST_EVENTS_INIT, 0700);
+        host_state_ready();
+        host_state_directory(HOST_EVENTS_INIT, 0700);
 
         for (;;)
         {
@@ -3179,7 +3227,7 @@ static fn host_events_boot(host_settings address_to settings)
                 }
 
                 host_write_text(status_path, "running\n");
-                output = system_open_at_mode(AT_FDCWD, path, FILE_WRITE | O_CLOEXEC, 0600);
+                output = host_open_state(AT_FDCWD, path, 0600);
                 child = host_event_start(text, output, host_event_environment());
                 if (output >= 0)
                         system_close(output);

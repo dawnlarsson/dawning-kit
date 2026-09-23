@@ -2213,8 +2213,7 @@ static b32 host_machine_source(void)
         host_machine_fresh = 1;
 
         host_state_ready();
-        handle = system_open_at_mode(AT_FDCWD, HOST_MACHINE_RUNTIME,
-                                     FILE_WRITE | O_CLOEXEC, 0600);
+        handle = host_open_state(AT_FDCWD, HOST_MACHINE_RUNTIME, 0600);
         if (handle < 0)
                 return handle;
         failed = storage_format_write(handle, host_machine_text, host_machine.length,

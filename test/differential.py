@@ -28864,6 +28864,253 @@ def harness_objtool_shape(argv):
     return 1 if failures else 0
 
 
+def harness_host_writes(argv):
+    """The moonwater command's root writes land where they are named.
+
+    host_write_file, the settings keep, the machine runtime and each boot
+    event's log opened program-chosen paths under /run/moonwater and /root
+    FILE_WRITE, which follows a link: a name planted first made root
+    truncate whatever it pointed at, the wifi passwords or the settings
+    going into it. And a mode given to open reaches only a file it makes, so
+    /root/wifi left at 0644 kept its passwords readable by all.
+
+    Two halves. Every write open in host.c, the CLI half of moonwater.c and
+    screen.c either refuses a link (O_NOFOLLOW, O_EXCL or
+    system_open_output_at) or sits in a function named below with the reason
+    it may follow one -- shell redirection and cp have to follow links, so a
+    rule for the whole tree cannot work. And the writer and the state
+    directory are cut out of host.c and run against links planted at a file
+    and at the directory, beside a scene that plants nothing and has to be
+    written; the parent's two are run the same way and must lose.
+    """
+    del argv
+    import subprocess
+    import tempfile
+    root = HARNESS_ROOT
+    allowed = {
+        "host_copy_file": "the image goes onto the ESP, FAT, which has no links",
+        "term_oom_adjust": "/proc/self, which is the kernel's",
+    }
+    failures, sites = [], 0
+    opener = re.compile(r"system_open_at(?:_mode)?\s*\(")
+    for name in ("src/sh/host.c", "src/moonwater/moonwater.c", "src/sh/screen.c"):
+        text = (root / name).read_text()
+        if name.endswith("moonwater.c"):
+            text = text[text.index("#ifdef MOONWATER_CLI"):]
+        for found in opener.finditer(text):
+            depth, at = 1, found.end()
+            while depth and at < len(text):
+                depth += {"(": 1, ")": -1}.get(text[at], 0)
+                at += 1
+            call = text[found.start():at]
+            if not re.search(r"FILE_WRITE|FILE_APPEND|O_CREAT|O_TRUNC", call):
+                continue
+            sites += 1
+            if re.search(r"O_NOFOLLOW|FILE_EXCLUSIVE|O_EXCL", call):
+                continue
+            head = [m.group(1) for m in re.finditer(r"(?m)^(?!\s)(?:static\s+)?[\w ]*?\b(\w+)\s*\([^;]*$",
+                                                     text[:found.start()])]
+            owner = head[-1] if head else "?"
+            if owner in allowed:
+                continue
+            line = text[:found.start()].count("\n") + 1
+            failures.append("%s:%d %s opens for writing through a link" % (name, line, owner))
+
+    host = (root / "src/sh/host.c").read_text()
+    marks = ("static bipolar host_open_state(", "static bipolar host_write_text(",
+             "static fn host_state_directory(", "static fn host_verdict_set(")
+    if not all(mark in host for mark in marks):
+        for failure in failures:
+            print("  FAIL " + failure)
+        print("  FAIL host.c has no host_open_state and host_state_directory to cut out")
+        write_tally("host-writes", 0, 1)
+        return 1
+    writer = host[host.index(marks[0]):host.index(marks[1])]
+    ready = host[host.index(marks[2]):host.index(marks[3])]
+    parent = r'''
+static bipolar host_write_file(string_address path, p8 address_to bytes,
+                               positive length, positive mode, bool sync)
+{
+        bipolar handle = system_open_at_mode(AT_FDCWD, path,
+                                             FILE_WRITE | O_CLOEXEC, mode);
+        bipolar failed;
+
+        if (handle < 0)
+                return handle;
+
+        failed = storage_format_write(handle, bytes, length, 0);
+        if (!failed && sync)
+                failed = system_call_1(syscall(fsync), (positive)handle);
+        system_close(handle);
+        return failed;
+}
+static fn host_state_ready(void)
+{
+        system_make_directory_at(AT_FDCWD, "/run", 0755);
+        system_make_directory_at(AT_FDCWD, HOST_STATE, 0755);
+}
+'''
+    shim = r'''
+#define _GNU_SOURCE
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+typedef unsigned char p8;
+typedef unsigned long positive;
+typedef long bipolar;
+typedef const char *string_address;
+#define fn void
+#define address_to *
+#define FILE_READ O_RDONLY
+#define FILE_WRITE (O_WRONLY | O_CREAT | O_TRUNC)
+#define HOST_STATE "run/moonwater"
+#define syscall(name) 0
+#define system_call_1(n, h) (fsync((int)(h)) < 0 ? -errno : 0)
+#define system_call_2(n, h, m) (fchmod((int)(h), (mode_t)(m)) < 0 ? -errno : 0)
+static bipolar answer(long r) { return r < 0 ? -errno : r; }
+static bipolar system_open_at(bipolar d, string_address p, positive f) {
+        return answer(openat((int)d, p, (int)f));
+}
+static bipolar system_open_at_mode(bipolar d, string_address p, positive f, positive m) {
+        return answer(openat((int)d, p, (int)f, (mode_t)m));
+}
+static bipolar system_open_output_at(bipolar d, string_address p, int replace, positive m) {
+        return answer(openat((int)d, p, FILE_WRITE | O_CLOEXEC |
+                                            (replace ? O_NOFOLLOW : O_EXCL), (mode_t)m));
+}
+static bipolar system_make_directory_at(bipolar d, string_address p, positive m) {
+        return answer(mkdirat((int)d, p, (mode_t)m));
+}
+static bipolar system_remove_at(bipolar d, string_address p, positive f) {
+        return answer(unlinkat((int)d, p, (int)f));
+}
+static bipolar storage_format_write(bipolar h, const void *b, positive n, positive at) {
+        (void)at;
+        return write((int)h, b, n) == (ssize_t)n ? 0 : -EIO;
+}
+static fn system_close(bipolar h) { close((int)h); }
+'''
+    driver = r'''
+static int failures, checks;
+static char here[4096];
+static void check(int good, const char *what) {
+        checks++;
+        if (good) return;
+        failures++;
+        printf("  FAIL %s\n", what);
+}
+static int holds(const char *path, const char *want) {
+        char seen[64] = {0};
+        int handle = open(path, O_RDONLY | O_NOFOLLOW);
+        ssize_t got;
+        if (handle < 0) return 0;
+        got = read(handle, seen, sizeof seen - 1);
+        close(handle);
+        return got == (ssize_t)strlen(want) && !memcmp(seen, want, got);
+}
+static void fresh(const char *name) {
+        char command[9000];
+        snprintf(command, sizeof command, "rm -rf '%s/%s' && mkdir '%s/%s'", here, name, here, name);
+        if (system(command) || chdir(name)) _exit(3);
+}
+int main(void) {
+        char full[4300];
+        struct stat seen;
+
+        if (!getcwd(here, sizeof here)) return 3;
+
+        /* Nothing planted: the file is written, with its mode. */
+        fresh("plain");
+        mkdir("run", 0755);
+        host_state_ready();
+        host_write_file(HOST_STATE "/settings", (p8 *)"secret", 6, 0600, false);
+        check(holds(HOST_STATE "/settings", "secret"), "a state file with nothing planted is written");
+        check(!stat(HOST_STATE "/settings", &seen) && (seen.st_mode & 0777) == 0600,
+              "a state file is made with its mode");
+        chdir(here);
+
+        /* A link where the file goes, at a file elsewhere -- absolute, so
+           the parent's write really lands on it rather than beside the link. */
+        fresh("filelink");
+        mkdir("run", 0755);
+        mkdir(HOST_STATE, 0755);
+        { int h = open("victim", O_WRONLY | O_CREAT, 0644); write(h, "keep", 4); close(h); }
+        snprintf(full, sizeof full, "%s/filelink/victim", here);
+        symlink(full, HOST_STATE "/settings");
+        host_write_file(HOST_STATE "/settings", (p8 *)"secret", 6, 0600, false);
+        check(holds("victim", "keep"), "a state file name that is a link is not written through");
+        chdir(here);
+
+        /* A file already there at 0644 is left root's alone. */
+        fresh("mode");
+        mkdir("root", 0700);
+        { int h = open("root/wifi", O_WRONLY | O_CREAT, 0644); write(h, "old", 3); close(h); chmod("root/wifi", 0644); }
+        host_write_file("root/wifi", (p8 *)"secret", 6, 0600, true);
+        check(!stat("root/wifi", &seen) && (seen.st_mode & 0777) == 0600,
+              "a secret over a readable file makes it root's alone");
+        check(holds("root/wifi", "secret"), "and holds the secret");
+        chdir(here);
+
+        /* The state directory itself a link, at a real directory elsewhere. */
+        fresh("dirlink");
+        mkdir("run", 0755);
+        mkdir("elsewhere", 0755);
+        snprintf(full, sizeof full, "%s/dirlink/elsewhere", here);
+        symlink(full, HOST_STATE);
+        host_state_ready();
+        host_write_file(HOST_STATE "/verdict", (p8 *)"live\n", 5, 0644, false);
+        check(access("elsewhere/verdict", F_OK) != 0, "a state directory that is a link is not written through");
+        check(!lstat(HOST_STATE, &seen) && S_ISDIR(seen.st_mode), "the state directory is made again as one");
+        check(holds(HOST_STATE "/verdict", "live\n"), "and the write lands in it");
+        chdir(here);
+
+        printf("%d %d\n", checks - failures, checks);
+        return failures != 0;
+}
+'''
+
+    def run(body):
+        with tempfile.TemporaryDirectory(prefix="host-writes-") as temporary:
+            top = Path(temporary).resolve()
+            (top / "fixture.c").write_text(shim + body + driver)
+            built = subprocess.run(["cc", "-w", "-o", str(top / "fixture"), str(top / "fixture.c")],
+                                   capture_output=True, text=True)
+            if built.returncode:
+                return None, built.stderr[-2000:]
+            ran = subprocess.run([str(top / "fixture")], cwd=top, capture_output=True, text=True,
+                                 timeout=30)
+            return ran.returncode, ran.stdout
+
+    now, said = run(writer + ready)
+    if now is None:
+        print("  FAIL the writer did not build:\n" + said)
+        return 1
+    then, before = run(parent)
+    if then is None:
+        print("  FAIL the parent writer did not build:\n" + before)
+        return 1
+    for line in said.splitlines():
+        if line.startswith("  FAIL"):
+            failures.append(line.strip()[5:])
+    parent_lost = sum(line.startswith("  FAIL") for line in before.splitlines())
+    if parent_lost < 4:
+        failures.append("the parent writer lost %d checks where it loses 4: the fixture no longer "
+                        "reaches what it was written for\n%s" % (parent_lost, before))
+    if not sites:
+        failures.append("no write open was found at all")
+    for failure in failures:
+        print("  FAIL " + failure)
+    print("host writes: %d write opens, %s scenes, parent lost %d"
+          % (sites, said.strip().splitlines()[-1] if said.strip() else "?", parent_lost))
+    write_tally("host-writes", 1 if not failures else 0, 1)
+    return 1 if failures else 0
+
+
 def harness_terminfo_install(argv):
     """The terminfo blob is written into a directory, never through a name.
 
@@ -30053,6 +30300,7 @@ HARNESS_CHECKS = {
     "objtool_shape": harness_objtool_shape,
     "coverage_report": harness_coverage_report,
     "terminfo_install": harness_terminfo_install,
+    "host_writes": harness_host_writes,
     "moonwater_cli": harness_moonwater_cli,
     "machine_reap": harness_machine_reap,
     "tls_chains": harness_tls_chains,
