@@ -873,6 +873,14 @@ def arch_transition(current, stack, directive):
     return current
 
 
+def constant_condition(expression):
+    """True or False for an #if the preprocessor decides by its constants,
+    None when a name in it depends on the target."""
+    if re.search(r'[A-Za-z_]', re.sub(r'(0[xX][0-9A-Fa-f]+|\d+)[uUlL]*', '', expression)):
+        return None
+    return expression_value(expression, set())
+
+
 def assembly_inventory(path, tokens, directives):
     events = [(item.start, 0, item) for item in directives]
     for index in range(len(tokens) - 3):
@@ -898,7 +906,30 @@ def assembly_inventory(path, tokens, directives):
     have, order, unscoped, pairing = {}, [], [], []
     counts, scopes = {}, {}
     opened = {arch: None for arch in ARCHES}
+    #   One frame per open conditional the preprocessor decides by constants
+    #   alone: #if 0, and the #else of an #if 1. A body inside is text the
+    #   compiler never sees, and counting it would let an #if 0 around one
+    #   architecture's body pass for that architecture having it.
+    constant_frames = []
     for _, event_kind, event in events:
+        if event_kind and any(frame['dead'] for frame in constant_frames):
+            continue
+        if not event_kind:
+            kind, rest = directive_parts(event)
+            if kind in ('if', 'ifdef', 'ifndef'):
+                value = constant_condition(rest) if kind == 'if' else None
+                constant_frames.append({'value': value, 'dead': value is False,
+                                        'taken': value is True})
+            elif kind == 'elif' and constant_frames:
+                frame = constant_frames[-1]
+                value = constant_condition(rest)
+                frame['dead'] = frame['taken'] or value is False
+                frame['taken'] = frame['taken'] or value is True
+            elif kind == 'else' and constant_frames:
+                frame = constant_frames[-1]
+                frame['dead'] = frame['taken']
+            elif kind == 'endif' and constant_frames:
+                constant_frames.pop()
         if event_kind:
             macro, name, line = event
             if macro in ASM_ALIASES:

@@ -33398,7 +33398,8 @@ def harness_inventory_mutations(argv):
 
     The parity gate reads lib.c's include graph and each architecture's
     bodies without running a preprocessor, so it has to decide #if itself,
-    and it decided in silence: a condition it could not parse -- a
+    and twice it decided in silence. A body wrapped in #if 0 counted as
+    that architecture having it; and a condition it could not parse -- a
     comparison, a compiler's own value -- read as false, which switched an
     include off and took its routines out of the count with it. Each
     mutation below is planted in a copy of src/, and the gate has to go
@@ -33416,11 +33417,22 @@ def harness_inventory_mutations(argv):
     probe = ('#if X64\n__asm__(\n    ASM_SECTION\n    ASM_FUNC(inventory_probe_only)\n'
              '    ASM_RET\n    ASM_END(inventory_probe_only)\n);\n#endif\n')
 
+    def riscv_hidden(text):
+        opener = "ASM_FUNC(string_length)"
+        closer = "ASM_END(string_length)"
+        last = text.rindex(opener)
+        end = text.index(closer, last) + len(closer)
+        line_start = text.rindex("\n", 0, last) + 1
+        line_end = text.index("\n", end) + 1
+        return text[:line_start] + "#if 0\n" + text[line_start:line_end] + "#endif\n" + text[line_end:]
+
     def include_behind(condition):
         return lambda text: text + "\n#if %s\n#include \"inventory_probe.inc\"\n#endif\n" % condition
 
     #   (name, mutation, extra file, what the gate must say, how it must end)
     cases = (
+        ("#if 0 around riscv64's string_length", riscv_hidden, None,
+         ("string_length", "RISCV64"), "red"),
         ("a probe behind a plain condition (control)", include_behind("defined(LINUX)"), probe,
          ("inventory_probe_only",), "red"),
         ("a probe behind a comparison", include_behind("defined(LINUX) && __STDC_VERSION__ >= 199901L"),
