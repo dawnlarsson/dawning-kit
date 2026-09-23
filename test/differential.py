@@ -28691,6 +28691,34 @@ def harness_objtool_shape(argv):
                 return True
         return False
 
+    # %rbp may be saved, restored and pointed at the stack, and nothing else:
+    # a frame-pointer unwinder (lockdep's stack walk, a WARN from an
+    # interrupt) reads whatever is in it as the caller's frame, and a needle
+    # pointer there is "bad 'bp' value" in the log (string_find, 2026-09-23).
+    frame_register = re.compile(r"%(rbp|ebp|bp|bpl)$")
+
+    def frame_scratch(word, line):
+        rest = line[len(word):].strip()
+        operands, depth, piece = [], 0, ""
+        for character in rest:
+            depth += {"(": 1, ")": -1}.get(character, 0)
+            if character == "," and not depth:
+                operands.append(piece.strip())
+                piece = ""
+            else:
+                piece += character
+        if piece.strip():
+            operands.append(piece.strip())
+        if not operands:
+            return False
+        if word.startswith(("xchg", "xadd", "cmpxchg")):
+            return any(frame_register.match(operand) for operand in operands)
+        if not frame_register.match(operands[-1]):
+            return False
+        if word.startswith(("push", "pop", "cmp", "test")) or word in ("bt", "btq", "btl"):
+            return False
+        return not (word.startswith("mov") and operands[0] == "%rsp" and len(operands) == 2)
+
     def lines_of(literal):
         try:
             value = ast.literal_eval(literal)
@@ -28699,14 +28727,15 @@ def harness_objtool_shape(argv):
         return [piece.split("#", 1)[0].strip() for chunk in value.split("\n")
                 for piece in chunk.split(";")]
 
-    def scan(text, where_name):
+    def scan(text, where_name, roots=None):
         failures, bodies_seen = [], 0
+        scratch, aliases, edges = {}, {}, {}
         tokens, directives = lex(text)
         events = sorted([(d.start, 0, d) for d in directives] +
                         [(t.start, 1, t) for t in tokens], key=lambda e: (e[0], e[1]))
         arch, arch_stack = None, []
         frames = []  # [kind, rest, prior-conditions, excluded]
-        active = {}
+        active, kernel = {}, {}
         for _, is_token, item in events:
             if not is_token:
                 kind, rest = directive_parts(item)
@@ -28727,11 +28756,17 @@ def harness_objtool_shape(argv):
                 arch = arch_transition(arch, arch_stack, item)
                 continue
             active[item.start] = arch == "X64" and not any(f[3] for f in frames)
+            kernel[item.start] = arch in (None, "X64") and not any(f[3] for f in frames)
 
         body, bodies, index = None, [], 0
         while index < len(tokens):
             token = tokens[index]
             index += 1
+            if token.kind == "identifier" and token.value == "ASM_ALIAS" \
+                    and kernel[token.start] and index + 4 < len(tokens) \
+                    and tokens[index].value == "(" and tokens[index + 2].value == ",":
+                aliases[tokens[index + 1].value] = tokens[index + 3].value
+                continue
             if not active[token.start]:
                 continue
             if token.kind == "identifier" and token.value in openers | enders \
@@ -28823,6 +28858,12 @@ def harness_objtool_shape(argv):
                     continue
                 if word in ("ud2", "jmp", "jmpq"):
                     after = line
+                if frame_scratch(word, line):
+                    scratch.setdefault(name, []).append(
+                        "%s: %s writes %%rbp, which a frame-pointer unwinder reads as "
+                        "the caller's frame" % (where, line))
+                edges.setdefault(name, set()).update(
+                    set(re.findall(r"[A-Za-z_.$][\w.$]*", line)) & entries - {name})
                 jumped = transfer.match(line)
                 if jumped and not jumped.group(2).startswith(("*", "%")):
                     label = jumped.group(2)
@@ -28832,7 +28873,25 @@ def harness_objtool_shape(argv):
                                         "reads as falling through to another function"
                                         % (where, word, label, home))
 
-        return bodies_seen, failures
+        #   %rbp is refused only in the bodies a kernel runs: the names its C
+        #   calls, the targets of the aliases it links (strstr, memcpy and
+        #   the rest, for the whole kernel), and whatever those reach. The
+        #   hashes, codecs and curves assembled into it and never called use
+        #   %rbp freely and are no unwinder's business.
+        reached = set(entries) if roots is None else \
+            {name for name in entries
+             if name in roots or (name.endswith("_wide") and name[:-5] in roots)} | \
+            {target for target in aliases.values() if target in entries}
+        frontier = list(reached)
+        while frontier:
+            for following in edges.get(frontier.pop(), ()):
+                if following not in reached:
+                    reached.add(following)
+                    frontier.append(following)
+        for name in sorted(scratch):
+            if name in reached:
+                failures += scratch[name]
+        return bodies_seen, failures, (reached, scratch)
 
     # Each refusal proves itself first, on the smallest source that earns it,
     # so a reader that stopped reading the bodies cannot pass for a clean tree.
@@ -28842,7 +28901,14 @@ def harness_objtool_shape(argv):
         "bare ret": shape % ('"xor %eax, %eax\\n ret\\n"', '"nop\\n"'),
         "no label to reach it": shape % ('ASM_RET "nop\\n"', '"nop\\n"'),
         "inside a": shape % ('".La_in: nop\\n" ASM_RET', '"jmp .La_in\\n"'),
+        "writes %rbp": shape % ('"push %rbp\\n mov %rsi, %rbp\\n pop %rbp\\n" ASM_RET',
+                                '"nop\\n"'),
     }
+    framed = shape % ('"push %rbp\\n mov %rsp, %rbp\\n cmp %rbp, %rax\\n pop %rbp\\n" ASM_RET',
+                      '"nop\\n"')
+    if scan(framed, "planted")[1]:
+        print("  FAIL a frame set up and torn down was refused: %r" % scan(framed, "planted")[1])
+        return 1
     for want, source in planted.items():
         found = scan(source, "planted")[1]
         if not any(want in failure for failure in found):
@@ -28853,16 +28919,63 @@ def harness_objtool_shape(argv):
             print("  FAIL a body under #ifndef KERNEL_MODE was read as kernel code")
             return 1
 
+    #   The C a kernel build compiles: core.c's include graph, read the way
+    #   the preprocessor would for KERNEL_MODE, as far as the guards go.
+    def kernel_names():
+        names, macros = set(), {}
+        for name in ("src/moonwater/core.c", "src/moonwater/spark.c",
+                     "src/moonwater/moonwater.c", "src/moonwater/canvas.c",
+                     "src/moonwater/window.c", "src/sh/term.c", "src/lib.util.c"):
+            tokens, directives = lex((HARNESS_ROOT / name).read_text(errors="replace"))
+            events = sorted([(d.start, 0, d) for d in directives] +
+                            [(t.start, 1, t) for t in tokens], key=lambda e: (e[0], e[1]))
+            frames = []
+            for _, is_token, item in events:
+                if not is_token:
+                    kind, rest = directive_parts(item)
+                    text = re.sub(r"\s+", "", rest)
+                    if kind in ("if", "ifdef", "ifndef"):
+                        frames.append([kind, text, (kind == "ifndef" and text == "KERNEL_MODE") or
+                                       (kind == "ifdef" and text == "MOONWATER_CLI") or
+                                       "!defined(KERNEL_MODE)" in text.split("&&")])
+                    elif kind in ("elif", "else") and frames:
+                        frame = frames[-1]
+                        frame[2] = frame[0] == "ifdef" and frame[1] == "KERNEL_MODE"
+                        frame[0] = kind
+                    elif kind == "endif" and frames:
+                        frames.pop()
+                    elif kind == "define" and not any(frame[2] for frame in frames):
+                        words = re.findall(r"[A-Za-z_]\w*", rest)
+                        if words:
+                            macros.setdefault(words[0], set()).update(words[1:])
+                elif item.kind == "identifier" and not any(frame[2] for frame in frames):
+                    names.add(item.value)
+        # A macro's words are the kernel's only where the macro is used.
+        grown = True
+        while grown:
+            grown = False
+            for macro, words in macros.items():
+                if macro in names and not words <= names:
+                    names |= words
+                    grown = True
+        return names
+
     paths = [Path(item) for item in argv] or [HARNESS_ROOT / "src/lib.c"]
-    bodies_seen, failures = 0, []
+    roots = kernel_names()
+    bodies_seen, failures, framed_count, reached_count = 0, [], 0, 0
     for path in paths:
-        seen, found = scan(path.read_text(errors="replace"), path.name)
+        seen, found, (reached, scratch) = scan(path.read_text(errors="replace"), path.name, roots)
         bodies_seen += seen
         failures += found
+        framed_count += len(scratch)
+        reached_count += len(reached)
     for failure in failures:
         print("  FAIL " + failure)
-    print("objtool shape: %d kernel x86_64 bodies, %d planted refusals, %d refusals"
-          % (bodies_seen, len(planted), len(failures)))
+    print("objtool shape: %d kernel x86_64 bodies, %d reached from the kernel, %d planted "
+          "refusals, %d refusals; %d bodies keep %%rbp as scratch, %d of them reached"
+          % (bodies_seen, reached_count, len(planted), len(failures), framed_count,
+             len({failure.split(":")[1].split()[1] for failure in failures
+                  if "writes %rbp" in failure})))
     refused = len({failure.split(":")[1].split()[1] for failure in failures})
     write_tally("objtool-shape", bodies_seen - refused, bodies_seen)
     if not bodies_seen:

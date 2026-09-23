@@ -5529,9 +5529,16 @@ __asm__(
     //       memory_compare had left there. The last of them is the offset
     //       above, which has to survive the call that teaches it.
     //
-    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n"
-    "push %r14\n   push %r15\n   sub $72, %rsp\n   mov %rdi, %rbx  # the haystack\n"
-    "mov %rdx, %rbp  # the needle\n"
+    //
+    //      The needle lives at 64(%rsp), not in %rbp: this runs in the
+    //      kernel under strstr, and a frame-pointer unwinder reads %rbp as
+    //      the caller's frame. The wide loop never touched it; the checks
+    //      of a candidate and the general-register hunt load it where they
+    //      use it, from the line the frame is already in.
+    //
+    "push %rbx\n   push %r12\n   push %r13\n"
+    "push %r14\n   push %r15\n   sub $80, %rsp\n   mov %rdi, %rbx  # the haystack\n"
+    "mov %rdx, 64(%rsp)  # the needle\n"
     "mov %rcx, %r12  # its length\n"
     "mov %r8, 32(%rsp)\n   mov %r9, 40(%rsp)\n"
     "movq $0, 56(%rsp)  # nothing has failed yet, so nothing is known\n"
@@ -5550,7 +5557,7 @@ __asm__(
     "mov %rsi, %r8\n   sub %r12, %r8\n   cmp $31, %r8\n   jb 6f\n"
     "sub $31, %r8\n   mov %r8, 8(%rsp)\n"
     "mov 32(%rsp), %rdi\n   mov 40(%rsp), %r10\n"
-    "movzbl (%rbp,%rdi), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n   movzbl (%rbp,%r10), %eax\n"
+    "movzbl (%rdx,%rdi), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n   movzbl (%rdx,%r10), %eax\n"
     "vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n   lea (%rbx,%rdi), %rax\n   mov %rax, 16(%rsp)\n"
     "lea (%rbx,%r10), %rax\n   mov %rax, 24(%rsp)\n   mov %rdi, 32(%rsp)\n   mov %r10, 40(%rsp)\n"
     //
@@ -5578,7 +5585,7 @@ __asm__(
     //
     "3:  mov %r9, (%rsp)\n"
     "31:  mov (%rsp), %r9\n   bsf %r13d, %eax\n   lea (%rbx,%r9), %r15\n   add %rax, %r15\n"
-    "cmp $4, %r12\n   jb 33f\n   mov (%rbp), %eax\n   cmp (%r15), %eax\n"
+    "cmp $4, %r12\n   jb 33f\n   mov 64(%rsp), %rcx\n   mov (%rcx), %eax\n   cmp (%r15), %eax\n"
     "jne 32f\n   cmp $5, %r12\n   jb 70f  # the four were all of it\n"
     //
     //      Where the last candidate failed, if one has. A zero says
@@ -5588,8 +5595,8 @@ __asm__(
     //      offset is never more than its length less eight.
     //
     "mov 56(%rsp), %rax\n   test %rax, %rax\n   jz 34f\n"
-    "mov (%rbp,%rax), %rcx\n   cmp (%r15,%rax), %rcx\n   jne 32f\n"
-    "34:  lea 4(%r15), %rdi\n   lea 4(%rbp), %rsi\n   lea -4(%r12), %rdx\n   call memory_compare\n"
+    "mov (%rcx,%rax), %rcx\n   cmp (%r15,%rax), %rcx\n   jne 32f\n"
+    "34:  lea 4(%r15), %rdi\n   mov 64(%rsp), %rsi\n   add $4, %rsi\n   lea -4(%r12), %rdx\n   call memory_compare\n"
     "test %eax, %eax\n   jz 70f\n   cmp $16, %r12\n   jb 32f\n"
     "mov 56(%rsp), %rax\n   cmp $8, %rax\n   jae 35f\n   mov %r12, %rax\n"
     "35:  sub $8, %rax\n   mov %rax, 56(%rsp)\n   jmp 32f\n"
@@ -5597,7 +5604,7 @@ __asm__(
     //      Two and three bytes: both probes are ends of the needle, so a
     //      three has one byte left in the middle and a two has none.
     //
-    "33:  cmp $2, %r12\n   jbe 70f\n   mov 48(%rsp), %rax\n   movzbl (%rbp,%rax), %ecx\n"
+    "33:  cmp $2, %r12\n   jbe 70f\n   mov 48(%rsp), %rax\n   mov 64(%rsp), %rcx\n   movzbl (%rcx,%rax), %ecx\n"
     "cmp %cl, (%r15,%rax)\n   je 70f\n"
     "32:  mov %r13d, %eax\n   dec %eax\n   and %eax, %r13d\n   jnz 31b\n"
     //
@@ -5607,8 +5614,8 @@ __asm__(
     //      the upper halves zero.
     //
     "mov (%rsp), %r9\n   mov 8(%rsp), %r8\n   mov 16(%rsp), %r10\n   mov 24(%rsp), %r11\n"
-    "mov 32(%rsp), %rax\n   movzbl (%rbp,%rax), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
-    "mov 40(%rsp), %rax\n   movzbl (%rbp,%rax), %eax\n   vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
+    "mov 64(%rsp), %rdx\n   mov 32(%rsp), %rax\n   movzbl (%rdx,%rax), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+    "mov 40(%rsp), %rax\n   movzbl (%rdx,%rax), %eax\n   vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
     "jmp 4b\n"
     "70:  vzeroupper\n   jmp 7f\n"
     "80:  vzeroupper\n   jmp 8f\n"
@@ -5668,12 +5675,12 @@ __asm__(
     //      offset of the byte to hunt, and nothing this calls writes r13.
     //
     "lea byte_commonness(%rip), %rcx\n   mov 32(%rsp), %r13\n   mov 40(%rsp), %rax\n"
-    "movzbl (%rbp,%r13), %edx\n   movzbl (%rcx,%rdx), %edx\n"
-    "movzbl (%rbp,%rax), %edi\n   movzbl (%rcx,%rdi), %edi\n"
+    "mov 64(%rsp), %rsi\n   movzbl (%rsi,%r13), %edx\n   movzbl (%rcx,%rdx), %edx\n"
+    "movzbl (%rsi,%rax), %edi\n   movzbl (%rcx,%rdi), %edi\n"
     "cmp %edi, %edx\n   cmova %rax, %r13\n"
     "mov %rbx, %r15\n"
     "61:  mov %r14, %rdx\n   sub %r15, %rdx\n   inc %rdx  # positions still to try\n"
-    "lea (%r15,%r13), %rdi\n   movzbl (%rbp,%r13), %esi\n   call memory_first_of\n   test %rax, %rax\n"
+    "lea (%r15,%r13), %rdi\n   mov 64(%rsp), %rsi\n   movzbl (%rsi,%r13), %esi\n   call memory_first_of\n   test %rax, %rax\n"
     "jz 8f\n   sub %r13, %rax\n   mov %rax, %r15\n"
     //
     //      The same filter as the block loop above, for the same
@@ -5682,17 +5689,17 @@ __asm__(
     //      and not less.
     //
     "mov 56(%rsp), %rdx\n   test %rdx, %rdx\n   jz 63f\n"
-    "mov (%rbp,%rdx), %rcx\n   cmp (%rax,%rdx), %rcx\n   jne 62f\n"
+    "mov 64(%rsp), %rcx\n   mov (%rcx,%rdx), %rcx\n   cmp (%rax,%rdx), %rcx\n   jne 62f\n"
     "63:  mov %r15, %rdi\n"
-    "mov %rbp, %rsi\n   mov %r12, %rdx\n   call memory_compare\n   test %eax, %eax\n"
+    "mov 64(%rsp), %rsi\n   mov %r12, %rdx\n   call memory_compare\n   test %eax, %eax\n"
     "jz 7f\n   cmp $16, %r12\n   jb 62f\n"
     "mov 56(%rsp), %rax\n   cmp $8, %rax\n   jae 64f\n   mov %r12, %rax\n"
     "64:  sub $8, %rax\n   mov %rax, 56(%rsp)\n"
     "62:  inc %r15\n   cmp %r14, %r15\n   jbe 61b\n"
     "8:  xor %eax, %eax\n   jmp 9f\n"
     "7:  mov %r15, %rax\n"
-    "9:  add $72, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n"
-    "pop %r12\n   pop %rbp\n   pop %rbx\n"
+    "9:  add $80, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n"
+    "pop %r12\n   pop %rbx\n"
     ASM_RET
     ASM_LOCAL_END(memory_search_prepared_core)
     //
@@ -18078,9 +18085,16 @@ ASM_FUNC(positive_to_string)
     //      One byte is string_first_of, which is already here.
     //
     "2:  cmpb $0, 1(%rsi)\n   jne 3f\n   movzbl (%rsi), %esi\n   jmp string_first_of\n"
-    "3:  push %rbx\n   push %rbp\n   push %r12\n   push %r13\n"
-    "push %r14\n   push %r15\n   sub $8, %rsp\n   mov %rdi, %rbx  # where to look next\n"
-    "mov %rsi, %rbp  # the needle\n"
+    //
+    //      The needle is kept in the frame rather than in %rbp: this is the
+    //      kernel's strstr, and a frame-pointer unwinder that meets %rbp
+    //      holding a string while it walks an interrupted stack says "bad
+    //      'bp' value" -- a debug kernel's lockdep walk did, from here. It is
+    //      read once a chunk, which is nothing against the chunk.
+    //
+    "3:  push %rbx\n   push %r12\n   push %r13\n"
+    "push %r14\n   push %r15\n   sub $16, %rsp\n   mov %rdi, %rbx  # where to look next\n"
+    "mov %rsi, (%rsp)  # the needle\n"
     "mov %rsi, %rdi\n   call string_length\n   mov %rax, %r12\n   mov $256, %r13\n"
     "lea 0(,%r12,4), %rax\n   cmp %rax, %r13\n   jae 4f\n   mov %rax, %r13  # never a chunk a needle would not fit four times in\n"
     "4:  xor %r14, %r14\n   xor %r15d, %r15d\n"
@@ -18096,7 +18110,7 @@ ASM_FUNC(positive_to_string)
     //
     "42:  lea (%rbx,%r14), %rax\n   and $-4096, %rax\n   add $4096, %rax\n   sub %rbx, %rax\n"
     "mov %rax, %r14\n   cmp %r13, %r14\n   jb 41b\n"
-    "43:  mov %rbx, %rdi\n   mov %r14, %rsi\n   mov %rbp, %rdx\n   mov %r12, %rcx\n"
+    "43:  mov %rbx, %rdi\n   mov %r14, %rsi\n   mov (%rsp), %rdx\n   mov %r12, %rcx\n"
     "call memory_search\n   test %rax, %rax\n   jnz 9f\n   test %r15d, %r15d\n"
     "jnz 8f  # the terminator was in it: nowhere else to look\n"
     "mov %r14, %rax\n   sub %r12, %rax\n   inc %rax  # keep needle_size - 1 of overlap\n"
@@ -18104,8 +18118,8 @@ ASM_FUNC(positive_to_string)
     "mov $65536, %r13\n"
     "45:  jmp 4b\n"
     "8:  xor %eax, %eax\n"
-    "9:  add $8, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n"
-    "pop %r12\n   pop %rbp\n   pop %rbx\n"
+    "9:  add $16, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n"
+    "pop %r12\n   pop %rbx\n"
     ASM_RET
     ASM_END(string_find)
     ASM_SECTION
@@ -18867,7 +18881,11 @@ ASM_FUNC(positive_to_string)
     // string starts in. What is past the terminator is masked off rather than
     // trusted.
     ASM_FUNC(string_table_find)
-    "push %rbx\n   push %rbp\n   push %r12\n   mov %edi, %eax\n"
+    //
+    //       The mask is in %r13 and not %r13, which a frame-pointer unwinder
+    //       reads as the caller's frame: the Canvas calls this in the kernel.
+    //
+    "push %rbx\n   push %r13\n   push %r12\n   mov %edi, %eax\n"
     "and $0xfff, %eax\n   cmp $0xff8, %eax\n   ja 20f\n   mov (%rdi), %r11\n"
     //
     //       Whether the name runs past the first eight bytes, which the mask
@@ -18879,18 +18897,18 @@ ASM_FUNC(positive_to_string)
     //       name happened to sit. "dirname" is seven characters.
     //
     "xor %r12d, %r12d\n"
-    "movabs $0x0101010101010101, %rbx\n   mov %r11, %rbp\n   sub %rbx, %rbp\n   mov %r11, %rbx\n"
-    "not %rbx\n   and %rbx, %rbp\n   movabs $0x8080808080808080, %rbx\n   and %rbx, %rbp\n"
-    "jz 3f\n   mov %rbp, %rbx\n   neg %rbx\n   and %rbp, %rbx\n"
-    "mov %rbx, %rbp\n   dec %rbp\n   or %rbx, %rbp\n   jmp 4f\n"
+    "movabs $0x0101010101010101, %rbx\n   mov %r11, %r13\n   sub %rbx, %r13\n   mov %r11, %rbx\n"
+    "not %rbx\n   and %rbx, %r13\n   movabs $0x8080808080808080, %rbx\n   and %rbx, %r13\n"
+    "jz 3f\n   mov %r13, %rbx\n   neg %rbx\n   and %r13, %rbx\n"
+    "mov %rbx, %r13\n   dec %r13\n   or %rbx, %r13\n   jmp 4f\n"
     // No terminator in the first eight, so all eight matter and the rest is
     // compared a byte at a time.
-    "3:  mov $-1, %rbp\n   mov $1, %r12d\n"
+    "3:  mov $-1, %r13\n   mov $1, %r12d\n"
     "4:  xor %eax, %eax\n   mov %rsi, %r8\n"
     "5:  cmp %rcx, %rax\n   jae 9f\n   mov (%r8), %r9\n   test %r9, %r9\n"
     "jz 9f\n   mov %r9d, %ebx\n   and $0xfff, %ebx\n   cmp $0xff8, %ebx\n"
     "ja 10f  # this entry ends too near a page to read eight of\n"
-    "mov (%r9), %r10\n   xor %r11, %r10\n   test %rbp, %r10\n   jnz 8f\n"
+    "mov (%r9), %r10\n   xor %r11, %r10\n   test %r13, %r10\n   jnz 8f\n"
     // The first eight agree as far as they matter. If the name ended inside
     // them that is the whole answer.
     "test %r12d, %r12d\n   jz 7f\n   mov %rdi, %rbx\n   add $8, %rbx\n"
@@ -18915,7 +18933,7 @@ ASM_FUNC(positive_to_string)
     "jmp 22b\n"
     "23:  add %rdx, %r8\n   inc %rax\n   jmp 21b\n"
     "9:  mov %rcx, %rax\n"
-    "7:  pop %r12\n   pop %rbp\n   pop %rbx\n"
+    "7:  pop %r12\n   pop %r13\n   pop %rbx\n"
     ASM_RET
     ASM_END(string_table_find)
     //
