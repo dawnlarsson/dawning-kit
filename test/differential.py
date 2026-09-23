@@ -14478,6 +14478,45 @@ def shell_lang_lineno_nesting(rng):
     return "lineno-nesting", shell_BASH, shell_program(*lines)
 
 
+def shell_lang_dynamic_names(rng):
+    """The variables bash answers when they are read -- the clocks, RANDOM,
+    LINENO, BASH_VERSION, the host names -- asked for by prefix, unset, and
+    written after being unset: ${!BASH_V*} names BASH_VERSINFO and
+    BASH_VERSION, unset takes one away for good, and an assignment after
+    that is an ordinary variable. What is printed is whether a name is set,
+    the prefix listings and the values the script wrote, never a clock."""
+    names = ("RANDOM", "SECONDS", "LINENO", "EPOCHSECONDS", "EPOCHREALTIME", "SRANDOM",
+             "BASHPID", "BASH_VERSION", "BASH_VERSINFO", "BASH_SUBSHELL", "BASH_COMMAND",
+             "HOSTNAME", "HOSTTYPE", "MACHTYPE", "OSTYPE", "GROUPS", "DIRSTACK", "BASHOPTS",
+             "SHELLOPTS", "EUID")
+    #   Prefixes that reach only names this shell has: BASH and BASH_ alone
+    #   would reach BASH_ARGV0 and the rest it does not provide at all.
+    prefixes = ("BASH_V", "EPOCH", "RAN", "SRAN", "SEC", "HOST", "MACH", "OST",
+                "GRO", "DIRS", "LINE", "SHELLO", "EU")
+    lines = []
+    for _ in range(rng.randint(1, 5)):
+        r = rng.random()
+        name = rng.choice(names)
+        if r < 0.3:
+            lines.append("unset %s 2>/dev/null; echo \"unset %s=$?\"" % (name, name))
+        elif r < 0.45:
+            lines.append("%s=%d 2>/dev/null; echo \"wrote %s\"" % (name, rng.randint(0, 9), name))
+        elif r < 0.7:
+            form, prefix = rng.choice(("*", "@")), rng.choice(prefixes)
+            lines.append("echo \"%s: ${!%s%s}\"" % (prefix, prefix, form))
+        else:
+            lines.append("echo \"%s: ${%s+set}\"" % (name, name))
+    #       The values a script wrote are its own; say them at the end.
+    lines.append("for n in %s; do case $n in RANDOM|SECONDS|LINENO|SRANDOM) "
+                 "printf '%%s=[%%s] ' \"$n\" \"${!n+x}\";; esac; done; echo" % " ".join(names))
+    body = "\n".join(lines)
+    if rng.random() < 0.3:
+        body = "f() {\n" + body + "\n}\nf"
+    if rng.random() < 0.2:
+        body = "(\n" + body + "\n)"
+    return "dynamic-names", ("bash",), shell_program(body)
+
+
 def shell_lang_nested_parameter(rng):
     """A parameter expansion whose word is another parameter expansion."""
     state = rng.choice(("unset", "empty", "value"))
@@ -14790,6 +14829,7 @@ SHELL_FAMILIES = (
     shell_lang_arithmetic_edges,
     shell_lang_read_field_edges,
     shell_lang_nested_parameter,
+    shell_lang_dynamic_names,
     shell_lang_lineno_nesting,
     shell_lang_case_classes,
     shell_lang_shopt_readers,

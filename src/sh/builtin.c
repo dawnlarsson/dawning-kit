@@ -2882,6 +2882,49 @@ PURE string_address env_get(const_string name)
 }
 
 /*
+        The scalars this shell answers when they are read rather than keeps
+        in the table, and the ones a script has unset. Bash's unset takes a
+        dynamic variable away for good -- unset RANDOM; echo $RANDOM prints
+        nothing, and RANDOM=5 afterwards is an ordinary variable that says
+        5 -- where this shell went on answering it; a name here with its bit
+        set reads as unset and is assigned like any other.
+*/
+static const string_address shell_dynamic_names[] = {
+    "EUID", "RANDOM", "LINENO", "OSTYPE", "SECONDS", "SRANDOM",
+    "BASHPID", "HOSTNAME", "HOSTTYPE", "MACHTYPE", "BASHOPTS",
+    "SHELLOPTS", "BASH_COMMAND", "BASH_VERSION", "EPOCHSECONDS",
+    "BASH_SUBSHELL", "EPOCHREALTIME", "GROUPS", "DIRSTACK",
+};
+static const string_address shell_dynamic_listed[] = {
+    "EUID=", "RANDOM=", "LINENO=", "OSTYPE=", "SECONDS=", "SRANDOM=",
+    "BASHPID=", "HOSTNAME=", "HOSTTYPE=", "MACHTYPE=", "BASHOPTS=",
+    "SHELLOPTS=", "BASH_COMMAND=", "BASH_VERSION=", "EPOCHSECONDS=",
+    "BASH_SUBSHELL=", "EPOCHREALTIME=", "GROUPS=", "DIRSTACK=",
+};
+static p32 shell_dynamic_gone;
+
+static COLD bipolar shell_dynamic_index(const_string name, positive length)
+{
+        //      Not memory_is_word: that takes its length from a literal,
+        //      and these are pointers.
+        for (positive at = 0; at < array_count(shell_dynamic_names); at++)
+                if (length == string_length(shell_dynamic_names[at]) &&
+                    !memory_compare((address_any)name, shell_dynamic_names[at], length))
+                        return (bipolar)at;
+        return -1;
+}
+
+// Whether a script has unset this dynamic variable.
+static COLD bool shell_dynamic_removed(const_string name, positive length)
+{
+        bipolar which;
+
+        return shell_dynamic_gone &&
+               (which = shell_dynamic_index(name, length)) >= 0 &&
+               (shell_dynamic_gone >> which & 1);
+}
+
+/*
         The set variable names beginning with prefix. Bash ${!prefix@} and
         ${!prefix*} need the same source table as lookup and export; a null
         destination is the sizing pass before the expander allocates its
@@ -2900,6 +2943,18 @@ positive env_names_prefix(string_address prefix, positive length,
             !memory_compare("PIPESTATUS", prefix, length))
                 exec_pipe_status_wanted();
 
+        //      The three dynamic arrays are made where they are first
+        //      named, and naming them by prefix is naming them.
+        static const string_address arrays[] = {"BASH_VERSINFO", "GROUPS", "DIRSTACK"};
+
+        for (positive at = 0; shell_bash_compat && at < array_count(arrays); at++)
+        {
+                positive size = string_length(arrays[at]);
+
+                if (length <= size && !memory_compare(arrays[at], prefix, length))
+                        shell_dynamic_wanted(arrays[at], size);
+        }
+
         for (positive at = 0; at < shell_var_count; at++)
         {
                 env_variable address_to variable = shell_vars + at;
@@ -2911,6 +2966,39 @@ positive env_names_prefix(string_address prefix, positive length,
 
                 if (count < room)
                         names[count] = variable->text;
+
+                count++;
+        }
+
+        if (!shell_bash_compat)
+                return count;
+
+        /*
+                The variables this shell answers when they are read rather
+                than keeps in the table are set all the same: bash's
+                ${!BASH_V*} is BASH_VERSINFO BASH_VERSION and ${!EPOCH*} both
+                clocks, where the table alone said nothing. One the table
+                holds -- written, or unset -- is the table's to answer.
+        */
+        for (positive at = 0; at < array_count(shell_dynamic_names); at++)
+        {
+                positive size = string_length(shell_dynamic_names[at]);
+                bool held = shell_dynamic_gone >> at & 1;
+
+                if (size < length || memory_compare(shell_dynamic_names[at], prefix, length))
+                        continue;
+
+                //      Not read to find out: reading RANDOM moves it. Every
+                //      one of these answers in this personality.
+                for (positive in = 0; in < shell_var_count && !held; in++)
+                        held = shell_vars[in].name_length == size &&
+                               !memory_compare(shell_vars[in].text,
+                                               shell_dynamic_names[at], size);
+                if (held)
+                        continue;
+
+                if (count < room)
+                        names[count] = shell_dynamic_listed[at];
 
                 count++;
         }
@@ -4396,6 +4484,10 @@ COLD bool shell_dynamic_wanted(const_string name, positive length)
         if (shell_pipe_status_wanted(name, length))
                 return true;
 
+        //      GROUPS and DIRSTACK a script has unset stay unset.
+        if (shell_dynamic_removed(name, length))
+                return false;
+
         if (shell_bash_compat &&
             memory_is_word((address_any)name, length, "BASH_VERSINFO"))
                 which = SHELL_DYNAMIC_VERSINFO;
@@ -4460,6 +4552,9 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
 
                 return null;
         }
+
+        if (shell_dynamic_removed(text, length))
+                return null;
 
         // Grouped by length first: every one of these is a miss for almost
         // every name that reaches here, and a length that matches nothing
@@ -4626,6 +4721,9 @@ COLD bool shell_dynamic_assign(const_string name, positive length,
 {
         string_address text = env_reading(name);
         string_address said = env_reading(value);
+
+        if (shell_dynamic_removed(text, length))
+                return false;
 
         if (memory_is_word((address_any)text, length, "RANDOM"))
         {
@@ -8156,6 +8254,13 @@ static bool shell_unset_variable(const_string name, positive length)
 
         if (shell_bash_compat && memory_is_word((address_any)name, length, "BASHPID"))
                 shell_bashpid_cleared = true;
+        if (shell_bash_compat)
+        {
+                bipolar which = shell_dynamic_index(name, length);
+
+                if (which >= 0)
+                        shell_dynamic_gone |= (p32)1 << which;
+        }
 
         b32 detached = exec_unset_prefix(name, length);
         if (detached < 0)
