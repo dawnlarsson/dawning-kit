@@ -273,6 +273,76 @@ coverage_keep()
         [ -z "$coverage_stem" ] || cp "$1" "$coverage_stem.elf"
 }
 
+#       The guest half. An image built with kernel/profile/coverage records
+#       what its /shell reached into /coverage.map on the guest's own root,
+#       against dist/shell.coverage.elf beside the image -- install, boot,
+#       settings, PID 1, the terminal applet and the monitor run nowhere
+#       else. A lane that boots such an image under MOONWATER_COVERAGE calls
+#       coverage_guest with the image and a work file: the machine then gets
+#       a second UART ($coverage_serial, placed after the console's so the
+#       console stays ttyS0), coverage_guest_commands makes the machine's
+#       last act before poweroff to write the record there, gzipped and in
+#       base64, and coverage_guest_collect puts it and a copy of the ELF into
+#       the coverage directory as one more binary for the report. A record
+#       that arrives cut is said and set aside, never read as blocks missed.
+coverage_serial=""
+coverage_guest_elf=""
+#       The same three lines as the image's /coverage-dump, typed rather
+#       than sourced: the boot lane ends with floodlight refusing /shell
+#       run, and a script read as a parser source is refused under it too.
+coverage_dump='echo begin | base64 > /dev/ttyS1; head -c 16777216 /coverage.map | gzip -c | base64 > /dev/ttyS1; echo ok | base64 > /dev/ttyS1'
+
+coverage_guest()
+{
+        coverage_serial=""
+        coverage_guest_elf=""
+        [ -n "${MOONWATER_COVERAGE:-}" ] || return 0
+        [ -f "$(dirname "$1")/shell.coverage.elf" ] || return 0
+        coverage_guest_elf=$(dirname "$1")/shell.coverage.elf
+        coverage_serial="-serial file:$2"
+}
+
+#       A commands file with the dump put in front of its closing poweroff.
+coverage_guest_commands()
+{
+        if [ -n "$coverage_serial" ] && [ "$(tail -n 1 "$1")" = poweroff ]; then
+                sed '$d' "$1"
+                printf '%s\npoweroff\n' "$coverage_dump"
+        else
+                cat "$1"
+        fi
+}
+
+coverage_guest_collect()
+{
+        [ -n "$coverage_serial" ] || return 0
+        coverage_record=${coverage_serial#-serial file:}
+        coverage_stem=$(mktemp "$MOONWATER_COVERAGE/guest_shell.$1.XXXXXX") || return 0
+        #       Between "begin" and "ok" in base64 (YmVnaW4K, b2sK): what a
+        #       firmware wrote to the port before is left out, and a record
+        #       with no ok after it was cut short. A cut one is kept as .cut
+        #       to look at, and the report never reads it.
+        if tr -d '\r' < "$coverage_record" |
+                awk '/YmVnaW4K$/ { taking = 1; count = 0; next }
+                     taking { line[++count] = $0 }
+                     END { if (!taking || line[count] != "b2sK") exit 1
+                           for (at = 1; at < count; at++) print line[at] }' \
+                        > "$coverage_stem.b64" &&
+                base64 -d < "$coverage_stem.b64" 2>/dev/null |
+                        gzip -dc > "$coverage_stem.map" 2>/dev/null &&
+                [ -s "$coverage_stem.map" ]; then
+                cp "$coverage_guest_elf" "$coverage_stem.elf"
+        else
+                printf '  %-30s the guest record came back cut (%s bytes)\n' \
+                        "coverage $1" "$(cat "$coverage_record" 2>/dev/null | wc -c)"
+                cp "$coverage_record" "$coverage_stem.cut" 2>/dev/null
+                rm -f "$coverage_stem.map"
+        fi
+        rm -f "$coverage_stem.b64"
+        rm -f "$coverage_stem"
+        coverage_stem=""
+}
+
 freestanding()
 {
         source_file=$1
@@ -10655,6 +10725,10 @@ wait "$floodlight_child"
 poweroff
 COMMANDS
 
+coverage_guest "$image" "$work/coverage"
+coverage_guest_commands "$work/commands" > "$work/commands.run"
+mv "$work/commands.run" "$work/commands"
+
 #       A display the terminal fits on. A guest takes seventy percent of the
 #       mode its EDID prefers, and QEMU's default EDID leaves it 640x480,
 #       which holds 78 columns: the terminal opens, as 78x24, and the check
@@ -10667,10 +10741,13 @@ COMMANDS
 #       several times slower than the x86 one under kvm.
 #
 if [ "$boot_emulator" = qemu-system-x86_64 ]; then
+        # shellcheck disable=SC2086
         timeout 180 "$boot_emulator" -m 2G -smp 2 "$@" \
                 -kernel "$image" -no-reboot -display none -serial stdio \
+                $coverage_serial \
                 -append "console=$boot_console drm_client_lib.active=" \
                 < "$work/commands" > "$work/transcript" 2>&1 || true
+        coverage_guest_collect boot
 else
         { sleep 15; cat "$work/commands"; } |
                 timeout 360 "$boot_emulator" -m 2G -smp 2 "$@" \
@@ -10932,7 +11009,10 @@ esac
 [ "$(uname -s)" = Darwin ] && power_machine=""
 
 if [ -n "$power_machine" ] && command -v python3 > /dev/null 2>&1; then
-        MOONWATER_BOOT_WORK=$work MOONWATER_POWER_EMULATOR=$boot_emulator \
+        coverage_guest "$image" "$work/coverage-power"
+        MOONWATER_POWER_COVERAGE=${coverage_serial#-serial file:} \
+                MOONWATER_POWER_DUMP=$coverage_dump \
+                MOONWATER_BOOT_WORK=$work MOONWATER_POWER_EMULATOR=$boot_emulator \
                 MOONWATER_POWER_MACHINE=$power_machine MOONWATER_POWER_CONSOLE=$power_console \
                 MOONWATER_POWER_CC=$power_cc MOONWATER_POWER_SLOW=$power_slow \
                 MOONWATER_POWER_BUTTON=$power_button \
@@ -10991,7 +11071,9 @@ guest = subprocess.Popen([
     "-drive", "if=none,id=stick,format=raw,file=fat:ro:" + stick + ",readonly=on",
     "-device", "usb-storage,bus=xhci.0,drive=stick,removable=on",
     "-chardev", "socket,id=console,path=" + console + ",server=on,wait=off",
-    "-serial", "chardev:console",
+    "-serial", "chardev:console"] +
+    (["-serial", "file:" + os.environ["MOONWATER_POWER_COVERAGE"]]
+     if os.environ.get("MOONWATER_POWER_COVERAGE") else []) + [
     "-qmp", "unix:" + qmp + ",server,nowait",
     "-append", "console=" + tty + " drm_client_lib.active="],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -11142,6 +11224,12 @@ asked("the power button runs poweroff again",
       "moonwater bind poweroff poweroff | grep -c 'poweroff: poweroff' | sed 's/^/niaga-/' | rev",
       b"1-again")
 
+#       A coverage image writes what it reached before the press takes it
+#       down; see coverage_guest.
+if os.environ.get("MOONWATER_POWER_COVERAGE") and ready:
+    say(os.environ["MOONWATER_POWER_DUMP"] + "; printf 'dumped-%s\\n' ready | rev")
+    wait_for(b"ydaer-depmud", 60 * slow)
+
 if button:
     powered = "no"
     if ready:
@@ -11164,6 +11252,7 @@ open(work + "/power-transcript", "wb").write(bytes(transcript))
 for name, got, want in out:
     print("%s|%s|%s" % (name, got, want))
 PY
+        coverage_guest_collect power
         if [ ! -s "$work/power-answers" ]; then
                 lost 'power button guest' "answered nothing: $(tail -3 "$work/power-why")"
         fi
@@ -11375,9 +11464,10 @@ install_boot()
         shift
         rm -f "$work/serial.in"
         mkfifo "$work/serial.in" || exit 1
+        coverage_guest "$image" "$work/coverage-$name"
         # shellcheck disable=SC2086
         timeout $((240 * install_slow)) "$install_emulator" -m 2G -smp 2 $install_board $install_machine \
-                -kernel "$image" -no-reboot -display none -serial stdio \
+                -kernel "$image" -no-reboot -display none -serial stdio $coverage_serial \
                 -append "console=$install_console drm_client_lib.active=" \
                 -device qemu-xhci,id=xhci \
                 -drive if=none,id=disk,format=raw,file="$work/disk.img" \
@@ -11401,11 +11491,12 @@ install_boot()
         {
                 sed -n 1p "$work/$name.commands"
                 echo 'until [ -e /run/moonwater/verdict ]; do sleep 1; done'
-                sed 1d "$work/$name.commands"
+                coverage_guest_commands "$work/$name.commands" | sed 1d
         } | sed -e "s|/EFI/BOOT/BOOTX64.EFI|/EFI/BOOT/$install_loader|g" \
                 -e "$install_patch" >&9
         exec 9>&-
         wait "$booting" 2>/dev/null || true
+        coverage_guest_collect "install-$name"
 
         says "$name" "$name powered down" 'reboot: Power down'
         never "$name" "$name without a panic" 'Kernel panic'
@@ -11762,13 +11853,15 @@ PY
                 rm -f "$work/serial.in"
                 mkfifo "$work/serial.in" || exit 1
                 cp "$firmware_vars" "$work/$name.vars"
+                coverage_guest "$image" "$work/coverage-$name"
                 # shellcheck disable=SC2086
                 timeout $((180 * install_slow)) "$install_emulator" -m 2G -smp 2 \
                         $install_firmware_board $install_machine \
                         -drive if=pflash,format=raw,readonly=on,file="$firmware" \
                         -drive if=pflash,format=raw,file="$work/$name.vars" \
                         -kernel "$work/$name.efi" -no-reboot -display none \
-                        -serial stdio -append "console=$install_console drm_client_lib.active=" \
+                        -serial stdio $coverage_serial \
+                        -append "console=$install_console drm_client_lib.active=" \
                         < "$work/serial.in" > "$work/$name" 2>&1 &
                 booting=$!
                 exec 9> "$work/serial.in"
@@ -11781,9 +11874,10 @@ PY
                         waited=$((waited + 1))
                 done
 
-                cat "$work/$name.commands" >&9
+                coverage_guest_commands "$work/$name.commands" >&9
                 exec 9>&-
                 wait "$booting" 2>/dev/null || true
+                coverage_guest_collect "install-$name"
 
                 says "$name" "$name powered down" 'reboot: Power down'
                 never "$name" "$name without a panic" 'Kernel panic'
@@ -11939,6 +12033,9 @@ trap 'rm -rf "$work"' EXIT INT TERM
 
 MOONWATER_CANVAS_WORK=$work
 export MOONWATER_CANVAS_WORK
+coverage_guest "$image" "$work/coverage-canvas"
+MOONWATER_CANVAS_COVERAGE=${coverage_serial#-serial file:}
+export MOONWATER_CANVAS_COVERAGE
 
 python3 - "$image" > "$work/answers" 2>"$work/why" <<'PY'
 import json, os, re, socket, subprocess, sys, time
@@ -11986,7 +12083,9 @@ guest = subprocess.Popen([
     # and on a Haswell desktop the USB 2 ports hang off EHCI, not xHCI.
     "-device", "usb-mouse,id=xhcimouse",
     "-device", "usb-ehci,id=ehci", "-device", "usb-mouse,bus=ehci.0,id=ehcimouse",
-    "-no-reboot", "-display", "none", "-serial", "file:" + work + "/serial",
+    "-no-reboot", "-display", "none", "-serial", "file:" + work + "/serial"] +
+    (["-serial", "file:" + os.environ["MOONWATER_CANVAS_COVERAGE"]]
+     if os.environ.get("MOONWATER_CANVAS_COVERAGE") else []) + [
     "-qmp", "unix:" + qmp + ",server,nowait",
     "-monitor", "unix:" + mon + ",server,nowait",
     # CANVAS_APPEND adds to the guest's command line: a profiling run wants
@@ -13005,6 +13104,20 @@ for name, marker in (("no protection fault", b"general protection fault"),
                      ("no kernel panic", b"kernel panic")):
     out.append((name, "present" if marker in serial else "absent", "absent"))
 
+#       A coverage image writes what it reached, typed into whichever
+#       terminal has the keyboard; see coverage_guest in test/run. Run, not
+#       sourced: a sourced file is a parser source, and the applets in it
+#       refuse to start under one.
+if os.environ.get("MOONWATER_CANVAS_COVERAGE"):
+    type_text("/coverage-dump\n")
+    for _ in range(120):
+        try:
+            if open(os.environ["MOONWATER_CANVAS_COVERAGE"], "rb").read().rstrip().endswith(b"b2sK"):
+                break
+        except OSError:
+            pass
+        time.sleep(0.5)
+
 hf.write(b"quit\n")
 hf.flush()
 time.sleep(1)
@@ -13498,6 +13611,7 @@ for name, got, want in out:
     print("%s|%s|%s" % (name, got, want))
 PY
 
+coverage_guest_collect canvas
 if [ ! -s "$work/answers" ]; then
         echo "  canvas       the guest answered nothing"
         sed 's/^/    /' "$work/why" | tail -5

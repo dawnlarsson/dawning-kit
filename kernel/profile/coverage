@@ -1,0 +1,18 @@
+#
+# Coverage profile
+#
+# Builds the image's /shell so that every basic block it reaches in the guest
+# is recorded, the way `sh test/run coverage` records the binaries a lane
+# builds on the host: install, boot, settings, PID 1, the terminal applet and
+# the monitor only ever run inside the booted image, so this is the only way
+# to see which of their branches the image lanes reach. x86_64 only.
+#
+#       sudo sh build.sh debug_none limbo desktop wifi serial coverage
+#       MOONWATER_IMAGE=dist/bootx64.efi sh test/run coverage DIR boot install
+#
+# The record is /coverage.map on the guest's RAM root; the unstripped ELF it
+# is read against is dist/shell.coverage.elf. The lanes give a coverage
+# machine a second UART and write the record to it before poweroff. Every
+# block costs a call, so time nothing on this image.
+#
+#> coverage on

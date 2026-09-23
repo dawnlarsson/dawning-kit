@@ -2578,6 +2578,7 @@ static b32 build_spark(string_address source, string_address output,
         positive text_size;
         positive data_size;
         positive bss_size;
+        string_address hook = null;
         struct header head;
 
         if (!arch || !*arch)
@@ -2609,6 +2610,40 @@ static b32 build_spark(string_address source, string_address output,
         data_binary = build_join(work, "/data.bin", null);
         entry_flag = build_join("-Wl,-e,", build_setting_get("entry"), null);
 
+        /*
+                The coverage profile (`#> coverage on`, x86_64 only). Every
+                basic block of the program calls the hook test/checks.c keeps
+                for `sh test/run coverage`, built here to make and record
+                into /coverage.map on the guest's RAM root, where PID 1 is
+                already able to write. The linked ELF, symbols and lines
+                kept, goes to dist/shell.coverage.elf, which is what the
+                report reads the guest's record against -- so the strip
+                flags are dropped for it, and nothing else changes.
+        */
+        if (mode && word_is(mode, "coverage"))
+        {
+                hook = build_join(work, "/coverage.o", null);
+
+                if (!word_is(arch, "x86_64"))
+                {
+                        build_remove_tree(work);
+                        return string_report(log_error, 1,
+                                             "spark: coverage records are taken on "
+                                             "x86_64, and this is %s\n", arch);
+                }
+
+                if (build_run(compiler, "-O2", "-c", "-march=x86-64",
+                              "-fno-stack-protector", "-fno-builtin",
+                              "-DCOVERAGE_hook", "-DCOVERAGE_CREATE",
+                              "-DCOVERAGE_PATH=\"/coverage.map\"",
+                              "test/checks.c", "-o", hook, null))
+                {
+                        build_remove_tree(work);
+                        return string_report(log_error, 1,
+                                             "spark: the coverage hook did not build\n");
+                }
+        }
+
         words[count++] = compiler;
         words[count++] = build_join(source, ".c", null);
         words[count++] = "-o";
@@ -2621,15 +2656,28 @@ static b32 build_spark(string_address source, string_address output,
                 positive found = build_split(build_key("program_flags"),
                                              (string_address address_to)pieces,
                                              BUILD_ARGUMENT_ROOM);
+                bool keep_lines = mode && word_is(mode, "coverage");
 
                 for (positive at = 0; at < found && count + 1 < BUILD_ARGUMENT_ROOM;
                      at++)
-                        if (!word_is(pieces[at], "-flto"))
+                        if (!word_is(pieces[at], "-flto") &&
+                            !(keep_lines && (word_is(pieces[at], "-s") ||
+                                             word_is(pieces[at], "-Wl,--strip-all") ||
+                                             word_is(pieces[at], "-Wl,--strip-debug") ||
+                                             word_is(pieces[at], "-Wl,-x") ||
+                                             word_is(pieces[at], "-Wl,-s"))))
                                 words[count++] = pieces[at];
         }
 
         if (mode && word_is(mode, "debug"))
                 words[count++] = "-g";
+
+        if (hook)
+        {
+                words[count++] = "-g";
+                words[count++] = "-fsanitize-coverage=trace-pc";
+                words[count++] = hook;
+        }
 
         count = build_add_split((string_address address_to)words, count,
                                 BUILD_ARGUMENT_ROOM,
@@ -2797,6 +2845,16 @@ static b32 build_spark(string_address source, string_address output,
                 }
 
                 close(handle);
+
+                if (good && hook &&
+                    (build_tool("mkdir", "-p", "dist", null) ||
+                     build_tool("cp", elf, "dist/shell.coverage.elf", null)))
+                {
+                        build_remove_tree(work);
+                        return string_report(log_error, 1,
+                                             "spark: cannot keep the coverage ELF\n");
+                }
+
                 build_remove_tree(work);
 
                 if (!good)
@@ -3871,10 +3929,17 @@ static b32 build_kernel_source()
         return 0;
 }
 
+#define COVERAGE_DUMP                                                      \
+        "#!/bin/sh\n"                                                        \
+        "echo begin | base64 > /dev/ttyS1\n"                                 \
+        "head -c 16777216 /coverage.map | gzip -c | base64 > /dev/ttyS1\n"   \
+        "echo ok | base64 > /dev/ttyS1\n"
+
 static b32 build_userspace()
 {
         string_address image = build_setting_get("image_root");
         string_address applet = null;
+        string_address shell_mode = null;
         //      Appended to below, one -D per component that is off.
         string_address flags = "";
 
@@ -3928,6 +3993,19 @@ static b32 build_userspace()
         if (!build_tools_read())
                 return build_die("cannot read the tool registry");
 
+        //      kernel/profile/coverage: /shell built to record which of its
+        //      blocks the guest reached, for `sh test/run coverage`. Any
+        //      other value is refused rather than read as off.
+        {
+                string_address asked = build_key_one("coverage", null);
+
+                if (word_is(asked, "on"))
+                        shell_mode = "coverage";
+                else if (*asked && !word_is(asked, "off"))
+                        return build_die(build_join("coverage: '", asked,
+                                                    "' is neither on nor off", null));
+        }
+
         if (build_moon_core && build_moon_shell)
         {
                 //      Every program in the default image is spark, including
@@ -3951,10 +4029,23 @@ static b32 build_userspace()
                 build_setting_set("spark_cppflags", flags);
 
                 if (build_spark(build_setting_get("shell_source"),
-                                build_join(image, "/shell", null), null))
+                                build_join(image, "/shell", null), shell_mode))
                         return build_die("building the shell");
 
                 applet = "shell";
+
+                //      What a coverage lane without a serial shell types
+                //      before it stops the machine: the record, gzipped and in
+                //      base64, out of the second UART between two short
+                //      streams, begin and ok, so what the firmware wrote there
+                //      first is left out and a record cut short is known to
+                //      be. test/run's coverage_dump is the same three lines.
+                if (shell_mode &&
+                    (!build_write_file(build_join(image, "/coverage-dump", null),
+                                      COVERAGE_DUMP, sizeof(COVERAGE_DUMP) - 1) ||
+                     build_tool("chmod", "0755",
+                                build_join(image, "/coverage-dump", null), null)))
+                        return build_die("installing /coverage-dump");
 
                 //      Scripts need a real interpreter path: /shell is the
                 //      image's binary, but a #!/bin/sh shebang is resolved by
@@ -4022,7 +4113,7 @@ static b32 build_userspace()
                 build_setting_set("spark_cppflags", flags);
 
                 if (build_spark(build_setting_get("utilities_source"),
-                                build_join(image, "/shell", null), null))
+                                build_join(image, "/shell", null), shell_mode))
                         return build_die("building the utilities");
 
                 //      The kernel's SPAWN_TOOL ABI accelerates through this

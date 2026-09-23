@@ -82988,6 +82988,11 @@ void probe_fill_32(void *d)
         A process that cannot open it (a bowl's root, a sandbox without the
         path) records nothing and runs on; the report counts a binary whose
         record is empty as never having run, never as covered.
+
+        COVERAGE_CREATE is the image's variant (kernel/profile/coverage):
+        nothing makes the record before the guest's PID 1 runs, so the first
+        process to reach a block creates it and every one sizes it -- the
+        same size, so the race between two first processes is harmless.
 */
 #if !defined(__x86_64__)
 #error "coverage records are taken on x86_64"
@@ -83027,7 +83032,18 @@ void __sanitizer_cov_trace_pc(void)
 
                 if (__atomic_exchange_n(&coverage_tried, 1, __ATOMIC_RELAXED))
                         return;
+#ifdef COVERAGE_CREATE
+                handle = coverage_system(2, (long)COVERAGE_PATH, 02 | 0100 | 02000000, 0600,
+                                         0, 0, 0);
+                if (handle >= 0 && coverage_system(77, handle, (long)COVERAGE_ROOM, 0, 0,
+                                                   0, 0) < 0)
+                {
+                        coverage_system(3, handle, 0, 0, 0, 0, 0);
+                        return;
+                }
+#else
                 handle = coverage_system(2, (long)COVERAGE_PATH, 02 | 02000000, 0, 0, 0, 0);
+#endif
                 if (handle < 0)
                         return;
                 mapped = coverage_system(9, 0, (long)COVERAGE_ROOM, 3, 1, handle, 0);
