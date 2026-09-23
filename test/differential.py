@@ -7694,25 +7694,31 @@ def files_tar(farm):
     #   is read as the little it holds rather than a terabyte of zeros: each
     #   run of bytes that are not zero, at its offset, which is the same
     #   answer however the filesystem laid the file out.
+    #   Read at most 64 MiB of it: a filesystem that does not report holes
+    #   answers SEEK_DATA with the whole file, and the terabyte would be read
+    #   as zeros. What is past the bound is counted by the size alone, the
+    #   same way on both sides.
     def held(path):
         digest = hashlib.sha256()
+        budget = 64 << 20
         with open(path, "rb") as handle:
             end = os.fstat(handle.fileno()).st_size
             at = 0
-            while at < end:
+            while at < end and budget > 0:
                 try:
                     at = os.lseek(handle.fileno(), at, os.SEEK_DATA)
                 except OSError:
                     break
                 stop = os.lseek(handle.fileno(), at, os.SEEK_HOLE)
                 handle.seek(at)
-                while at < stop:
-                    piece = handle.read(min(stop - at, 1 << 20))
+                while at < stop and budget > 0:
+                    piece = handle.read(min(stop - at, 1 << 20, budget))
                     if not piece:
                         break
                     for run in re.finditer(rb"[^\0]+", piece):
                         digest.update(b"%d:" % (at + run.start()) + run.group(0))
                     at += len(piece)
+                    budget -= len(piece)
         return end, digest.hexdigest()[:12]
 
     commands = (("tf",), ("tvf",), ("xf",), ("xf", "--strip-components=1"), ("xf", "-C", "sub"))
