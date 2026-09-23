@@ -30310,6 +30310,13 @@ static bool rm_option_seen(p8 letter, string_address value)
                 rm_force = false;
                 return true;
         }
+        //      Every --interactive=WHEN is held to the list as it is read,
+        //      as getopt and argmatch hold it: a bad one is refused even when
+        //      a later -i or --interactive would have won.
+        if (letter == 'W' && value &&
+            file_word_among((string_address) "rm", (string_address) "--interactive",
+                            value, rm_whens, sizeof(rm_whens) / sizeof(rm_whens[0])) < 0)
+                return false;
         if (letter == 'W' &&
             (!value || string_equals(value, (string_address)"always") ||
              string_equals(value, (string_address)"yes") ||
