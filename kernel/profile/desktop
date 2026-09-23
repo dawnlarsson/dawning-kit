@@ -80,6 +80,28 @@ CONFIG_USB_ROLE_SWITCH=y
 # Thunderbolt dock actually is; without it a USB4 port is just USB.
 CONFIG_USB4=y
 
+#
+# Webcams
+#
+# V4L2 and the USB video class, which is nearly every webcam made and what
+# a program in a bowl -- ffmpeg, a browser -- opens as /dev/video*. Their
+# microphones are USB audio, already in general. A bowl cannot bring a
+# kernel driver of its own, so without these no camera exists for it.
+# The filter keeps the other media families (TV, radio, DVB) out.
+#
+CONFIG_MEDIA_SUPPORT=y
+CONFIG_MEDIA_SUPPORT_FILTER=y
+CONFIG_MEDIA_SUBDRV_AUTOSELECT=n
+CONFIG_MEDIA_CAMERA_SUPPORT=y
+# The sensor and lens menus are for cameras wired to a board over I2C;
+# on by default, they drag in the media controller and fwnode glue.
+CONFIG_VIDEO_CAMERA_SENSOR=n
+CONFIG_VIDEO_CAMERA_LENS=n
+CONFIG_VIDEO_DEV=y
+CONFIG_MEDIA_USB_SUPPORT=y
+CONFIG_USB_VIDEO_CLASS=y
+CONFIG_USB_VIDEO_CLASS_INPUT_EVDEV=n
+
 # Above BITS_PER_LONG, small_cpumask_bits becomes the runtime nr_cpu_ids and
 # disables the single-word bitmap/find inlines: 727/1232 call sites reload it.
 # Keeping a desktop in one word measured 1.55x on its profiled _find_next_bit.

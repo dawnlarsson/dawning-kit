@@ -260,6 +260,11 @@ read-only, so a package's install scripts cannot change the host. A bowl is
 not a security sandbox: its programs run as root and can reach the host's
 devices.
 
+The desktop image carries webcam drivers, V4L2 and the USB video class, and
+USB audio, so ffmpeg or a browser installed in a bowl finds a USB camera and
+its microphones as `/dev/video*` and `/dev/snd/*`. A bowl cannot load a kernel
+driver of its own.
+
 ## The terminal
 
 Canvas opens a terminal at boot and on Control-Shift-T. It answers as
