@@ -14896,6 +14896,44 @@ def shell_background_pid(farm):
     return shell_reference_walk(farm, cases)
 
 
+#       argv[0] is the command word as it was written. PATH decides which
+#       file is loaded and nothing else: the program, ps and /proc/PID/cmdline
+#       see `sh`, not /usr/bin/sh. The word is written bare, quoted, through a
+#       variable and behind `command`, and the command runs in every place
+#       the shell starts one: the tail of a -c string, the foreground, the
+#       background, either end of a pipeline, a subshell, a function, and
+#       under exec.
+shell_ARGV_WORDS = {"bare": "sh", "quoted": "'sh'", "variable": "$p", "command": "command sh",
+                    "dash": "dash"}
+shell_ARGV_PLACES = {
+    "tail": "@C@",
+    "foreground": "@C@; :",
+    "background": "@C@ & wait",
+    "pipe-first": "@C@ | cat; :",
+    "pipe-last": ": | @C@; :",
+    "subshell": "(@C@); :",
+    "function": "f() { @C@; }; f; :",
+    "exec": "(exec @C@); :",
+}
+
+
+def shell_argv_script(word, place):
+    command = (shell_ARGV_WORDS[word] + " -c " +
+               shell_quote("tr '\\000' '|' < /proc/$$/cmdline; echo") + " name")
+    inner = "p=sh; " + shell_ARGV_PLACES[place].replace("@C@", command)
+    return shell_program(shell_SELF + './"$shell_me" -c ' + shell_quote(inner),
+                         'echo "end=$?"', 'rm -f "./$shell_me"')
+
+
+def shell_argv_zero(farm):
+    """argv[0] as the started program sees it, against bash and dash: every
+    spelling of the command word in shell_ARGV_WORDS in every place of
+    shell_ARGV_PLACES, under each name."""
+    cases = [(mode, "argv0 %s %s" % (word, place), shell_argv_script(word, place), 10, None)
+             for mode in sorted(SHELL_MODES) for word in shell_ARGV_WORDS
+             for place in shell_ARGV_PLACES]
+    return shell_reference_walk(farm, cases)
+
 
 SHELL_CHECKS = (
     shell_restricted_function_import,
@@ -14903,6 +14941,7 @@ SHELL_CHECKS = (
     shell_nesting_limits,
     shell_signal_dispositions,
     shell_background_pid,
+    shell_argv_zero,
 )
 
 
@@ -24615,13 +24654,17 @@ def harness_floodlight(argv):
              spawn_tool_source.index('floodlight_launch_decide') <
                  spawn_tool_source.index('shell_spawn_tool_preflighted') and
              source_calls(execute_command_tokens, 'policy', '=',
-                          'floodlight_launch_decide', '(', 'shell_argv', '[',
-                          '0', ']', ',', 'shell_argv', ',', 'count', ',',
+                          'floodlight_launch_decide', '(', 'path', ',',
+                          'shell_argv', ',', 'count', ',',
                           'false', ',', 'false', ',', 'false', ',', 'null',
                           ')') and
+             source_calls(execute_command_tokens, 'shell_spawn_preflighted',
+                          '(', 'SPARK_SPAWN_SHELL', ',', 'path', ',',
+                          'shell_argv', ',') and
              execute_command_source.index('floodlight_launch_decide') <
                  execute_command_source.index('shell_spawn_preflighted'),
-             'the Spark backend is gated before publishing a spawn request'),
+             'the Spark backend is gated before publishing a spawn request, '
+             'for the file it publishes'),
             (calls('if', '(', '!', 'floodlight_row_count', ')'),
              'an untouched register costs an applet one comparison, not a walk'),
             (calls('syscall', '(', 'prctl', ')', ',', 'PR_SET_NO_NEW_PRIVS'),
@@ -33854,11 +33897,20 @@ def harness_guest_scenarios(argv):
         name = "n%d" % case
         script = 'tr "\\000" "|" < /proc/$$/cmdline'
         #   By its path, which is what the program's first word is here
-        #   and under bash alike; a bare sh this shell hands over resolved.
+        #   and under bash alike.
         want = "|".join(["/bin/sh", "-c", script, name] + words) + "|"
         lines.append("/bin/sh -c %s %s %s > /tmp/sc.got" % (q(script), name, " ".join(q(w) for w in words)))
         lines.append("printf '%%s' %s > /tmp/sc.want" % q(want))
         lines.append("scen_same %s" % q("proc cmdline %d" % case))
+        #   And bare, found through PATH: argv[0] is still the word that
+        #   was written, in the foreground, a pipeline and the background.
+        place = rng.choice(("foreground", "pipeline", "background"))
+        run = "sh -c %s %s %s" % (q(script), name, " ".join(q(w) for w in words))
+        run = {"foreground": run + " > /tmp/sc.got", "pipeline": run + " | cat > /tmp/sc.got",
+               "background": run + " > /tmp/sc.got & wait"}[place]
+        lines.append(run)
+        lines.append("printf '%%s' %s > /tmp/sc.want" % q("|".join(["sh", "-c", script, name] + words) + "|"))
+        lines.append("scen_same %s" % q("proc cmdline %d, bare sh in the %s" % (case, place)))
         env = ["V%d=%s" % (at, rng.choice(("1", "a b", "", "x" * 120))) for at in range(rng.randrange(1, 4))]
         script = 'tr "\\000" "|" < /proc/$$/environ'
         lines.append("env -i %s /bin/sh -c %s > /tmp/sc.got" % (" ".join(q(e) for e in env), q(script)))

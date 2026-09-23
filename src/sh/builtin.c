@@ -76,6 +76,12 @@ static fn shell_exec_failed(b32 status)
 string_address address_to shell_argv;
 positive shell_argc;
 
+/* The file an external command is loaded from, when PATH found it. argv[0]
+   stays the word as it was typed, which is what the program, ps and
+   /proc/PID/cmdline see in every other shell; null means argv[0] is the
+   path as well. */
+string_address shell_exec_path;
+
 // eval runs a line, and what runs lines sits below this file.
 fn run_line(string_address line);
 fn shell_input_end();
@@ -19225,9 +19231,10 @@ static fn shell_execute_found(string_address found, string_address name,
         policy = floodlight_launch_decide(found, shell_argv, shell_argc,
                                           false, false, false, null);
 
-        if (!bowl_wrap_command(found, shell_directory, address_of shell_argv,
-                               address_of shell_argc))
-                shell_argv[0] = found;
+        shell_exec_path = found;
+        if (bowl_wrap_command(found, shell_directory, address_of shell_argv,
+                              address_of shell_argc))
+                shell_exec_path = shell_argv[0];
 
         if (shell_tail_command && policy != FLOODLIGHT_LAUNCH_REFUSE &&
             exec_inplace_ready(floodlight_parent_supervised))
@@ -19238,6 +19245,7 @@ static fn shell_execute_found(string_address found, string_address name,
         else
                 shell_execute_command();
 
+        shell_exec_path = null;
         shell_argv = saved_argv;
         shell_argc = saved_argc;
         shell_argv[0] = name;

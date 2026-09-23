@@ -12369,12 +12369,18 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
             FLOODLIGHT_LAUNCH_ALLOW)
                 return -1;
 
+        /* A bowl guest is recognised by the file PATH found, and a wrapped
+           stage starts the bowl program instead. Anything else is loaded from
+           that file under the word as it was typed. */
         words[0] = executable;
 
-        bowl_wrap_words(shell_directory, words, (positive)node->word_count,
-                        EXEC_STAGE_WORDS_MAX + 1);
+        if (bowl_wrap_words(shell_directory, words, (positive)node->word_count,
+                            EXEC_STAGE_WORDS_MAX + 1))
+                executable = words[0];
+        else
+                words[0] = name;
 
-        return shell_spawn_stage(words, input, output, -1);
+        return shell_spawn_stage(executable, words, input, output, -1);
 }
 
 /*

@@ -1386,8 +1386,9 @@ DEAD_END fn shell_thread_instance_mode(bool preserve_ignored)
                 exit(126);
         }
 
-        bipolar exec_result = shell_exec_file(shell_argv[0], shell_argv,
-                                              shell_argc, environment);
+        bipolar exec_result = shell_exec_file(
+            shell_exec_path ? shell_exec_path : shell_argv[0], shell_argv,
+            shell_argc, environment);
 
         if (floodlight_inplace_terminal)
                 floodlight_silent_stop();
@@ -1652,10 +1653,11 @@ static bipolar shell_spawn_preflighted(b32 flags, string_address path,
         later. Naming them here means the stage is spawned instead, and the
         fork never happens.
 */
-bipolar shell_spawn_stage(string_address address_to arguments,
+bipolar shell_spawn_stage(string_address path,
+                          string_address address_to arguments,
                           b32 input, b32 output, b32 error)
 {
-        return shell_spawn_preflighted(SPARK_SPAWN_SHELL, arguments[0],
+        return shell_spawn_preflighted(SPARK_SPAWN_SHELL, path,
                                        arguments, input, output, error);
 }
 
@@ -1742,16 +1744,18 @@ fn shell_execute_command()
         bipolar child = -1;
         positive count;
         b32 policy;
+        string_address path = shell_exec_path ? shell_exec_path
+                                              : shell_argv[0];
 
         log_flush();
 
         count = pointer_vector_count(shell_argv);
-        policy = floodlight_launch_decide(shell_argv[0], shell_argv, count,
+        policy = floodlight_launch_decide(path, shell_argv, count,
                                           false, false, false, null);
 
         if (policy == FLOODLIGHT_LAUNCH_ALLOW)
                 child = shell_spawn_preflighted(SPARK_SPAWN_SHELL,
-                                                shell_argv[0], shell_argv,
+                                                path, shell_argv,
                                                 -1, -1, -1);
 
         if (child < 0)
