@@ -28912,15 +28912,120 @@ static string_address rm_prompt(bipolar directory, string_address name,
                    : (string_address) "remove write-protected regular empty file";
 }
 
+/*
+        One entry of a directory being emptied: the name joined to the path
+        it is shown by, and handed to rm_tree.
+*/
+static bool rm_entry(bipolar directory, string_address shown, string_address name,
+                     positive depth, bool address_to complete)
+{
+        p8 below[FILE_PATH_MAX];
+
+        if (!file_path_join(below, shown, name))
+        {
+                string_format(log_error, "rm: cannot remove '%w/%w': %s\n",
+                              writer_terminal_quoted_name, shown,
+                              writer_terminal_quoted_name, name,
+                              file_reason(-ERROR_NAME_TOO_LONG));
+                rm_status = 1;
+                address_to complete = false;
+                return false;
+        }
+        if (rm_tree(directory, name, below, depth))
+                return true;
+        address_to complete = false;
+        return false;
+}
+
+/*
+        The whole listing of a directory, read before anything in it is
+        touched, as GNU's fts reads it: the records sit in the utility arena
+        from mark to the end, and the arena goes back to mark when the
+        directory is done, which is stack order because every level below
+        takes its own listing above this one and gives it back first.
+        Answers the end of the records, or null when the listing would not
+        fit or could not be read (the reason is left in *error).
+*/
+static p8 address_to rm_listing(bipolar directory, p8 address_to address_to start,
+                                bipolar address_to error)
+{
+        address_to error = 0;
+        if (!utility_arena.bytes && !utility_arena_take(0))
+                return null;
+        //      getdents writes 8-byte fields; the records then follow one
+        //      another from here, each read ending on a whole record.
+        utility_arena.used = (utility_arena.used + 7) & ~(positive)7;
+        address_to start = utility_arena.bytes + utility_arena.used;
+        while (1)
+        {
+                p8 address_to into = memory_arena_take(address_of utility_arena,
+                                                       FILE_TRANSFER_SIZE, 8);
+                bipolar got;
+
+                if (!into)
+                        return null;
+                got = system_read_directory(directory, into, FILE_TRANSFER_SIZE);
+                if (got < 0)
+                {
+                        address_to error = got;
+                        return null;
+                }
+                utility_arena.used = (positive)(into - utility_arena.bytes) +
+                                     (positive)got;
+                if (got == 0)
+                        return utility_arena.bytes + utility_arena.used;
+        }
+}
+
 static bool rm_contents(bipolar directory, string_address shown, positive depth)
 {
         bool complete = true;
+        positive mark = utility_arena.used;
+        bipolar listing_error;
+        p8 address_to at = null;
+        p8 address_to finish = rm_listing(directory, address_of at,
+                                          address_of listing_error);
 
         /*
-                Removing an entry while a getdents block is being walked moves
-                the ones behind it, so the block is refilled from the start
-                after each pass and the directory is read again until a pass
-                finds nothing left to take.
+                Each entry is asked about and acted on once. The listing used
+                to be walked while entries were being removed from it and read
+                again from the start after every pass that removed anything,
+                so under -i an entry answered no was asked about again on the
+                next pass -- rm -ri dup asked for dup/one twice and for
+                dir/sub/deep three times, each extra question eating an answer
+                meant for the next one -- and an entry that could not be
+                removed was reported once a pass.
+        */
+        if (finish)
+        {
+                while (at < finish)
+                {
+                        struct linux_dirent64 address_to entry =
+                            (struct linux_dirent64 address_to)at;
+
+                        at += entry->d_reclen;
+                        if (file_is_dot(entry->d_name))
+                                continue;
+                        rm_entry(directory, shown, entry->d_name, depth,
+                                 address_of complete);
+                }
+                utility_arena.used = mark;
+                return complete;
+        }
+        utility_arena.used = mark;
+        if (listing_error < 0)
+        {
+                string_format(log_error, "rm: cannot read %w: %s\n",
+                              writer_shell_quoted_name, shown, file_reason(listing_error));
+                rm_status = 1;
+                return false;
+        }
+
+        /*
+                A listing too large for the arena is walked as it is read,
+                and read again from the start after a pass that removed
+                something, since removing an entry while a getdents block is
+                being walked moves the ones behind it.
         */
         while (1)
         {
@@ -29022,11 +29127,14 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         }
         else if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
         {
+                //      A file kept at the question does not hold its
+                //      directory back either: GNU asks about the directory
+                //      next and says it is not empty.
                 if (rm_prompting == 'i' && !file_ask((string_address) "rm",
                                         rm_prompt(directory, name, address_of facts,
                                                   false),
                                         shown))
-                        return false;
+                        return true;
 
                 tried = file_remove_same(directory, name, 0,
                                          address_of facts);
@@ -29148,7 +29256,11 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 }
         }
 
-        if (!complete && rm_status == 0)
+        //      Something below stayed -- a directory not gone into, or
+        //      one that failed -- so this one cannot go, and GNU neither
+        //      asks about it nor reports it not empty: the one failure
+        //      below was the whole of what went wrong.
+        if (!complete)
         {
                 if (inside >= 0)
                         system_close(inside);
@@ -29167,7 +29279,12 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 if (inside >= 0)
                         system_close(inside);
 
-                return false;
+                //      A directory kept at the question after its contents
+                //      went does not hold its parent back: GNU goes on to ask
+                //      about the parent and reports it not empty. Only a file
+                //      kept, or a directory not gone into, spares the
+                //      ancestors the question.
+                return inside >= 0;
         }
 
         bipolar gone = file_remove_same(directory, name, AT_REMOVEDIR,

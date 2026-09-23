@@ -5682,6 +5682,12 @@ INPUTS.update({
     "files_yes": b"y\n" * 16,
     "files_no": b"n\n" * 16,
     "files_mixed": b"y\nn\n" * 8,
+    #       Answers that decline at other places in a walk: a file kept, a
+    #       directory kept after its contents went, a descent refused. Each
+    #       of those leaves its parent to be asked about or not asked about,
+    #       and rm -ri once asked about a kept entry twice over.
+    "files_answers_nyy": b"n\ny\ny\n" * 8,
+    "files_answers_yyn": b"y\ny\nn\n" * 8,
     "files_words": b"one two  three\n'four five' six\n\"seven eight\" nine\nten\\ eleven\n\ntwelve\n",
     "files_nul_words": b"a.txt\0b.txt\0two words\0\0missing\0dir\0",
     "files_paths": b"a.txt\nb.txt\nmissing\ndir\nlink\n",
@@ -6876,7 +6882,8 @@ FILES_UTILITIES = (
                       ("a.txt", "b.txt", "missing"), ("shut",), ("unreadable",), ("deep",), ("two words",), ("--", "-dash"), (),
                       ("dir", "a.txt", "hollow"), ("loop",), ("dir/sub/back",), (".",), ("./",), ("a.txt/",), ("dir/",), ("twin",),
                       ("nest",), ("dup", "nest", "hollow"), ("a.txt", "a.txt"), ("new\nline",), ("shut/inside",), ("dir/sub",)),
-            stdin=("files_yes", "files_no", "files_mixed"), fixture="files", stderr="exact",
+            stdin=("files_yes", "files_no", "files_mixed", "files_answers_nyy", "files_answers_yyn"),
+            fixture="files", stderr="exact",
             extra=(("-rf", "dir", "a.txt", "missing"), ("-ri", "dir"), ("-rv", "dir"), ("-dv", "hollow"), ("-fd", "dir"),
                    ("-f", "-i", "a.txt"), ("-i", "-f", "a.txt"), ("-r", "--one-file-system", "dir"), ("-I", "a.txt", "b.txt", "c.txt", "empty"),
                    ("-rI", "dir"), ("-rf", "shut"), ("-r", "shut"), ("-rf", "unreadable"), ("-r", "dir/sub/back"), ("-rf", "dir/back/"),
