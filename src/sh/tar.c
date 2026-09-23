@@ -2236,12 +2236,13 @@ static fn tar_sparse_clear(void)
         tar_sparse_active = false;
 }
 
+/*      A span of no bytes is kept: it is how a map says the file carries on
+        past its last data as a hole -- GNU writes one at the real size when
+        the file ends in one, and the extraction's length is where the map
+        ends, not the real size, which only the listing shows. */
 static bool tar_sparse_add(p64 offset, p64 bytes)
 {
-        if (!bytes)
-                return true;
-
-        if (bytes && offset > (p64)-1 - bytes)
+        if (offset > (p64)-1 - bytes)
                 return false;
 
         if (tar_sparse_used >= TAR_SPARSE_MAX)
@@ -2258,26 +2259,33 @@ static bool tar_sparse_add(p64 offset, p64 bytes)
         return true;
 }
 
-static bool tar_sparse_entry(p8 address_to field)
+/*      One entry of a map: 1 taken, 0 the end of this block's entries (a
+        byte count that starts with a NUL is an unused slot, as GNU reads
+        it, where a written zero is a span of no bytes), -1 refused. */
+static bipolar tar_sparse_entry(p8 address_to field)
 {
         p64 offset;
         p64 bytes;
 
+        if (!field[12])
+                return 0;
+
         if (!tar_field_value(field, 12, address_of offset) ||
             !tar_field_value(field + 12, 12, address_of bytes))
-                return false;
+                return -1;
 
-        return tar_sparse_add(offset, bytes);
+        return tar_sparse_add(offset, bytes) ? 1 : -1;
 }
 
 static bool tar_sparse_load(bipolar archive, p8 address_to header)
 {
         positive at;
         bool extended;
+        bipolar taken = 1;
 
         tar_sparse_clear();
-        for (at = 0; at < TAR_SPARSE_HEADER; at++)
-                if (!tar_sparse_entry(header + 386 + at * 24))
+        for (at = 0; at < TAR_SPARSE_HEADER && taken > 0; at++)
+                if ((taken = tar_sparse_entry(header + 386 + at * 24)) < 0)
                         return false;
 
         extended = header[482] != 0;
@@ -2291,8 +2299,9 @@ static bool tar_sparse_load(bipolar archive, p8 address_to header)
                 if (!extra)
                         return false;
 
-                for (at = 0; at < TAR_SPARSE_EXTRA; at++)
-                        if (!tar_sparse_entry(extra + at * 24))
+                taken = 1;
+                for (at = 0; at < TAR_SPARSE_EXTRA && taken > 0; at++)
+                        if ((taken = tar_sparse_entry(extra + at * 24)) < 0)
                                 return false;
 
                 extended = extra[504] != 0;
@@ -2318,11 +2327,25 @@ static p64 tar_sparse_payload(void)
         return held;
 }
 
+/*
+        The gaps between a sparse member's spans are holes where the output
+        can have them, as GNU makes them: each span is written where it
+        belongs, and a span of no bytes sets the length there. Nothing bounds
+        an offset but the real size, a twelve byte field that base-256
+        stretches past 2^64, so a member of two hundred bytes can place its
+        end a petabyte out -- written as zeros, that filled the disk it was
+        extracted to. A pipe (-O into one) cannot hold a hole and is given
+        the zeros, which is what GNU gives it. Positions count from where the
+        output stood when the member began, so a member written after another
+        onto one standard output lands after it.
+*/
 static bool tar_deliver_sparse(bipolar archive, bipolar out, p64 size,
                                bool seekable)
 {
         p64 cursor = 0;
+        p64 copied = 0;
         positive at;
+        bipolar start = out >= 0 ? system_seek(out, 0, FILE_SEEK_CUR) : -1;
 
         if (!tar_sparse_active || tar_sparse_payload() != size)
         {
@@ -2332,16 +2355,41 @@ static bool tar_deliver_sparse(bipolar archive, bipolar out, p64 size,
 
         for (at = 0; at < tar_sparse_used; at++)
         {
-                if (tar_sparse[at].offset < cursor ||
-                    !tar_write_zeros(out, tar_sparse[at].offset - cursor) ||
-                    !tar_copy_n(archive, out, tar_sparse[at].bytes, seekable))
+                p64 offset = tar_sparse[at].offset;
+                bipolar moved = 0;
+
+                if (offset < cursor)
                         return false;
 
-                cursor = tar_sparse[at].offset + tar_sparse[at].bytes;
+                if (start < 0)
+                {
+                        if (!tar_write_zeros(out, offset - cursor))
+                                return false;
+                }
+                else if (offset > (p64)bipolar_max - (p64)start)
+                        moved = -ERROR_FILE_TOO_LARGE;
+                else if (!tar_sparse[at].bytes)
+                        moved = system_truncate_handle(out, start + (bipolar)offset);
+                else
+                        moved = system_seek(out, start + (bipolar)offset, FILE_SEEK_SET);
+
+                // Said as a write failure, and the rest of the member passed
+                // over so the next header is where it should be.
+                if (moved < 0)
+                {
+                        tar_write_failure = moved;
+                        (void)tar_skip(archive, tar_padded(size) - copied, seekable);
+                        return false;
+                }
+
+                if (!tar_copy_n(archive, out, tar_sparse[at].bytes, seekable))
+                        return false;
+
+                copied += tar_sparse[at].bytes;
+                cursor = offset + tar_sparse[at].bytes;
         }
 
-        return tar_write_zeros(out, tar_sparse_real - cursor) &&
-               tar_skip(archive, tar_padded(size) - size, seekable);
+        return tar_skip(archive, tar_padded(size) - size, seekable);
 }
 
 static bool tar_flush(bipolar handle)
@@ -3305,7 +3353,8 @@ static b32 tar_read_archive(struct tar_options address_to options)
 
                         listed = true;
                         if (options->verbose)
-                                tar_long_line(block, type, mode, size,
+                                tar_long_line(block, type, mode,
+                                              tar_sparse_active ? tar_sparse_real : size,
                                               tar_pax_local.has_user ? tar_pax_local.user : user,
                                               tar_pax_local.has_group ? tar_pax_local.group : group,
                                               major, minor,

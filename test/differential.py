@@ -7526,7 +7526,86 @@ def files_tar_archives(rng, count):
             archive.addfile(info, io.BytesIO(data))
         moments.append((f"moment-{number}", stream.getvalue(), True))
 
-    return archives, moments
+    return archives, moments, files_tar_sparse(rng, 24)
+
+
+def files_tar_sparse(rng, count):
+    """Old GNU sparse members (type S), built a byte at a time because
+    Python's tarfile writes none: a map of spans in the header and, past four,
+    in extension blocks, the data the spans hold, and a real size at the last
+    span's end or past it -- a hole at the end, from a block to a terabyte.
+
+    The terabyte is the one that matters. A real size is a twelve byte field,
+    base-256 when it does not fit in octal, and nothing but the spans bounds
+    it; GNU makes the gaps holes and sets the length once, so a member of
+    two hundred bytes costs nothing, and a tar that writes the gaps as zeros
+    fills the disk it extracts to. Fields are octal where they fit and
+    base-256 where they do not, or where the draw says so, since both
+    readers take both."""
+
+    def number(value, width, wide=False):
+        if not wide and value < 8 ** (width - 1):
+            return b"%0*o\0" % (width - 1, value)
+        return bytes([0x80]) + value.to_bytes(width - 1, "big")
+
+    def header(name, spans, real, stored, wide):
+        block = bytearray(512)
+        block[0:len(name)] = name
+        block[100:108] = b"0000644\0"
+        block[108:116] = b"0001750\0"
+        block[116:124] = b"0001750\0"
+        block[124:136] = number(stored, 12, wide)
+        block[136:148] = number(1790000000, 12)
+        block[156:157] = b"S"
+        block[257:265] = b"ustar  \0"
+        block[265:272] = b"someone"
+        block[297:306] = b"somegroup"
+        for at, (offset, size) in enumerate(spans[:4]):
+            block[386 + at * 24:398 + at * 24] = number(offset, 12, wide)
+            block[398 + at * 24:410 + at * 24] = number(size, 12, wide)
+        block[482] = 1 if len(spans) > 4 else 0
+        block[483:495] = number(real, 12, wide)
+        block[148:156] = b" " * 8
+        block[148:156] = b"%06o\0 " % sum(block)
+        blocks = [bytes(block)]
+        rest = spans[4:]
+        while rest:
+            extra = bytearray(512)
+            for at, (offset, size) in enumerate(rest[:21]):
+                extra[at * 24:at * 24 + 12] = number(offset, 12, wide)
+                extra[at * 24 + 12:at * 24 + 24] = number(size, 12, wide)
+            rest = rest[21:]
+            extra[504] = 1 if rest else 0
+            blocks.append(bytes(extra))
+        return b"".join(blocks)
+
+    #   Shaped the way GNU writes them, since GNU reads each span's data in
+    #   whole blocks: every span but the last a multiple of 512. A hole at
+    #   the end is GNU's span of no bytes at the real size, or, drawn
+    #   instead, a real size past the map with nothing to mark it, which
+    #   GNU lists and does not extract. The terabyte is always marked.
+    made = []
+    tails = (0, 0, 1, 511, 4096, 3 << 20, 1 << 40)
+    for index in range(count):
+        spans, cursor = [], 0
+        count_of = rng.choice((0, 1, 2, 4, 5, 9, 26))
+        for place in range(count_of):
+            cursor += rng.choice((0, 1, 512, 4096, 65536, 1 << 20))
+            size = rng.choice((512, 4096, 69632)) if place + 1 < count_of \
+                else rng.choice((1, 7, 512, 4096, 70000))
+            spans.append((cursor, size))
+            cursor += size
+        tail = tails[index % len(tails)]
+        real = cursor + tail
+        data = b"".join(bytes([0x41 + (at + offset) % 26]) * size
+                        for at, (offset, size) in enumerate(spans))
+        if tail and (tail == 1 << 40 or rng.random() < 0.6):
+            spans.append((real, 0))
+        name = b"sparse%d" % index
+        member = header(name, spans, real, len(data), rng.random() < 0.25)
+        member += data + b"\0" * (-len(data) % 512)
+        made.append((f"sparse-{index}-{len(spans)}-{tail}", member + b"\0" * 1024, True))
+    return made
 
 
 def files_tar(farm):
@@ -7564,8 +7643,34 @@ def files_tar(farm):
                 seen.append((relative, "p", oct(info.st_mode & 0o7777)))
             else:
                 seen.append((relative, "f", oct(info.st_mode & 0o7777), info.st_nlink,
-                             int(info.st_mtime), hashlib.sha256(path.read_bytes()).hexdigest()[:12]))
+                             int(info.st_mtime), info.st_size,
+                             info.st_blocks * 512 < info.st_size, held(path)))
         return seen
+
+    #   A file's bytes by where they are held, so a terabyte that is one hole
+    #   is read as the little it holds rather than a terabyte of zeros: each
+    #   run of bytes that are not zero, at its offset, which is the same
+    #   answer however the filesystem laid the file out.
+    def held(path):
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            end = os.fstat(handle.fileno()).st_size
+            at = 0
+            while at < end:
+                try:
+                    at = os.lseek(handle.fileno(), at, os.SEEK_DATA)
+                except OSError:
+                    break
+                stop = os.lseek(handle.fileno(), at, os.SEEK_HOLE)
+                handle.seek(at)
+                while at < stop:
+                    piece = handle.read(min(stop - at, 1 << 20))
+                    if not piece:
+                        break
+                    for run in re.finditer(rb"[^\0]+", piece):
+                        digest.update(b"%d:" % (at + run.start()) + run.group(0))
+                    at += len(piece)
+        return end, digest.hexdigest()[:12]
 
     commands = (("tf",), ("tvf",), ("xf",), ("xf", "--strip-components=1"), ("xf", "-C", "sub"))
 
@@ -7578,9 +7683,12 @@ def files_tar(farm):
             (work / "sub").mkdir(parents=True)
             (top / "a.tar").write_bytes(data)
             before = snapshot(top / "outside")
-            ran = subprocess.run([binary, command[0], str(top / "a.tar"), *command[1:]],
-                                 cwd=work, env={"PATH": os.defpath, "LC_ALL": "C", "TZ": "UTC0"},
-                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+            try:
+                ran = subprocess.run([binary, command[0], str(top / "a.tar"), *command[1:]],
+                                     cwd=work, env={"PATH": os.defpath, "LC_ALL": "C", "TZ": "UTC0"},
+                                     stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+            except subprocess.TimeoutExpired:
+                return ("timed out", b"", []), (None, [])
             outside = snapshot(top / "outside")
             stray = sorted(p.name for p in top.iterdir()
                            if p.name not in ("outside", "work", "a.tar"))
@@ -7588,10 +7696,12 @@ def files_tar(farm):
                 (outside if outside != before else None, stray)
 
     rng = random.Random(0x7a52)
-    archives, moments = files_tar_archives(rng, 240)
+    archives, moments, sparse = files_tar_archives(rng, 240)
     cases = [(name, data, command, settled)
              for name, data, settled in archives for command in commands] + \
-            [(name, data, ("tvf",), settled) for name, data, settled in moments]
+            [(name, data, ("tvf",), settled) for name, data, settled in moments] + \
+            [(name, data, command, settled) for name, data, settled in sparse
+             for command in (("tvf",), ("xf",))]
 
     def compare(case):
         name, data, command, settled = case
