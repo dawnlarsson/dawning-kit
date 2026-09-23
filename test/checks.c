@@ -58270,7 +58270,13 @@ static fn storage_test_link_state(void)
         check("a lease without a route drops route ownership",
               !net_ownership_next(true, true, true, false));
         check("unchanged carrier keeps lease", !net_link_news(11, IFF_RUNNING, address_of held));
-        check("second live interface keeps lease", !net_link_news(12, IFF_RUNNING, address_of held));
+        /* A second link gaining carrier is looked at even with a lease held,
+           since the preference may favour it (46a05157, "a second live link
+           is therefore worth a look"); what keeps the lease is auto finding
+           the preferred link is the one that holds it. */
+        check("second live interface is looked at", net_link_news(12, IFF_RUNNING, address_of held));
+        check("its unchanged carrier is not looked at again",
+              !net_link_news(12, IFF_RUNNING, address_of held));
         check("carrier loss retains state until kernel cleanup",
               net_link_news(11, 0, address_of held) && held.index == 11 &&
                   held.lost);

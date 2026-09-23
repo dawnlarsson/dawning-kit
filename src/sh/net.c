@@ -1487,9 +1487,11 @@ typedef struct
 
 static netlink_buffer net_states;
 
-/* Remember every carrier transition, but reconfigure only when no lease is
-   active or its interface actually loses carrier. A newly probed down link
-   is actionable while unconfigured; a second live interface is not. */
+/* Remember every carrier transition, and reconfigure when no lease is
+   active, when its interface loses carrier, or when another link gains it:
+   the preference may favour that one, and auto keeps the lease when the
+   preferred link is the one holding it. A newly probed down link is
+   actionable while unconfigured. */
 static COLD bool net_link_news(p32 index, p32 flags, net_holding address_to held)
 {
         net_state address_to entry;
