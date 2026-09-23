@@ -71,6 +71,10 @@ static bool regex_compile(string_address pattern, bool extended, bool icase,
 enum { REGEX_FIRST, REGEX_LONGEST, REGEX_EXACT_LONGEST, REGEX_CAPTURES = 4 };
 static bool regex_find(p8 mode, string_address text, positive length, positive from);
 
+/* A file name in a diagnostic, delimiters included, the way coreutils' quoteaf
+   writes one; defined beside ls's shell styles, which it is. */
+static fn writer_shell_quoted_name(writer output, string_address value);
+
 
 /*
         What the file utilities share.
@@ -3777,8 +3781,8 @@ static fn file_change_walk_as(bipolar directory, string_address name,
 
         if (depth == 0)
         {
-                string_format(log_error, "%s: '%w' is nested too deep\n", program,
-                              writer_terminal_quoted_name, shown);
+                string_format(log_error, "%s: %w is nested too deep\n", program,
+                              writer_shell_quoted_name, shown);
                 address_to status = 1;
                 return;
         }
@@ -3797,8 +3801,8 @@ static fn file_change_walk_as(bipolar directory, string_address name,
         {
                 if (report_walk_errors)
                 {
-                        string_format(log_error, "%s: cannot open directory '%w': %s\n", program,
-                                      writer_terminal_quoted_name, shown, file_reason(walk.error));
+                        string_format(log_error, "%s: cannot open directory %w: %s\n", program,
+                                      writer_shell_quoted_name, shown, file_reason(walk.error));
                         address_to status = 1;
                 }
 
@@ -3841,8 +3845,8 @@ static fn file_change_walk_as(bipolar directory, string_address name,
 
         if (report_walk_errors && walk.error < 0)
         {
-                string_format(log_error, "%s: cannot read directory '%w': %s\n", program,
-                              writer_terminal_quoted_name, shown, file_reason(walk.error));
+                string_format(log_error, "%s: cannot read directory %w: %s\n", program,
+                              writer_shell_quoted_name, shown, file_reason(walk.error));
                 address_to status = 1;
         }
 
@@ -3969,8 +3973,8 @@ static bool file_change_root_refused(string_address path, string_address program
                 return false;
 
         string_format(log_error,
-                      "%s: it is dangerous to operate recursively on '%w'%s\n",
-                      program, writer_terminal_quoted_name, path,
+                      "%s: it is dangerous to operate recursively on %w%s\n",
+                      program, writer_shell_quoted_name, path,
                       string_equals(path, "/") ? (string_address) ""
                                                : (string_address) " (same as '/')");
         string_format(log_error,
@@ -4155,7 +4159,7 @@ static bool file_answer_is_yes(b32 from)
 
 bool file_ask(string_address program, string_address question, string_address subject)
 {
-        string_format(log_error, "%s: %s '%w'? ", program, question, writer_terminal_quoted_name,
+        string_format(log_error, "%s: %s %w? ", program, question, writer_shell_quoted_name,
                       subject);
 
         return file_answer_is_yes(0);
@@ -6131,8 +6135,8 @@ static bool file_destination_in(string_address program, string_address directory
         if (made < 0)
         {
                 string_format(log_error,
-                              "%s: cannot create directory '%w': %s\n", program,
-                              writer_terminal_quoted_name,
+                              "%s: cannot create directory %w: %s\n", program,
+                              writer_shell_quoted_name,
                               string_get(failing) ? failing : parent,
                               file_reason(made));
                 return false;
@@ -6160,8 +6164,8 @@ static bool file_source_destination(string_address program, positive first,
 
         if (!into && first + 1 >= count)
         {
-                return string_report(log_error, false, "%s: missing destination file operand after '%w'\n",
-                              program, writer_terminal_quoted_name, program_argument((b32)first));
+                return string_report(log_error, false, "%s: missing destination file operand after %w\n",
+                              program, writer_shell_quoted_name, program_argument((b32)first));
         }
 
         string_address last = into ? into : program_argument((b32)(count - 1));
@@ -6205,23 +6209,23 @@ static bool file_source_destination(string_address program, positive first,
                         if (target_looked < 0)
                                 return string_report(
                                     log_error, false,
-                                    "%s: failed to access '%w': %s\n", program,
-                                    writer_terminal_quoted_name, last,
+                                    "%s: failed to access %w: %s\n", program,
+                                    writer_shell_quoted_name, last,
                                     file_reason(target_looked));
                         return string_report(
                             log_error, false,
-                            "%s: target '%w' is not a directory\n", program,
-                            writer_terminal_quoted_name, last);
+                            "%s: target %w is not a directory\n", program,
+                            writer_shell_quoted_name, last);
                 }
 
                 if (into)
                         return string_report(
                             log_error, false,
-                            "%s: target directory '%w': %s\n", program,
-                            writer_terminal_quoted_name, last, file_reason(why));
+                            "%s: target directory %w: %s\n", program,
+                            writer_shell_quoted_name, last, file_reason(why));
 
-                return string_report(log_error, false, "%s: target '%w': %s\n",
-                                     program, writer_terminal_quoted_name, last,
+                return string_report(log_error, false, "%s: target %w: %s\n",
+                                     program, writer_shell_quoted_name, last,
                                      file_reason(why));
         }
 
@@ -6693,6 +6697,24 @@ static fn ls_quote_shell(writer write, string_address name, positive length, boo
 
         if (open)
                 write("'", 1);
+}
+
+/*
+        A file name in a diagnostic as coreutils writes it with quoteaf: always
+        quoted, in double quotes when a single quote is the only thing in it a
+        shell would read, and otherwise in single quotes with every byte that
+        is not printable ASCII spelled $'\n' between the quoted runs --
+        'new'$'\n''line', "q'x", 'h'$'\303\251'. It is ls's
+        shell-escape-always, which is what quoteaf is, and it is the one
+        spelling a person can paste back into a shell to name the file.
+        Messages that quote an argument rather than a name (an extra operand,
+        an invalid mode) and the programs that use quote() for names too
+        (mkdir, find, nice, xargs) keep writer_terminal_quoted_name inside
+        quotes of their own.
+*/
+static fn writer_shell_quoted_name(writer output, string_address value)
+{
+        ls_quote_shell(output, value, string_length(value), true, true);
 }
 
 // The C styles: a quoted string a C compiler would read back, the same
@@ -8350,8 +8372,8 @@ static bool ls_add(bipolar directory, string_address path, string_address shown,
 
                 if (looked < 0 && !under)
                 {
-                        string_format(log_error, "%s: cannot access '%w': %s\n", ls_program,
-                                      writer_terminal_quoted_name, shown, file_reason(looked));
+                        string_format(log_error, "%s: cannot access %w: %s\n", ls_program,
+                                      writer_shell_quoted_name, shown, file_reason(looked));
                         ls_status = 2;
                         return true;
                 }
@@ -8396,8 +8418,8 @@ static bool ls_add(bipolar directory, string_address path, string_address shown,
                 {
                         p8 full[FILE_PATH_MAX];
 
-                        string_format(log_error, "%s: cannot access '%w': %s\n", ls_program,
-                                      writer_terminal_quoted_name,
+                        string_format(log_error, "%s: cannot access %w: %s\n", ls_program,
+                                      writer_shell_quoted_name,
                                       file_path_join(full, under, shown) ? full : shown,
                                       file_reason(looked));
                         ls_status = 1;
@@ -8591,8 +8613,8 @@ static fn ls_directory(string_address path, bool heading, positive depth,
 
         if (!file_walk_open(address_of walk, AT_FDCWD, path))
         {
-                string_format(log_error, "%s: cannot open directory '%w': %s\n", ls_program,
-                              writer_terminal_quoted_name, path, file_reason(walk.handle));
+                string_format(log_error, "%s: cannot open directory %w: %s\n", ls_program,
+                              writer_shell_quoted_name, path, file_reason(walk.handle));
                 ls_status = named ? 2 : 1;
                 return;
         }
@@ -9028,8 +9050,8 @@ static bool ls_operand(string_address path, file_facts address_to facts, bool ad
 
         if (looked < 0)
         {
-                string_format(log_error, "%s: cannot access '%w': %s\n", ls_program,
-                              writer_terminal_quoted_name, path, file_reason(looked));
+                string_format(log_error, "%s: cannot access %w: %s\n", ls_program,
+                              writer_shell_quoted_name, path, file_reason(looked));
                 ls_status = 2;
                 return false;
         }
@@ -13577,8 +13599,8 @@ static b32 file_stat()
 
                         if (done < 0)
                         {
-                                string_format(log_error, "stat: cannot read file system information for '%w': %s\n",
-                                              writer_terminal_quoted_name, path, file_reason(done));
+                                string_format(log_error, "stat: cannot read file system information for %w: %s\n",
+                                              writer_shell_quoted_name, path, file_reason(done));
                                 stat_status = 1;
                                 continue;
                         }
@@ -13603,8 +13625,8 @@ static b32 file_stat()
 
                 if (looked < 0)
                 {
-                        string_format(log_error, "stat: cannot statx '%w': %s\n",
-                                      writer_terminal_quoted_name, path, file_reason(looked));
+                        string_format(log_error, "stat: cannot statx %w: %s\n",
+                                      writer_shell_quoted_name, path, file_reason(looked));
                         stat_status = 1;
                         continue;
                 }
@@ -14214,8 +14236,8 @@ static bool du_tree_sink(address_any context, address_any node_address,
                                         return false;
                                 continue;
                         }
-                        string_format(log_error, "du: cannot read directory '%w': %s\n",
-                                      writer_terminal_quoted_name, (string_address)node->path,
+                        string_format(log_error, "du: cannot read directory %w: %s\n",
+                                      writer_shell_quoted_name, (string_address)node->path,
                                       file_reason(record.error));
                         du_status = 1;
                         if (node->depth <= du_maximum)
@@ -14225,20 +14247,20 @@ static bool du_tree_sink(address_any context, address_any node_address,
                 }
                 else if (record.kind == DU_TREE_READ)
                 {
-                        string_format(log_error, "du: cannot read directory '%w': %s\n",
-                                      writer_terminal_quoted_name, (string_address)node->path,
+                        string_format(log_error, "du: cannot read directory %w: %s\n",
+                                      writer_shell_quoted_name, (string_address)node->path,
                                       file_reason(record.error));
                         du_status = 1;
                 }
                 else if (record.kind == DU_TREE_FAILED)
                 {
                         if (record.error)
-                                string_format(log_error, "du: cannot access '%w': %s\n",
-                                              writer_terminal_quoted_name, path,
+                                string_format(log_error, "du: cannot access %w: %s\n",
+                                              writer_shell_quoted_name, path,
                                               file_reason(record.error));
                         else
-                                string_format(log_error, "du: cannot access '%w'\n",
-                                              writer_terminal_quoted_name, path);
+                                string_format(log_error, "du: cannot access %w\n",
+                                              writer_shell_quoted_name, path);
                         du_status = 1;
                 }
                 else if (record.kind == DU_TREE_ENTRY)
@@ -14288,11 +14310,11 @@ static p64 du_measure_tree(string_address root)
         if (looked < 0)
         {
                 if (du_follow && looked == -ERROR_NO_ENTRY)
-                        string_format(log_error, "du: cannot access '%w'\n",
-                                      writer_terminal_quoted_name, root);
+                        string_format(log_error, "du: cannot access %w\n",
+                                      writer_shell_quoted_name, root);
                 else
-                        string_format(log_error, "du: cannot access '%w': %s\n",
-                                      writer_terminal_quoted_name, root, file_reason(looked));
+                        string_format(log_error, "du: cannot access %w: %s\n",
+                                      writer_shell_quoted_name, root, file_reason(looked));
                 du_status = 1;
                 return 0;
         }
@@ -14322,8 +14344,8 @@ static p64 du_measure_tree(string_address root)
 
         if (handle < 0)
         {
-                string_format(log_error, "du: cannot read directory '%w': %s\n",
-                              writer_terminal_quoted_name, root, file_reason(handle));
+                string_format(log_error, "du: cannot read directory %w: %s\n",
+                              writer_shell_quoted_name, root, file_reason(handle));
                 du_status = 1;
                 du_report(mine, du_measure_stamp, root);
                 return mine;
@@ -14521,8 +14543,8 @@ static p64 du_measure(string_address root)
 
                         if (kept->result < 0 && kept->mark != DU_UNREAD)
                         {
-                                string_format(log_error, "du: cannot access '%w': %s\n",
-                                              writer_terminal_quoted_name, path,
+                                string_format(log_error, "du: cannot access %w: %s\n",
+                                              writer_shell_quoted_name, path,
                                               file_reason(kept->result));
                                 du_status = 1;
                                 continue;
@@ -14566,8 +14588,8 @@ static p64 du_measure(string_address root)
                                 // way.
                                 if (depth < FILE_MAX_DEPTH)
                                 {
-                                        string_format(log_error, "du: cannot read directory '%w': %s\n",
-                                                      writer_terminal_quoted_name, path,
+                                        string_format(log_error, "du: cannot read directory %w: %s\n",
+                                                      writer_shell_quoted_name, path,
                                                       file_reason(kept->result));
                                         du_status = 1;
                                 }
@@ -15363,7 +15385,7 @@ static fn chmod_said(string_address shown, positive was, positive now)
             !(chmod_selected.loudness == 'c' && (was & 07777) != (now & 07777)))
                 return;
 
-        string_format(log, "mode of '%w' ", writer_terminal_quoted_name, shown);
+        string_format(log, "mode of %w ", writer_shell_quoted_name, shown);
 
         if ((was & 07777) == (now & 07777))
         {
@@ -15518,11 +15540,11 @@ static fn chmod_report(string_address shown, chmod_outcome address_to out)
         {
         case CHMOD_DANGLING:
                 if (chmod_selected.loudness == 'v')
-                        string_format(log, "'%w' could not be accessed\n",
-                                      writer_terminal_quoted_name, shown);
+                        string_format(log, "%w could not be accessed\n",
+                                      writer_shell_quoted_name, shown);
                 if (!chmod_quiet)
-                        string_format(log_error, "chmod: cannot operate on dangling symlink '%w'\n",
-                                      writer_terminal_quoted_name, shown);
+                        string_format(log_error, "chmod: cannot operate on dangling symlink %w\n",
+                                      writer_shell_quoted_name, shown);
                 chmod_status = 1;
                 return;
 
@@ -15531,19 +15553,19 @@ static fn chmod_report(string_address shown, chmod_outcome address_to out)
                 // because it reports on every file it was handed and not
                 // only on the ones it changed.
                 if (chmod_selected.loudness == 'v')
-                        string_format(log, "'%w' could not be accessed\n",
-                                      writer_terminal_quoted_name, shown);
+                        string_format(log, "%w could not be accessed\n",
+                                      writer_shell_quoted_name, shown);
                 if (!chmod_quiet)
-                        string_format(log_error, "chmod: cannot access '%w': %s\n",
-                                      writer_terminal_quoted_name, shown,
+                        string_format(log_error, "chmod: cannot access %w: %s\n",
+                                      writer_shell_quoted_name, shown,
                                       file_reason(out->error));
                 chmod_status = 1;
                 return;
 
         case CHMOD_LINK_KEPT:
                 if (chmod_selected.loudness == 'v')
-                        string_format(log, "neither symbolic link '%w' nor referent has been changed\n",
-                                      writer_terminal_quoted_name, shown);
+                        string_format(log, "neither symbolic link %w nor referent has been changed\n",
+                                      writer_shell_quoted_name, shown);
                 return;
 
         case CHMOD_INVALID:
@@ -15555,8 +15577,8 @@ static fn chmod_report(string_address shown, chmod_outcome address_to out)
 
         case CHMOD_REFUSED:
                 if (!chmod_quiet)
-                        string_format(log_error, "chmod: changing permissions of '%w': %s\n",
-                                      writer_terminal_quoted_name, shown,
+                        string_format(log_error, "chmod: changing permissions of %w: %s\n",
+                                      writer_shell_quoted_name, shown,
                                       file_reason(out->error));
                 chmod_status = 1;
                 return;
@@ -15575,8 +15597,8 @@ static fn chmod_report(string_address shown, chmod_outcome address_to out)
                 //      -f takes the word away and leaves the answer: the
                 //      reference is silent and still answers 1.
                 if (!chmod_quiet)
-                        string_format(log_error, "chmod: cannot read directory '%w': %s\n",
-                                      writer_terminal_quoted_name, shown,
+                        string_format(log_error, "chmod: cannot read directory %w: %s\n",
+                                      writer_shell_quoted_name, shown,
                                       file_reason(out->error));
                 chmod_status = 1;
                 return;
@@ -15774,8 +15796,8 @@ static fn chmod_tree(string_address path)
         if (handle < 0)
         {
                 if (!chmod_quiet)
-                        string_format(log_error, "chmod: cannot read directory '%w': %s\n",
-                                      writer_terminal_quoted_name, path,
+                        string_format(log_error, "chmod: cannot read directory %w: %s\n",
+                                      writer_shell_quoted_name, path,
                                       file_reason(handle));
                 chmod_status = 1;
                 return;
@@ -15926,8 +15948,8 @@ static b32 file_chmod()
 
                 if (looked < 0)
                 {
-                        return string_report(log_error, 1, "chmod: failed to get attributes of '%w': %s\n",
-                                      writer_terminal_quoted_name, like, file_reason(looked));
+                        return string_report(log_error, 1, "chmod: failed to get attributes of %w: %s\n",
+                                      writer_shell_quoted_name, like, file_reason(looked));
                 }
 
                 chmod_referenced = true;
@@ -16034,15 +16056,15 @@ static fn chown_said(string_address shown, file_facts address_to was, bool chang
                 //      in chown's words, whichever of the two was called.
                 if (chown_user < 0 && chown_group < 0)
                 {
-                        string_format(log, "ownership of '%w' retained\n",
-                                      writer_terminal_quoted_name, shown);
+                        string_format(log, "ownership of %w retained\n",
+                                      writer_shell_quoted_name, shown);
                         return;
                 }
 
                 chown_who(was->owner, was->group, who);
-                string_format(log, "%s%w' retained as %s\n",
-                              chown_group_words() ? (string_address)"group of '" : (string_address)"ownership of '",
-                              writer_terminal_quoted_name, shown, who);
+                string_format(log, "%s%w retained as %s\n",
+                              chown_group_words() ? (string_address)"group of " : (string_address)"ownership of ",
+                              writer_shell_quoted_name, shown, who);
                 return;
         }
 
@@ -16052,9 +16074,9 @@ static fn chown_said(string_address shown, file_facts address_to was, bool chang
         chown_who(chown_user < 0 ? was->owner : (positive)chown_user,
                   chown_group < 0 ? was->group : (positive)chown_group, who);
 
-        string_format(log, "%s%w' from %s to %s\n",
-                      chown_group_words() ? (string_address)"changed group of '" : (string_address)"changed ownership of '",
-                      writer_terminal_quoted_name, shown, before, who);
+        string_format(log, "%s%w from %s to %s\n",
+                      chown_group_words() ? (string_address)"changed group of " : (string_address)"changed ownership of ",
+                      writer_shell_quoted_name, shown, before, who);
 }
 
 /*
@@ -16220,8 +16242,8 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
         case CHOWN_UNREAD:
                 //      -f takes the word away and leaves the answer.
                 if (!chown_quiet)
-                        string_format(log_error, "%s: cannot read directory '%w': %s\n",
-                                      chown_program, writer_terminal_quoted_name, shown,
+                        string_format(log_error, "%s: cannot read directory %w: %s\n",
+                                      chown_program, writer_shell_quoted_name, shown,
                                       file_reason(out->error));
                 chown_status = 1;
                 return;
@@ -16230,19 +16252,19 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
         case CHOWN_UNREACHED:
                 if (chown_selected.loudness == 'v')
                 {
-                        string_format(log, "%s%w' to %s\n",
-                                      chown_group_words() ? (string_address)"failed to change group of '" : (string_address) "failed to change ownership of '",
-                                      writer_terminal_quoted_name, shown, chown_spec);
+                        string_format(log, "%s%w to %s\n",
+                                      chown_group_words() ? (string_address)"failed to change group of " : (string_address) "failed to change ownership of ",
+                                      writer_shell_quoted_name, shown, chown_spec);
                 }
 
                 if (!chown_quiet)
                 {
                         string_format(log_error,
                                       out->kind == CHOWN_DANGLING
-                                          ? "%s: cannot dereference '%w': %s\n"
-                                          : "%s: cannot access '%w': %s\n",
+                                          ? "%s: cannot dereference %w: %s\n"
+                                          : "%s: cannot access %w: %s\n",
                                       chown_program,
-                                      writer_terminal_quoted_name, shown, file_reason(out->error));
+                                      writer_shell_quoted_name, shown, file_reason(out->error));
                 }
 
                 chown_status = 1;
@@ -16259,9 +16281,9 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
                         p8 before[FILE_PATH_MAX];
 
                         chown_who(out->owner, out->group, before);
-                        string_format(log, "%s%w' from %s to %s\n",
-                                      chown_group_words() ? (string_address) "failed to change group of '" : (string_address) "failed to change ownership of '",
-                                      writer_terminal_quoted_name, shown, before,
+                        string_format(log, "%s%w from %s to %s\n",
+                                      chown_group_words() ? (string_address) "failed to change group of " : (string_address) "failed to change ownership of ",
+                                      writer_shell_quoted_name, shown, before,
                                       chown_spec);
                 }
 
@@ -16269,10 +16291,10 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
                 {
                         string_format(log_error,
                                       chown_group_words()
-                                          ? "%s: changing group of '"
-                                          : "%s: changing ownership of '",
+                                          ? "%s: changing group of "
+                                          : "%s: changing ownership of ",
                                       chown_program);
-                        string_format(log_error, "%w': %s\n", writer_terminal_quoted_name, shown,
+                        string_format(log_error, "%w: %s\n", writer_shell_quoted_name, shown,
                                       file_reason(out->error));
                 }
 
@@ -16504,8 +16526,8 @@ static fn chown_tree(string_address path)
         if (handle < 0)
         {
                 if (!chown_quiet)
-                        string_format(log_error, "%s: cannot read directory '%w': %s\n",
-                                      chown_program, writer_terminal_quoted_name, path,
+                        string_format(log_error, "%s: cannot read directory %w: %s\n",
+                                      chown_program, writer_shell_quoted_name, path,
                                       file_reason(handle));
                 chown_status = 1;
         }
@@ -16694,8 +16716,8 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
                 if (looked < 0)
                 {
-                        return string_report(log_error, 1, "%s: failed to get attributes of '%w': %s\n",
-                                      program, writer_terminal_quoted_name, like,
+                        return string_report(log_error, 1, "%s: failed to get attributes of %w: %s\n",
+                                      program, writer_shell_quoted_name, like,
                                       file_reason(looked));
                 }
 
@@ -16777,8 +16799,8 @@ static fn file_backup_told(string_address source, string_address destination,
                       mid, writer_terminal_quoted_name, destination);
         if (file_backup_did)
         {
-                string_format(log, "' (backup: '%w')\n",
-                              writer_terminal_quoted_name, file_backup_shown);
+                string_format(log, "' (backup: %w)\n",
+                              writer_shell_quoted_name, file_backup_shown);
                 file_backup_did = false;
         }
         else
@@ -16797,14 +16819,14 @@ static bool file_overwrite_kinds_ok(string_address program,
                 return true;
         if (src_dir)
                 string_format(log_error,
-                              "%s: cannot overwrite non-directory '%w' with directory '%w'\n",
-                              program, writer_terminal_quoted_name, destination,
-                              writer_terminal_quoted_name, source);
+                              "%s: cannot overwrite non-directory %w with directory %w\n",
+                              program, writer_shell_quoted_name, destination,
+                              writer_shell_quoted_name, source);
         else
                 string_format(log_error,
-                              "%s: cannot overwrite directory '%w' with non-directory '%w'\n",
-                              program, writer_terminal_quoted_name, destination,
-                              writer_terminal_quoted_name, source);
+                              "%s: cannot overwrite directory %w with non-directory %w\n",
+                              program, writer_shell_quoted_name, destination,
+                              writer_shell_quoted_name, source);
         return false;
 }
 
@@ -16881,8 +16903,8 @@ static bool ln_make(string_address target, string_address name)
         {
                 if (!ln_relative_text(target, name, relative))
                 {
-                        return string_report(log_error, false, "ln: cannot make relative target '%w': File name too long\n",
-                                      writer_terminal_quoted_name, target);
+                        return string_report(log_error, false, "ln: cannot make relative target %w: File name too long\n",
+                                      writer_shell_quoted_name, target);
                 }
 
                 target = relative;
@@ -16899,8 +16921,8 @@ static bool ln_make(string_address target, string_address name)
 
                 if (looked < 0)
                 {
-                        return string_report(log_error, false, "ln: failed to access '%w': %s\n",
-                                      writer_terminal_quoted_name, target, file_reason(looked));
+                        return string_report(log_error, false, "ln: failed to access %w: %s\n",
+                                      writer_shell_quoted_name, target, file_reason(looked));
                 }
 
                 //      -d, -F and --directory ask for the link to be
@@ -16918,8 +16940,8 @@ static bool ln_make(string_address target, string_address name)
                     O_PATH | (ln_through ? 0 : O_NOFOLLOW));
                 if (source_handle < 0)
                 {
-                        return string_report(log_error, false, "ln: failed to access '%w': %s\n",
-                                      writer_terminal_quoted_name, target,
+                        return string_report(log_error, false, "ln: failed to access %w: %s\n",
+                                      writer_shell_quoted_name, target,
                                       file_reason(source_handle));
                 }
         }
@@ -16929,8 +16951,8 @@ static bool ln_make(string_address target, string_address name)
             file_parent_open(name, destination_leaf);
         if (destination_directory < 0)
         {
-                string_format(log_error, "ln: failed to access destination '%w': %s\n",
-                              writer_terminal_quoted_name, name,
+                string_format(log_error, "ln: failed to access destination %w: %s\n",
+                              writer_shell_quoted_name, name,
                               file_reason(destination_directory));
                 if (source_handle >= 0)
                         system_close(source_handle);
@@ -16999,8 +17021,8 @@ static bool ln_make(string_address target, string_address name)
             (source.hard_links == 1 ||
              ln_same_dirent(target, destination_directory, destination_leaf)))
         {
-                string_format(log_error, "ln: '%w' and '%w' are the same file\n",
-                              writer_terminal_quoted_name, target, writer_terminal_quoted_name,
+                string_format(log_error, "ln: %w and %w are the same file\n",
+                              writer_shell_quoted_name, target, writer_shell_quoted_name,
                               name);
                 system_close(destination_directory);
                 system_close(source_handle);
@@ -17015,8 +17037,8 @@ static bool ln_make(string_address target, string_address name)
                     address_of destination);
                 if (removed < 0)
                 {
-                        string_format(log_error, "ln: failed to replace '%w': %s\n",
-                                      writer_terminal_quoted_name, name, file_reason(removed));
+                        string_format(log_error, "ln: failed to replace %w: %s\n",
+                                      writer_shell_quoted_name, name, file_reason(removed));
                         system_close(destination_directory);
                         if (source_handle >= 0)
                                 system_close(source_handle);
@@ -17045,19 +17067,19 @@ static bool ln_make(string_address target, string_address name)
         if (done < 0)
         {
                 if (ln_symbolic)
-                        string_format(log_error, "ln: failed to create symbolic link '%w': %s\n",
-                                      writer_terminal_quoted_name, name, file_reason(done));
+                        string_format(log_error, "ln: failed to create symbolic link %w: %s\n",
+                                      writer_shell_quoted_name, name, file_reason(done));
                 else if (done == -ERROR_TOO_MANY_LINKS)
-                        string_format(log_error, "ln: failed to create hard link to '%w': %s\n",
-                                      writer_terminal_quoted_name, target, file_reason(done));
+                        string_format(log_error, "ln: failed to create hard link to %w: %s\n",
+                                      writer_shell_quoted_name, target, file_reason(done));
                 else if (done == -ERROR_EXISTS || done == -ERROR_OVER_QUOTA ||
                          done == -ERROR_NO_SPACE || done == -ERROR_READ_ONLY)
-                        string_format(log_error, "ln: failed to create hard link '%w': %s\n",
-                                      writer_terminal_quoted_name, name, file_reason(done));
+                        string_format(log_error, "ln: failed to create hard link %w: %s\n",
+                                      writer_shell_quoted_name, name, file_reason(done));
                 else
-                        string_format(log_error, "ln: failed to create hard link '%w' => '%w': %s\n",
-                                      writer_terminal_quoted_name, name,
-                                      writer_terminal_quoted_name, target, file_reason(done));
+                        string_format(log_error, "ln: failed to create hard link %w => %w: %s\n",
+                                      writer_shell_quoted_name, name,
+                                      writer_shell_quoted_name, target, file_reason(done));
                 return false;
         }
 
@@ -17065,18 +17087,18 @@ static bool ln_make(string_address target, string_address name)
         {
                 if (file_backup_did)
                 {
-                        string_format(log, "'%w' ~ '%w%s%w'\n",
-                                      writer_terminal_quoted_name, file_backup_shown,
-                                      writer_terminal_quoted_name, name,
-                                      ln_symbolic ? (string_address)"' -> '"
-                                                  : (string_address)"' => '",
-                                      writer_terminal_quoted_name, target);
+                        string_format(log, "%w ~ %w%s%w\n",
+                                      writer_shell_quoted_name, file_backup_shown,
+                                      writer_shell_quoted_name, name,
+                                      ln_symbolic ? (string_address)" -> "
+                                                  : (string_address)" => ",
+                                      writer_shell_quoted_name, target);
                         file_backup_did = false;
                 }
                 else
-                        string_format(log, "'%w%s%w'\n", writer_terminal_quoted_name, name,
-                                      ln_symbolic ? (string_address)"' -> '" : (string_address)"' => '",
-                                      writer_terminal_quoted_name, target);
+                        string_format(log, "%w%s%w\n", writer_shell_quoted_name, name,
+                                      ln_symbolic ? (string_address)" -> " : (string_address)" => ",
+                                      writer_shell_quoted_name, target);
         }
 
         return true;
@@ -17159,8 +17181,8 @@ static b32 file_ln()
                 if (count - first == 1)
                 {
                         string_format(log_error,
-                                      "ln: missing destination file operand after '%w'\n",
-                                      writer_terminal_quoted_name,
+                                      "ln: missing destination file operand after %w\n",
+                                      writer_shell_quoted_name,
                                       program_argument((b32)first));
                         return string_report(log_error, 1,
                                       "Try 'ln --help' for more information.\n");
@@ -17216,8 +17238,8 @@ static b32 file_ln()
                         if (looked < 0 ||
                             (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
                                 return string_report(
-                                    log_error, 1, "ln: target '%w': %s\n",
-                                    writer_terminal_quoted_name, into,
+                                    log_error, 1, "ln: target %w: %s\n",
+                                    writer_shell_quoted_name, into,
                                     file_reason(looked < 0
                                                     ? looked
                                                     : -ERROR_NOT_DIRECTORY));
@@ -17237,8 +17259,8 @@ static b32 file_ln()
                                                         through ? 0 : AT_SYMLINK_NOFOLLOW,
                                                         address_of facts);
 
-                        return string_report(log_error, 1, "ln: target '%w': %s\n",
-                                      writer_terminal_quoted_name, last,
+                        return string_report(log_error, 1, "ln: target %w: %s\n",
+                                      writer_shell_quoted_name, last,
                                       file_reason(looked < 0 ? looked : -ERROR_NOT_DIRECTORY));
                 }
 
@@ -17351,8 +17373,8 @@ static b32 file_link()
 
         if (answer < 0)
         {
-                return string_report(log_error, 1, "link: cannot create link '%w' to '%w': %s\n",
-                              writer_terminal_quoted_name, target, writer_terminal_quoted_name,
+                return string_report(log_error, 1, "link: cannot create link %w to %w: %s\n",
+                              writer_shell_quoted_name, target, writer_shell_quoted_name,
                               source, file_reason(answer));
         }
         return 0;
@@ -17369,8 +17391,8 @@ static b32 file_unlink()
 
         if (answer < 0)
         {
-                return string_report(log_error, 1, "unlink: cannot unlink '%w': %s\n",
-                              writer_terminal_quoted_name, path, file_reason(answer));
+                return string_report(log_error, 1, "unlink: cannot unlink %w: %s\n",
+                              writer_shell_quoted_name, path, file_reason(answer));
         }
         return 0;
 }
@@ -18955,8 +18977,8 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
         {
                 p8 offender[2] = {path[string_span(path, pathchk_portable_set())], end};
 
-                string_format(log_error, "pathchk: non-portable character '%w' in file name '%w",
-                              writer_terminal_quoted_name, offender, writer_terminal_quoted_name,
+                string_format(log_error, "pathchk: non-portable character %w in file name '%w",
+                              writer_shell_quoted_name, offender, writer_terminal_quoted_name,
                               path);
                 return string_report(log_error, false, "'\n");
         }
@@ -19119,7 +19141,7 @@ static const argument_option mkdir_options[] = {
 
 static fn mkdir_told(string_address path)
 {
-        string_format(log, "mkdir: created directory '%w'\n", writer_terminal_quoted_name, path);
+        string_format(log, "mkdir: created directory %w\n", writer_shell_quoted_name, path);
 }
 
 static b32 file_mkdir()
@@ -19265,8 +19287,8 @@ static b32 file_make_node(string_address program, string_address path,
         {
                 if (string_is(program + 2, 'f'))
                 {
-                        string_format(log_error, "%s: cannot create fifo '%w': %s\n", program,
-                                      writer_terminal_quoted_name, path, file_reason(made));
+                        string_format(log_error, "%s: cannot create fifo %w: %s\n", program,
+                                      writer_shell_quoted_name, path, file_reason(made));
                 }
                 else
                 {
@@ -19530,8 +19552,8 @@ static bool file_sync_one(string_address path, p8 mode)
 
         if (opened < 0)
         {
-                return string_report(log_error, false, "sync: error opening '%w': %s\n",
-                              writer_terminal_quoted_name, path, file_reason(read_error));
+                return string_report(log_error, false, "sync: error opening %w: %s\n",
+                              writer_shell_quoted_name, path, file_reason(read_error));
         }
 
         bipolar flags = system_call_3(syscall(fcntl), (positive)opened,
@@ -19542,8 +19564,8 @@ static bool file_sync_one(string_address path, p8 mode)
                                   (positive)flags & ~O_NONBLOCK) >= 0;
 
         if (!good)
-                string_format(log_error, "sync: couldn't reset non-blocking mode '%w'\n",
-                              writer_terminal_quoted_name, path);
+                string_format(log_error, "sync: couldn't reset non-blocking mode %w\n",
+                              writer_shell_quoted_name, path);
         else
         {
                 bipolar synced = mode == 'd'
@@ -19557,8 +19579,8 @@ static bool file_sync_one(string_address path, p8 mode)
 
                 if (synced < 0)
                 {
-                        string_format(log_error, "sync: error syncing '%w': %s\n",
-                                      writer_terminal_quoted_name, path, file_reason(synced));
+                        string_format(log_error, "sync: error syncing %w: %s\n",
+                                      writer_shell_quoted_name, path, file_reason(synced));
                         good = false;
                 }
         }
@@ -19567,8 +19589,8 @@ static bool file_sync_one(string_address path, p8 mode)
 
         if (closed < 0)
         {
-                string_format(log_error, "sync: failed to close '%w': %s\n",
-                              writer_terminal_quoted_name, path, file_reason(closed));
+                string_format(log_error, "sync: failed to close %w: %s\n",
+                              writer_shell_quoted_name, path, file_reason(closed));
                 good = false;
         }
 
@@ -19875,15 +19897,15 @@ static bool split_output_open(split_output address_to output)
         if (opened < 0)
         {
                 if (output->protect_input && opened == -ERROR_INVALID)
-                        return string_report(log_error, false, "split: '%w' would overwrite input; aborting\n",
-                                      writer_terminal_quoted_name, output->name);
+                        return string_report(log_error, false, "split: %w would overwrite input; aborting\n",
+                                      writer_shell_quoted_name, output->name);
 
                 return string_report(log_error, false, "split: %w: %s\n",
                               writer_terminal_name, output->name, file_reason(opened));
         }
 
         if (output->verbose)
-                string_format(log, "creating file '%w'\n", writer_terminal_quoted_name,
+                string_format(log, "creating file %w\n", writer_shell_quoted_name,
                               output->name);
 
         return true;
@@ -19899,8 +19921,8 @@ static bool split_output_write(split_output address_to output,
         if (system_write_all((positive)output->stage.handle, bytes, length) !=
             length)
         {
-                return string_report(log_error, false, "split: write error on '%w'\n",
-                              writer_terminal_quoted_name, output->name);
+                return string_report(log_error, false, "split: write error on %w\n",
+                              writer_shell_quoted_name, output->name);
         }
         return true;
 }
@@ -19916,8 +19938,8 @@ static bool split_output_close(split_output address_to output)
 
         if (closed < 0)
         {
-                return string_report(log_error, false, "split: cannot publish '%w': %s\n",
-                              writer_terminal_quoted_name, output->name, file_reason(closed));
+                return string_report(log_error, false, "split: cannot publish %w: %s\n",
+                              writer_shell_quoted_name, output->name, file_reason(closed));
         }
         return true;
 }
@@ -20645,8 +20667,8 @@ static b32 file_split()
 
         if (in < 0)
         {
-                return string_report(log_error, 1, "split: cannot open '%w' for reading: %s\n",
-                              writer_terminal_quoted_name, input_name, file_reason(in));
+                return string_report(log_error, 1, "split: cannot open %w for reading: %s\n",
+                              writer_shell_quoted_name, input_name, file_reason(in));
         }
 
         split_output output = {
@@ -20926,8 +20948,8 @@ static bool csplit_section(csplit_state address_to state, positive from,
         if (file_same_as_input(state->protect_input, state->name,
                                address_of state->input_facts))
         {
-                return string_report(log_error, false, "csplit: '%w' would overwrite input; aborting\n",
-                              writer_terminal_quoted_name, state->name);
+                return string_report(log_error, false, "csplit: %w would overwrite input; aborting\n",
+                              writer_shell_quoted_name, state->name);
         }
 
         if (!array_store_reserve(csplit_outputs, csplit_output_room,
@@ -20967,8 +20989,8 @@ static bool csplit_section(csplit_state address_to state, positive from,
 
         if (!identified || !written || closed < 0)
         {
-                return string_report(log_error, false, "csplit: write error on '%w'\n",
-                              writer_terminal_quoted_name, state->name);
+                return string_report(log_error, false, "csplit: write error on %w\n",
+                              writer_shell_quoted_name, state->name);
         }
         csplit_outputs[state->made++] = made;
 
@@ -21351,8 +21373,8 @@ static b32 file_csplit()
 
         if (in < 0)
         {
-                return string_report(log_error, 1, "csplit: cannot open '%w' for reading: %s\n",
-                              writer_terminal_quoted_name, input_name, file_reason(in));
+                return string_report(log_error, 1, "csplit: cannot open %w for reading: %s\n",
+                              writer_shell_quoted_name, input_name, file_reason(in));
         }
 
         file_facts facts;
@@ -21754,8 +21776,8 @@ static bool truncate_current_size(string_address path, bipolar handle,
 
         if (size < 0)
         {
-                return string_report(log_error, false, "truncate: cannot get the size of '%w': %s\n",
-                              writer_terminal_quoted_name, path, file_reason(size));
+                return string_report(log_error, false, "truncate: cannot get the size of %w: %s\n",
+                              writer_shell_quoted_name, path, file_reason(size));
         }
 
         address_to out = size;
@@ -21778,8 +21800,8 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
                 if (no_create && handle == -ERROR_NO_ENTRY)
                         return true;
 
-                return string_report(log_error, false, "truncate: cannot open '%w' for writing: %s\n",
-                              writer_terminal_quoted_name, path, file_reason(handle));
+                return string_report(log_error, false, "truncate: cannot open %w for writing: %s\n",
+                              writer_shell_quoted_name, path, file_reason(handle));
         }
 
         file_facts facts;
@@ -21861,14 +21883,14 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
 
         if (done < 0)
         {
-                return string_report(log_error, false, "truncate: failed to truncate '%w': %s\n",
-                              writer_terminal_quoted_name, path, file_reason(done));
+                return string_report(log_error, false, "truncate: failed to truncate %w: %s\n",
+                              writer_shell_quoted_name, path, file_reason(done));
         }
 
         if (closed < 0)
         {
-                return string_report(log_error, false, "truncate: failed to close '%w': %s\n",
-                              writer_terminal_quoted_name, path, file_reason(closed));
+                return string_report(log_error, false, "truncate: failed to close %w: %s\n",
+                              writer_shell_quoted_name, path, file_reason(closed));
         }
 
         return true;
@@ -21966,8 +21988,8 @@ static b32 file_truncate()
 
                 if (looked < 0)
                 {
-                        return string_report(log_error, 1, "truncate: cannot stat '%w': %s\n",
-                                      writer_terminal_quoted_name, reference_path,
+                        return string_report(log_error, 1, "truncate: cannot stat %w: %s\n",
+                                      writer_shell_quoted_name, reference_path,
                                       file_reason(looked));
                 }
 
@@ -21980,8 +22002,8 @@ static b32 file_truncate()
 
                 if (handle < 0 && (facts.mode & MODE_FORMAT) != MODE_FILE)
                 {
-                        return string_report(log_error, 1, "truncate: cannot get the size of '%w': %s\n",
-                                      writer_terminal_quoted_name, reference_path,
+                        return string_report(log_error, 1, "truncate: cannot get the size of %w: %s\n",
+                                      writer_shell_quoted_name, reference_path,
                                       file_reason(handle));
                 }
 
@@ -23056,7 +23078,7 @@ static bool shred_sync(bipolar handle, string_address path, bool data)
         if (done >= 0)
                 return true;
 
-        return string_report(log_error, false, "shred: '%w': sync failed: %s\n", writer_terminal_quoted_name,
+        return string_report(log_error, false, "shred: %w: sync failed: %s\n", writer_shell_quoted_name,
                       path, file_reason(done));
 }
 
@@ -23065,7 +23087,7 @@ static bool shred_pass(bipolar handle, string_address path, positive length,
 {
         if (system_seek(handle, 0, FILE_SEEK_SET) < 0)
         {
-                return string_report(log_error, false, "shred: '%w': seek failed\n", writer_terminal_quoted_name,
+                return string_report(log_error, false, "shred: %w: seek failed\n", writer_shell_quoted_name,
                               path);
         }
 
@@ -23085,8 +23107,8 @@ static bool shred_pass(bipolar handle, string_address path, positive length,
                 if (system_write_all((positive)handle, file_transfer, chunk) !=
                     chunk)
                 {
-                        return string_report(log_error, false, "shred: '%w': write failed\n",
-                                      writer_terminal_quoted_name, path);
+                        return string_report(log_error, false, "shred: %w: write failed\n",
+                                      writer_shell_quoted_name, path);
                 }
 
                 left -= chunk;
@@ -23139,8 +23161,8 @@ static bool shred_one(string_address path, positive iterations,
 
         if (!good || (facts.mode & MODE_FORMAT) != MODE_FILE)
         {
-                string_format(log_error, "shred: '%w': refusing non-regular file\n",
-                              writer_terminal_quoted_name, path);
+                string_format(log_error, "shred: %w: refusing non-regular file\n",
+                              writer_shell_quoted_name, path);
                 system_close(handle);
                 return false;
         }
@@ -23151,8 +23173,8 @@ static bool shred_one(string_address path, positive iterations,
                 length = requested;
         else if (facts.size > positive_max)
         {
-                string_format(log_error, "shred: '%w': file is too large\n",
-                              writer_terminal_quoted_name, path);
+                string_format(log_error, "shred: %w: file is too large\n",
+                              writer_shell_quoted_name, path);
                 system_close(handle);
                 return false;
         }
@@ -23170,8 +23192,8 @@ static bool shred_one(string_address path, positive iterations,
 
                         if (length > positive_max - add)
                         {
-                                string_format(log_error, "shred: '%w': size overflow\n",
-                                              writer_terminal_quoted_name, path);
+                                string_format(log_error, "shred: %w: size overflow\n",
+                                              writer_shell_quoted_name, path);
                                 system_close(handle);
                                 return false;
                         }
@@ -23184,8 +23206,8 @@ static bool shred_one(string_address path, positive iterations,
 
         if (iterations && good && !file_random_seed(address_of random))
         {
-                string_format(log_error, "shred: '%w': kernel randomness unavailable\n",
-                              writer_terminal_quoted_name, path);
+                string_format(log_error, "shred: %w: kernel randomness unavailable\n",
+                              writer_shell_quoted_name, path);
                 good = false;
         }
 
@@ -23235,8 +23257,8 @@ static bool shred_one(string_address path, positive iterations,
 
                 if (shortened < 0)
                 {
-                        string_format(log_error, "shred: '%w': cannot truncate before removal: %s\n",
-                                      writer_terminal_quoted_name, path, file_reason(shortened));
+                        string_format(log_error, "shred: %w: cannot truncate before removal: %s\n",
+                                      writer_shell_quoted_name, path, file_reason(shortened));
                         good = false;
                 }
                 else
@@ -23247,8 +23269,8 @@ static bool shred_one(string_address path, positive iterations,
 
         if (closed < 0)
         {
-                string_format(log_error, "shred: '%w': close failed: %s\n",
-                              writer_terminal_quoted_name, path, file_reason(closed));
+                string_format(log_error, "shred: %w: close failed: %s\n",
+                              writer_shell_quoted_name, path, file_reason(closed));
                 good = false;
         }
 
@@ -23900,8 +23922,8 @@ static b32 file_shuf()
                 if (finished < 0)
                 {
                         string_format(log_error,
-                                      "shuf: failed to publish output '%w': %s\n",
-                                      writer_terminal_quoted_name, output_name,
+                                      "shuf: failed to publish output %w: %s\n",
+                                      writer_shell_quoted_name, output_name,
                                       file_reason(finished));
                         return 1;
                 }
@@ -24007,8 +24029,8 @@ static b32 file_shuf()
                         file_staged_name_abort(address_of output.stage);
                 if (good && finished < 0)
                 {
-                        string_format(log_error, "shuf: failed to publish output '%w': %s\n",
-                                      writer_terminal_quoted_name, output_name,
+                        string_format(log_error, "shuf: failed to publish output %w: %s\n",
+                                      writer_shell_quoted_name, output_name,
                                       file_reason(finished));
                         good = false;
                 }
@@ -24541,8 +24563,8 @@ static b32 file_dircolors()
                 if (!input)
                 {
                         if (!read_failed)
-                                string_format(log_error, "dircolors: '%w' is too large\n",
-                                              writer_terminal_quoted_name, name);
+                                string_format(log_error, "dircolors: %w is too large\n",
+                                              writer_shell_quoted_name, name);
                         else if (reason < 0)
                                 string_format(log_error, "dircolors: %w: read error: %s\n",
                                               writer_terminal_name, name, file_reason(reason));
@@ -24628,8 +24650,8 @@ static b32 file_rmdir()
                 while (1)
                 {
                         if (flags & FILE_FLAG('v'))
-                                string_format(log, "rmdir: removing directory, '%w'\n",
-                                              writer_terminal_quoted_name, path);
+                                string_format(log, "rmdir: removing directory, %w\n",
+                                              writer_shell_quoted_name, path);
 
                         bipolar gone = system_remove_at(AT_FDCWD, path,
                                                          AT_REMOVEDIR);
@@ -24647,9 +24669,9 @@ static b32 file_rmdir()
                                 //      a parent walked up to as a directory,
                                 //      which is how the reference's two
                                 //      messages differ.
-                                string_format(log_error, "%s%w': ",
-                                              named ? (string_address) "rmdir: failed to remove '" : (string_address) "rmdir: failed to remove directory '",
-                                              writer_terminal_quoted_name, path);
+                                string_format(log_error, "%s%w: ",
+                                              named ? (string_address) "rmdir: failed to remove " : (string_address) "rmdir: failed to remove directory ",
+                                              writer_shell_quoted_name, path);
                                 string_format(
                                     log_error, "%s\n",
                                     gone == -ERROR_NOT_DIRECTORY && length &&
@@ -25260,14 +25282,14 @@ static bool file_overwrite_allowed(string_address program, string_address shown,
         {
                 if (fail_skip)
                 {
-                        string_format(log_error, "%s: not replacing '%w'\n",
-                                      program, writer_terminal_quoted_name,
+                        string_format(log_error, "%s: not replacing %w\n",
+                                      program, writer_shell_quoted_name,
                                       shown);
                         address_to status = 1;
                 }
                 else if (loud && never)
-                        string_format(log, "skipped '%w'\n",
-                                      writer_terminal_quoted_name, shown);
+                        string_format(log, "skipped %w\n",
+                                      writer_shell_quoted_name, shown);
                 return false;
         }
 
@@ -25446,8 +25468,8 @@ static bool file_move_remove(bipolar directory, string_address source,
                                  directory, source, flags, expected);
         if (gone < 0)
         {
-                string_format(log_error, "mv: cannot remove '%w': %s\n",
-                              writer_terminal_quoted_name, shown, file_reason(gone));
+                string_format(log_error, "mv: cannot remove %w: %s\n",
+                              writer_shell_quoted_name, shown, file_reason(gone));
                 mv_across_said = true;
         }
         return gone == 0;
@@ -25593,9 +25615,9 @@ static bool cp_batch_replay(walk_batch address_to batch, positive depth)
                         if (item->result == 0)
                         {
                                 if (cp_loud)
-                                        string_format(log, "'%w' -> '%w'\n",
-                                                      writer_terminal_quoted_name, from,
-                                                      writer_terminal_quoted_name, to);
+                                        string_format(log, "%w -> %w\n",
+                                                      writer_shell_quoted_name, from,
+                                                      writer_shell_quoted_name, to);
                                 break;
                         }
                         //      fall through: the ordinary copy says why.
@@ -25607,13 +25629,13 @@ static bool cp_batch_replay(walk_batch address_to batch, positive depth)
                         break;
                 case CP_DIR:
                         if (cp_loud)
-                                string_format(log, "'%w' -> '%w'\n",
-                                              writer_terminal_quoted_name, from,
-                                              writer_terminal_quoted_name, to);
+                                string_format(log, "%w -> %w\n",
+                                              writer_shell_quoted_name, from,
+                                              writer_shell_quoted_name, to);
                         break;
                 case CP_DIR_FAILED:
-                        string_format(log_error, "cp: cannot open directory '%w': %s\n",
-                                      writer_terminal_quoted_name, to,
+                        string_format(log_error, "cp: cannot open directory %w: %s\n",
+                                      writer_shell_quoted_name, to,
                                       file_reason(item->result));
                         complete = false;
                         break;
@@ -25629,8 +25651,8 @@ static bool cp_batch_replay(walk_batch address_to batch, positive depth)
                 {
                         if (item->result < 0)
                         {
-                                string_format(log_error, "cp: cannot read directory '%w': %s\n",
-                                              writer_terminal_quoted_name, from,
+                                string_format(log_error, "cp: cannot read directory %w: %s\n",
+                                              writer_shell_quoted_name, from,
                                               file_reason(item->result));
                                 complete = false;
                         }
@@ -25647,8 +25669,8 @@ static bool cp_batch_replay(walk_batch address_to batch, positive depth)
                         if (attributed < 0)
                         {
                                 string_format(log_error,
-                                              "cp: cannot preserve attributes for '%w': %s\n",
-                                              writer_terminal_quoted_name, to,
+                                              "cp: cannot preserve attributes for %w: %s\n",
+                                              writer_shell_quoted_name, to,
                                               file_reason(attributed));
                                 complete = false;
                         }
@@ -26090,8 +26112,8 @@ static bool cp_tree_serial_copy(string_address path, positive name_at, positive 
                 log_error("cp: out of memory while walking the tree\n", 0);
         else if (cp_tree_serial.source < 0 || cp_tree_serial.destination < 0)
         {
-                string_format(log_error, "cp: cannot access '%w': %s\n",
-                              writer_terminal_quoted_name, (string_address)from,
+                string_format(log_error, "cp: cannot access %w: %s\n",
+                              writer_shell_quoted_name, (string_address)from,
                               file_reason(cp_tree_serial.source < 0
                                               ? cp_tree_serial.source
                                               : cp_tree_serial.destination));
@@ -26157,8 +26179,8 @@ static bool cp_tree_sink(address_any context, address_any node_address,
                                                                   path, path_length);
 
                                 string_format(log_error,
-                                              "cp: cannot preserve attributes for '%w': %s\n",
-                                              writer_terminal_quoted_name,
+                                              "cp: cannot preserve attributes for %w: %s\n",
+                                              writer_shell_quoted_name,
                                               to ? (string_address)to : path,
                                               file_reason(attributed));
                                 memory_give(to);
@@ -26190,26 +26212,26 @@ static bool cp_tree_sink(address_any context, address_any node_address,
                 {
                 case CP_TREE_FILE:
                 case CP_TREE_DIRECTORY:
-                        string_format(log, "'%w' -> '%w'\n",
-                                      writer_terminal_quoted_name, (string_address)from,
-                                      writer_terminal_quoted_name, (string_address)to);
+                        string_format(log, "%w -> %w\n",
+                                      writer_shell_quoted_name, (string_address)from,
+                                      writer_shell_quoted_name, (string_address)to);
                         break;
                 case CP_TREE_DIRECTORY_FAILED:
-                        string_format(log_error, "cp: cannot open directory '%w': %s\n",
-                                      writer_terminal_quoted_name, (string_address)to,
+                        string_format(log_error, "cp: cannot open directory %w: %s\n",
+                                      writer_shell_quoted_name, (string_address)to,
                                       file_reason(record.code));
                         cp_tree_complete = false;
                         break;
                 case CP_TREE_READ_FAILED:
-                        string_format(log_error, "cp: cannot read directory '%w': %s\n",
-                                      writer_terminal_quoted_name, (string_address)from,
+                        string_format(log_error, "cp: cannot read directory %w: %s\n",
+                                      writer_shell_quoted_name, (string_address)from,
                                       file_reason(record.code));
                         cp_tree_complete = false;
                         break;
                 case CP_TREE_ATTRIBUTES_FAILED:
                         string_format(log_error,
-                                      "cp: cannot preserve attributes for '%w': %s\n",
-                                      writer_terminal_quoted_name, (string_address)to,
+                                      "cp: cannot preserve attributes for %w: %s\n",
+                                      writer_shell_quoted_name, (string_address)to,
                                       file_reason(record.code));
                         cp_tree_complete = false;
                         break;
@@ -26508,8 +26530,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         if (looked < 0)
         {
                 if (!moving)
-                        string_format(log_error, "cp: cannot stat '%w': %s\n",
-                                      writer_terminal_quoted_name, source_shown,
+                        string_format(log_error, "cp: cannot stat %w: %s\n",
+                                      writer_shell_quoted_name, source_shown,
                                       file_reason(looked));
                 return false;
         }
@@ -26554,8 +26576,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         {
                 string_format(
                     log_error,
-                    "cp: destination changed before copying '%w'\n",
-                    writer_terminal_quoted_name, destination_shown);
+                    "cp: destination changed before copying %w\n",
+                    writer_shell_quoted_name, destination_shown);
                 return false;
         }
 
@@ -26589,9 +26611,9 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                                 return true;
                 }
                 else
-                        return string_report(log_error, false, "cp: '%w' and '%w' are the same file\n",
-                                      writer_terminal_quoted_name, source_shown,
-                                      writer_terminal_quoted_name, destination_shown);
+                        return string_report(log_error, false, "cp: %w and %w are the same file\n",
+                                      writer_shell_quoted_name, source_shown,
+                                      writer_shell_quoted_name, destination_shown);
         }
 
         if (!moving && destination_exists && !file_backup_kind &&
@@ -26611,9 +26633,9 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                                     FILE_RESOLVE_FINAL_MISSING) &&
                     realpath_under(from, to))
                 {
-                        return string_report(log_error, false, "cp: cannot copy a directory, '%w', into itself, '%w'\n",
-                                      writer_terminal_quoted_name, source_shown,
-                                      writer_terminal_quoted_name, destination_shown);
+                        return string_report(log_error, false, "cp: cannot copy a directory, %w, into itself, %w\n",
+                                      writer_shell_quoted_name, source_shown,
+                                      writer_shell_quoted_name, destination_shown);
                 }
         }
 
@@ -26643,8 +26665,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
             kind != MODE_DIRECTORY && !destination_exists)
         {
                 return string_report(log_error, false,
-                                     "cp: not writing through dangling symlink '%w'\n",
-                              writer_terminal_quoted_name, destination_shown);
+                                     "cp: not writing through dangling symlink %w\n",
+                              writer_shell_quoted_name, destination_shown);
         }
 
         if (!moving && (cp_hard || cp_symbolic) && kind != MODE_DIRECTORY)
@@ -26691,15 +26713,15 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                         {
                                 if (!moving)
                                         string_format(log_error,
-                                            "cp: cannot create link '%w'\n",
-                                            writer_terminal_quoted_name,
+                                            "cp: cannot create link %w\n",
+                                            writer_shell_quoted_name,
                                             destination_shown);
                         }
                         else
                         {
                                 string_format(log_error,
-                                    "%s: cannot create special file '%w': %s\n",
-                                    program, writer_terminal_quoted_name,
+                                    "%s: cannot create special file %w: %s\n",
+                                    program, writer_shell_quoted_name,
                                     destination_shown, file_reason(made));
                                 mv_across_said |= moving;
                         }
@@ -26720,8 +26742,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 if (protected_result < 0)
                         string_format(
                             log_error,
-                            "%s: cannot preserve attributes for '%w': %s\n",
-                            program, writer_terminal_quoted_name,
+                            "%s: cannot preserve attributes for %w: %s\n",
+                            program, writer_shell_quoted_name,
                             destination_shown, file_reason(protected_result));
 
                 bipolar published = file_copy_publish(
@@ -26751,8 +26773,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
 
                 if (made < 0)
                 {
-                        return string_report(log_error, false, "cp: cannot create regular file '%w': %s\n",
-                                      writer_terminal_quoted_name, destination_shown,
+                        return string_report(log_error, false, "cp: cannot create regular file %w: %s\n",
+                                      writer_shell_quoted_name, destination_shown,
                                       file_reason(made));
                 }
 
@@ -26782,8 +26804,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 if (attributed < 0)
                         string_format(
                             log_error,
-                            "cp: cannot preserve attributes for '%w': %s\n",
-                            writer_terminal_quoted_name, destination_shown,
+                            "cp: cannot preserve attributes for %w: %s\n",
+                            writer_shell_quoted_name, destination_shown,
                             file_reason(attributed));
                 if (attributed < 0 || published < 0 || closed < 0)
                         return false;
@@ -26797,9 +26819,9 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 if (!moving && cp_reflink_policy == 'A' && kind == MODE_FILE)
                         return string_report(
                             log_error, false,
-                            "cp: failed to clone '%w' from '%w': %s\n",
-                            writer_terminal_quoted_name, destination_shown,
-                            writer_terminal_quoted_name, source_shown,
+                            "cp: failed to clone %w from %w: %s\n",
+                            writer_shell_quoted_name, destination_shown,
+                            writer_shell_quoted_name, source_shown,
                             file_reason(-ERROR_NOT_SUPPORTED));
 
                 positive source_flags = FILE_READ |
@@ -26815,8 +26837,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 if (in < 0)
                 {
                         if (!moving)
-                                string_format(log_error, "cp: cannot open '%w' for reading: %s\n",
-                                              writer_terminal_quoted_name, source_shown,
+                                string_format(log_error, "cp: cannot open %w for reading: %s\n",
+                                              writer_shell_quoted_name, source_shown,
                                               file_reason(in));
                         return false;
                 }
@@ -26853,8 +26875,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                         if (known_source_handle < 0)
                                 system_close(in);
                         if (!moving)
-                                string_format(log_error, "cp: cannot create regular file '%w': %s\n",
-                                              writer_terminal_quoted_name, destination_shown,
+                                string_format(log_error, "cp: cannot create regular file %w: %s\n",
+                                              writer_shell_quoted_name, destination_shown,
                                               file_reason(out));
                         return false;
                 }
@@ -26876,8 +26898,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                         else
                                 system_close(out);
                         if (!moving)
-                                string_format(log_error, "cp: cannot copy '%w'\n",
-                                              writer_terminal_quoted_name, source_shown);
+                                string_format(log_error, "cp: cannot copy %w\n",
+                                              writer_shell_quoted_name, source_shown);
                         return false;
                 }
 
@@ -26907,8 +26929,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 if (attributed < 0)
                         string_format(
                             log_error,
-                            "%s: cannot preserve attributes for '%w': %s\n",
-                            program, writer_terminal_quoted_name,
+                            "%s: cannot preserve attributes for %w: %s\n",
+                            program, writer_shell_quoted_name,
                             destination_shown, file_reason(attributed));
                 if (attributed < 0 || published < 0 || closed < 0)
                         return false;
@@ -26924,8 +26946,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
 
         if (depth == 0)
         {
-                return string_report(log_error, false, "cp: '%w' is nested too deep\n",
-                              writer_terminal_quoted_name, source_shown);
+                return string_report(log_error, false, "cp: %w is nested too deep\n",
+                              writer_shell_quoted_name, source_shown);
         }
 
         // A handle the walk opened for reading is read from directly; the
@@ -26941,8 +26963,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                   FILE_READ | O_DIRECTORY | (follow ? 0 : O_NOFOLLOW));
         if (source_handle < 0)
         {
-                string_format(log_error, "%s: cannot read directory '%w': %s\n", program,
-                              writer_terminal_quoted_name, source_shown,
+                string_format(log_error, "%s: cannot read directory %w: %s\n", program,
+                              writer_shell_quoted_name, source_shown,
                               file_reason(source_handle));
                 mv_across_said |= moving;
                 return false;
@@ -26960,8 +26982,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         {
                 if (!facts_held)
                         system_close(source_handle);
-                string_format(log_error, "%s: cannot open directory '%w': %s\n", program,
-                              writer_terminal_quoted_name, destination_shown,
+                string_format(log_error, "%s: cannot open directory %w: %s\n", program,
+                              writer_shell_quoted_name, destination_shown,
                               file_reason(destination_handle));
                 mv_across_said |= moving;
                 return false;
@@ -27053,8 +27075,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
 
         if (walk.error < 0)
         {
-                string_format(log_error, "%s: cannot read directory '%w': %s\n", program,
-                              writer_terminal_quoted_name, source_shown, file_reason(walk.error));
+                string_format(log_error, "%s: cannot read directory %w: %s\n", program,
+                              writer_shell_quoted_name, source_shown, file_reason(walk.error));
                 mv_across_said |= moving;
                 complete = false;
         }
@@ -27094,8 +27116,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         if (attributed < 0)
                 string_format(
                     log_error,
-                    "%s: cannot preserve attributes for '%w': %s\n",
-                    program, writer_terminal_quoted_name,
+                    "%s: cannot preserve attributes for %w: %s\n",
+                    program, writer_shell_quoted_name,
                     destination_shown, file_reason(attributed));
 
         if (staged && (!publish || published < 0))
@@ -27147,8 +27169,8 @@ static fn cp_pair(string_address source, string_address destination)
 
         if (slashed < 0)
         {
-                string_format(log_error, "cp: cannot stat '%w': %s\n",
-                              writer_terminal_quoted_name, source,
+                string_format(log_error, "cp: cannot stat %w: %s\n",
+                              writer_shell_quoted_name, source,
                               file_reason(slashed));
                 cp_status = 1;
                 return;
@@ -27159,8 +27181,8 @@ static fn cp_pair(string_address source, string_address destination)
         if (!file_dest_slash(destination, dest_stripped, address_of dest_named))
         {
                 string_format(log_error,
-                              "cp: cannot create regular file '%w': %s\n",
-                              writer_terminal_quoted_name, destination,
+                              "cp: cannot create regular file %w: %s\n",
+                              writer_shell_quoted_name, destination,
                               file_reason(-ERROR_NAME_TOO_LONG));
                 cp_status = 1;
                 return;
@@ -27174,13 +27196,13 @@ static fn cp_pair(string_address source, string_address destination)
         if (source_directory < 0 || destination_directory < 0)
         {
                 if (source_directory < 0)
-                        string_format(log_error, "cp: cannot access '%w': %s\n",
-                                      writer_terminal_quoted_name, source,
+                        string_format(log_error, "cp: cannot access %w: %s\n",
+                                      writer_shell_quoted_name, source,
                                       file_reason(source_directory));
                 else
                         string_format(log_error,
-                                      "cp: cannot create regular file '%w': %s\n",
-                                      writer_terminal_quoted_name, destination,
+                                      "cp: cannot create regular file %w: %s\n",
+                                      writer_shell_quoted_name, destination,
                                       file_reason(destination_directory));
                 if (source_directory >= 0)
                         system_close(source_directory);
@@ -27203,7 +27225,7 @@ static fn cp_pair(string_address source, string_address destination)
             follow ? 0 : AT_SYMLINK_NOFOLLOW, address_of source_facts);
         if (source_looked < 0)
         {
-                string_format(log_error, "cp: cannot stat '%w': %s\n", writer_terminal_quoted_name,
+                string_format(log_error, "cp: cannot stat %w: %s\n", writer_shell_quoted_name,
                               source, file_reason(source_looked));
                 system_close(source_directory);
                 system_close(destination_directory);
@@ -27268,8 +27290,8 @@ static fn cp_pair(string_address source, string_address destination)
                                      address_of source_facts, destination_is_link,
                                      address_of done))
                 {
-                        string_format(log_error, "cp: '%w' and '%w' are the same file\n",
-                                      writer_terminal_quoted_name, source, writer_terminal_quoted_name,
+                        string_format(log_error, "cp: %w and %w are the same file\n",
+                                      writer_shell_quoted_name, source, writer_shell_quoted_name,
                                       destination);
                         system_close(source_directory);
                         system_close(destination_directory);
@@ -27521,12 +27543,12 @@ static bool ln_option_seen(p8 letter, string_address value)
         bipolar looked = file_look_code(AT_FDCWD, value, 0, address_of facts);
 
         if (looked < 0)
-                return string_report(log_error, false, "ln: failed to access '%w': %s\n",
-                              writer_terminal_quoted_name, value, file_reason(looked));
+                return string_report(log_error, false, "ln: failed to access %w: %s\n",
+                              writer_shell_quoted_name, value, file_reason(looked));
 
         if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
-                return string_report(log_error, false, "ln: target '%w' is not a directory\n",
-                              writer_terminal_quoted_name, value);
+                return string_report(log_error, false, "ln: target %w is not a directory\n",
+                              writer_shell_quoted_name, value);
 
         ln_target_directory = value;
         return true;
@@ -27797,14 +27819,14 @@ static bool install_attributes_handle(bipolar destination_handle,
 
         if (owned < 0)
         {
-                return string_report(log_error, false, "install: cannot change ownership of '%w': %s\n",
-                              writer_terminal_quoted_name, destination, file_reason(owned));
+                return string_report(log_error, false, "install: cannot change ownership of %w: %s\n",
+                              writer_shell_quoted_name, destination, file_reason(owned));
         }
 
         if (file_change_mode_handle(destination_handle, install_mode) < 0)
         {
-                return string_report(log_error, false, "install: cannot change mode of '%w'\n",
-                              writer_terminal_quoted_name, destination);
+                return string_report(log_error, false, "install: cannot change mode of %w\n",
+                              writer_shell_quoted_name, destination);
         }
 
         if (install_preserve && source)
@@ -27816,8 +27838,8 @@ static bool install_attributes_handle(bipolar destination_handle,
                                            (string_address)"", times,
                                            AT_EMPTY_PATH) < 0)
                 {
-                        return string_report(log_error, false, "install: cannot preserve times of '%w'\n",
-                                      writer_terminal_quoted_name, destination);
+                        return string_report(log_error, false, "install: cannot preserve times of %w\n",
+                                      writer_shell_quoted_name, destination);
                 }
         }
 
@@ -27964,11 +27986,11 @@ static fn install_pair(string_address source, string_address destination)
                         system_close(source_directory);
                 if (looked >= 0 &&
                     (from.mode & MODE_FORMAT) == MODE_DIRECTORY)
-                        string_format(log_error, "install: omitting directory '%w'\n",
-                                      writer_terminal_quoted_name, source);
+                        string_format(log_error, "install: omitting directory %w\n",
+                                      writer_shell_quoted_name, source);
                 else
-                        string_format(log_error, "install: cannot stat '%w': %s\n",
-                                      writer_terminal_quoted_name, source,
+                        string_format(log_error, "install: cannot stat %w: %s\n",
+                                      writer_shell_quoted_name, source,
                                       looked < 0 ? file_reason(looked)
                                                  : (string_address) "Not a regular file");
                 install_status = 1;
@@ -27984,8 +28006,8 @@ static fn install_pair(string_address source, string_address destination)
                 if (install_loud)
                         file_backup_told(source, destination, (string_address) "'",
                                          (string_address) "' -> '");
-                string_format(log_error, "install: cannot open '%w' for reading: %s\n",
-                              writer_terminal_quoted_name, source, file_reason(source_handle));
+                string_format(log_error, "install: cannot open %w for reading: %s\n",
+                              writer_shell_quoted_name, source, file_reason(source_handle));
                 install_status = 1;
                 return;
         }
@@ -28004,8 +28026,8 @@ static fn install_pair(string_address source, string_address destination)
                 if (!install_parents)
                         string_format(
                             log_error,
-                            "install: cannot create regular file '%w': %s\n",
-                            writer_terminal_quoted_name, destination,
+                            "install: cannot create regular file %w: %s\n",
+                            writer_shell_quoted_name, destination,
                             file_reason(destination_directory));
                 install_status = 1;
                 return;
@@ -28019,8 +28041,8 @@ static fn install_pair(string_address source, string_address destination)
         if (to_looked < 0 && to_looked != -ERROR_NO_ENTRY)
         {
                 string_format(log_error,
-                              "install: cannot inspect '%w': %s\n",
-                              writer_terminal_quoted_name, destination,
+                              "install: cannot inspect %w: %s\n",
+                              writer_shell_quoted_name, destination,
                               file_reason(to_looked));
                 system_close(destination_directory);
                 system_close(source_handle);
@@ -28030,8 +28052,8 @@ static fn install_pair(string_address source, string_address destination)
         if (destination_exists &&
             file_same_identity(address_of from, address_of to))
         {
-                string_format(log_error, "install: '%w' and '%w' are the same file\n",
-                              writer_terminal_quoted_name, source, writer_terminal_quoted_name,
+                string_format(log_error, "install: %w and %w are the same file\n",
+                              writer_shell_quoted_name, source, writer_shell_quoted_name,
                               destination);
                 system_close(destination_directory);
                 system_close(source_handle);
@@ -28055,8 +28077,8 @@ static fn install_pair(string_address source, string_address destination)
                                                  (string_address) "'",
                                                  (string_address) "' -> '");
                         string_format(log_error,
-                                      "install: cannot create regular file '%w': %s\n",
-                                      writer_terminal_quoted_name, destination,
+                                      "install: cannot create regular file %w: %s\n",
+                                      writer_shell_quoted_name, destination,
                                       file_reason(-ERROR_IS_DIRECTORY));
                 }
                 system_close(destination_directory);
@@ -28076,7 +28098,7 @@ static fn install_pair(string_address source, string_address destination)
         }
 
         if (install_loud && destination_exists && !file_backup_kind)
-                string_format(log, "removed '%w'\n", writer_terminal_quoted_name,
+                string_format(log, "removed %w\n", writer_shell_quoted_name,
                               destination);
 
         if (!file_backup_made_at((string_address)"install",
@@ -28100,8 +28122,8 @@ static fn install_pair(string_address source, string_address destination)
         {
                 system_close(destination_directory);
                 system_close(source_handle);
-                string_format(log_error, "install: cannot create regular file '%w': %s\n",
-                              writer_terminal_quoted_name, destination,
+                string_format(log_error, "install: cannot create regular file %w: %s\n",
+                              writer_shell_quoted_name, destination,
                               file_reason(destination_handle));
                 install_status = 1;
                 return;
@@ -28121,8 +28143,8 @@ static fn install_pair(string_address source, string_address destination)
 
         if (!copied || published < 0)
         {
-                string_format(log_error, "install: cannot publish '%w'\n",
-                              writer_terminal_quoted_name, destination);
+                string_format(log_error, "install: cannot publish %w\n",
+                              writer_shell_quoted_name, destination);
                 install_status = 1;
                 return;
         }
@@ -28154,8 +28176,8 @@ static fn install_pair(string_address source, string_address destination)
 
 static fn install_directory_told(string_address path)
 {
-        string_format(log, "install: creating directory '%w'\n",
-                      writer_terminal_quoted_name, path);
+        string_format(log, "install: creating directory %w\n",
+                      writer_shell_quoted_name, path);
 }
 
 static bool install_option_seen(p8 letter, string_address value)
@@ -28304,8 +28326,8 @@ static b32 file_install()
         if (!into && taking.first + 1 >= count)
                 return string_report(
                     log_error, 1,
-                    "install: missing destination file operand after '%w'\n",
-                    writer_terminal_quoted_name,
+                    "install: missing destination file operand after %w\n",
+                    writer_shell_quoted_name,
                     program_argument((b32)taking.first));
         if (mode && !file_mode_of(mode, 0, false, address_of install_mode))
                 return string_report(log_error, 1, "install: invalid mode '%w'\n",
@@ -28380,8 +28402,8 @@ static fn mv_one(string_address source, string_address destination)
 
         if (slashed < 0)
         {
-                string_format(log_error, "mv: cannot stat '%w': %s\n",
-                              writer_terminal_quoted_name, source,
+                string_format(log_error, "mv: cannot stat %w: %s\n",
+                              writer_shell_quoted_name, source,
                               file_reason(slashed));
                 mv_status = 1;
                 goto finished;
@@ -28391,9 +28413,9 @@ static fn mv_one(string_address source, string_address destination)
         string_address dest_named = destination;
         if (!file_dest_slash(destination, dest_stripped, address_of dest_named))
         {
-                string_format(log_error, "mv: cannot move '%w' to '%w': %s\n",
-                              writer_terminal_quoted_name, source,
-                              writer_terminal_quoted_name, destination,
+                string_format(log_error, "mv: cannot move %w to %w: %s\n",
+                              writer_shell_quoted_name, source,
+                              writer_shell_quoted_name, destination,
                               file_reason(-ERROR_NAME_TOO_LONG));
                 mv_status = 1;
                 goto finished;
@@ -28405,8 +28427,8 @@ static fn mv_one(string_address source, string_address destination)
             destination, destination_leaf);
         if (source_directory < 0 || destination_directory < 0)
         {
-                string_format(log_error, "mv: cannot move '%w' to '%w': %s\n",
-                              writer_terminal_quoted_name, source, writer_terminal_quoted_name,
+                string_format(log_error, "mv: cannot move %w to %w: %s\n",
+                              writer_shell_quoted_name, source, writer_shell_quoted_name,
                               destination,
                               file_reason(source_directory < 0 ? source_directory : destination_directory));
                 mv_status = 1;
@@ -28421,7 +28443,7 @@ static fn mv_one(string_address source, string_address destination)
                                         address_of from);
         if (looked < 0)
         {
-                string_format(log_error, "mv: cannot stat '%w': %s\n", writer_terminal_quoted_name,
+                string_format(log_error, "mv: cannot stat %w: %s\n", writer_shell_quoted_name,
                               source, file_reason(looked));
                 mv_status = 1;
                 goto finished;
@@ -28448,9 +28470,9 @@ static fn mv_one(string_address source, string_address destination)
                                         destination_directory,
                                         destination_leaf)))
                 {
-                        string_format(log_error, "mv: '%w' and '%w' are the same file\n",
-                                      writer_terminal_quoted_name, source,
-                                      writer_terminal_quoted_name,
+                        string_format(log_error, "mv: %w and %w are the same file\n",
+                                      writer_shell_quoted_name, source,
+                                      writer_shell_quoted_name,
                                       destination);
                         mv_status = 1;
                         goto finished;
@@ -28487,8 +28509,8 @@ static fn mv_one(string_address source, string_address destination)
         if (source_handle < 0)
         {
                 string_format(log_error,
-                              "mv: source changed before moving '%w': %s\n",
-                              writer_terminal_quoted_name, source,
+                              "mv: source changed before moving %w: %s\n",
+                              writer_shell_quoted_name, source,
                               file_reason(source_handle));
                 mv_status = 1;
                 goto finished;
@@ -28501,9 +28523,9 @@ static fn mv_one(string_address source, string_address destination)
                 {
                         string_format(
                             log_error,
-                            "mv: cannot safely exchange writable names '%w' and '%w'\n",
-                            writer_terminal_quoted_name, source,
-                            writer_terminal_quoted_name, destination);
+                            "mv: cannot safely exchange writable names %w and %w\n",
+                            writer_shell_quoted_name, source,
+                            writer_shell_quoted_name, destination);
                         mv_status = 1;
                         goto finished;
                 }
@@ -28515,8 +28537,8 @@ static fn mv_one(string_address source, string_address destination)
                 {
                         string_format(
                             log_error,
-                            "mv: destination changed before exchanging '%w': %s\n",
-                            writer_terminal_quoted_name, destination,
+                            "mv: destination changed before exchanging %w: %s\n",
+                            writer_shell_quoted_name, destination,
                             file_reason(destination_handle));
                         mv_status = 1;
                         goto finished;
@@ -28588,8 +28610,8 @@ static fn mv_one(string_address source, string_address destination)
         //      that was being replaced.
         if (mv_exchange)
         {
-                string_format(log_error, "mv: cannot exchange '%w' and '%w': %s\n",
-                              writer_terminal_quoted_name, source, writer_terminal_quoted_name,
+                string_format(log_error, "mv: cannot exchange %w and %w: %s\n",
+                              writer_shell_quoted_name, source, writer_shell_quoted_name,
                               destination, file_reason(done));
                 mv_status = 1;
                 goto finished;
@@ -28600,8 +28622,8 @@ static fn mv_one(string_address source, string_address destination)
                 goto finished;
         if ((done == -ERROR_EXISTS || done == -ERROR_AGAIN) && mv_ask)
         {
-                string_format(log_error, "mv: destination changed before moving '%w'\n",
-                              writer_terminal_quoted_name, destination);
+                string_format(log_error, "mv: destination changed before moving %w\n",
+                              writer_shell_quoted_name, destination);
                 mv_status = 1;
                 goto finished;
         }
@@ -28628,8 +28650,8 @@ static fn mv_one(string_address source, string_address destination)
                 if (copy_handle < 0)
                 {
                         string_format(log_error,
-                                      "mv: cannot open '%w': %s\n",
-                                      writer_terminal_quoted_name, source,
+                                      "mv: cannot open %w: %s\n",
+                                      writer_shell_quoted_name, source,
                                       file_reason(copy_handle));
                         mv_across_said = true;
                 }
@@ -28657,8 +28679,8 @@ static fn mv_one(string_address source, string_address destination)
                 {
                         if (mv_update_policy != 'n' && mv_update_policy != 'F')
                         {
-                                string_format(log_error, "mv: destination changed before moving '%w'\n",
-                                              writer_terminal_quoted_name, destination);
+                                string_format(log_error, "mv: destination changed before moving %w\n",
+                                              writer_shell_quoted_name, destination);
                                 mv_status = 1;
                         }
                         goto finished;
@@ -28679,22 +28701,22 @@ static fn mv_one(string_address source, string_address destination)
                 if (file_resolve(source, outer, true) &&
                     file_resolve(destination, inner, true) && realpath_under(outer, inner))
                 {
-                        string_format(log_error, "mv: cannot move '%w' to a subdirectory of itself, '%w'\n",
-                                      writer_terminal_quoted_name, source,
-                                      writer_terminal_quoted_name, destination);
+                        string_format(log_error, "mv: cannot move %w to a subdirectory of itself, %w\n",
+                                      writer_shell_quoted_name, source,
+                                      writer_shell_quoted_name, destination);
                         mv_status = 1;
                         goto finished;
                 }
         }
 
         if (done == -ERROR_NOT_EMPTY)
-                string_format(log_error, "mv: cannot overwrite '%w': %s\n",
-                              writer_terminal_quoted_name, destination,
+                string_format(log_error, "mv: cannot overwrite %w: %s\n",
+                              writer_shell_quoted_name, destination,
                               file_reason(done));
         else
-                string_format(log_error, "mv: cannot move '%w' to '%w': %s\n",
-                              writer_terminal_quoted_name, source,
-                              writer_terminal_quoted_name, destination,
+                string_format(log_error, "mv: cannot move %w to %w: %s\n",
+                              writer_shell_quoted_name, source,
+                              writer_shell_quoted_name, destination,
                               file_reason(done));
         mv_status = 1;
 
@@ -28901,8 +28923,8 @@ static bool rm_contents(bipolar directory, string_address shown, positive depth)
 
                 if (sought < 0)
                 {
-                        string_format(log_error, "rm: cannot read '%w': %s\n",
-                                      writer_terminal_quoted_name, shown, file_reason(sought));
+                        string_format(log_error, "rm: cannot read %w: %s\n",
+                                      writer_shell_quoted_name, shown, file_reason(sought));
                         rm_status = 1;
                         return false;
                 }
@@ -28939,8 +28961,8 @@ static bool rm_contents(bipolar directory, string_address shown, positive depth)
 
                 if (walk.error < 0)
                 {
-                        string_format(log_error, "rm: cannot read '%w': %s\n",
-                                      writer_terminal_quoted_name, shown, file_reason(walk.error));
+                        string_format(log_error, "rm: cannot read %w: %s\n",
+                                      writer_shell_quoted_name, shown, file_reason(walk.error));
                         rm_status = 1;
                         return false;
                 }
@@ -28979,8 +29001,8 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 // there and will not be looked at is still a failure.
                 if (!rm_force || tried != -ERROR_NO_ENTRY)
                 {
-                        string_format(log_error, "rm: cannot remove '%w': %s\n",
-                                      writer_terminal_quoted_name, shown, file_reason(tried));
+                        string_format(log_error, "rm: cannot remove %w: %s\n",
+                                      writer_shell_quoted_name, shown, file_reason(tried));
                         rm_status = 1;
                 }
 
@@ -29000,7 +29022,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 if (tried == 0)
                 {
                         if (rm_loud)
-                                string_format(log, "removed '%w'\n", writer_terminal_quoted_name,
+                                string_format(log, "removed %w\n", writer_shell_quoted_name,
                                               shown);
                         return true;
                 }
@@ -29019,8 +29041,8 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         {
                 if (!rm_force || tried != -ERROR_NO_ENTRY)
                 {
-                        string_format(log_error, "rm: cannot remove '%w': %s\n",
-                                      writer_terminal_quoted_name, shown,
+                        string_format(log_error, "rm: cannot remove %w: %s\n",
+                                      writer_shell_quoted_name, shown,
                                       file_reason(looked < 0 ? looked : tried));
                         rm_status = 1;
                 }
@@ -29032,8 +29054,8 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
             (facts.device_major != rm_device_major ||
              facts.device_minor != rm_device_minor))
         {
-                string_format(log_error, "rm: skipping '%w', since it's on a different device\n",
-                              writer_terminal_quoted_name, shown);
+                string_format(log_error, "rm: skipping %w, since it's on a different device\n",
+                              writer_shell_quoted_name, shown);
                 rm_status = 1;
                 return false;
         }
@@ -29049,8 +29071,8 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         {
                 if (depth == 0)
                 {
-                        string_format(log_error, "rm: '%w' is nested too deep\n",
-                                      writer_terminal_quoted_name, shown);
+                        string_format(log_error, "rm: %w is nested too deep\n",
+                                      writer_shell_quoted_name, shown);
                         rm_status = 1;
                         return false;
                 }
@@ -29091,8 +29113,8 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 {
                         if (!rm_force || inside != -ERROR_NO_ENTRY)
                         {
-                                string_format(log_error, "rm: cannot read '%w': %s\n",
-                                              writer_terminal_quoted_name, shown,
+                                string_format(log_error, "rm: cannot read %w: %s\n",
+                                              writer_shell_quoted_name, shown,
                                               file_reason(inside));
                                 rm_status = 1;
                         }
@@ -29103,8 +29125,8 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 if (rm_preserve_root &&
                     file_same_identity(address_of facts, address_of rm_root))
                 {
-                        string_format(log_error, "rm: refusing to read '%w': preserved root directory\n",
-                                      writer_terminal_quoted_name, shown);
+                        string_format(log_error, "rm: refusing to read %w: preserved root directory\n",
+                                      writer_shell_quoted_name, shown);
                         rm_status = 1;
                         system_close(inside);
                         return false;
@@ -29147,8 +29169,8 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                                   gone != -ERROR_NOT_DIRECTORY &&
                                   gone != -ERROR_INVALID))
                 {
-                        string_format(log_error, "rm: cannot remove '%w': %s\n",
-                                      writer_terminal_quoted_name, shown, file_reason(gone));
+                        string_format(log_error, "rm: cannot remove %w: %s\n",
+                                      writer_shell_quoted_name, shown, file_reason(gone));
                         rm_status = 1;
                 }
 
@@ -29156,7 +29178,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         }
 
         if (rm_loud)
-                string_format(log, "removed directory '%w'\n", writer_terminal_quoted_name, shown);
+                string_format(log, "removed directory %w\n", writer_shell_quoted_name, shown);
 
         return complete;
 }
@@ -29276,8 +29298,8 @@ static fn rm_batch_replay(walk_batch address_to batch)
                 if (item->mark == RM_UNLINK && code == 0)
                 {
                         if (rm_loud)
-                                string_format(log, "removed '%w'\n",
-                                              writer_terminal_quoted_name, shown);
+                                string_format(log, "removed %w\n",
+                                              writer_shell_quoted_name, shown);
                         continue;
                 }
 
@@ -29301,8 +29323,8 @@ static fn rm_batch_replay(walk_batch address_to batch)
                         if (gone == 0)
                         {
                                 if (rm_loud)
-                                        string_format(log, "removed directory '%w'\n",
-                                                      writer_terminal_quoted_name, shown);
+                                        string_format(log, "removed directory %w\n",
+                                                      writer_shell_quoted_name, shown);
                                 continue;
                         }
                         item->spare = RM_FAILED_REMOVE;
@@ -29312,8 +29334,8 @@ static fn rm_batch_replay(walk_batch address_to batch)
                 {
                         if (code < 0)
                         {
-                                string_format(log_error, "rm: cannot read '%w': %s\n",
-                                              writer_terminal_quoted_name, shown,
+                                string_format(log_error, "rm: cannot read %w: %s\n",
+                                              writer_shell_quoted_name, shown,
                                               file_reason(code));
                                 rm_status = 1;
                                 rm_kept[depth] = true;
@@ -29335,8 +29357,8 @@ static fn rm_batch_replay(walk_batch address_to batch)
                         if (code == 0)
                         {
                                 if (rm_loud)
-                                        string_format(log, "removed directory '%w'\n",
-                                                      writer_terminal_quoted_name, shown);
+                                        string_format(log, "removed directory %w\n",
+                                                      writer_shell_quoted_name, shown);
                                 continue;
                         }
                 }
@@ -29347,11 +29369,11 @@ static fn rm_batch_replay(walk_batch address_to batch)
                                       writer_terminal_quoted_name, name,
                                       file_reason(-ERROR_NAME_TOO_LONG));
                 else if (item->mark == RM_FAILED && item->spare == RM_FAILED_DEEP)
-                        string_format(log_error, "rm: '%w' is nested too deep\n",
-                                      writer_terminal_quoted_name, shown);
+                        string_format(log_error, "rm: %w is nested too deep\n",
+                                      writer_shell_quoted_name, shown);
                 else if (item->mark == RM_FAILED && item->spare == RM_FAILED_ROOT)
-                        string_format(log_error, "rm: refusing to read '%w': preserved root directory\n",
-                                      writer_terminal_quoted_name, shown);
+                        string_format(log_error, "rm: refusing to read %w: preserved root directory\n",
+                                      writer_shell_quoted_name, shown);
                 else
                 {
                         // -f forgives only a name that is not there, and a
@@ -29748,27 +29770,27 @@ static bool rm_tree_sink(address_any context, address_any node_address,
                 switch (record.kind)
                 {
                 case RM_TREE_REMOVED:
-                        string_format(log, "removed '%w'\n", writer_terminal_quoted_name, path);
+                        string_format(log, "removed %w\n", writer_shell_quoted_name, path);
                         break;
                 case RM_TREE_REMOVED_DIRECTORY:
-                        string_format(log, "removed directory '%w'\n",
-                                      writer_terminal_quoted_name, path);
+                        string_format(log, "removed directory %w\n",
+                                      writer_shell_quoted_name, path);
                         break;
                 case RM_TREE_CANNOT_REMOVE:
-                        string_format(log_error, "rm: cannot remove '%w': %s\n",
-                                      writer_terminal_quoted_name, path,
+                        string_format(log_error, "rm: cannot remove %w: %s\n",
+                                      writer_shell_quoted_name, path,
                                       file_reason(record.code));
                         rm_status = 1;
                         break;
                 case RM_TREE_CANNOT_READ:
-                        string_format(log_error, "rm: cannot read '%w': %s\n",
-                                      writer_terminal_quoted_name, path,
+                        string_format(log_error, "rm: cannot read %w: %s\n",
+                                      writer_shell_quoted_name, path,
                                       file_reason(record.code));
                         rm_status = 1;
                         break;
                 case RM_TREE_REFUSED_ROOT:
-                        string_format(log_error, "rm: refusing to read '%w': preserved root directory\n",
-                                      writer_terminal_quoted_name, path);
+                        string_format(log_error, "rm: refusing to read %w: preserved root directory\n",
+                                      writer_shell_quoted_name, path);
                         rm_status = 1;
                         break;
                 }
@@ -29804,12 +29826,12 @@ static fn rm_tree_parallel(string_address root, file_facts address_to facts)
                     file_remove_same(AT_FDCWD, root, AT_REMOVEDIR, facts) == 0)
                 {
                         if (rm_loud)
-                                string_format(log, "removed directory '%w'\n",
-                                              writer_terminal_quoted_name, root);
+                                string_format(log, "removed directory %w\n",
+                                              writer_shell_quoted_name, root);
                         return;
                 }
-                string_format(log_error, "rm: cannot remove '%w': %s\n",
-                              writer_terminal_quoted_name, root,
+                string_format(log_error, "rm: cannot remove %w: %s\n",
+                              writer_shell_quoted_name, root,
                               file_reason(looked));
                 rm_status = 1;
                 return;
@@ -29860,14 +29882,14 @@ static fn rm_tree_parallel(string_address root, file_facts address_to facts)
                 if (code == 0)
                 {
                         if (rm_loud)
-                                string_format(log, "removed directory '%w'\n",
-                                              writer_terminal_quoted_name, root);
+                                string_format(log, "removed directory %w\n",
+                                              writer_shell_quoted_name, root);
                 }
                 else if (!(rm_force && (code == -ERROR_NO_ENTRY ||
                                         (through && code == -ERROR_NOT_DIRECTORY))))
                 {
-                        string_format(log_error, "rm: cannot remove '%w': %s\n",
-                                      writer_terminal_quoted_name, root,
+                        string_format(log_error, "rm: cannot remove %w: %s\n",
+                                      writer_shell_quoted_name, root,
                                       file_reason(code));
                         rm_status = 1;
                 }
@@ -29912,12 +29934,12 @@ static fn rm_batched(string_address root, file_facts address_to facts)
                     file_remove_same(AT_FDCWD, root, AT_REMOVEDIR, facts) == 0)
                 {
                         if (rm_loud)
-                                string_format(log, "removed directory '%w'\n",
-                                              writer_terminal_quoted_name, root);
+                                string_format(log, "removed directory %w\n",
+                                              writer_shell_quoted_name, root);
                         return;
                 }
-                string_format(log_error, "rm: cannot remove '%w': %s\n",
-                              writer_terminal_quoted_name, root,
+                string_format(log_error, "rm: cannot remove %w: %s\n",
+                              writer_shell_quoted_name, root,
                               file_reason(looked));
                 rm_status = 1;
                 return;
@@ -30214,8 +30236,8 @@ static b32 file_rm()
 
                 if (rm_recursive && rm_dot_operand(path))
                 {
-                        string_format(log_error, "rm: refusing to remove '.' or '..' directory: skipping '%w'\n",
-                                      writer_terminal_quoted_name, path);
+                        string_format(log_error, "rm: refusing to remove '.' or '..' directory: skipping %w\n",
+                                      writer_shell_quoted_name, path);
                         rm_status = 1;
                         continue;
                 }
@@ -30233,8 +30255,8 @@ static b32 file_rm()
                              looked != -ERROR_NOT_DIRECTORY &&
                              looked != -ERROR_INVALID))
                         {
-                                string_format(log_error, "rm: cannot remove '%w': %s\n",
-                                              writer_terminal_quoted_name, path,
+                                string_format(log_error, "rm: cannot remove %w: %s\n",
+                                              writer_shell_quoted_name, path,
                                               file_reason(looked));
                                 rm_status = 1;
                         }
@@ -30274,17 +30296,17 @@ static b32 file_rm()
                                 {
                                         string_format(
                                             log_error,
-                                            "rm: failed to stat '%w': skipping '%w'\n",
-                                            writer_terminal_quoted_name, above,
-                                            writer_terminal_quoted_name, path);
+                                            "rm: failed to stat %w: skipping %w\n",
+                                            writer_shell_quoted_name, above,
+                                            writer_shell_quoted_name, path);
                                         rm_status = 1;
                                         continue;
                                 }
                                 if (parent.device_major != facts.device_major ||
                                     parent.device_minor != facts.device_minor)
                                 {
-                                        string_format(log_error, "rm: skipping '%w', since it's on a different device\n",
-                                                      writer_terminal_quoted_name, path);
+                                        string_format(log_error, "rm: skipping %w, since it's on a different device\n",
+                                                      writer_shell_quoted_name, path);
                                         log_error("rm: and --preserve-root=all is in effect\n", 0);
                                         rm_status = 1;
                                         continue;
@@ -30294,8 +30316,8 @@ static b32 file_rm()
 
                 if (here && !rm_recursive && !rm_empty_directories)
                 {
-                        string_format(log_error, "rm: cannot remove '%w': Is a directory\n",
-                                      writer_terminal_quoted_name, path);
+                        string_format(log_error, "rm: cannot remove %w: Is a directory\n",
+                                      writer_shell_quoted_name, path);
                         rm_status = 1;
                         continue;
                 }
@@ -30513,8 +30535,8 @@ static b32 file_touch()
 
                 if (looked < 0)
                 {
-                        return string_report(log_error, 1, "touch: failed to get attributes of '%w': %s\n",
-                                      writer_terminal_quoted_name, from, file_reason(looked));
+                        return string_report(log_error, 1, "touch: failed to get attributes of %w: %s\n",
+                                      writer_shell_quoted_name, from, file_reason(looked));
                 }
 
                 file_times_of(address_of facts, times);
@@ -30576,8 +30598,8 @@ static b32 file_touch()
 
                         if (done < 0)
                         {
-                                string_format(log_error, "touch: cannot touch '%w': %s\n",
-                                              writer_terminal_quoted_name, path, file_reason(done));
+                                string_format(log_error, "touch: cannot touch %w: %s\n",
+                                              writer_shell_quoted_name, path, file_reason(done));
                                 status = 1;
                         }
 
@@ -30611,12 +30633,12 @@ static b32 file_touch()
                         if (created < 0 && created != -ERROR_IS_DIRECTORY &&
                             created != -ERROR_EXISTS &&
                             created != -ERROR_INVALID)
-                                string_format(log_error, "touch: cannot touch '%w': %s\n",
-                                              writer_terminal_quoted_name, path,
+                                string_format(log_error, "touch: cannot touch %w: %s\n",
+                                              writer_shell_quoted_name, path,
                                               file_reason(created));
                         else
-                                string_format(log_error, "touch: setting times of '%w': %s\n",
-                                              writer_terminal_quoted_name, path, file_reason(done));
+                                string_format(log_error, "touch: setting times of %w: %s\n",
+                                              writer_shell_quoted_name, path, file_reason(done));
                         status = 1;
                 }
         }

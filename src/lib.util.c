@@ -2401,26 +2401,69 @@ static fn writer_terminal_name(writer output, string_address value)
         writer_terminal_name_span(output, value, string_length(value));
 }
 
-/* The body of a pathname already delimited by single quotes in a diagnostic.
-   Backslash and the delimiter are always escaped, while terminal controls and
-   non-ASCII bytes use the same bounded streaming encoder as bare names. */
+/* One byte of a name as a C string spells it: the seven letters, the
+   backslash and the quote doubled up with a backslash, and three octal digits
+   for every other byte. This is how coreutils' quote() and findutils write a
+   name in the C locale, and the octal is what keeps a byte outside ASCII from
+   being read back as part of the letter after it, which \x would not. */
+static positive writer_c_escape(p8 byte, p8 address_to into)
+{
+        static const p8 letters[14] = {
+            [7] = 'a', [8] = 'b', [9] = 't', [10] = 'n',
+            [11] = 'v', [12] = 'f', [13] = 'r',
+        };
+
+        into[0] = '\\';
+        if (byte < sizeof(letters) && letters[byte])
+        {
+                into[1] = letters[byte];
+                return 2;
+        }
+        if (byte == '\\' || byte == '\'')
+        {
+                into[1] = byte;
+                return 2;
+        }
+        into[1] = (p8)('0' + (byte >> 6));
+        into[2] = (p8)('0' + ((byte >> 3) & 7));
+        into[3] = (p8)('0' + (byte & 7));
+        return 4;
+}
+
+/* The body of a pathname already delimited by single quotes in a diagnostic,
+   spelled the way coreutils' quote() spells it in the C locale -- 'new\nline',
+   'e\033x', 'q\'x' -- which is what mkdir, find, env, nice, timeout and xargs
+   write, and what a message that names a file with quoteaf starts from.
+   Ordinary spans cross the writer whole; only the bytes a terminal would act
+   on, the backslash and the delimiter are spelled out. */
 static fn writer_terminal_quoted_name_span(writer output,
                                            string_address value,
                                            positive length)
 {
         p8 policy = HEX_CONTROL | HEX_TAB | HEX_HIGH | HEX_SLASH;
+        p8 address_to quote = length ? memory_first_of(value, '\'', length)
+                                     : 0;
 
         while (length)
         {
-                p8 address_to quote = memory_first_of(value, '\'', length);
-                positive span = quote ? (positive)(quote - value) : length;
+                positive span = quote ? (positive)(quote - (p8 address_to)value)
+                                      : length;
+                positive plain = span ? memory_escape_index(value, span, policy)
+                                      : 0;
+                p8 spelled[4];
 
-                writer_hex_escaped(output, value, span, policy);
-                value += span;
-                length -= span;
-                if (!length)
-                        break;
-                output("\\'", 2);
+                if (plain)
+                {
+                        output(value, plain);
+                        value += plain;
+                        length -= plain;
+                        continue;
+                }
+                output(spelled, writer_c_escape(*(p8 address_to)value, spelled));
+                if (!span)
+                        quote = length > 1
+                                    ? memory_first_of(value + 1, '\'', length - 1)
+                                    : 0;
                 value++;
                 length--;
         }

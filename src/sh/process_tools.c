@@ -19,6 +19,14 @@ static b32 process_tool_exec_environment(
         bipolar answer = file_exec_path_try_in(words[0], words, environment,
                                                path);
 
+        //      nohup names the command with quoteaf and the others with
+        //      quote(), which is the difference between 'new'$'\n''line' and
+        //      'new\nline' -- and between "q'x" and 'q\'x'.
+        if (string_equals(program, "nohup"))
+                return string_report(log_error, answer == -ERROR_NO_ENTRY ? 127 : 126,
+                                     "%s: failed to run command %w: %s\n", program,
+                                     writer_shell_quoted_name, words[0],
+                                     file_reason(answer));
         return string_report(log_error, answer == -ERROR_NO_ENTRY ? 127 : 126, "%s: failed to run command '%w': %s\n",
                       program, writer_terminal_quoted_name, words[0], file_reason(answer));
 }
