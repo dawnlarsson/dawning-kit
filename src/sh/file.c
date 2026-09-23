@@ -25487,6 +25487,37 @@ static bool file_overwrite_allowed(string_address program, string_address shown,
 }
 
 
+/*
+        Whether a symbolic link made at this name is made in the current
+        directory, which is where a relative target would be read from. The
+        reference asks it of the name's directory part, as dirname cuts it --
+        slashes on the end go first, so missing/ is made here -- and takes
+        the answer from the inode, so ./x and dir/../x are here too.
+*/
+static bool cp_link_here(string_address destination)
+{
+        p8 parent[FILE_PATH_MAX];
+        file_facts there;
+        file_facts here;
+
+        if (!file_name_without_trailing_slashes(parent, destination))
+                return false;
+
+        string_address last = string_last_of(parent, '/');
+
+        if (!last)
+                return true;
+
+        positive length = (positive)(last - (string_address)parent);
+
+        while (length > 1 && parent[length - 1] == '/')
+                length--;
+        parent[length ? length : 1] = end;
+        return file_look(AT_FDCWD, parent, 0, address_of there) &&
+               file_look(AT_FDCWD, (string_address) ".", 0, address_of here) &&
+               file_same_identity(address_of there, address_of here);
+}
+
 // -l and -s make a name for the file rather than a copy of it, and neither
 // has anything to say about a directory: with -r the directory is still made
 // and it is what lands inside that is linked.
@@ -25507,7 +25538,7 @@ static bool cp_linked(bipolar source_directory, string_address source,
                 // A relative target is read from where the link sits, so a
                 // link made anywhere but here would point somewhere else.
                 if (!string_is(source_shown, '/') &&
-                    string_first_of(destination_shown, '/'))
+                    !cp_link_here(destination_shown))
                 {
                         return string_report(log_error, false, "cp: %w: can make relative symbolic links only in current directory\n",
                                       writer_terminal_name, destination_shown);
