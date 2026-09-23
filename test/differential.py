@@ -32953,6 +32953,427 @@ far.kill()
 """
 
 
+def harness_guest_scenarios(argv):
+    """What the booted image does with seeded settings, files, signals and
+    screens, held to models of the rules rather than to remembered answers.
+
+        guest_scenarios [--seed N]
+        guest_scenarios [--seed N] --segments TRANSCRIPT
+
+    Prints a POSIX sh script for the boot lane to run on the machine, with
+    one `#expect FAMILY TOTAL` line per family at its top. With --segments
+    it reads the console transcript of that run instead and prints
+    name|got|want for the monitor frames the script drew on the console. Each family
+    counts its questions and ends by printing scen-FAMILY-OK-of-TOTAL
+    reversed, so the console's echo of the script never answers for it; a
+    question that disagrees also prints `scenario-miss` and what it saw.
+
+      settings   bind init/exit add and remove against a model of the
+                 settings block: ids that are never handed out twice,
+                 removal by id or by the exact text, 16 entries a list,
+                 4,096 bytes an entry, a 16,320 byte block that fills,
+                 usage for an empty entry, the init mount switch.
+      wifi       /root/wifi written as a generated file, read back through
+                 moonwater wifi against a model of its loader; adds the
+                 rules refuse before any radio is asked, file untouched.
+      bluetooth  names remembered, once each, in order, until the list's
+                 4 KiB is used; names the rules refuse.
+      keyboard   layouts set and read back; unknown ones refused.
+      monitor    frames drawn on the console (the image's stty sets no
+                 size and script -c is not launched from the console, so
+                 the small screen stays the Canvas lane's), and the /proc
+                 fallback with /dev/spark covered.
+      pid1       signals to init, orphans reaped, no zombie left with init
+                 as parent.
+    """
+    import random
+    seed = 1
+    if "--seed" in argv:
+        seed = int(argv[argv.index("--seed") + 1])
+    rng = random.Random(seed)
+    out = []
+    expects = []
+    segments = []
+
+    def q(text):
+        return "'" + text.replace("'", "'\\''") + "'"
+
+    def fmt(data):
+        # A printf format that writes data back byte for byte.
+        pieces = []
+        for byte in data:
+            ch = chr(byte)
+            if byte == 0x25:
+                pieces.append("%%")
+            elif byte == 0x5c:
+                pieces.append("\\\\")
+            elif byte == 0x27:
+                pieces.append("'\\''")
+            elif 32 <= byte < 127:
+                pieces.append(ch)
+            else:
+                pieces.append("\\%03o" % byte)
+        return "'" + "".join(pieces) + "'"
+
+    def family(name, lines):
+        # What the family asks, counted from what it says rather than kept
+        # by hand beside it: every question is one of these calls.
+        asked = sum(line.count(call) for line in lines
+                    for call in ("scen_status ", "scen_count ", "scen_same ",
+                                 "scen_same_file ", "scen_expect_empty"))
+        out.append("# ---- %s" % name)
+        out.extend(lines)
+        out.append("scen_done %s" % name)
+        expects.append((name, asked))
+
+    # ---------------------------------------------------------- settings
+    lines = []
+    PAYLOAD, ENTRY, TEXT_MOST, LIST_MOST = 16320, 8, 4096, 16
+    lists = {"init": [], "exit": []}
+    nexts = {"init": 1, "exit": 1}
+    used = [0]
+    mount_off = [False]
+    checked = [0]
+
+    def padded(n):
+        return (n + 3) // 4 * 4
+
+    def list_check(name):
+        want = ["%d  %s" % (i, t) for i, t, _ in lists[name]]
+        builds = []
+        for i, t, spell in lists[name]:
+            builds.append("printf '%%s\\n' %s" % ('"%d  %s"' % (i, spell) if spell else q("%d  %s" % (i, t))))
+        if not want:
+            builds.append("printf '%%s\\n' %s" % q("%s: %s" % (name, "nothing runs at boot" if name == "init" else "nothing runs when the machine stops")))
+        lines.append("{ %s; } > /tmp/sc.want" % "; ".join(builds))
+        lines.append("moonwater bind %s 2>&1 | scen_strip > /tmp/sc.got" % name)
+        checked[0] += 1
+        lines.append("scen_same %s" % q("settings list %s, check %d" % (name, checked[0])))
+
+    def status(label, want, command):
+        lines.append("%s > /dev/null 2>&1; scen_status %s %d $?" % (command, q(label), want))
+
+    lines.append("scen_expect_empty")
+    step = 0
+    for _ in range(46):
+        step += 1
+        name = rng.choice(("init", "init", "exit"))
+        roll = rng.random()
+        if roll < 0.46:
+            shape = rng.random()
+            spell = None
+            if shape < 0.08:
+                args, text = "''", ""
+            elif shape < 0.2:
+                n = rng.choice((600, 1500, 2600, TEXT_MOST - 5, TEXT_MOST - 4))
+                text = "echo " + "x" * n
+                args = '"echo $(scen_rep %d x)"' % n
+                spell = "echo $(scen_rep %d x)" % n
+            elif shape < 0.4:
+                words = ["true" if name == "exit" else "echo"] + \
+                    ["w%d" % rng.randrange(1000) for _ in range(rng.randrange(1, 4))]
+                args = " ".join(q(w) for w in words)
+                text = " ".join(words)
+            else:
+                word = rng.choice(("a b", "it's", 'say "hi"', "x=1;y=2", "$HOME", "semi;colon", "#hash"))
+                text = ("true " if name == "exit" else "echo ") + word
+                args = q(text)
+            if not text:
+                want = 2
+            elif len(text) > TEXT_MOST:
+                want = 1
+            elif len(lists[name]) >= LIST_MOST:
+                want = 1
+            elif PAYLOAD - used[0] < ENTRY + padded(len(text)):
+                want = 1
+            else:
+                want = 0
+                lists[name].append((nexts[name], text, spell))
+                nexts[name] += 1
+                used[0] += ENTRY + padded(len(text))
+            status("settings %d add %s" % (step, name), want,
+                   "moonwater bind %s add %s" % (name, args))
+        elif roll < 0.72:
+            how = rng.random()
+            if lists[name] and how < 0.45:
+                entry = rng.choice(lists[name])
+                args = str(entry[0])
+            elif how < 0.75 and any(not e[2] for e in lists[name]):
+                entry = rng.choice([e for e in lists[name] if not e[2]])
+                args = q(entry[1])
+            elif how < 0.88:
+                entry = None
+                args = str(rng.choice((0, 999, 65535, 70000)))
+            else:
+                entry = None
+                args = q("no such entry %d" % rng.randrange(100))
+            if entry:
+                lists[name].remove(entry)
+                used[0] -= ENTRY + padded(len(entry[1]))
+                want = 0
+            else:
+                want = 1
+            status("settings %d remove %s %s" % (step, name, args), want,
+                   "moonwater bind %s remove %s" % (name, args))
+        elif roll < 0.82:
+            word = rng.choice(("on", "off", "", "maybe"))
+            if name == "exit":
+                status("settings %d exit mount" % step, 2, "moonwater bind exit mount %s" % word)
+            elif word in ("on", "off"):
+                mount_off[0] = word == "off"
+                status("settings %d mount %s" % (step, word), 0, "moonwater bind init mount " + word)
+            elif word == "maybe":
+                status("settings %d mount maybe" % step, 2, "moonwater bind init mount maybe")
+            else:
+                lines.append("moonwater bind init mount 2>&1 | scen_strip > /tmp/sc.got")
+                lines.append("printf '%%s\\n' %s > /tmp/sc.want" % q("init mount " + ("off" if mount_off[0] else "on")))
+                lines.append("scen_same %s" % q("settings %d mount shown" % step))
+        elif roll < 0.9:
+            status("settings %d usage" % step, 2, rng.choice((
+                "moonwater bind %s add" % name, "moonwater bind %s remove" % name,
+                "moonwater bind %s drop x" % name)))
+        else:
+            list_check(name)
+    # Leave it as it was found: every entry out by id, mount on, both empty.
+    for name in ("init", "exit"):
+        for entry in list(lists[name]):
+            status("settings cleanup %s %d" % (name, entry[0]), 0,
+                   "moonwater bind %s remove %d" % (name, entry[0]))
+            lists[name].remove(entry)
+        list_check(name)
+    status("settings cleanup mount", 0, "moonwater bind init mount on")
+    family("settings", lines)
+
+    # -------------------------------------------------------------- wifi
+    lines = []
+    lines.append("cp /root/wifi /tmp/scen-wifi.kept 2>/dev/null; scen_wifi_had=$?")
+    for run in range(10):
+        records = []
+        for _ in range(rng.randrange(0, 20)):
+            kind = rng.random()
+            if kind < 0.06:
+                records.append(b"")                      # a stray blank line
+                continue
+            ssid_len = rng.choice((1, 5, 12, 31, 32, 33, 40))
+            ssid = bytes(rng.choice(b"abcdefXYZ019 -_.'\"") for _ in range(ssid_len))
+            if rng.random() < 0.08:
+                ssid = ssid[:1] + bytes([rng.choice((1, 9, 27, 31))]) + ssid[2:]
+            if rng.random() < 0.05:
+                ssid = ssid[:1] + b"\xc3\xa9" + ssid[1:]
+            pass_len = rng.choice((0, 0, 7, 8, 20, 63, 64, 70))
+            password = bytes(rng.choice(b"abcdefgh12345678!@#$%^&*") for _ in range(pass_len))
+            if password and rng.random() < 0.06:
+                password = password[:2] + b"\x07" + password[3:]
+            records.append(ssid)
+            records.append(password)
+        data = b"".join(r + b"\n" for r in records)
+        if data and rng.random() < 0.2:
+            data = data[:-1]                           # no newline at the end
+        # radio_wifi_load, line for line
+        text = data
+        networks = []
+        at = 0
+        want_ssid = True
+        current = None
+        while at < len(text) and len(networks) < 16:
+            start = at
+            while at < len(text) and text[at] != 0x0a:
+                at += 1
+            line = text[start:at]
+            if at < len(text):
+                at += 1
+            if want_ssid:
+                if not line:
+                    continue
+                if len(line) > 32 or any(b < 32 for b in line):
+                    current = None
+                    want_ssid = False
+                    continue
+                current = line
+                want_ssid = False
+                continue
+            if current is not None:
+                if line and (len(line) > 63 or any(b < 32 for b in line)):
+                    pass
+                else:
+                    networks.append(current)
+            current = None
+            want_ssid = True
+        if not want_ssid and len(networks) < 16 and current is not None:
+            networks.append(current)
+        lines.append("printf %s > /root/wifi" % fmt(data))
+        want_lines = b"wifi on\n" + b"".join(b"  " + n + b"\n" for n in networks)
+        lines.append("rm -f /root/wifi.power")
+        lines.append("printf %s > /tmp/sc.want" % fmt(want_lines))
+        lines.append("moonwater wifi 2>&1 | scen_strip > /tmp/sc.got")
+        lines.append("scen_same %s" % q("wifi file %d" % run))
+        # refusals the rules make before any radio: file left alone
+        refusals = [
+            ("''", "", "that network name is empty or too long"),
+            ('"$(scen_rep 33 n)"', "", "that network name is empty or too long"),
+            ("net", "short77", "a WPA password is 8 to 63 characters"),
+            ("net", "p" * 64, "that password is too long"),
+            ("net", "p" * 70, "that password is too long"),
+            ('"$(printf \'a\\tb\')"', "", "that network name cannot be stored"),
+            ("net", "pass\x01word", None),
+        ]
+        ssid_arg, password, message = rng.choice(refusals)
+        if message is None:
+            pw = '"$(printf \'pass\\001word\')"'
+            message = "that network name cannot be stored"
+        else:
+            pw = q(password) if password else ""
+        if len(networks) >= 16 and rng.random() < 0.5:
+            ssid_arg, pw, message = "brandnew", "", "too many saved networks"
+        lines.append("cp /root/wifi /tmp/sc.file 2>/dev/null || : > /tmp/sc.file")
+        lines.append("moonwater wifi add %s %s > /tmp/sc.got 2>&1; scen_status %s 1 $?"
+                     % (ssid_arg if ssid_arg.startswith(("'", '"')) else q(ssid_arg), pw,
+                        q("wifi refusal %d" % run)))
+        lines.append("scen_count %s 1 \"$(grep -c %s /tmp/sc.got)\"" % (q("wifi refusal %d says why" % run), q(message)))
+        lines.append("cmp -s /tmp/sc.file /root/wifi 2>/dev/null || [ ! -e /root/wifi ]; scen_status %s 0 $?" % q("wifi refusal %d leaves the file" % run))
+    lines.append("if [ \"$scen_wifi_had\" = 0 ]; then cp /tmp/scen-wifi.kept /root/wifi; else rm -f /root/wifi; fi")
+    family("wifi", lines)
+
+    # --------------------------------------------------------- bluetooth
+    lines = []
+    lines.append("cp /root/bluetooth /tmp/scen-bt.kept 2>/dev/null; scen_bt_had=$?")
+    lines.append("rm -f /root/bluetooth")
+    remembered = []
+    size = 0
+    for step in range(60):
+        kind = rng.random()
+        if kind < 0.1 and remembered:
+            name = rng.choice(remembered)
+        elif kind < 0.16:
+            name = "b" * rng.choice((129, 200))
+        elif kind < 0.2:
+            name = ""
+        else:
+            name = "dev%d-%s" % (rng.randrange(10000), "x" * rng.choice((0, 10, 60, 118)))
+        if not name or len(name) > 128:
+            want, why = 1, "that bluetooth name is empty or too long"
+        elif name in remembered:
+            want, why = 0, "bluetooth remembered"
+        elif size + len(name) + 1 >= 4096:
+            want, why = 1, "too many saved bluetooth devices"
+        else:
+            want, why = 0, "bluetooth remembered"
+            remembered.append(name)
+            size += len(name) + 1
+        lines.append("moonwater bluetooth add %s > /tmp/sc.got 2>&1; scen_status %s %d $?"
+                     % (q(name), q("bluetooth %d add" % step), want))
+        lines.append("scen_count %s 1 \"$(grep -c %s /tmp/sc.got)\"" % (q("bluetooth %d says" % step), q(why)))
+    lines.append("printf '%%s\\n' %s > /tmp/sc.want" % " ".join(q(n) for n in remembered))
+    lines.append("scen_same_file %s /root/bluetooth" % q("bluetooth list"))
+    lines.append("if [ \"$scen_bt_had\" = 0 ]; then cp /tmp/scen-bt.kept /root/bluetooth; else rm -f /root/bluetooth; fi")
+    family("bluetooth", lines)
+
+    # ---------------------------------------------------------- keyboard
+    lines = []
+    layouts = ("us", "uk", "gb", "de", "se", "sv", "no", "nb", "dk", "fi", "fr", "es", "it")
+    current = "us"
+    for step in range(20):
+        name = rng.choice(layouts + ("xx", "US", "u", "deu", ""))
+        if name in layouts:
+            current = name
+            status("keyboard %d set %s" % (step, name), 0, "moonwater keyboard %s" % name)
+        elif name == "":
+            status("keyboard %d empty" % step, 1, "moonwater keyboard ''")
+        else:
+            status("keyboard %d set %s" % (step, name), 1, "moonwater keyboard %s" % name)
+        lines.append("printf '%%s\\n' %s > /tmp/sc.want" % q("keyboard " + current))
+        lines.append("moonwater keyboard 2>&1 | scen_strip > /tmp/sc.got")
+        lines.append("scen_same %s" % q("keyboard %d reads back" % step))
+    status("keyboard back to us", 0, "moonwater keyboard us")
+    family("keyboard", lines)
+
+    # ----------------------------------------------------------- monitor
+    lines = []
+    #   monitor sizes itself from its standard output, and the image's
+    #   stty sets no size (script -c is not launched from the console
+    #   shell either), so these frames go to the console at the size it
+    #   reports, between reversed markers, and --segments reads them back
+    #   out of the transcript. The small-screen branch is the Canvas lane's.
+    for index in range(3):
+        frames = rng.randrange(1, 4)
+        lines.append("printf 'mon-%d-begin\\n' | rev; monitor 0.0%d %d; "
+                     "printf 'mon-%d-end-%%s\\n' $? | rev" % (index, rng.randrange(2, 9), frames, index))
+        segments.append((index, 0, 0, frames))
+    #   /dev/spark covered by an empty file, which sends the monitor to
+    #   /proc. Covering all of /dev takes floodlight's policy with it, and
+    #   then it refuses every launch.
+    lines.append(": > /tmp/scen-nospark")
+    lines.append("unshare -m sh -c 'mount --bind /tmp/scen-nospark /dev/spark && exec monitor 0.05 2' > /tmp/m.out 2>&1; scen_status 'monitor from /proc exits 0' 0 $?")
+    lines.append("scen_count 'monitor from /proc lists processes' 1 \"$(grep -q 'cpu%' /tmp/m.out && echo 1)\"")
+    family("monitor", lines)
+
+    # -------------------------------------------------------------- pid1
+    lines = []
+    signals = ["HUP", "INT", "QUIT", "USR1", "USR2", "PIPE", "ALRM", "TERM", "CHLD",
+               "CONT", "WINCH", "URG", "TSTP", "TTIN", "TTOU"]
+    for round_ in range(4):
+        picked = rng.sample(signals, rng.randrange(3, 7))
+        orphans = rng.randrange(4, 24)
+        lines.append("for s in %s; do kill -$s 1; done" % " ".join(picked))
+        lines.append("i=0; while [ $i -lt %d ]; do sh -c 'sleep 0.%d & sleep 0.%d & exit 0'; i=$((i + 1)); done"
+                     % (orphans, rng.randrange(1, 4), rng.randrange(1, 4)))
+        lines.append("sleep 1")
+        lines.append("scen_status %s 0 \"$([ -d /proc/1 ] && [ \"$(sed -n 's/^State:[[:space:]]*\\(.\\).*/\\1/p' /proc/1/status)\" != T ]; echo $?)\""
+                     % q("init alive and running after %s" % " ".join(picked)))
+        lines.append("scen_count %s 0 \"$(scen_zombies)\"" % q("no zombie left to init, round %d" % round_))
+    family("pid1", lines)
+
+    if "--segments" in argv:
+        # The console frames, read back: each run between its markers
+        # draws its frames, gives the screen back, exits 0 and shows the
+        # layout its size calls for.
+        seen = Path(argv[argv.index("--segments") + 1]).read_bytes()
+        for index, rows, cols, frames in segments:
+            begin = ("mon-%d-begin" % index)[::-1].encode()
+            end_mark = ("mon-%d-end-" % index)[::-1].encode()
+            name = "monitor on the console, run %d" % index
+            start = seen.find(begin + b"\r\n")
+            if start < 0:
+                start = seen.find(begin + b"\n")
+            stop = seen.find(end_mark, start + 1) if start >= 0 else -1
+            if start < 0 or stop < 0:
+                print("%s ran|no|yes" % name)
+                continue
+            # The monitor leaves no newline behind it, so its status, the
+            # digits reversed just before the end marker, shares a line
+            # with its last frame.
+            digits = stop
+            while digits > start and seen[digits - 1:digits].isdigit():
+                digits -= 1
+            status = seen[digits:stop][::-1].decode(errors="replace")
+            body = seen[start:digits]
+            print("%s exits 0|%s|0" % (name, status.strip()))
+            print("%s draws its frames|%d|%d" % (name, body.count(b"\033[?2026l"), frames + 1))
+            print("%s gives the screen back|%s|yes" % (name, "yes" if b"\033[?1049l" in body else "no"))
+            print("%s lists processes|%s|yes" % (name, "yes" if b"cpu%" in body else "no"))
+        return 0
+
+    head = ["#expect %s %d" % item for item in expects]
+    prelude = r'''scen_ok=0
+scen_all=0
+scen_strip() { sed 's/^.\[1m\[Moonwater\].\[0m //'; }
+scen_rep() { r=$2; while [ ${#r} -lt $1 ]; do r=$r$r; done; printf '%s\n' "$r" | cut -c1-$1; }
+scen_pass() { scen_ok=$((scen_ok + 1)); scen_all=$((scen_all + 1)); }
+scen_miss() { scen_all=$((scen_all + 1)); printf 'scenario-miss %s\n' "$*"; }
+scen_same() { if cmp -s /tmp/sc.want /tmp/sc.got; then scen_pass; else scen_miss "$1"; head -c 400 /tmp/sc.got | od -c | head -8; fi; }
+scen_same_file() { cp "$2" /tmp/sc.got 2>/dev/null || : > /tmp/sc.got; scen_same "$1"; }
+scen_status() { if [ "$2" = "$3" ]; then scen_pass; else scen_miss "$1: status $3, wanted $2"; head -c 300 /tmp/sc.got 2>/dev/null; echo; fi; }
+scen_count() { if [ "$2" = "$3" ]; then scen_pass; else scen_miss "$1: $3, wanted $2"; fi; }
+scen_done() { printf 'scen-%s-%s-of-%s\n' "$1" "$scen_ok" "$scen_all" | rev; scen_ok=0; scen_all=0; }
+scen_expect_empty() { moonwater bind init 2>&1 | grep -c 'nothing runs at boot' > /tmp/sc.got; printf '1\n' > /tmp/sc.want; scen_same 'settings start from none'; }
+scen_zombies() { n=0; for f in /proc/[0-9]*/status; do s=$(sed -n 's/^State:[[:space:]]*\(.\).*/\1/p' "$f" 2>/dev/null); pp=$(sed -n 's/^PPid:[[:space:]]*//p' "$f" 2>/dev/null); [ "$s" = Z ] && [ "$pp" = 1 ] && n=$((n + 1)); done; echo $n; }
+scen_find() { for p in /proc/[0-9]*; do c=$(tr '\000' ' ' < $p/cmdline 2>/dev/null); case $c in *"$1"*) echo ${p#/proc/};; esac; done; }'''
+    print("\n".join(head))
+    print(prelude)
+    print("\n".join(out))
+    return 0
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -32977,6 +33398,7 @@ HARNESS_CHECKS = {
     "riscv_builtins": harness_riscv_builtins,
     "objtool_shape": harness_objtool_shape,
     "coverage_report": harness_coverage_report,
+    "guest_scenarios": harness_guest_scenarios,
     "terminfo_install": harness_terminfo_install,
     "dhcp_packets": harness_dhcp_packets,
     "term_streams": harness_term_streams,

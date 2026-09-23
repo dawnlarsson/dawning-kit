@@ -10713,6 +10713,7 @@ moonwater timezone UTC > /dev/null 2>&1
 #       and when it lands after the write the child is refused, nobody ever
 #       opens the gate, and the parent hangs there until the boot times out.
 #
+#scenarios
 printf '%s\n' '#!/bin/dirname' > /tmp/floodlight-entry
 chmod +x /tmp/floodlight-entry
 mkfifo /tmp/floodlight-gate /tmp/floodlight-started
@@ -10724,6 +10725,36 @@ printf '%s\n' go > /tmp/floodlight-gate
 wait "$floodlight_child"
 poweroff
 COMMANDS
+
+#
+#       Generated scenarios, where the #scenarios line is: settings lists,
+#       the wifi and bluetooth files, keyboard layouts, the monitor on the
+#       console and in its failures, and init under signals and orphans
+#       with its two services killed until it gives them up --
+#       what only runs on a booted image, each family held to a model in
+#       differential.py --harness guest_scenarios. Before the last block,
+#       which leaves floodlight refusing scripts, and last otherwise, since
+#       init stops restarting the machine script and ip watch in it.
+#       MOONWATER_GUEST_SEED picks another draw.
+#
+if python3 test/differential.py --harness guest_scenarios \
+        --seed "${MOONWATER_GUEST_SEED:-1}" > "$work/scenarios" 2> "$work/scenarios.err"; then
+        awk -v with="$work/scenarios" '
+                $0 == "#scenarios" {
+                        print "cat > /tmp/scenarios.sh <<'"'"'SCENARIOS'"'"'"
+                        while ((getline line < with) > 0)
+                                if (line !~ /^#expect /)
+                                        print line
+                        print "SCENARIOS"
+                        print "sh /tmp/scenarios.sh < /dev/null"
+                        next
+                }
+                { print }' "$work/commands" > "$work/commands.run" &&
+                mv "$work/commands.run" "$work/commands"
+else
+        : > "$work/scenarios"
+        lost 'guest scenarios' "the generator failed: $(tail -1 "$work/scenarios.err")"
+fi
 
 coverage_guest "$image" "$work/coverage"
 coverage_guest_commands "$work/commands" > "$work/commands.run"
@@ -10742,7 +10773,7 @@ mv "$work/commands.run" "$work/commands"
 #
 if [ "$boot_emulator" = qemu-system-x86_64 ]; then
         # shellcheck disable=SC2086
-        timeout 180 "$boot_emulator" -m 2G -smp 2 "$@" \
+        timeout 240 "$boot_emulator" -m 2G -smp 2 "$@" \
                 -kernel "$image" -no-reboot -display none -serial stdio \
                 $coverage_serial \
                 -append "console=$boot_console drm_client_lib.active=" \
@@ -10750,7 +10781,7 @@ if [ "$boot_emulator" = qemu-system-x86_64 ]; then
         coverage_guest_collect boot
 else
         { sleep 15; cat "$work/commands"; } |
-                timeout 360 "$boot_emulator" -m 2G -smp 2 "$@" \
+                timeout 480 "$boot_emulator" -m 2G -smp 2 "$@" \
                 -kernel "$image" -no-reboot -display none -serial stdio \
                 -append "console=$boot_console drm_client_lib.active=" \
                 > "$work/transcript" 2>&1 || true
@@ -10835,6 +10866,17 @@ never transcript 'init survived'      'Attempted to kill init'
 never transcript 'no kernel panic'    'Kernel panic'
 
 says transcript 'init started'        'Run /init as init process'
+while read -r mark family total; do
+        [ "$mark" = "#expect" ] || continue
+        says transcript "scenarios: $family" \
+                "$(printf 'scen-%s-%s-of-%s' "$family" "$total" "$total" | rev)"
+done < "$work/scenarios"
+tr -d '\r' < "$work/transcript" | grep -a '^scenario-miss ' | head -20 | sed 's/^/    /'
+python3 test/differential.py --harness guest_scenarios --seed "${MOONWATER_GUEST_SEED:-1}" \
+        --segments "$work/transcript" > "$work/segments" 2>&1
+while IFS='|' read -r name got want; do
+        same "$name" "$want" "$got"
+done < "$work/segments"
 says transcript 'arithmetic'          'answer42'
 says transcript 'shifts'              'shift16'
 says transcript 'uname'               'xuniL'
