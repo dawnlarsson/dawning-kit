@@ -77,9 +77,20 @@ CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
 CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
 CONFIG_X86_INTEL_PSTATE=y
 CONFIG_X86_AMD_PSTATE=y
-# 2 is active/EPP: firmware picks the P-state across the whole range.
-# 3 is guided (the 7.2 default), which still needs the OS to move min/max.
-CONFIG_X86_AMD_PSTATE_DEFAULT_MODE=2
+# 3 is active (EPP): firmware picks the P-state across the whole range,
+# and it is the 7.2 default. The numbering is 1 disabled, 2 passive, 3
+# active, 4 guided -- this said 2 and called it active, which is passive,
+# the software ramp this line was meant to avoid. The command line in
+# profile/gpu names amd_pstate=active and x86 always prepends it, so no
+# image booted passive; a kernel built without that line would have.
+#
+# In active mode on a desktop or laptop firmware profile, 7.2 starts the
+# powersave policy with EPP balance_performance, on AC and battery alike
+# unless amd_dynamic_epp is asked for. That is the choice: a busy core
+# climbs to boost at once, an idle one drops to the floor and a deep
+# C-state, and performance (EPP 0) would hold the clock up for nothing.
+# A server or undefined firmware profile starts at performance instead.
+CONFIG_X86_AMD_PSTATE_DEFAULT_MODE=3
 # Zen 2+ uses amd-pstate; Bulldozer through Zen 1 still need ACPI _PSS.
 CONFIG_X86_ACPI_CPUFREQ=y
 CONFIG_CPU_IDLE=y
