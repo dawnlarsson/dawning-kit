@@ -15072,6 +15072,36 @@ static fn df_reading(file_mount_facts address_to facts, p64 address_to total,
         address_to spare = facts->blocks_available;
 }
 
+/*      A control byte written as '?', as GNU df and mount write a device
+        and a mount point: either can be a name a user chose -- a FUSE
+        mount's source, a directory under /run/media named after a stick's
+        label, a mount in a user namespace -- and the tools that list them
+        are run by root on the whole table. The length is the name's, so a
+        column measured from it still holds; UTF-8 is left alone. */
+static fn file_write_controls_hidden(writer output, string_address text,
+                                     positive width)
+{
+        positive length = string_length(text);
+        positive plain = 0;
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 byte = (p8)text[at];
+
+                if (byte >= 32 && byte != 127)
+                        continue;
+                // A writer takes a length of 0 as "to the end".
+                if (at > plain)
+                        output(text + plain, at - plain);
+                output("?", 1);
+                plain = at + 1;
+        }
+        if (length > plain)
+                output(text + plain, length - plain);
+        for (; length < width; length++)
+                output(" ", 1);
+}
+
 static fn df_row(string_address device, string_address type, string_address where,
                  file_mount_facts address_to facts, bool measured,
                  df_amount_column address_to columns)
@@ -15083,7 +15113,7 @@ static fn df_row(string_address device, string_address type, string_address wher
         df_reading(facts, values, values + 1, values + 2,
                    address_of size);
 
-        string_to_field_bulk(log, device, df_device_width, ' ', true);
+        file_write_controls_hidden(log, device, df_device_width);
         log(" ", 1);
 
         if (df_types)
@@ -15113,7 +15143,7 @@ static fn df_row(string_address device, string_address type, string_address wher
                 log("% ", 2);
         }
 
-        log(where, 0);
+        file_write_controls_hidden(log, where, 0);
         log("\n", 1);
 }
 

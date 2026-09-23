@@ -29860,6 +29860,118 @@ int main(int argc, char **argv) {
     return 0 if passed == total and ran.returncode == 0 else 1
 
 
+def harness_mount_names(argv):
+    """Mount points and sources named by whoever mounts them, listed by root.
+
+    A mount point is a name anyone who can mount chooses -- a FUSE user
+    through setuid fusermount, a stick's label under /run/media, anyone in a
+    user namespace -- and so is a mount's source. The kernel's mountinfo
+    escapes only space, tab, newline and backslash, so ESC, BEL, DEL and C1
+    reach the tools that list the table whole. GNU df writes a control byte
+    as '?', util-linux findmnt spells it \\xNN in its table and mount writes
+    the target's as '?'. Inside unshare -Urm, seeded names from a grammar of
+    those bytes, UTF-8, backslashes and plain text are mounted as tmpfs and
+    listed by df, findmnt (tree, list, raw, pairs) and mount, ours against
+    the box's, in the C locale. mount's source is spelled '?' at STRICT_SAFE
+    where util-linux writes it raw, so the reference's is spelled the same
+    before the lines are compared. The parent wrote every name raw.
+    """
+    import random
+    import shutil
+    import subprocess
+    import tempfile
+    farm = Path(argv[0]) if argv else None
+    seeds = int(argv[1]) if len(argv) > 1 else 24
+    if not farm or not (farm / "df").exists():
+        print("  FAIL mount names needs the farm directory")
+        return 1
+    references = {tool: shutil.which(tool) for tool in ("df", "findmnt", "mount", "unshare")}
+    if not all(references.values()):
+        print("mount names: NOT RUN -- no reference df, findmnt, mount or unshare")
+        return 2
+    pieces = [b"\x1b[31m", b"\x1b]0;t\x07", b"\x07", b"\x7f", b"\x01", b"\x1b", b"\\", b"\\x41",
+              "å".encode(), b"\xc2\x9b", b"~", b"plain", b"-", b"."]
+    rng = random.Random(0x6d6e74)
+    names = []
+    for seed in range(seeds):
+        draw = b"".join(rng.choice(pieces) for _ in range(1 + rng.randrange(4)))
+        names.append((b"n%d" % seed + draw, b"s%d" % seed + draw.replace(b"\\", b"")))
+    with tempfile.TemporaryDirectory(prefix="mount-names-") as temporary:
+        top = Path(temporary)
+        base = top / "m"
+        base.mkdir()
+        script = [b"set -u", b"cd " + bytes(base)]
+        for index, (target, source) in enumerate(names):
+            script.append(b"mkdir -p -- '" + target + b"' && mount -t tmpfs -- '" + source +
+                          b"' '" + target + b"' || echo MOUNTFAIL %d" % index)
+        for side, bin_df, bin_findmnt, bin_mount in (
+                (b"ref", references["df"], references["findmnt"], references["mount"]),
+                (b"ours", str(farm / "df"), str(farm / "findmnt"), str(farm / "mount"))):
+            for label, command in ((b"df", bin_df.encode() + b" -a"),
+                                   (b"findmnt", bin_findmnt.encode()),
+                                   (b"findmnt-l", bin_findmnt.encode() + b" -l -o TARGET,SOURCE"),
+                                   (b"findmnt-r", bin_findmnt.encode() + b" -r -o TARGET,SOURCE"),
+                                   (b"findmnt-P", bin_findmnt.encode() + b" -P -o TARGET,SOURCE"),
+                                   (b"mount", bin_mount.encode())):
+                script.append(b"echo '@@ " + side + b" " + label + b"'; LC_ALL=C " + command +
+                              b" 2>/dev/null | grep -a -F -- '" + bytes(base) + b"/'")
+        (top / "scene.sh").write_bytes(b"\n".join(script) + b"\n")
+        ran = subprocess.run([references["unshare"], "-Urm", "bash", str(top / "scene.sh")],
+                             capture_output=True, timeout=120)
+    if b"MOUNTFAIL" in ran.stdout or ran.returncode:
+        print("mount names: NOT RUN -- no user and mount namespace here (%r)"
+              % ran.stderr[-200:])
+        return 2
+    listings = {}
+    for block in ran.stdout.split(b"@@ ")[1:]:
+        head, _, body = block.partition(b"\n")
+        listings[tuple(head.split())] = body
+
+    def squeezed(text):
+        return re.sub(rb" +", b" ", text)
+
+    def spell_source(text):
+        # util-linux mount writes the source raw; this build spells it as
+        # the target is spelled, which is the only difference allowed.
+        out = []
+        for line in text.split(b"\n"):
+            source, on, rest = line.partition(b" on ")
+            out.append(re.sub(rb"[\x00-\x1f\x7f]", b"?", source) + on + rest)
+        return b"\n".join(out)
+
+    checks = passed = 0
+    for label in (b"df", b"findmnt", b"findmnt-l", b"findmnt-r", b"findmnt-P", b"mount"):
+        want = listings.get((b"ref", label), b"")
+        got = listings.get((b"ours", label), b"")
+        if label == b"mount":
+            want = spell_source(want)
+        want_lines = squeezed(want).split(b"\n")
+        got_lines = squeezed(got).split(b"\n")
+        if label == b"findmnt":
+            # The tree's branch glyphs depend on each mount's place among
+            # the others; the names are what is under test.
+            want_lines = [re.sub(rb"^[ |`-]*", b"", line) for line in want_lines]
+            got_lines = [re.sub(rb"^[ |`-]*", b"", line) for line in got_lines]
+        for index, line in enumerate(want_lines):
+            checks += 1
+            other = got_lines[index] if index < len(got_lines) else b""
+            if other == line:
+                passed += 1
+            elif checks - passed <= 6:
+                print("  FAIL %s line %d\n    want %r\n    got  %r" % (label.decode(), index, line, other))
+        if len(got_lines) != len(want_lines):
+            checks += 1
+            print("  FAIL %s lists %d lines where the reference lists %d"
+                  % (label.decode(), len(got_lines), len(want_lines)))
+        if not want.strip():
+            checks += 1
+            print("  FAIL the reference %s listed none of the mounts" % label.decode())
+    print("mount names: %d of %d lines as the references write them, %d names in six listings"
+          % (passed, checks, len(names)))
+    write_tally("mount-names", passed, checks)
+    return 0 if passed == checks else 1
+
+
 def harness_term_streams(argv):
     """Generated byte streams through the terminal emulator, which is ring 0.
 
@@ -31408,6 +31520,7 @@ HARNESS_CHECKS = {
     "dhcp_packets": harness_dhcp_packets,
     "term_streams": harness_term_streams,
     "console_queue": harness_console_queue,
+    "mount_names": harness_mount_names,
     "pane_restride": harness_pane_restride,
     "host_writes": harness_host_writes,
     "moonwater_cli": harness_moonwater_cli,

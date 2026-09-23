@@ -2618,20 +2618,51 @@ static b32 storage_columns(string_address list,
 #define storage_column_name(column) storage_column_table[(column)].name
 
 /* Count and write the same bounded cell pieces. Counting returns the original
-   byte width: raw/pairs escaping does not participate in padded columns. */
+   byte width: raw/pairs escaping does not participate in padded columns.
+
+   The padded listing spells what libsmartcols spells in the C locale, a
+   control byte or one past ASCII as \xNN and a backslash as \x5c where an x
+   follows it, so no name reads as a spelling; it is as wide as what it
+   shows. It wrote them whole: a mount point is a name anyone who can mount
+   -- a FUSE user, a stick's label under /run/media -- chooses, and findmnt
+   put its escapes on root's terminal. */
+#define STORAGE_FINDMNT_SPELLED (HEX_CONTROL | HEX_TAB | HEX_HIGH)
+
 static positive storage_findmnt_value(writer output, string_address value,
                                       positive length, bool raw, bool pairs)
 {
-        if (output)
+        if (raw || pairs)
         {
-                if (raw || pairs)
+                if (output)
                         writer_hex_escaped(output, value, length,
                             HEX_CONTROL | HEX_TAB | HEX_SLASH | HEX_HIGH |
                             (pairs ? HEX_QUOTE : HEX_SPACE));
-                else
-                        output(value, length);
+                return length;
         }
-        return length;
+
+        positive shown = length;
+        positive plain = 0;
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 byte = (p8)value[at];
+
+                if (!(escape_categories[byte] & STORAGE_FINDMNT_SPELLED) &&
+                    !(byte == '\\' && at + 1 < length && value[at + 1] == 'x'))
+                        continue;
+                shown += 3;
+                if (!output)
+                        continue;
+                // A writer takes a length of 0 as "to the end".
+                if (at > plain)
+                        output(value + plain, at - plain);
+                writer_hex_escaped(output, value + at, 1,
+                                   STORAGE_FINDMNT_SPELLED | HEX_SLASH);
+                plain = at + 1;
+        }
+        if (output && length > plain)
+                output(value + plain, length - plain);
+        return shown;
 }
 
 static PURE inline INLINE bool storage_filesystem_option_represented(
@@ -4128,8 +4159,17 @@ static b32 storage_mount_list(writer write, writer diagnostic,
                 storage_mount address_to record = table.entry + at;
                 if (storage_type_match(type_filter, record->type))
                 {
-                        string_format(write, "%s on %s type %s (", record->source,
-                                      record->target, record->type);
+                        /* util-linux writes the target's control bytes
+                           as '?' and the source's whole; safe spells the
+                           source the same way, since a FUSE user names it. */
+#if MOONWATER_STRICT >= STRICT_SAFE
+                        file_write_controls_hidden(write, record->source, 0);
+#else
+                        write(record->source, 0);
+#endif
+                        write(str(" on "));
+                        file_write_controls_hidden(write, record->target, 0);
+                        string_format(write, " type %s (", record->type);
                         storage_combined_options_write(write, record, false,
                                                        false);
                         if (write)

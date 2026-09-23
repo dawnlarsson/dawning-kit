@@ -4732,6 +4732,10 @@ lane_util_linux()
         fi
 
         differential_domain util_linux "$policy_farm" || util_linux_failed=1
+
+        #       Mount names a user chose, planted in a namespace and listed.
+        python3 test/differential.py --harness mount_names "$farm"
+        case $? in 0|2) ;; *) util_linux_failed=1 ;; esac
         return "$util_linux_failed"
 }
 lane_shell()
