@@ -13513,11 +13513,18 @@ static positive text_spans_count;
 static bool text_spans_build(bool complement)
 {
         positive limit = max(text_list_used, text_list_open);
+        /*      Only the marked positions are walked one at a time. Between
+                the last mark and an open range that starts far beyond it
+                nothing is listed and nothing begins, so it is one gap: the
+                walk to it was per position, and cut -b 1,100000000000000-
+                spent hours here before reading a byte, where GNU answers. */
+        positive walked = text_list_open > text_list_used ? text_list_used
+                                                          : limit;
         bool ran = false;
 
         text_spans_count = 0;
 
-        for (positive at = 1; at < limit; at++)
+        for (positive at = 1; at < walked; at++)
         {
                 if (text_list_has(at) == complement)
                 {
@@ -13533,6 +13540,22 @@ static bool text_spans_build(bool complement)
                         text_spans[text_spans_count++] = (text_span){at, at};
 
                 ran = true;
+        }
+
+        if (max(walked, (positive)1) < limit)
+        {
+                if (!complement)
+                        ran = false;
+                else if (ran)
+                        text_spans[text_spans_count - 1].last = limit - 1;
+                else if (text_spans_count == TEXT_SPANS_MAX)
+                        return false;
+                else
+                {
+                        text_spans[text_spans_count++] =
+                            (text_span){max(walked, (positive)1), limit - 1};
+                        ran = true;
+                }
         }
 
         // Every position from limit on answers alike, and none of them was

@@ -15520,6 +15520,12 @@ TEXT_UTILITIES = (
                    ("-d", ":", "-f", "1,1,1"), ("-d", ":", "-f", "3,1"), ("-d", ",", "-f", "2,2"),
                    ("-c1-3", "--complement"), ("-c1,3", "--output-delimiter=X"), ("-c1-2,4", "--output-delimiter=X"),
                    ("-c1,2", "--output-delimiter=X"), ("-OX", "-c1,3"), ("-c4999,5001", "-OX", "wide"),
+                   #   An open range far past the last mark, which the span
+                   #   builder walked one position at a time before reading.
+                   ("-b", "1,100000000000000-", "a.txt"), ("-c", "2,3,99999999999999-", "wide"),
+                   ("--complement", "-b", "1,100000000000000-", "a.txt"),
+                   ("--complement", "-c", "3,5,4000-", "wide"), ("-b", "5,1-2,70000-", "wide"),
+                   ("-b", "18446744073709551614-", "a.txt"), ("--complement", "-b", "99999999999-", "a.txt"),
                    ("-c5000", "wide"), ("-c4999-5001", "wide"), ("-c1-", "wide"), ("-c", "1", "nonl"),
                    (), ("-d", ":"), ("--complement",))),
     Utility("expand",
