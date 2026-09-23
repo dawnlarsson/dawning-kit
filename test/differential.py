@@ -33002,8 +33002,11 @@ def harness_guest_scenarios(argv):
                  size and script -c is not launched from the console, so
                  the small screen stays the Canvas lane's), and the /proc
                  fallback with /dev/spark covered.
+      proc       /proc/PID/cmdline and environ of generated argument and
+                 environment lists read back whole.
       pid1       signals to init, orphans reaped, no zombie left with init
-                 as parent.
+                 as parent; the machine script and ip watch, found by their
+                 command lines, killed until init stops starting them again.
     """
     import random
     seed = 1
@@ -33326,6 +33329,29 @@ def harness_guest_scenarios(argv):
     lines.append("scen_count 'monitor from /proc lists processes' 1 \"$(grep -q 'cpu%' /tmp/m.out && echo 1)\"")
     family("monitor", lines)
 
+    # -------------------------------------------------------------- proc
+    #   What a process was started with, as /proc gives it back to anyone
+    #   who asks -- ps, top and pgrep -f in a bowl, and scen_find here: the
+    #   words joined by NUL, each ended by one, and the environment the same.
+    lines = []
+    pool = ("a", "two words", "", "--", "-c", "x" * 300, "*", "$HOME", "tab\\tnot")
+    for case in range(8):
+        words = [rng.choice(pool) for _ in range(rng.randrange(0, 5))]
+        name = "n%d" % case
+        script = 'tr "\\000" "|" < /proc/$$/cmdline'
+        #   By its path, which is what the program's first word is here
+        #   and under bash alike; a bare sh this shell hands over resolved.
+        want = "|".join(["/bin/sh", "-c", script, name] + words) + "|"
+        lines.append("/bin/sh -c %s %s %s > /tmp/sc.got" % (q(script), name, " ".join(q(w) for w in words)))
+        lines.append("printf '%%s' %s > /tmp/sc.want" % q(want))
+        lines.append("scen_same %s" % q("proc cmdline %d" % case))
+        env = ["V%d=%s" % (at, rng.choice(("1", "a b", "", "x" * 120))) for at in range(rng.randrange(1, 4))]
+        script = 'tr "\\000" "|" < /proc/$$/environ'
+        lines.append("env -i %s /bin/sh -c %s > /tmp/sc.got" % (" ".join(q(e) for e in env), q(script)))
+        lines.append("printf '%%s' %s > /tmp/sc.want" % q("|".join(env) + "|"))
+        lines.append("scen_same %s" % q("proc environ %d" % case))
+    family("proc", lines)
+
     # -------------------------------------------------------------- pid1
     lines = []
     signals = ["HUP", "INT", "QUIT", "USR1", "USR2", "PIPE", "ALRM", "TERM", "CHLD",
@@ -33340,6 +33366,24 @@ def harness_guest_scenarios(argv):
         lines.append("scen_status %s 0 \"$([ -d /proc/1 ] && [ \"$(sed -n 's/^State:[[:space:]]*\\(.\\).*/\\1/p' /proc/1/status)\" != T ]; echo $?)\""
                      % q("init alive and running after %s" % " ".join(picked)))
         lines.append("scen_count %s 0 \"$(scen_zombies)\"" % q("no zombie left to init, round %d" % round_))
+    #   The two long-lived services, killed until init gives each up, found
+    #   by the command line each was started with -- the only thing that
+    #   tells them apart: every program here is /shell to the kernel.
+    #   Each comeback is killed as soon as it shows, inside the second
+    #   init gives a restart to count as a failure, and the loop ends once
+    #   none has come back for three seconds -- or at 40 kills, which is a
+    #   service init never gave up.
+    lines.append("scen_child() { for f in $(grep -l '^PPid:[[:space:]]*1$' /proc/[0-9]*/status 2>/dev/null); do "
+                 "d=${f%/status}; c=$(tr '\\000' ' ' < $d/cmdline 2>/dev/null); case $c in *\"$1\"*) echo ${d#/proc/};; esac; done; }")
+    lines.append("scen_kill_until() { scen_kills=0; idle=0; while [ $idle -lt 30 ] && [ $scen_kills -lt 40 ]; do "
+                 "p=$(scen_child \"$1\"); if [ -n \"$p\" ]; then kill -KILL $p; scen_kills=$((scen_kills + 1)); idle=0; "
+                 "else idle=$((idle + 1)); sleep 0.1; fi; done; }")
+    lines.append("scen_kill_until 'moonwater machine'")
+    lines.append("scen_count 'the machine script was there and came back' 1 \"$([ $scen_kills -ge 3 ] && echo 1)\"")
+    lines.append("scen_count 'init stops restarting the machine script' 0 \"$(scen_child 'moonwater machine' | wc -w)\"")
+    lines.append("scen_kill_until 'ip watch'")
+    lines.append("scen_count 'ip watch was there and came back' 1 \"$([ $scen_kills -ge 2 ] && echo 1)\"")
+    lines.append("scen_count 'init stops restarting ip watch' 0 \"$(scen_child 'ip watch' | wc -w)\"")
     family("pid1", lines)
 
     if "--segments" in argv:

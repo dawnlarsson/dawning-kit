@@ -903,14 +903,24 @@ static struct linux_binfmt format = {
         No auxiliary vector. A spark image is mapped at a fixed base by the
         loader above and has no interpreter to inform, which is the whole of
         what auxv is for here.
+
+        And where the strings end, which create_elf_tables also says and this
+        did not: setup_arg_pages leaves arg_start, and arg_end, env_start and
+        env_end are what /proc/PID/cmdline and /proc/PID/environ read
+        between. Left at zero, every program's command line read as empty --
+        ps, top and pgrep -f in a bowl saw nothing, and so did anything here
+        that looked a process up by what it was started as.
 */
 static int spark_stack(struct linux_binprm *bprm, unsigned long *out)
 {
+        struct mm_struct *mm = current->mm;
         unsigned long walk = bprm->p;
         unsigned long __user *slot;
         unsigned long bottom;
         int count = bprm->argc + bprm->envc;
         int i;
+
+        mm->arg_end = mm->env_start = mm->env_end = walk;
 
         // A count, every pointer, and the two nulls that end each list.
         bottom = (walk - (unsigned long)(count + 3) * sizeof(unsigned long)) & ~15UL;
@@ -935,6 +945,10 @@ static int spark_stack(struct linux_binprm *bprm, unsigned long *out)
                         return -EFAULT;
 
                 walk += (unsigned long)length;
+
+                if (i < bprm->argc)
+                        mm->arg_end = mm->env_start = walk;
+                mm->env_end = walk;
         }
 
         // The null after argv when there was no environment to start one.
