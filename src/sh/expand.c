@@ -4564,6 +4564,11 @@ static COLD fn expand_fatal_status(b32 status)
         Interactive shells recover at the next line either way. Invalid
         ${!name} is not this class: bash continues under --posix too.
 */
+// Set while an arithmetic expression's own failure is being raised, which an
+// interactive bash survives under -e where every other expansion error ends
+// it; exec_abort_line reads it.
+static bool expand_arithmetic_failing;
+
 static COLD fn expand_arithmetic_error()
 {
         if (shell_bash_compat && !shell_posix_on())
@@ -4598,7 +4603,9 @@ static HOT string_address expand_arithmetic_finish(string_address ready,
                         {
                                 shell_arith_report(writer_stderr_once, null,
                                                    ready);
+                                expand_arithmetic_failing = true;
                                 expand_arithmetic_error();
+                                expand_arithmetic_failing = false;
                         }
 
                         return stop + 2;
@@ -5161,7 +5168,10 @@ static COLD fn expand_slice_error()
 */
 static COLD fn expand_indirect_error()
 {
-        if (shell_bash_compat)
+        //      An interactive bash under -e leaves on it as on any other
+        //      expansion error but an arithmetic one.
+        if (shell_bash_compat &&
+            !(shell_is_interactive && (shell_options & ((positive)1 << ('e' - 'a')))))
                 expand_slice_error();
         else
                 expand_fatal_status(1);

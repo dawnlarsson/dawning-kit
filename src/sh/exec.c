@@ -188,9 +188,24 @@ static DEAD_END fn exec_child_leave(b32 status)
         break, except that no construct is allowed to consume it. The reader
         clears it when the next top-level input line begins.
 */
+static bool exec_abort_recoverable;
+
 static COLD fn exec_abort_line(b32 status)
 {
         if (exec_forked)
+                exec_child_leave(status);
+
+        /*
+                The line is over, and under -e so is the shell: bash leaves
+                an interactive session on ${y:?}, set -u's unbound name, a bad
+                substitution or a readonly assignment the way errexit leaves
+                it for any failed command -- only an arithmetic error, which
+                is recoverable at a terminal, does not end it. This went on
+                reading, so a session run with -e survived the very errors -e
+                is there to stop on.
+        */
+        if (shell_bash_compat && shell_is_interactive && !exec_abort_recoverable &&
+            !expand_arithmetic_failing && (shell_options & SHELL_ERREXIT))
                 exec_child_leave(status);
 
         shell_status = status;
@@ -203,7 +218,9 @@ static COLD fn exec_abort_line(b32 status)
 // this signal on return, while functions and loops must keep unwinding.
 COLD fn exec_expand_input_error()
 {
+        exec_abort_recoverable = true;
         exec_abort_line(shell_status);
+        exec_abort_recoverable = false;
         exec_signal = EXEC_SIGNAL_INPUT_ERROR;
 }
 
