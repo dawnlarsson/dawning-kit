@@ -7526,6 +7526,35 @@ def files_tar_archives(rng, count):
             archive.addfile(info, io.BytesIO(data))
         moments.append((f"moment-{number}", stream.getvalue(), True))
 
+    #   The same stamps in the GNU format, where they are base-256 and a
+    #   negative one is two's complement: -tv read the field unsigned,
+    #   refused the sign and listed 1970. With a normal member beside an
+    #   absurd one, in both orders, since GNU grows the date column to the
+    #   widest date so far and pads the dates after it. And an owner and a
+    #   group carrying control bytes, which GNU writes raw and this build
+    #   spells \xNN (see files_tar).
+    def gnu(*members):
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w", format=tarfile.GNU_FORMAT) as archive:
+            for info, data in members:
+                archive.addfile(info, io.BytesIO(data))
+        return stream.getvalue()
+
+    for number, moment in enumerate((-70000000000000, -1, -86401, 8 ** 11,
+                                     67767976233532799)):
+        moments.append((f"gnu-moment-{number}",
+                        gnu(member("file", "ancient", mtime=moment, data=b"a")), True))
+    moments.append(("gnu-moment-wide-first",
+                    gnu(member("file", "ancient", mtime=-70000000000000, data=b"a"),
+                        member("file", "recent", data=b"r")), True))
+    moments.append(("gnu-moment-wide-last",
+                    gnu(member("file", "recent", data=b"r"),
+                        member("file", "ancient", mtime=-70000000000000, data=b"a"),
+                        member("file", "after", data=b"b")), True))
+    owned, _ = member("file", "owned", data=b"o")
+    owned.uname, owned.gname = "a\x1b]0;title\x07b", "g\nh\tt"
+    moments.append(("owner-controls", gnu((owned, b"o")), True))
+
     return archives, moments, files_tar_sparse(rng, 24)
 
 
@@ -7700,13 +7729,27 @@ def files_tar(farm):
     cases = [(name, data, command, settled)
              for name, data, settled in archives for command in commands] + \
             [(name, data, ("tvf",), settled) for name, data, settled in moments] + \
+            [(name, data, ("xf",), settled) for name, data, settled in moments
+             if name in ("gnu-moment-1", "gnu-moment-2", "gnu-moment-3")] + \
             [(name, data, command, settled) for name, data, settled in sparse
              for command in (("tvf",), ("xf",))]
+
+    #   An owner or group with a control byte in it is spelled \xNN here
+    #   and written raw by GNU, and the column is as wide as what is shown;
+    #   so GNU's line, with those bytes spelled and the padding folded, is
+    #   the answer.
+    def spelled(listing):
+        body = re.sub(rb"[\x00-\x1f]", lambda byte: b"\\x%02x" % byte.group(0)[0],
+                      listing[:-1]) + listing[-1:]
+        return re.sub(rb" +", b" ", body)
 
     def compare(case):
         name, data, command, settled = case
         want, _ = run(reference, name, data, command)
         got, escaped = run(str(candidate), name, data, command)
+        if name.startswith("owner-") and command == ("tvf",):
+            want = (want[0], spelled(want[1]), want[2])
+            got = (got[0], re.sub(rb" +", b" ", got[1]), got[2])
         return case, (want if settled or command[0] != "xf" else got), got, escaped
 
     passed, notes = 0, []

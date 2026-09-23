@@ -55,6 +55,41 @@ static bool tar_base256(p8 address_to field, positive width,
 }
 
 static bool tar_field_value(p8 address_to field, positive width,
+                            p64 address_to value);
+
+/*      A time, which base-256 may make negative: the field is a two's
+        complement number under its marker bit, as GNU reads it, so 0xff
+        followed by 0xff... is -1 and a stamp before 1970 lists as the year
+        it was rather than as 1970, which is what refusing it -- and so
+        having no time at all -- printed. Octal is never negative. */
+static bool tar_field_moment(p8 address_to field, positive width,
+                             b64 address_to value)
+{
+        p64 plain;
+        b64 held;
+
+        if (!width || !(field[0] & 0x80))
+        {
+                if (!tar_field_value(field, width, address_of plain) ||
+                    plain > (p64)bipolar_max)
+                        return false;
+                address_to value = (b64)plain;
+                return true;
+        }
+
+        held = (b64)(field[0] & 0x3f) - (b64)(field[0] & 0x40);
+        for (positive at = 1; at < width; at++)
+        {
+                if (held > (bipolar_max >> 8) || held < (bipolar_min >> 8))
+                        return false;
+                held = held * 256 + field[at];
+        }
+
+        address_to value = held;
+        return true;
+}
+
+static bool tar_field_value(p8 address_to field, positive width,
                             p64 address_to value)
 {
         p8 digits[32];
@@ -862,7 +897,13 @@ static fn tar_name_line(writer output, string_address name)
         goes. -v was accepted and printed the bare name.
 */
 static positive tar_listing_width = 19;
+static positive tar_listing_date_width = 16;
 
+/*      The owner and group are names the archive chose, so a control byte in
+        one is spelled \xNN rather than written to the terminal, where
+        g\nh forged a line of the listing; the column is as wide as what is
+        shown. GNU writes them as they are, and so does a build for
+        diffing against it. */
 static positive tar_header_word(p8 address_to into, p8 address_to field,
                                 positive width, p64 number, bool numeric)
 {
@@ -870,13 +911,18 @@ static positive tar_header_word(p8 address_to into, p8 address_to field,
 
         if (!numeric)
                 while (length < width && field[length])
-                {
-                        into[length] = field[length];
                         length++;
-                }
 
         if (!length)
                 length = positive_into(into, (positive)number);
+#if MOONWATER_STRICT >= STRICT_SAFE
+        else
+                length = memory_into_escaped(into, field, length, 4 * width,
+                                             HEX_CONTROL | HEX_TAB).y;
+#else
+        else
+                memory_copy(into, field, length);
+#endif
 
         into[length] = end;
         return length;
@@ -894,8 +940,8 @@ static fn tar_long_line(p8 address_to block, p8 type, p64 mode, p64 size,
                      {'5', 0040000}, {'6', 0010000}, {'D', 0040000}};
         positive format = 0100000;
         p8 letters[12];
-        p8 owner[40];
-        p8 grouped[40];
+        p8 owner[4 * 32 + 1];
+        p8 grouped[4 * 32 + 1];
         p8 amount[48];
         positive widths;
         positive length;
@@ -965,6 +1011,12 @@ static fn tar_long_line(p8 address_to block, p8 type, p64 mode, p64 size,
                         when[at++] = (p8)('0' + parts[part] / 10);
                         when[at++] = (p8)('0' + parts[part] % 10);
                 }
+                /*      Left in a column as wide as the widest date so far,
+                        the way the size is right in one: GNU's datewidth. */
+                if (at > tar_listing_date_width)
+                        tar_listing_date_width = at;
+                while (at < tar_listing_date_width)
+                        when[at++] = ' ';
                 when[at] = end;
                 string_format(log, "%s %s ", (string_address)amount, (string_address)when);
         }
@@ -3190,7 +3242,7 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 p64 minor = 0;
                 p64 user = 0;
                 p64 group = 0;
-                p64 stamp = 0;
+                b64 stamp = 0;
                 bool stamped;
                 tar_member_meta meta;
                 p8 kept[TAR_PATH];
@@ -3236,7 +3288,7 @@ static b32 tar_read_archive(struct tar_options address_to options)
 
                 /* Owner and time are not worth refusing an archive over: a
                    field that does not parse restores nothing. */
-                stamped = tar_field_value(block + 136, 12, address_of stamp);
+                stamped = tar_field_moment(block + 136, 12, address_of stamp);
                 if (!tar_field_value(block + 108, 8, address_of user))
                         user = 0;
                 if (!tar_field_value(block + 116, 8, address_of group))
@@ -3359,7 +3411,7 @@ static b32 tar_read_archive(struct tar_options address_to options)
                                               tar_pax_local.has_group ? tar_pax_local.group : group,
                                               major, minor,
                                               tar_pax_local.has_time ? tar_pax_local.seconds
-                                                                     : (b64)stamp,
+                                                                     : stamp,
                                               tar_name, target, options->numeric);
                         else
                                 tar_name_line(log, tar_name);
@@ -3436,12 +3488,10 @@ static b32 tar_read_archive(struct tar_options address_to options)
                                    ? address_of tar_pax_local
                                    : address_of tar_pax_global;
                         meta.seconds = said->has_time ? said->seconds
-                                                      : (b64)stamp;
+                                                      : stamp;
                         meta.nanoseconds = said->has_time ? said->nanoseconds
                                                           : 0;
-                        meta.timed = said->has_time ||
-                                     (stamped &&
-                                      stamp <= 0x7fffffffffffffffull);
+                        meta.timed = said->has_time || stamped;
                         if (options->verbose)
                                 tar_name_line(log_error, shown);
                         tar_extract_member(handle, type, kept, kept_link, size,
