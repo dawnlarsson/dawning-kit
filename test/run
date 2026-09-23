@@ -9478,6 +9478,7 @@ python3 test/differential.py --harness objtool_shape || kit_failed=1
 python3 test/differential.py --harness terminfo_install || kit_failed=1
 python3 test/differential.py --harness host_writes || kit_failed=1
 python3 test/differential.py --harness console_queue || kit_failed=1
+python3 test/differential.py --harness pane_restride || kit_failed=1
 python3 test/differential.py --harness dhcp_packets || kit_failed=1
 python3 test/differential.py --harness machine_reap || kit_failed=1
 python3 test/differential.py --harness machine_scan || kit_failed=1

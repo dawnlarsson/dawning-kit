@@ -3039,6 +3039,27 @@ static long pane_restride(struct pane *pane, unsigned int columns)
                 if (length && !pane_cells_held(pane, slot, length))
                         length = 0;
 
+                /*
+                        The program's word again, and "the program is in
+                        this call" is one thread of it: another can have
+                        grown the line since the pass above held its new
+                        place, and the move then wrote into a page of the
+                        reservation with nothing mapped, an oops under both
+                        locks. Hold the place for the length read now --
+                        nothing to do where the first pass did it -- and
+                        leave the line empty where memory is short.
+                */
+                if (length)
+                {
+                        first = WINDOW_PIXELS + (unsigned long)slot * stride *
+                                                    sizeof(struct window_cell);
+                        last = first + (unsigned long)length *
+                                           sizeof(struct window_cell);
+                        if (!pane_pages_hold(pane, first >> PAGE_SHIFT,
+                                             PAGE_ALIGN(last) >> PAGE_SHIFT))
+                                length = 0;
+                }
+
                 if (length)
                         memmove(pane->cells + (unsigned long)slot * stride,
                                 pane->cells + (unsigned long)slot * was,

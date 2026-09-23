@@ -29666,6 +29666,200 @@ int main(int argc, char **argv) {
     return 0 if passed == total and ran.returncode == 0 else 1
 
 
+def harness_pane_restride(argv):
+    """A window's ring recut wider while another thread of its program writes.
+
+    WINDOW_IOCTL_STRIDE moves every line of a lazily held ring out to a wider
+    stride: one pass holds the pages each line will land on, a second moves
+    it. Both read the line's length out of the program's shared page, and the
+    program is only one thread in the call -- another can grow a line between
+    the passes, and the parent then moved it into a page of the compositor's
+    reservation with nothing mapped: an oops, reachable with /dev/spark
+    alone. pane_restride, pane_pages_hold and pane_cells_held are cut out of
+    canvas.c; pane_page_hold marks a page held, memmove checks every byte it
+    touches is on a held page, and READ_ONCE of one chosen line answers its
+    first read short and every later one grown, which is the second thread.
+    Seeded rings of 1 to 96 lines, strides of 8 to 256 cells widened by 1 to
+    512 columns, the raced line anywhere; the moved cells are checked against
+    what the program wrote, and a line is moved whole or left empty.
+    """
+    import subprocess
+    import tempfile
+    seeds = int(argv[0]) if argv else 4000
+    text = (HARNESS_ROOT / "src/moonwater/canvas.c").read_text()
+
+    def cut(first, following):
+        start = text.index(first)
+        return text[start:text.index(following, start)]
+
+    body = cut("// Every page from first up to, not including, last.", "static void pane_mapping_free")
+    body += cut("static unsigned int console_stride(", "static void pane_ring(")
+    body += cut("static long pane_restride(", "static long window_ioctl_stride(")
+    shim = r'''
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#define PAGE_SHIFT 12
+#define PAGE_SIZE 4096ul
+#define PAGE_ALIGN(x) (((x) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
+#define WINDOW_PIXELS 4096
+#define CONSOLE_STRIDE_STEP 32u
+/* Once each, as the kernel's are: a min that read READ_ONCE twice would
+   take the second thread's word in the first pass and hide the race. */
+#define min(a, b) ({ __typeof__(a) _a = (a); __typeof__(b) _b = (b); _a < _b ? _a : _b; })
+#define max(a, b) ({ __typeof__(a) _a = (a); __typeof__(b) _b = (b); _a > _b ? _a : _b; })
+#define round_up(x, y) ((((x) + (y) - 1) / (y)) * (y))
+#define smp_load_acquire(p) (*(p))
+#define WRITE_ONCE(x, v) ((x) = (v))
+#define pr_info(...) ((void)0)
+#define ENOMEM 12
+#define true 1
+#define false 0
+struct page;
+struct window_cell { unsigned int character; unsigned char ink, paper; unsigned short flags; };
+struct shared { unsigned int stride; };
+struct pane {
+        struct page **pages;
+        unsigned long page_count;
+        unsigned int history, stride, max_columns;
+        unsigned int *lengths;
+        struct window_cell *cells;
+        struct shared *shared;
+        char *mapping;
+};
+static unsigned failures, checks, moves, raced_moves;
+static struct pane *current;
+static void check(int good, const char *what, unsigned seed) {
+        checks++;
+        if (good) return;
+        if (++failures < 8) printf("  FAIL %s (seed %u)\n", what, seed);
+}
+static struct page *pane_page_hold(struct pane *pane, unsigned long index) {
+        if (index >= pane->page_count) return NULL;
+        pane->pages[index] = (struct page *)1;
+        return pane->pages[index];
+}
+static unsigned *race_word, race_short, race_long, race_reads;
+static unsigned race_read(unsigned *word) {
+        if (word == race_word && race_reads++ == 0) return race_short;
+        if (word == race_word) *word = race_long;
+        return *word;
+}
+#define READ_ONCE(x) race_read(&(x))
+static int bytes_held(const void *at, unsigned long count) {
+        unsigned long from = (unsigned long)((const char *)at - current->mapping);
+        for (unsigned long page = from >> PAGE_SHIFT;
+             count && page <= (from + count - 1) >> PAGE_SHIFT; page++)
+                if (page >= current->page_count || !current->pages[page]) return 0;
+        return 1;
+}
+static unsigned unheld;
+static void *checked_move(void *to, const void *from, unsigned long count) {
+        if (!bytes_held(to, count) || !bytes_held(from, count)) { unheld++; return to; }
+        moves++;
+        return memmove(to, from, count);
+}
+#define memmove checked_move
+'''
+    driver = r'''
+static unsigned long draws = 1;
+static unsigned next_draw(void) {
+        draws = draws * 6364136223846793005ull + 1442695040888963407ull;
+        return (unsigned)(draws >> 33);
+}
+static unsigned cell_of(unsigned slot, unsigned column) { return slot * 7919u + column * 31u + 1; }
+int main(int argc, char **argv) {
+        unsigned seeds = argc > 1 ? (unsigned)atoi(argv[1]) : 4000;
+        for (unsigned seed = 1; seed <= seeds; seed++) {
+                draws = seed;
+                struct pane pane = {0};
+                struct shared shared = {0};
+                unsigned history = 1 + next_draw() % 96;
+                unsigned was = 8 + next_draw() % 256;
+                unsigned max_columns = was + 32 + next_draw() % 1024;
+                unsigned columns = was + 1 + next_draw() % 512;
+                /* Sparse rings leave the places lines move out to unheld,
+                   which is where a line grown behind the first pass lands. */
+                unsigned sparse = 1 + next_draw() % 8;
+                unsigned long bytes = WINDOW_PIXELS + (unsigned long)history * max_columns *
+                                      sizeof(struct window_cell) + history * sizeof(unsigned);
+                pane.page_count = PAGE_ALIGN(bytes) >> PAGE_SHIFT;
+                pane.mapping = calloc(pane.page_count, PAGE_SIZE);
+                pane.pages = calloc(pane.page_count, sizeof(*pane.pages));
+                pane.history = history; pane.stride = was; pane.max_columns = max_columns;
+                pane.cells = (struct window_cell *)(pane.mapping + WINDOW_PIXELS);
+                pane.lengths = calloc(history, sizeof(unsigned));
+                pane.shared = &shared;
+                current = &pane;
+                unsigned raced = next_draw() % history;
+                unsigned *wanted = calloc(history, sizeof(unsigned));
+                for (unsigned slot = 0; slot < history; slot++) {
+                        unsigned length = next_draw() % sparse ? 0 : next_draw() % (was + 1);
+                        if (slot == raced) {
+                                race_long = 1 + next_draw() % was;
+                                race_short = next_draw() % (race_long + 1) / (1 + next_draw() % 8);
+                                length = race_long;
+                        }
+                        pane.lengths[slot] = length;
+                        wanted[slot] = length;
+                        /* The program touched the cells it wrote: their pages are held. */
+                        for (unsigned column = 0; column < length; column++) {
+                                struct window_cell *cell = pane.cells + (unsigned long)slot * was + column;
+                                pane_page_hold(&pane, (unsigned long)((char *)cell - pane.mapping) >> PAGE_SHIFT);
+                                cell->character = cell_of(slot, column);
+                        }
+                }
+                race_word = pane.lengths + raced; race_reads = 0;
+                unheld = 0;
+                unsigned before = moves;
+                long stride = pane_restride(&pane, columns);
+                check(stride > (long)was, "the ring was recut wider", seed);
+                check(!unheld, "every byte moved is on a held page", seed);
+                if (race_short < race_long && moves > before) raced_moves++;
+                for (unsigned slot = 0; slot < history && stride > 0; slot++) {
+                        unsigned length = pane.lengths[slot];
+                        check(length == wanted[slot] || length == 0,
+                              "a line is moved whole or left empty", seed);
+                        for (unsigned column = 0; column < length; column++)
+                                if (pane.cells[(unsigned long)slot * stride + column].character !=
+                                    cell_of(slot, column)) {
+                                        check(0, "a moved cell is the one the program wrote", seed);
+                                        break;
+                                }
+                }
+                free(pane.mapping); free(pane.pages); free(pane.lengths); free(wanted);
+        }
+        printf("%u %u %u %u\n", checks - failures, checks, moves, raced_moves);
+        return failures != 0;
+}
+'''
+    with tempfile.TemporaryDirectory(prefix="pane-restride-") as temporary:
+        top = Path(temporary)
+        (top / "restride.c").write_text(shim + body + driver)
+        built = subprocess.run(["cc", "-O2", "-w", "-o", str(top / "restride"), str(top / "restride.c")],
+                               capture_output=True, text=True)
+        if built.returncode:
+            print("  FAIL the restride did not build:\n" + built.stderr[-3000:])
+            return 1
+        ran = subprocess.run([str(top / "restride"), str(seeds)], capture_output=True, text=True,
+                             timeout=300)
+    lines = ran.stdout.rstrip().splitlines()
+    for line in lines[:-1]:
+        print(line)
+    try:
+        passed, total, moved, raced = (int(word) for word in lines[-1].split())
+    except (IndexError, ValueError):
+        print("  FAIL the restride said nothing it could be read by: %r" % ran.stdout[-500:])
+        return 1
+    print("pane restride: %d of %d checks, %d lines moved, %d rings raced mid-recut, %d seeds"
+          % (passed, total, moved, raced, seeds))
+    if not raced:
+        print("  FAIL no ring was raced between the two passes")
+        passed = -1
+    write_tally("pane-restride", max(passed, 0), total)
+    return 0 if passed == total and ran.returncode == 0 else 1
+
+
 def harness_term_streams(argv):
     """Generated byte streams through the terminal emulator, which is ring 0.
 
@@ -31214,6 +31408,7 @@ HARNESS_CHECKS = {
     "dhcp_packets": harness_dhcp_packets,
     "term_streams": harness_term_streams,
     "console_queue": harness_console_queue,
+    "pane_restride": harness_pane_restride,
     "host_writes": harness_host_writes,
     "moonwater_cli": harness_moonwater_cli,
     "machine_reap": harness_machine_reap,
