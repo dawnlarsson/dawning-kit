@@ -129,6 +129,33 @@ CONFIG_SENSORS_K10TEMP=y
 CONFIG_X86_PKG_TEMP_THERMAL=y
 
 #
+# Sensors and power a desktop can read.
+#
+# The Super I/O chips are where a desktop board's fan tachometers and
+# board temperatures live: Nuvoton NCT67xx on ASUS, ASRock, MSI and
+# Gigabyte's newer boards, NCT6683 on some MSI and Intel ones, ITE IT87xx
+# on Gigabyte's. Probing them only reads, apart from switching monitoring
+# on: nct6775 sets the start bit, the temperature enables and VBAT
+# sampling, it87 its tachometer and voltage enables; neither touches a
+# fan's mode or duty unless somebody writes pwm*_enable (it87 rewrites
+# PWM polarity only under fix_pwm_polarity=1, off by default). The BIOS
+# or EC fan curve keeps running exactly as it did.
+#
+# drivetemp is a SATA drive's temperature through SCT, one ATA command
+# per read; monitor reads it every five seconds, not every frame.
+#
+# POWERCAP and INTEL_RAPL are the package energy counter under
+# /sys/class/powercap, which the same driver reads on AMD from Zen on.
+# This is not prod's PERF_EVENTS_INTEL_RAPL=n: that one is the perf PMU
+# over the same MSRs, and stays out.
+CONFIG_SENSORS_NCT6775=y
+CONFIG_SENSORS_NCT6683=y
+CONFIG_SENSORS_IT87=y
+CONFIG_SENSORS_DRIVETEMP=y
+CONFIG_POWERCAP=y
+CONFIG_INTEL_RAPL=y
+
+#
 # Storage: AHCI for SATA, NVMe for anything since about 2014.
 #
 CONFIG_BLOCK=y
