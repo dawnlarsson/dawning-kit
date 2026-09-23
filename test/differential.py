@@ -30695,7 +30695,10 @@ def harness_term_streams(argv):
     bottom or past the last row, save and restore, the alternate screen,
     origin and insert modes, tab stops, repeats and inserts and deletes of
     absurd counts, OSC, DCS, APC, PM and SOS strings left open, and the
-    window resized between pieces. After every piece the cursor has to be
+    window resized between pieces -- and a quarter of the streams are
+    apt's Progress-Fancy around dpkg output, byte for byte, resized under
+    its region as a window is while an install runs (the OptiPlex report of
+    a terminal lost near the end of a Debian install). After every piece the cursor has to be
     on the grid (its column may equal the width while a wrap is pending) and
     the region inside it with its top above its bottom; every stream has to
     finish, within five seconds, and exit cleanly.
@@ -30780,8 +30783,60 @@ def harness_term_streams(argv):
             return "\\e[4%s" % rng.choice("hl")
         return "\\e[%d;%dH" % (number(rng), number(rng))
 
+    def apt_size(rng):
+        return rng.choice(((240, 67), (239, 66), (170, 48), (136, 38), (80, 24),
+                           (100, 30), (rng.randrange(20, 257), rng.randrange(3, 90))))
+
+    def apt_stream(rng):
+        """What apt's Progress-Fancy writes around dpkg's output, byte for
+        byte as apt-pkg/install-progress.cc spells it: the bottom row kept
+        for the bar by a region whose top is 0, the bar drawn at row;0f
+        between a save and a restore, the region set again on every
+        SIGWINCH at the new height -- which can be lower than the region
+        already set -- and the teardown that gives the rows back and
+        clears below. The sizes are what a window on a 1080p or a 768p
+        desktop holds, the field report's machine among them."""
+        columns, rows = apt_size(rng)
+        verbs = []
+
+        def say(chunk):
+            verbs.extend(["in", chunk, "cursor", "mode"])
+
+        def setup(height):
+            say("\\n\\e7\\e[0;%dr\\e8\\e[1A" % (height - 1))
+
+        setup(rows)
+        percent = 0
+        for _ in range(rng.randrange(5, 60)):
+            pick = rng.randrange(10)
+            if pick < 5:
+                line = rng.choice(("Unpacking weston (13.0.0-2) ...", "Setting up libwayland-client0:amd64 ...",
+                                   "Selecting previously unselected package libinput10:amd64.",
+                                   "(Reading database ... %d files and directories currently installed.)" % rng.randrange(99999),
+                                   "Processing triggers for man-db (2.12.0-4) ...",
+                                   "update-alternatives: using /usr/bin/weston to provide /usr/bin/x-window-manager",
+                                   "\\xe2\\x80\\x98" + "x" * rng.randrange(1, 400) + "\\xe2\\x80\\x99"))
+                say(line + rng.choice(("\\r\\n", "\\n", "\\r\\n\\r\\n")))
+            elif pick < 8:
+                percent = min(100, percent + rng.randrange(0, 9))
+                width = max(0, columns - 22)
+                done = width * percent // 100
+                say("\\e7\\e[%d;0f\\e[42m\\e[30mProgress: [%3d%%]\\e[49m\\e[39m [%s%s] \\e8"
+                    % (rows, percent, "#" * done, "." * (width - done)))
+            else:
+                columns, rows = rng.choice(((columns, max(1, rows - rng.randrange(1, rows + 1))),
+                                            (rng.randrange(1, 257), rng.randrange(1, 90)),
+                                            (columns, rows + rng.randrange(1, 20))))
+                verbs.extend(["resize", "%dx%d" % (columns, rows), "cursor", "mode"])
+                setup(rows)
+        say("\\e7\\e[0;%dr\\e8\\e[J" % rows)
+        say("\\e[%d;0f\\e[2K" % rows)
+        return columns, rows, verbs
+
     def stream(index):
         rng = random.Random(seed * 1000003 + index)
+        if index % 4 == 3:
+            return apt_stream(rng)
         columns, rows = rng.choice(((80, 24), (1, 1), (2, 1), (1, 5), (132, 50),
                                     (rng.randrange(1, 300), rng.randrange(1, 120))))
         verbs = []
@@ -30843,8 +30898,9 @@ def harness_term_streams(argv):
     def stream_start(index):
         if index not in starts:
             rng = random.Random(seed * 1000003 + index)
-            starts[index] = rng.choice(((80, 24), (1, 1), (2, 1), (1, 5), (132, 50),
-                                        (rng.randrange(1, 300), rng.randrange(1, 120))))
+            starts[index] = apt_size(rng) if index % 4 == 3 else \
+                rng.choice(((80, 24), (1, 1), (2, 1), (1, 5), (132, 50),
+                            (rng.randrange(1, 300), rng.randrange(1, 120))))
         return starts[index]
 
     for index in range(count):
