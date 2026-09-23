@@ -29725,6 +29725,181 @@ def harness_term_streams(argv):
     return 1 if failures else 0
 
 
+def harness_dhcp_packets(argv):
+    """DHCP replies from a grammar, through the parser ip watch runs as root.
+
+    dhcp_read walks a reply's options -- a packet from the network, read
+    by a process with every privilege -- so a length it trusted would be a
+    read past the datagram. The walk is cut out of src/net/net.c and built
+    with the host compiler under AddressSanitizer and UBSan, and fed 200,000
+    seeded replies each in a heap block exactly its length: the fixed BOOTP
+    head with a field now and then wrong (op, hardware type and length,
+    transaction, client address, cookie), then options drawn from PAD, END,
+    the eight the lease reads at their own length and at 0, 3, 5 and 8 bytes,
+    the message type at 0, 1 and 2, unknown options, repeats, masks of every
+    shape, and the datagram cut anywhere from nothing to all of it. A reply
+    that is whole and well formed has to give the lease a model of the
+    options the generator wrote says it gives; every reply has to be read
+    without the sanitizers saying a word.
+
+        dhcp_packets [COUNT [SEED]]
+    """
+    import subprocess
+    import tempfile
+    count = int(argv[0]) if argv else 200000
+    seed = int(argv[1], 0) if len(argv) > 1 else 0xd4c9
+    net = (HARNESS_ROOT / "src/net/net.c").read_text()
+    head = net[net.index("#define DHCP_HEAD 236"):net.index("static COLD positive dhcp_build(")]
+    walk = net[net.index("static COLD bipolar dhcp_read("):
+               net.index("//      A mask of n leading bits")]
+    shim = r'''
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+typedef uint8_t p8;
+typedef uint32_t p32;
+typedef uint64_t p64;
+typedef unsigned long positive;
+typedef long bipolar;
+typedef int b32;
+#define COLD
+#define CONST
+#define fn void
+#define address_to *
+#define address_of &
+#define array_count(a) (sizeof(a) / sizeof((a)[0]))
+#define memory_compare memcmp
+static p32 network_load_32(const p8 *at) {
+        return (p32)at[0] << 24 | (p32)at[1] << 16 | (p32)at[2] << 8 | at[3];
+}
+static bool network_transaction_secure(void *into, positive size) { (void)into; (void)size; return true; }
+static bipolar system_random_fill(void *into, positive size, positive flags) {
+        (void)into; (void)size; (void)flags; return 0;
+}
+'''
+    driver = r'''
+static uint64_t draws;
+static p32 draw(p32 below) {
+        draws ^= draws << 13; draws ^= draws >> 7; draws ^= draws << 17;
+        return below ? (p32)(draws % below) : (p32)draws;
+}
+static void put32(p8 *at, p32 value) {
+        at[0] = value >> 24; at[1] = value >> 16; at[2] = value >> 8; at[3] = value;
+}
+static const p8 lease_options[] = {1, 3, 6, 54, 51, 58, 59};
+static const p8 offsets[] = {1, 2, 3, 4, 5, 6, 7};
+static const bool multiple[] = {false, true, true, false, false, false, false};
+static const p32 masks[] = {0, 0xffffff00, 0xffff0000, 0xffffffff, 0x80000000,
+                            0xff00ff00, 0x00ffffff, 0xfffffffe, 0x7fffffff};
+int main(int argc, char **argv) {
+        long count = atol(argv[1]);
+        unsigned long whole = 0, parsed = 0, agreed = 0, wrong = 0;
+        p8 hardware[6] = {2, 0, 0, 0, 0, 1};
+        draws = strtoull(argv[2], 0, 0) | 1;
+        for (long n = 0; n < count; n++) {
+                p8 build[1500];
+                positive at = DHCP_HEAD + 4, size;
+                p32 model[8] = {0};
+                p8 kind = 0;
+                bool broken = false, ended = false;
+                memset(build, 0, sizeof build);
+                build[0] = 2; build[1] = 1; build[2] = 6;
+                put32(build + 4, 0xdeadbeef);
+                memcpy(build + 28, hardware, 6);
+                put32(build + 16, 0x0a000002);
+                put32(build + DHCP_HEAD, DHCP_COOKIE);
+                if (!draw(20)) {
+                        broken = true;
+                        build[draw(DHCP_HEAD + 4)] ^= (p8)(1 << draw(8));
+                }
+                model[0] = 0x0a000002;
+                for (p32 options = draw(24); options-- && at < sizeof build - 80;) {
+                        p32 pick = draw(14);
+                        if (pick == 0) { build[at++] = DHCP_OPTION_PAD; continue; }
+                        if (pick == 1 && draw(3) == 0) { build[at++] = DHCP_OPTION_END; ended = true; break; }
+                        if (pick <= 3) {
+                                p8 length = (p8)(draw(4) == 0 ? draw(3) : 1);
+                                build[at] = DHCP_OPTION_TYPE; build[at + 1] = length;
+                                for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)(1 + draw(8));
+                                if (length == 1) kind = build[at + 2];
+                                at += 2 + length;
+                                continue;
+                        }
+                        if (pick <= 10) {
+                                p32 which = draw(array_count(lease_options));
+                                static const p8 lengths[] = {4, 4, 4, 4, 0, 3, 5, 8, 12};
+                                p8 length = lengths[draw(array_count(lengths))];
+                                build[at] = lease_options[which]; build[at + 1] = length;
+                                for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)draw(256);
+                                if (lease_options[which] == 1 && length >= 4)
+                                        put32(build + at + 2, masks[draw(array_count(masks))]);
+                                if (length >= 4 && (length == 4 || multiple[which]))
+                                        model[offsets[which]] = network_load_32(build + at + 2);
+                                at += 2 + length;
+                                continue;
+                        }
+                        {
+                                p8 length = (p8)draw(40);
+                                build[at] = (p8)(60 + draw(190)); build[at + 1] = length;
+                                for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)draw(256);
+                                at += 2 + length;
+                        }
+                }
+                if (!ended && draw(2)) { build[at++] = DHCP_OPTION_END; ended = true; }
+                size = at;
+                if (!draw(4)) { size = draw((p32)at + 1); broken = true; }
+                p8 *packet = malloc(size ? size : 1);
+                memcpy(packet, build, size);
+                dhcp_lease lease = {0};
+                p8 said = 0;
+                bipolar answer = dhcp_read(packet, size, 0xdeadbeef, hardware, &lease, &said);
+                free(packet);
+                if (!answer) parsed++;
+                if (broken) continue;
+                whole++;
+                bool mask_ok = dhcp_mask_valid(model[1]);
+                bool want = kind && mask_ok;
+                p32 got[8];
+                memcpy(got, &lease, sizeof got);
+                if ((answer == 0) != want ||
+                    (want && (said != kind || memcmp(got, model, sizeof got)))) {
+                        if (wrong++ < 5)
+                                printf("  FAIL packet %ld: answer %ld kind %d/%d mask %08x\n",
+                                       n, answer, said, kind, model[1]);
+                } else
+                        agreed++;
+        }
+        printf("%ld %lu %lu %lu %lu\n", count, parsed, whole, agreed, wrong);
+        return wrong != 0;
+}
+'''
+    with tempfile.TemporaryDirectory(prefix="dhcp-packets-") as temporary:
+        top = Path(temporary)
+        (top / "dhcp.c").write_text(shim + head + walk + driver)
+        compiler = "clang" if shutil.which("clang") else "cc"
+        built = subprocess.run([compiler, "-O1", "-g", "-w", "-fsanitize=address,undefined",
+                                "-fno-sanitize-recover=all", "-o", str(top / "dhcp"),
+                                str(top / "dhcp.c")], capture_output=True, text=True)
+        if built.returncode:
+            print("  FAIL the parser did not build:\n" + built.stderr[-3000:])
+            return 1
+        ran = subprocess.run([str(top / "dhcp"), str(count), hex(seed)], capture_output=True,
+                             text=True, timeout=600)
+    for line in ran.stdout.splitlines()[:-1]:
+        print(line)
+    if ran.returncode or ran.stderr.strip():
+        print("  FAIL the sanitizers or the model said:\n" + (ran.stderr or ran.stdout)[-3000:])
+        write_tally("dhcp-packets", 0, 1)
+        return 1
+    total, parsed, whole, agreed, wrong = (int(word) for word in ran.stdout.split()[-5:])
+    print("dhcp packets: %d replies read clean, %d parsed, %d of %d whole ones as the model says"
+          % (total, parsed, agreed, whole))
+    write_tally("dhcp-packets", agreed, whole)
+    return 0
+
+
 def harness_terminfo_install(argv):
     """The terminfo blob is written into a directory, never through a name.
 
@@ -30914,6 +31089,7 @@ HARNESS_CHECKS = {
     "objtool_shape": harness_objtool_shape,
     "coverage_report": harness_coverage_report,
     "terminfo_install": harness_terminfo_install,
+    "dhcp_packets": harness_dhcp_packets,
     "term_streams": harness_term_streams,
     "console_queue": harness_console_queue,
     "host_writes": harness_host_writes,
