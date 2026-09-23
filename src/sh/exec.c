@@ -497,7 +497,9 @@ static p8 exec_nothing[1];
 
 // Where the status word sits in a listing, which is bash's column and not a
 // number of this shell's choosing: a person reads the two side by side.
-#define JOB_STATUS_WIDTH 24
+// 27 is what bash 5.3.15 on the box writes, in the plain listing and
+// under -l alike; this used to be 24.
+#define JOB_STATUS_WIDTH 27
 #define JOB_SIGNAL_DESC_WIDTH 24
 
 typedef struct
@@ -1107,6 +1109,28 @@ static positive job_text_node(p8 address_to address_to into,
                 }
 
                 return used;
+        }
+
+        /* A coprocess is named as bash names it: coproc, its name, and its
+           body -- never the line it was on, which named it by the whole -c
+           string, every command after it included. A plain command has no
+           name written before it, and bash writes none. */
+        if (kind == NODE_COPROC)
+        {
+                b32 body = parse_nodes[node].left;
+
+                used = job_text_add(into, room, used, (string_address) "coproc ", 7);
+                if (parse_nodes[node].word_count &&
+                    !(body && parse_nodes[body].kind == NODE_SIMPLE &&
+                      word_is(parse_words[parse_nodes[node].word], "COPROC")))
+                {
+                        used = job_text_add(into, room, used,
+                                            parse_words[parse_nodes[node].word],
+                                            parse_word_lengths[parse_nodes[node].word]);
+                        used = job_text_add(into, room, used, (string_address) " ", 1);
+                }
+                return job_text_node(into, room, used, parse_nodes[node].left,
+                                     depth + 1);
         }
 
         /* A loop, a case or an if has no rendering here worth inventing. The
