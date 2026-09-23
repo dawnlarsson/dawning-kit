@@ -19314,10 +19314,12 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
         {
                 p8 offender[2] = {path[string_span(path, pathchk_portable_set())], end};
 
-                string_format(log_error, "pathchk: non-portable character %w in file name '%w",
-                              writer_shell_quoted_name, offender, writer_terminal_quoted_name,
-                              path);
-                return string_report(log_error, false, "'\n");
+                //      The character as quote() spells an argument and the
+                //      name as quoteaf spells a file, which is GNU's pair.
+                return string_report(log_error, false,
+                                     "pathchk: non-portable character '%w' in file name %w\n",
+                                     writer_terminal_quoted_name, offender,
+                                     writer_shell_quoted_name, path);
         }
 
         if (basic)

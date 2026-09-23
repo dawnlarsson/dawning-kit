@@ -6565,7 +6565,15 @@ FILES_UTILITIES = (
                       ("missing/" + "x" * 256,), ("ordinary", "-P"), ("okay", "bad+name", "also"), (),
                       ("a\tb",), ("dir/inside",), ("/" + "x" * 5000,), ("a.txt/x",), ("dangling/x",), ("-lead",),
                       ("--", "-lead"), ("okay//double",), ("shut/inside",), ("x" * 300,), ("dir/" + "x" * 256,)),
-            stdin=("empty",), fixture="files", stderr="exact"),
+            stdin=("empty",), fixture="files", stderr="exact",
+            #   A byte the portable set lacks, of every kind a quoting
+            #   treats differently, at the front, the middle and the end of
+            #   a name: GNU quotes the character as an argument and the name
+            #   as a file, two different quotings in one sentence.
+            extra=tuple(flags + (name,)
+                        for byte in ("\x01", "\t", "\x1b", "'", '"', "\\", " ", "$", "\x7f", "\u00e9", "*", "+", "~")
+                        for name in ("a" + byte + "b", byte + "ab", "ab" + byte)
+                        for flags in (("-p",), ("-P", "-p"), ("--portability",)))),
     Utility("id", options=(Option("-u"), Option("-g"), Option("-G"), Option("-n"), Option("-r"), Option("-z"),
                            Option("-Z"), Option("-a"), Option("--user"), Option("--group"), Option("--groups"),
                            Option("--name"), Option("--real"), Option("--zero"), Option("--context")),
