@@ -51700,6 +51700,8 @@ b32 main(void)
 #include "../src/waterlink/link.c"
 #include "../src/waterlink/seal.c"
 #include "../src/waterlink/handshake.c"
+#include "../src/waterlink/discover.c"
+#include "../src/waterlink/pair.c"
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
@@ -53363,6 +53365,341 @@ static fn handshake(void)
 }
 
 /*
+        Groups: the derivation against hashlib's PBKDF2, the blinded tags,
+        the pairing handshake, and the mDNS parser against hostile packets.
+*/
+static fn group_keys(struct waterlink_group_keys address_to keys,
+                     string_address namespace, string_address secret)
+{
+        p8 derived[32];
+
+        waterlink_group_derive(namespace, (p8 address_to)secret,
+                               string_length(secret), 1000, derived);
+        waterlink_group_keys_from(keys, derived, namespace);
+}
+
+static fn group_derivation(void)
+{
+        static const p8 one[32] = {
+                0xf3, 0x86, 0x42, 0xce, 0x4e, 0x30, 0x42, 0x0f, 0x7a, 0xfc, 0xe6,
+                0xab, 0x60, 0xb7, 0x2d, 0x73, 0x9c, 0x7b, 0x66, 0x48, 0x7a, 0xdd,
+                0xf8, 0x51, 0x41, 0x18, 0xb3, 0xe9, 0xd8, 0x29, 0x7f, 0x51};
+        static const p8 thousand[32] = {
+                0x7f, 0xf8, 0x8f, 0xc4, 0x56, 0x4d, 0x85, 0xb4, 0x0c, 0x71, 0x69,
+                0xd4, 0x20, 0x1c, 0x7c, 0xd6, 0xe1, 0x8a, 0x2e, 0x55, 0x52, 0xa2,
+                0xfc, 0x53, 0x8f, 0x57, 0x7c, 0xb5, 0x2d, 0x6d, 0x4a, 0xaa};
+        static const p8 long_secret[32] = {
+                0x53, 0xfa, 0x6c, 0xe9, 0x94, 0x59, 0xe7, 0x73, 0xd8, 0x58, 0x5c,
+                0xdb, 0x95, 0x4c, 0x45, 0xdd, 0xd2, 0xa9, 0x91, 0x00, 0xe3, 0xe5,
+                0x8d, 0x71, 0xba, 0x21, 0x7e, 0x2b, 0x8b, 0x2b, 0xec, 0xd2};
+        static const char longer[] = "a much longer secret that exceeds sixty "
+                                     "four bytes in length, for the pad rule";
+        p8 out[32];
+
+        waterlink_group_derive("office", (p8 address_to) "sesame", 6, 1, out);
+        check("PBKDF2 of one round is hashlib's", !memory_compare(out, one, 32));
+        waterlink_group_derive("office", (p8 address_to) "sesame", 6, 1000, out);
+        check("PBKDF2 of a thousand rounds is hashlib's",
+              !memory_compare(out, thousand, 32));
+        waterlink_group_derive("lab-2", (p8 address_to)longer,
+                               sizeof longer - 1, 1000, out);
+        check("and a secret past the HMAC block is hashed first, as hashlib's",
+              !memory_compare(out, long_secret, 32));
+}
+
+static fn group_tags(void)
+{
+        struct waterlink_group_keys office, again, other, elsewhere;
+        p8 nonce[16], second[16], tag[16], mine[16], theirs[16];
+        struct waterlink_identity one_machine, another;
+        positive told = 0;
+
+        group_keys(address_of office, "office", "sesame");
+        group_keys(address_of again, "office", "sesame");
+        group_keys(address_of other, "office", "sesamf");
+        group_keys(address_of elsewhere, "office2", "sesame");
+        identity_seeded(address_of one_machine, 11);
+        identity_seeded(address_of another, 12);
+
+        for (positive round = 0; round < 64; round++)
+        {
+                random_seeded(nonce, 16, (p8)round);
+                random_seeded(second, 16, (p8)(round + 100));
+                waterlink_tag(address_of office, nonce, tag);
+                waterlink_tag(address_of again, nonce, mine);
+                told += !memory_compare(tag, mine, 16);
+                waterlink_tag(address_of other, nonce, mine);
+                told += memory_compare(tag, mine, 16) != 0;
+                waterlink_tag(address_of elsewhere, nonce, mine);
+                told += memory_compare(tag, mine, 16) != 0;
+                waterlink_tag(address_of office, second, mine);
+                told += memory_compare(tag, mine, 16) != 0;
+                waterlink_who(address_of office, nonce, one_machine.public, mine);
+                waterlink_who(address_of again, nonce, one_machine.public, theirs);
+                told += !memory_compare(mine, theirs, 16);
+                waterlink_who(address_of office, nonce, another.public, theirs);
+                told += memory_compare(mine, theirs, 16) != 0;
+        }
+        check("a member recognises a member's tag and nobody else does, "
+              "and a nonce makes a new one",
+              told == 64 * 6);
+        check("groups mark their peers, never zero, one mark a namespace",
+              office.mark && office.mark == again.mark &&
+                      office.mark != elsewhere.mark);
+}
+
+static fn group_pairing(void)
+{
+        struct waterlink_group_keys office, other;
+        struct waterlink_identity a, b;
+        struct waterlink_noise starting, answering;
+        struct waterlink_pair_seen seen;
+        p8 first[WATERLINK_DATAGRAM], second[WATERLINK_DATAGRAM],
+                third[WATERLINK_DATAGRAM];
+        p8 e1[32], e2[32], key[32], name[WATERLINK_PAIR_NAME];
+        p8 a_name[WATERLINK_PAIR_NAME] = "machine-a";
+        p8 b_name[WATERLINK_PAIR_NAME] = "machine-b";
+
+        group_keys(address_of office, "office", "sesame");
+        group_keys(address_of other, "office", "wrong");
+        identity_seeded(address_of a, 21);
+        identity_seeded(address_of b, 22);
+        random_seeded(e1, 32, 23);
+        random_seeded(e2, 32, 24);
+        memory_zero(address_of seen, sizeof seen);
+
+        waterlink_pair_first(address_of starting, office.pair, e1, 77, first);
+        check("a first message under the wrong secret is refused with no curve",
+              !waterlink_pair_heard_first(address_of answering, other.pair,
+                                          first));
+        check("and under the right one it opens",
+              waterlink_pair_heard_first(address_of answering, office.pair,
+                                         first));
+        check("once", waterlink_pair_fresh(address_of seen, first + 16));
+        check("a first message made again is refused as a replay",
+              !waterlink_pair_fresh(address_of seen, first + 16));
+
+        waterlink_pair_second(address_of answering, address_of b, e2, b_name,
+                              77, second);
+        check("the initiator learns the responder's key and name",
+              waterlink_pair_heard_second(address_of starting, second, key,
+                                          name) &&
+                      !memory_compare(key, b.public, 32) &&
+                      !memory_compare(name, b_name, WATERLINK_PAIR_NAME));
+        waterlink_pair_third(address_of starting, address_of a, a_name, 99,
+                             third);
+        check("and the responder the initiator's",
+              waterlink_pair_heard_third(address_of answering, address_of b,
+                                         third, key, name) &&
+                      !memory_compare(key, a.public, 32) &&
+                      !memory_compare(name, a_name, WATERLINK_PAIR_NAME));
+
+        //      Tampering after the first message: nothing opens.
+        {
+                bool refused = true;
+
+                waterlink_pair_first(address_of starting, office.pair, e1, 77,
+                                     first);
+                waterlink_pair_heard_first(address_of answering, office.pair,
+                                           first);
+                waterlink_pair_second(address_of answering, address_of b, e2,
+                                      b_name, 77, second);
+                second[16 + 40] ^= 4;
+                if (waterlink_pair_heard_second(address_of starting, second,
+                                                key, name))
+                        refused = false;
+                check("a changed second message does not open", refused);
+        }
+}
+
+/*
+        The mDNS parser against what a hostile network sends. Every packet
+        is placed so its last byte is the last of a readable page with an
+        unmapped one after it: a read past the end is a fault here, on every
+        machine. Built packets must read back as built; broken ones must be
+        refused or read as nothing; and the shapes every DNS parser gets wrong
+        once are made on purpose.
+*/
+static p8 address_to mdns_page;
+
+static fn mdns_page_make(void)
+{
+        bipolar mapped = system_call_6(syscall(mmap), 0, 2 * 4096, 3, 0x22,
+                                       (positive)(bipolar)-1, 0);
+
+        mdns_page = (p8 address_to)mapped;
+        system_call_3(syscall(mprotect), (positive)(mdns_page + 4096), 4096, 0);
+}
+
+static bool mdns_read_edge(const p8 address_to packet, positive length,
+                           struct waterlink_found address_to found)
+{
+        p8 address_to at = mdns_page + 4096 - length;
+
+        memory_copy(at, packet, length);
+        return waterlink_mdns_read(at, length, found);
+}
+
+static fn mdns_parse(void)
+{
+        struct waterlink_announce_group groups[2];
+        struct waterlink_found found;
+        p8 packet[WATERLINK_MDNS_MAX];
+        p8 broken[WATERLINK_MDNS_MAX];
+        p8 host[6] = {1, 2, 3, 4, 5, 6};
+        positive length;
+        positive survived = 0;
+        positive tries = 0;
+
+        mdns_page_make();
+        for (positive g = 0; g < 2; g++)
+        {
+                random_seeded(groups[g].instance, 10, (p8)(g + 1));
+                random_seeded(groups[g].nonce, 16, (p8)(g + 3));
+                random_seeded(groups[g].tag, 16, (p8)(g + 5));
+                random_seeded(groups[g].who, 16, (p8)(g + 7));
+        }
+
+        length = waterlink_mdns_announce(packet, sizeof packet, groups, 2, host,
+                                         22348, 0x0a000001, 4500, 0, null, 0);
+        check("an announcement reads back: two instances, ports and fields",
+              length && mdns_read_edge(packet, length, address_of found) &&
+                      found.response && found.count == 2 &&
+                      found.instance[0].has_port &&
+                      found.instance[0].port == 22348 &&
+                      found.instance[1].has_fields &&
+                      !memory_compare(found.instance[1].nonce, groups[1].nonce,
+                                      16) &&
+                      !memory_compare(found.instance[1].tag, groups[1].tag, 16) &&
+                      !memory_compare(found.instance[1].who, groups[1].who, 16));
+
+        length = waterlink_mdns_query(packet, sizeof packet);
+        check("a question for the service is one",
+              mdns_read_edge(packet, length, address_of found) && found.asked &&
+                      !found.response && found.question_length);
+
+        //      The shapes, by hand: each must be refused.
+        {
+                static const p8 loop[] = {0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+                                          0xc0, 12, 0, 12, 0, 1};
+                static const p8 ahead[] = {0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+                                           0xc0, 16, 0, 12, 0, 1, 0};
+                static const p8 kind40[] = {0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+                                            0x41, 'a', 0, 0, 12, 0, 1};
+                static const p8 kind80[] = {0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+                                            0x81, 'a', 0, 0, 12, 0, 1};
+                static const p8 counts[] = {0, 0, 0x84, 0, 0xff, 0xff, 0xff,
+                                            0xff, 0, 0, 0, 0};
+                static const p8 short_head[] = {0, 0, 0x84, 0, 0};
+                p8 long_label[12 + 1 + 64 + 1 + 4];
+                p8 long_name[12 + 5 * 64 + 1 + 4];
+                p8 rdlength[64];
+                positive refused = 0;
+                positive at;
+
+                refused += !mdns_read_edge(loop, sizeof loop, address_of found);
+                refused += !mdns_read_edge(ahead, sizeof ahead, address_of found);
+                refused += !mdns_read_edge(kind40, sizeof kind40,
+                                           address_of found);
+                refused += !mdns_read_edge(kind80, sizeof kind80,
+                                           address_of found);
+                refused += !mdns_read_edge(counts, sizeof counts,
+                                           address_of found);
+                refused += !mdns_read_edge(short_head, sizeof short_head,
+                                           address_of found);
+                refused += !mdns_read_edge(packet, 0, address_of found);
+
+                //      A label of 64 bytes: the length byte is 0x40, a type.
+                memory_zero(long_label, sizeof long_label);
+                long_label[5] = 1;
+                long_label[12] = 64;
+                memory_fill(long_label + 13, 'x', 64);
+                long_label[12 + 1 + 64 + 2] = 12;
+                refused += !mdns_read_edge(long_label, sizeof long_label,
+                                           address_of found);
+
+                //      A name of five 63-byte labels: past 255.
+                memory_zero(long_name, sizeof long_name);
+                long_name[5] = 1;
+                at = 12;
+                for (positive label = 0; label < 5; label++)
+                {
+                        long_name[at++] = 63;
+                        memory_fill(long_name + at, 'y', 63);
+                        at += 63;
+                }
+                long_name[at++] = 0;
+                long_name[at + 1] = 12;
+                refused += !mdns_read_edge(long_name, at + 4, address_of found);
+
+                //      A record whose rdata runs past the packet.
+                memory_zero(rdlength, sizeof rdlength);
+                rdlength[2] = 0x84;
+                rdlength[7] = 1;
+                memory_copy(rdlength + 12, waterlink_service_name,
+                            WATERLINK_SERVICE_BYTES);
+                at = 12 + WATERLINK_SERVICE_BYTES;
+                rdlength[at + 1] = 12;
+                rdlength[at + 3] = 1;
+                rdlength[at + 8] = 0x01; // rdlength 256
+                refused += !mdns_read_edge(rdlength, at + 10 + 4,
+                                           address_of found);
+
+                check("pointer loops and forward pointers, label types, long "
+                      "labels and names, impossible counts, short headers and "
+                      "rdata past the end are all refused",
+                      refused == 10);
+        }
+
+        //      Generated: every cut of a real announcement, and a thousand
+        //      random edits of it, each read at the page's edge. Surviving is
+        //      the claim; what they read must never be more than was there.
+        length = waterlink_mdns_announce(packet, sizeof packet, groups, 2, host,
+                                         22348, 0x0a000001, 4500, 0, null, 0);
+        for (positive cut = 0; cut < length; cut++)
+        {
+                tries++;
+                (void)mdns_read_edge(packet, cut, address_of found);
+                survived += found.count <= WATERLINK_FOUND_MAX;
+        }
+        traffic_state = 0x51a7e5ull;
+        for (positive round = 0; round < 20000; round++)
+        {
+                positive edits = 1 + traffic_next() % 6;
+                positive size = length;
+
+                memory_copy(broken, packet, length);
+                for (positive e = 0; e < edits; e++)
+                {
+                        p64 roll = traffic_next();
+                        positive where = (positive)(roll >> 8) % size;
+
+                        switch (roll % 5)
+                        {
+                        case 0: broken[where] ^= (p8)(1u << (roll >> 40) % 8); break;
+                        case 1: broken[where] = (p8)(roll >> 16); break;
+                        //      A pointer, anywhere, to anywhere.
+                        case 2:
+                                if (where + 1 < size)
+                                {
+                                        broken[where] = (p8)(0xc0 | ((roll >> 24) & 0x3f));
+                                        broken[where + 1] = (p8)(roll >> 32);
+                                }
+                                break;
+                        case 3: size = where ? where : 1; break;
+                        default: broken[where] = (p8)((roll >> 20) % 70); break;
+                        }
+                }
+                tries++;
+                (void)mdns_read_edge(broken, size, address_of found);
+                survived += found.count <= WATERLINK_FOUND_MAX;
+        }
+        check("every cut and 20,000 random edits of an announcement are read "
+              "at a page's edge without reading past it",
+              survived == tries);
+}
+
+/*
         For the harness: seeded inputs and what both messages and both keys
         came out as, one line a seed, in hex.
 */
@@ -53434,10 +53771,185 @@ static b32 noise_vectors(positive count)
         return 0;
 }
 
+/*
+        XXpsk0 for the harness: seeded statics, ephemerals, PSK and names, and
+        the three message bodies, one line a seed.
+*/
+static b32 pair_vectors(positive count)
+{
+        for (positive seed = 0; seed < count; seed++)
+        {
+                struct waterlink_identity i, r;
+                struct waterlink_noise a, b;
+                p8 si[32], sr[32], ei[32], er[32], psk[32];
+                p8 ni[WATERLINK_PAIR_NAME], nr[WATERLINK_PAIR_NAME];
+                p8 first[WATERLINK_DATAGRAM], second[WATERLINK_DATAGRAM],
+                        third[WATERLINK_DATAGRAM];
+                p8 key[32], name[WATERLINK_PAIR_NAME];
+
+                sim_rng = 0x9a1b2c3dull * (seed + 1);
+                for (positive n = 0; n < 32; n++)
+                {
+                        si[n] = (p8)sim_next();
+                        sr[n] = (p8)sim_next();
+                        ei[n] = (p8)sim_next();
+                        er[n] = (p8)sim_next();
+                        psk[n] = (p8)sim_next();
+                        ni[n] = (p8)sim_next();
+                        nr[n] = (p8)sim_next();
+                }
+                waterlink_identity_from(address_of i, si);
+                waterlink_identity_from(address_of r, sr);
+                waterlink_pair_first(address_of a, psk, ei, 1, first);
+                if (!waterlink_pair_heard_first(address_of b, psk, first))
+                        return 1;
+                waterlink_pair_second(address_of b, address_of r, er, nr, 1,
+                                      second);
+                if (!waterlink_pair_heard_second(address_of a, second, key, name))
+                        return 1;
+                waterlink_pair_third(address_of a, address_of i, ni, 1, third);
+                if (!waterlink_pair_heard_third(address_of b, address_of r,
+                                                third, key, name))
+                        return 1;
+
+                hex_out(si, 32);
+                hex_out(sr, 32);
+                hex_out(ei, 32);
+                hex_out(er, 32);
+                hex_out(psk, 32);
+                hex_out(ni, 32);
+                hex_out(nr, 32);
+                hex_out(first + 16, WATERLINK_PAIR_1_BYTES);
+                hex_out(second + 16, WATERLINK_PAIR_2_BYTES);
+                hex_out(third + 16, WATERLINK_PAIR_3_BYTES);
+                string_format(log, "\n");
+        }
+        log_flush();
+        return 0;
+}
+
+static fn hex_line(p8 address_to bytes, positive length)
+{
+        static const char digits[] = "0123456789abcdef";
+        p8 two[3];
+
+        for (positive at = 0; at < length; at++)
+        {
+                two[0] = (p8)digits[bytes[at] >> 4];
+                two[1] = (p8)digits[bytes[at] & 15];
+                two[2] = 0;
+                string_format(log, "%s", (string_address)two);
+        }
+        string_format(log, "\n");
+}
+
+/*
+        mDNS for the harness: an announcement of two groups for dnspython to
+        read, and a reader for packets dnspython builds -- hex in on standard
+        input, one packet a line, what was found out.
+*/
+static b32 mdns_modes(string_address mode)
+{
+        if (string_equals(mode, "mdns-announce"))
+        {
+                struct waterlink_announce_group groups[2];
+                p8 host[6] = {0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6};
+                p8 packet[WATERLINK_MDNS_MAX];
+                positive length;
+
+                for (positive g = 0; g < 2; g++)
+                {
+                        random_seeded(groups[g].instance, 10, (p8)(g + 1));
+                        random_seeded(groups[g].nonce, 16, (p8)(g + 3));
+                        random_seeded(groups[g].tag, 16, (p8)(g + 5));
+                        random_seeded(groups[g].who, 16, (p8)(g + 7));
+                }
+                length = waterlink_mdns_announce(packet, sizeof packet, groups,
+                                                 2, host, 22348, 0x0a4d0002,
+                                                 4500, 0, null, 0);
+                hex_line(packet, length);
+                length = waterlink_mdns_query(packet, sizeof packet);
+                hex_line(packet, length);
+                log_flush();
+                return 0;
+        }
+
+        //      mdns-read
+        {
+                static p8 line[2 * WATERLINK_MDNS_MAX + 4];
+
+                for (;;)
+                {
+                        positive used = 0;
+                        p8 packet[WATERLINK_MDNS_MAX];
+                        struct waterlink_found found;
+                        bool good;
+
+                        for (;;)
+                        {
+                                bipolar got = system_read_once(0, line + used, 1);
+
+                                if (got <= 0)
+                                {
+                                        log_flush();
+                                        return 0;
+                                }
+                                if (line[used] == '\n')
+                                        break;
+                                if (used < sizeof line - 1)
+                                        used++;
+                        }
+                        if (used % 2 || used / 2 > WATERLINK_MDNS_MAX ||
+                            !waterlink_unhex(line, used / 2, packet))
+                        {
+                                string_format(log, "bad\n");
+                                continue;
+                        }
+                        good = waterlink_mdns_read(packet, used / 2,
+                                                   address_of found);
+                        string_format(log, "%s %s %p", good ? "ok" : "refused",
+                                      found.asked ? "asked" : "-",
+                                      found.count);
+                        for (positive at = 0; good && at < found.count; at++)
+                        {
+                                struct waterlink_found_instance address_to one =
+                                        found.instance + at;
+
+                                string_format(log, " %p:%p", one->has_fields,
+                                              (positive)one->port);
+                                if (one->has_fields)
+                                {
+                                        string_format(log, ":");
+                                        for (positive k = 0; k < 16; k++)
+                                        {
+                                                p8 two[3] = {
+                                                        (p8)waterlink_hex[one->nonce[k] >> 4],
+                                                        (p8)waterlink_hex[one->nonce[k] & 15], 0};
+
+                                                string_format(log, "%s",
+                                                              (string_address)two);
+                                        }
+                                }
+                        }
+                        string_format(log, "\n");
+                        log_flush();
+                }
+        }
+}
+
 b32 main(void)
 {
         if (program_argument_count() > 1)
+        {
+                string_address mode = program_argument_list()[1];
+
+                if (string_equals(mode, "pair"))
+                        return pair_vectors(64);
+                if (string_equals(mode, "mdns-announce") ||
+                    string_equals(mode, "mdns-read"))
+                        return mdns_modes(mode);
                 return noise_vectors(64);
+        }
         sealed();
         sealed_short();
         whole_path();
@@ -53458,6 +53970,10 @@ b32 main(void)
         full_frame_beside_owed_ack();
         network_generated();
         handshake();
+        group_derivation();
+        group_tags();
+        group_pairing();
+        mdns_parse();
         return test_report(null);
 }
 #endif /* CHECK_waterlink */

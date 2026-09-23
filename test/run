@@ -2336,14 +2336,19 @@ lane_waterlink()
 {
         freestanding_checks_lane waterlink waterlink
         waterlink_outcome=$?
+        #       dnspython and noiseprotocol are found through
+        #       WATERLINK_NOISE_PATH where the system has neither; without
+        #       dnspython the interop half says NOT RUN and the lane stands on
+        #       the rest.
         if [ -x "$work/waterlink.$host_arch" ]; then
-                python3 test/differential.py --harness waterlink_noise \
-                        --binary "$work/waterlink.$host_arch"
-                case $? in
-                0) ;;
-                2) [ "$waterlink_outcome" != 0 ] || waterlink_outcome=2 ;;
-                *) waterlink_outcome=1 ;;
-                esac
+                for harness in waterlink_noise waterlink_mdns; do
+                        python3 test/differential.py --harness "$harness" \
+                                --binary "$work/waterlink.$host_arch"
+                        case $? in
+                        0|2) ;;
+                        *) waterlink_outcome=1 ;;
+                        esac
+                done
         fi
         return "$waterlink_outcome"
 }

@@ -32666,6 +32666,103 @@ def harness_waterlink_noise(argv):
                 package_agreed += 1
     checks(own_agreed == len(lines), "the spec's Noise, written here, makes the same bytes and keys "
            "(%d of %d)" % (own_agreed, len(lines)))
+
+    #       The pairing handshake, Noise_XXpsk0 with the same cipher: the three
+    #       message bodies of 64 seeded pairings, both references.
+    ran = subprocess.run([args.binary, "pair"], capture_output=True, timeout=120)
+    pairs = [line.split() for line in ran.stdout.decode().splitlines() if line.strip()]
+    checks(ran.returncode == 0 and len(pairs) == 64, "the binary printed 64 pairings")
+    pair_name = b"Noise_XXpsk0_25519_AES128GCM_SHA256"
+    pair_prologue = b"waterlink pair 1"
+
+    class OwnXX(Own):
+        def __init__(self, psk):
+            self.h = hashlib.sha256(pair_name).digest()
+            self.ck = self.h
+            self.k = None
+            self.n = 0
+            self.mix_hash(pair_prologue)
+            prk = hmac_module.new(self.ck, psk, hashlib.sha256).digest()
+            one = hmac_module.new(prk, b"\x01", hashlib.sha256).digest()
+            two = hmac_module.new(prk, one + b"\x02", hashlib.sha256).digest()
+            three = hmac_module.new(prk, two + b"\x03", hashlib.sha256).digest()
+            self.ck = one
+            self.mix_hash(two)
+            self.k = three
+            self.n = 0
+
+        def e(self, public):
+            self.mix_hash(public)
+            self.mix_key(public)
+
+    def own_pair(si, sr, ei, er, psk, ni, nr):
+        a = OwnXX(psk)
+        first = public_of(ei)
+        a.e(first)
+        first += a.seal(b"")
+        second = public_of(er)
+        a.e(second)
+        a.mix_key(dh(ei, public_of(er)))
+        second += a.seal(public_of(sr))
+        a.mix_key(dh(ei, public_of(sr)))
+        second += a.seal(nr)
+        third = a.seal(public_of(si))
+        a.mix_key(dh(si, public_of(er)))
+        third += a.seal(ni)
+        return first, second, third
+
+    def package_pair(si, sr, ei, er, psk, ni, nr):
+        from noise.connection import NoiseConnection, Keypair
+        from noise.backends.default.ciphers import AESGCMCipher
+
+        class Cut(AESGCMCipher):
+            def initialize(self, key):
+                self.cipher = AESGCM(key[:16])
+
+        def made(initiator):
+            connection = NoiseConnection.from_name(b"Noise_XXpsk0_25519_AESGCM_SHA256")
+            connection.noise_protocol.name = pair_name
+            connection.noise_protocol.cipher_class = Cut
+            connection.set_prologue(pair_prologue)
+            connection.set_psks(psk)
+            if initiator:
+                connection.set_as_initiator()
+                connection.set_keypair_from_private_bytes(Keypair.STATIC, si)
+                connection.set_keypair_from_private_bytes(Keypair.EPHEMERAL, ei)
+            else:
+                connection.set_as_responder()
+                connection.set_keypair_from_private_bytes(Keypair.STATIC, sr)
+                connection.set_keypair_from_private_bytes(Keypair.EPHEMERAL, er)
+            connection.start_handshake()
+            return connection
+
+        a, b = made(True), made(False)
+        first = bytes(a.write_message(b""))
+        b.read_message(first)
+        second = bytes(b.write_message(nr))
+        a.read_message(second)
+        third = bytes(a.write_message(ni))
+        b.read_message(third)
+        return first, second, third
+
+    own_paired = package_paired = 0
+    for fields in pairs:
+        if len(fields) != 10:
+            continue
+        si, sr, ei, er, psk, ni, nr, first, second, third = (bytes.fromhex(f) for f in fields)
+        if own_pair(si, sr, ei, er, psk, ni, nr) == (first, second, third):
+            own_paired += 1
+        if have_package and package_pair(si, sr, ei, er, psk, ni, nr) == (first, second, third):
+            package_paired += 1
+    checks(own_paired == len(pairs) and pairs,
+           "XXpsk0 written here makes the same three messages (%d of %d)" % (own_paired, len(pairs)))
+    if have_package:
+        checks(package_paired == len(pairs),
+               "the noiseprotocol package makes the same three messages (%d of %d)" %
+               (package_paired, len(pairs)))
+    if have_package:
+        checks(package_agreed == len(lines), "the noiseprotocol package makes the same bytes and keys "
+               "(%d of %d)" % (package_agreed, len(lines)))
     if have_package:
         checks(package_agreed == len(lines), "the noiseprotocol package makes the same bytes and keys "
                "(%d of %d)" % (package_agreed, len(lines)))
@@ -33527,6 +33624,139 @@ def harness_inventory_mutations(argv):
     return 0 if passed == len(cases) else 1
 
 
+def harness_waterlink_mdns(argv):
+    """waterlink's mDNS against dnspython, both ways.
+
+    dnspython reads the announcement and the question the check binary
+    builds and must find real DNS-SD in them: the PTR from the service to
+    the instance, SRV on the port with the cache-flush bit, the three TXT
+    fields, the host's A record, no cache-flush on the PTR. Then dnspython
+    builds announcements in the same shape -- compressed its way, cases
+    mixed, records reordered, extra records about other services around them
+    -- and questions of every type, and the binary's reader must find the
+    instances, ports and nonces dnspython put there and nothing else. The
+    hostile half is CHECK_waterlink's; this is the interoperating half. Found
+    through WATERLINK_NOISE_PATH, like the Noise reference.
+    """
+    import random
+    import subprocess
+    parser = argparse.ArgumentParser(prog="differential.py --harness waterlink_mdns")
+    parser.add_argument("--binary", required=True)
+    args = parser.parse_args(argv)
+    extra = os.environ.get("WATERLINK_NOISE_PATH")
+    if extra:
+        sys.path.insert(0, extra)
+    try:
+        import dns.message
+        import dns.name
+        import dns.rrset
+        import dns.rdatatype
+        import dns.rdataclass
+        import dns.flags
+    except ImportError:
+        print("waterlink mdns: NOT RUN -- dnspython is not importable")
+        return 2
+    checks = Checks()
+
+    built = subprocess.run([args.binary, "mdns-announce"], capture_output=True, timeout=60)
+    lines = built.stdout.decode().split()
+    checks(built.returncode == 0 and len(lines) == 2, "the binary built an announcement and a question")
+    if len(lines) == 2:
+        announcement = dns.message.from_wire(bytes.fromhex(lines[0]))
+        question = dns.message.from_wire(bytes.fromhex(lines[1]))
+        service = dns.name.from_text("_waterlink._udp.local.")
+        ptr = [r for r in announcement.answer if r.rdtype == dns.rdatatype.PTR and r.name == service]
+        srv = [r for r in announcement.answer if r.rdtype == dns.rdatatype.SRV]
+        txt = [r for r in announcement.answer if r.rdtype == dns.rdatatype.TXT]
+        a = [r for r in announcement.answer if r.rdtype == dns.rdatatype.A]
+        checks(announcement.flags & dns.flags.QR and announcement.flags & dns.flags.AA,
+               "dnspython reads an authoritative response")
+        checks(len(ptr) == 1 and len(ptr[0]) == 2 and ptr[0].rdclass == dns.rdataclass.IN,
+               "one PTR set from the service to two instances, no cache-flush bit")
+        #       dnspython knows no cache-flush bit, so a record in class
+        #       0x8001 comes back as raw rdata, read here by the RFC's layout.
+        def raw(record):
+            return list(record)[0].to_wire() if not hasattr(list(record)[0], "data") else list(record)[0].data
+
+        def strings(data):
+            out, at = [], 0
+            while at < len(data):
+                out.append(data[at + 1:at + 1 + data[at]])
+                at += 1 + data[at]
+            return out
+        checks(len(srv) == 2 and all(raw(r)[4:6] == (22348).to_bytes(2, "big") for r in srv) and
+               all(r.rdclass == 0x8001 for r in srv), "SRV on the port with cache-flush")
+        fields = [sorted(t.decode()[:2] for t in strings(raw(r))) for r in txt]
+        checks(len(txt) == 2 and all(f == ["n=", "t=", "v=", "w="] for f in fields) and
+               all(r.rdclass == 0x8001 for r in txt), "TXT with v, n, t and w, with cache-flush")
+        checks(len(a) == 1 and raw(a[0]) == bytes([10, 77, 0, 2]), "the host's A record")
+        checks(len(question.question) == 1 and question.question[0].name == service and
+               question.question[0].rdtype == dns.rdatatype.PTR, "the question is PTR for the service")
+
+    #       dnspython's own announcements, for the binary to read.
+    rng = random.Random(0x5353)
+    packets = []
+    expect = []
+    for round in range(300):
+        message = dns.message.Message()
+        message.flags = dns.flags.QR | dns.flags.AA
+        count = rng.randint(0, 3)
+        want = []
+        records = []
+        for at in range(count):
+            label = "wl-%020x" % rng.getrandbits(80)
+            base = "_waterlink._udp.local."
+            if rng.random() < 0.3:
+                base = "_WaterLink._UDP.Local."
+            instance = dns.name.from_text(label + "." + base)
+            port = rng.randint(1, 65535)
+            nonce = bytes(rng.getrandbits(8) for _ in range(16))
+            fields = ["v=1", "n=" + nonce.hex(), "t=" + "ab" * 16, "w=" + "cd" * 16]
+            rng.shuffle(fields)
+            records.append(dns.rrset.from_text(dns.name.from_text(base), 4500, "IN", "PTR", instance.to_text()))
+            records.append(dns.rrset.from_text(instance, 120, "IN", "SRV", "0 0 %d wl-host.local." % port))
+            records.append(dns.rrset.from_text(instance, 4500, "IN", "TXT", " ".join('"%s"' % f for f in fields)))
+            want.append((port, nonce.hex()))
+        for at in range(rng.randint(0, 3)):
+            other = dns.name.from_text("printer%d._ipp._tcp.local." % at)
+            records.append(dns.rrset.from_text(other, 120, "IN", "SRV", "0 0 631 printer.local."))
+            records.append(dns.rrset.from_text(other, 120, "IN", "TXT", '"rp=ipp/print"'))
+        rng.shuffle(records)
+        for record in records:
+            message.answer.append(record)
+        packets.append(message.to_wire().hex())
+        expect.append(("response", sorted(want)))
+    for kind in ("PTR", "ANY", "SRV", "A"):
+        query = dns.message.make_query("_waterlink._udp.local.", kind)
+        query.id = 0
+        packets.append(query.to_wire().hex())
+        expect.append(("asked" if kind in ("PTR", "ANY") else "quiet", []))
+
+    read = subprocess.run([args.binary, "mdns-read"], input=("\n".join(packets) + "\n").encode(),
+                          capture_output=True, timeout=60)
+    answers = read.stdout.decode().splitlines()
+    agreed = 0
+    for (kind, want), answer in zip(expect, answers):
+        words = answer.split()
+        if len(words) < 3 or words[0] != "ok":
+            continue
+        found = []
+        for item in words[3:]:
+            parts = item.split(":")
+            if len(parts) == 3 and parts[0] == "1":
+                found.append((int(parts[1]), parts[2]))
+        if kind == "response" and sorted(found) == want and words[1] == "-":
+            agreed += 1
+        elif kind == "asked" and words[1] == "asked" and not found:
+            agreed += 1
+        elif kind == "quiet" and words[1] == "-" and not found:
+            agreed += 1
+    checks(len(answers) == len(packets) and agreed == len(packets),
+           "the binary reads dnspython's packets as dnspython wrote them (%d of %d)" %
+           (agreed, len(packets)))
+    return checks.verdict("waterlink mdns:", "waterlink-mdns")
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -33566,6 +33796,7 @@ HARNESS_CHECKS = {
     "tls_chains": harness_tls_chains,
     "machine_scan": harness_machine_scan,
     "waterlink_noise": harness_waterlink_noise,
+    "waterlink_mdns": harness_waterlink_mdns,
     "waterlink_link": harness_waterlink_link,
 }
 
