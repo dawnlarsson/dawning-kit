@@ -44963,7 +44963,13 @@ __asm__(
         //       is built once for all of them and the run is drawn a scanline
         //       at a time, front to back. cells is eight bytes a cell with the
         //       character in the low four, a character below 256; font is
-        //       sixteen rows of one byte a glyph. A line of text in the
+        //       sixteen rows of one byte a glyph, 256 of them. Only the low
+        //       byte of a character is read, in every body: cells is the
+        //       program's own shared page, read again on each of sixteen
+        //       scanlines, and a second thread can rewrite a character after
+        //       the caller checked it -- a whole word read made that a font
+        //       index up to 64 GiB past the face, in ring 0. A byte cannot
+        //       leave the face whatever the page says. A line of text in the
         //       terminal's colours is mostly such runs: a 180 by 50 window of
         //       it composed in 63 cycles a cell against 79 through canvas_cell
         //       a call at a time on Zen 5, with the same pixels.
@@ -45011,7 +45017,7 @@ __asm__(
     "1:      mov     %rdi, %r13              # this scanline\n"
     "        mov     %rcx, %r14              # the first cell\n"
     "        mov     %r8, %r15               # cells left\n"
-    "2:      mov     (%r14), %eax            # the character\n"
+    "2:      movzbl  (%r14), %eax            # the character, its low byte\n"
     "        add     $8, %r14\n"
     "        shl     $4, %eax\n"
     "        movzbl  (%rdx,%rax,1), %eax     # its bits on this row\n"
@@ -45078,7 +45084,7 @@ __asm__(
         // The cell loop on a line of its own. Where the linker happened to
         // put it moved a line of text by a quarter, 30 cycles a cell or 38.
     "        .p2align 6\n"
-    "2:      mov     (%rax), %ebx            # the character\n"
+    "2:      movzbl  (%rax), %ebx            # the character, its low byte\n"
     "        add     $8, %rax\n"
     "        shl     $4, %ebx\n"
     "        vpbroadcastb (%rdx,%rbx,1), %ymm3   # its bits on this row\n"
@@ -45555,7 +45561,7 @@ __asm__(
     "1:      mov     x12, x0                 // this scanline\n"
     "        mov     x13, x3                 // the first cell\n"
     "        mov     x14, x4                 // cells left\n"
-    "2:      ldr     w15, [x13], #8          // the character\n"
+    "2:      ldrb    w15, [x13], #8          // the character, its low byte\n"
     "        add     x15, x2, x15, lsl #4\n"
     "        ldrb    w15, [x15]              // its bits on this row\n"
     "        and     x16, x15, #0xf0\n"
@@ -45653,7 +45659,7 @@ __asm__(
     "1:      mov     x12, x0                 // this scanline\n"
     "        mov     x13, x3                 // the first cell\n"
     "        mov     x14, x4                 // cells left\n"
-    "2:      ldr     w15, [x13], #8          // the character\n"
+    "2:      ldrb    w15, [x13], #8          // the character, its low byte\n"
     "        add     x15, x2, x15, lsl #4\n"
     "        ld1r    {v4.16b}, [x15]         // its bits on this row\n"
     "        cmtst   v5.4s, v4.4s, v2.4s\n"
@@ -46233,7 +46239,7 @@ __asm__(
     "1:      mv      t6, a0                  # this scanline\n"
     "        mv      a5, a3                  # the first cell\n"
     "        mv      a6, a4                  # cells left\n"
-    "2:      lwu     t0, 0(a5)               # the character\n"
+    "2:      lbu     t0, 0(a5)               # the character, its low byte\n"
     "        addi    a5, a5, 8\n"
     "        slli    t0, t0, 4\n"
     "        add     t0, a2, t0\n"
@@ -46263,7 +46269,7 @@ __asm__(
     "3:      mv      t6, a0\n"
     "        mv      a5, a3\n"
     "        mv      a6, a4\n"
-    "4:      lwu     t0, 0(a5)\n"
+    "4:      lbu     t0, 0(a5)\n"
     "        addi    a5, a5, 8\n"
     "        slli    t0, t0, 4\n"
     "        add     t0, a2, t0\n"
@@ -46375,7 +46381,7 @@ __asm__(
     "1:      mv      t3, a0                  # this scanline\n"
     "        mv      t2, a3                  # the first cell\n"
     "        mv      t4, a4                  # cells left\n"
-    "2:      lwu     t1, 0(t2)               # the character\n"
+    "2:      lbu     t1, 0(t2)               # the character, its low byte\n"
     "        addi    t2, t2, 8\n"
     "        slli    t1, t1, 4\n"
     "        add     t1, t1, a2\n"

@@ -62273,6 +62273,8 @@ b32 main(void)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
@@ -62579,12 +62581,49 @@ static void check_wide_bodies(void) {
     }
 }
 
+/* The cells a run is drawn from are the program's shared page, and the
+   bodies read each character again on every scanline, after the caller
+   checked it: a second thread can make it anything by then. Only the low
+   byte may reach the face, which here ends at a page nothing is mapped
+   behind, so a body reading the whole word faults instead of drawing. */
+static void check_character_bounds(int wide) {
+    long page=sysconf(_SC_PAGESIZE);
+    unsigned char *pages=mmap(NULL,(size_t)page*3,PROT_READ|PROT_WRITE,
+                              MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    assert(pages!=MAP_FAILED);
+    assert(!mprotect(pages+2*page,(size_t)page,PROT_NONE));
+    u8 *face=pages+2*page-256*16;
+    for(unsigned i=0;i<256*16;i++)face[i]=(u8)(i*131+i/16*7);
+    static u32 got[8*23*16+64],want[8*23*16+64];
+    const unsigned high[]={0x100,0x1000,0x10000,0xdead0000,0xffffff00,0x80000000};
+    for(unsigned trial=0;trial<6*23;trial++) {
+        unsigned count=1+trial%23,pitch=count*8;
+        struct window_cell run[23],plain[23];
+        for(unsigned i=0;i<count;i++) {
+            unsigned character=33+(trial*7+i*13)%94;
+            plain[i]=(struct window_cell){character,1,2,0};
+            run[i]=(struct window_cell){high[(trial+i)%6]|character,1,2,0};
+        }
+        memset(want,0xa5,sizeof(want));
+        canvas_cells(want,pitch,face,plain,count,0x11223344,0x55667788);
+        memset(got,0xa5,sizeof(got));
+        canvas_cells(got,pitch,face,run,count,0x11223344,0x55667788);
+        check(!memcmp(got,want,sizeof(got)));
+        if(!wide)continue;
+        memset(got,0xa5,sizeof(got));
+        canvas_cells_wide(got,pitch,face,run,count,0x11223344,0x55667788);
+        check(!memcmp(got,want,sizeof(got)));
+    }
+    assert(!munmap(pages,(size_t)page*3));
+}
+
 int main(void) {
     const u32 palette[]={0x1b2733,0x2f3f52,0x2b3a4c,0x4c6785,
                          0x101820,0xdfe7ef,0xffffff,0x000000};
     check_pane_focus_policy();
     const int wide=simd_usable();
     if(wide)check_wide_bodies();
+    check_character_bounds(wide);
     const u32 formats[]={0,DRM_FORMAT_ARGB8888,0x34325258,0xffffffff};
     for(unsigned f=0;f<4;f++)for(unsigned a=0;a<4;a++) {
         memset(pixels,0xa5,16*sizeof(*pixels));
