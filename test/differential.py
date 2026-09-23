@@ -26566,6 +26566,48 @@ def harness_compression(argv):
                                               '%d bytes, GNU %d; %s' % (len(got.stdout), len(ref.stdout),
                                                                         got.stderr.decode(errors='replace')))
 
+                    # Damage, drawn: a stream the reference made, with a byte
+                    # flipped, a run of bytes cut or inserted, or its tail cut,
+                    # at seeded places across headers, blocks and trailers.
+                    # The decoders are zero-margin by design, so this is where
+                    # a table or a length that trusts its input shows: ours
+                    # must never die by a signal or run out of time, and has to
+                    # refuse exactly what the reference refuses.
+                    hurt = random.Random(0xDA3A6E + len(codec))
+                    for name, data in (data_sets[3], data_sets[-3], data_sets[-1]):
+                        blob = call(command(refs[codec], codec, level=level, reference=True), data).stdout
+                        for trial in range(40):
+                            damaged = bytearray(blob)
+                            at = hurt.randrange(len(blob))
+                            kind = hurt.choice(('flip', 'flip', 'cut', 'insert', 'tail', 'byte'))
+                            if kind == 'flip':
+                                damaged[at] ^= 1 << hurt.randrange(8)
+                            elif kind == 'byte':
+                                damaged[at] = hurt.choice((0, 0xff, 0x80, 0x7f, damaged[at] ^ 0xff))
+                            elif kind == 'cut':
+                                del damaged[at:at + hurt.randrange(1, 64)]
+                            elif kind == 'insert':
+                                damaged[at:at] = hurt.randbytes(hurt.randrange(1, 64))
+                            else:
+                                del damaged[at:]
+                            damaged = bytes(damaged)
+                            ref = call([refs[codec], '-dc'], damaged)
+                            try:
+                                got = subprocess.run(decode, input=damaged, stdout=subprocess.PIPE,
+                                                     stderr=subprocess.PIPE, timeout=30)
+                            except subprocess.TimeoutExpired:
+                                check('%s/%s/damage-%s-%d' % (label, codec, name, trial), False,
+                                      '%s at %d did not finish' % (kind, at))
+                                continue
+                            same_bytes = codec != 'xz' or ref.returncode == 0 or got.stdout == ref.stdout
+                            check('%s/%s/damage-%s-%d' % (label, codec, name, trial),
+                                  got.returncode >= 0 and
+                                  (got.returncode == 0) == (ref.returncode == 0) and
+                                  (ref.returncode != 0 or got.stdout == ref.stdout) and same_bytes,
+                                  '%s at %d of %d: %s %d, ours %d %s' % (
+                                      kind, at, len(blob), codec, ref.returncode, got.returncode,
+                                      got.stderr.decode(errors='replace')[:120]))
+
                     # Different search budgets and reset paths must remain interoperable.
                     for other_level in ('1', '6', '9'):
                         if other_level == level:

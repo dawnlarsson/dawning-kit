@@ -1698,12 +1698,19 @@ static bool zstd_skippable(void)
         return zstd_in_skip_bytes(size);
 }
 
+/*      Whether this stream has shown a frame of either kind yet: input that
+        ends before it has is refused, as zstd refuses it -- "unexpected end
+        of file" for an empty .zst, which decoded here to nothing and 0. A
+        stream of skippable frames alone is still a stream. */
+static bool zstd_began;
+
 static bool zstd_stream(void)
 {
         bool any = zstd_live && zstd_decoded > 0;
 
         if (!zstd_live)
         {
+                zstd_began = false;
                 zstd_decoded = 0;
                 zstd_output.used = 0;
                 if (!zstd_pull)
@@ -1737,6 +1744,8 @@ static bool zstd_stream(void)
                         {
                                 if (zstd_src.eof && zstd_src.at == zstd_src.have)
                                 {
+                                        if (!zstd_began)
+                                                return zstd_fail("zstd unexpected end of file");
                                         zstd_why = null;
                                         break;
                                 }
@@ -1747,6 +1756,8 @@ static bool zstd_stream(void)
                 {
                         if (zstd_src.eof && zstd_src.at == zstd_src.have)
                         {
+                                if (!zstd_began)
+                                        return zstd_fail("zstd unexpected end of file");
                                 zstd_why = null;
                                 break;
                         }
@@ -1754,6 +1765,7 @@ static bool zstd_stream(void)
                 }
                 memory_copy(peek, zstd_in_at(), 4);
                 magic = memory_load_unaligned(p32, peek);
+                zstd_began = true;
                 if (magic == ZSTD_MAGIC)
                 {
                         if (!zstd_frame())
