@@ -12682,7 +12682,12 @@ def shell_lang_nounset_forms(rng):
         use = "v=$(echo \"[" + form + "]\"); echo \"[$v] after=$?\""
     else:
         use = "g() { echo \"[" + form + "]\"; }; g; echo tail"
-    bash_only = context == "dbl" or any(t in form for t in ("a[", "b[", "^^", "@Q", ":0:1", "/a/b", "${!x}", "$_", "LINENO"))
+    #       The operators only bash has run under every personality: dash
+    #       answers each with Bad substitution, and that answer is the one
+    #       to compare -- a dash that ran ${x^^} as bash does went unseen
+    #       for as long as these were held back to bash. What stays bash's is
+    #       what dash cannot even parse or has no name for.
+    bash_only = context == "dbl" or any(t in form for t in ("a[", "b[", "$_", "LINENO")) or "a=(" in setup
     return "nounset-forms", shell_BASH if bash_only else shell_ALL, shell_program(
         "empty=; set -u", setup, "echo start", "exec 2>/dev/null", use, "echo \"after=$?\"")
 
@@ -13857,12 +13862,17 @@ def shell_lang_nested_parameter(rng):
         setup[0] = "x="
     elif state == "value":
         setup[0] = "x=abcabc"
-    bash_only = any(mark in form for mark in ("/", "^^", "!", ":1:", "${x:1", "${y:1"))
-    modes = shell_BASH if bash_only else shell_ALL
+    #       Every form runs under every personality. dash refuses what is
+    #       bash's alone -- substring, pattern substitution, case conversion,
+    #       indirection -- as a bad substitution, and that refusal is what
+    #       this compares; holding those forms back to bash is how a dash
+    #       that quietly did the bash thing went unnoticed.
+    modes = shell_ALL
     script = shell_program(*setup,
                            "set -- p1 p2",
                            "printf '<%s>' " + word + " 2>/dev/null; echo \" status=$?\"",
-                           "printf 'x=<%s> y=<%s> z=<%s>\\n' \"${x-U}\" \"${y-U}\" \"${z-U}\"")
+                           "printf 'x=<%s> y=<%s> z=<%s>\\n' \"${x-U}\" \"${y-U}\" \"${z-U}\"",
+                           "if [ -e touched ]; then echo touched; fi")
     return "nested-parameter", modes, script
 
 

@@ -7493,7 +7493,15 @@ static string_address expand_braced_body(string_address step,
                         step++;
                 }
         }
-        else if (!colon && seen == '/')
+        /*
+                Pattern substitution, case conversion and ${v@X} are bash's.
+                dash has none of them, so under its name they are not
+                operators at all and fall to the refusal below -- the Bad
+                substitution that ends the process -- rather than doing the
+                bash thing: ${x/a/b}, ${x^^}, ${x,} and ${x@U} all ran here
+                where dash stops.
+        */
+        else if (!colon && seen == '/' && shell_bash_compat)
         {
                 operation = seen;
                 step++;
@@ -7504,7 +7512,7 @@ static string_address expand_braced_body(string_address step,
                         step++;
                 }
         }
-        else if (!colon && (seen == '^' || seen == ','))
+        else if (!colon && (seen == '^' || seen == ',') && shell_bash_compat)
         {
                 operation = seen;
                 step++;
@@ -7521,7 +7529,7 @@ static string_address expand_braced_body(string_address step,
         //      ${v@} with no letter is still a transform: bash refuses it as
         //      a bad substitution. The letter is read as the word below, and
         //      an empty word takes the unknown-letter path.
-        else if (!colon && seen == '@')
+        else if (!colon && seen == '@' && shell_bash_compat)
         {
                 operation = seen;
                 step++;
