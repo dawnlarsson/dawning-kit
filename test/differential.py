@@ -7816,7 +7816,99 @@ def files_tar(farm):
     return passed, total, notes
 
 
-FILES_CHECKS = (files_column_layout, files_xargs_parallel, files_zones, files_tar)
+def files_find_terminal(farm):
+    """find's names on a terminal, against GNU find, through a real pty.
+
+    A file name is whoever made it's, and GNU find writes a byte a terminal
+    would act on as '?' when -print, -fprint or a name directive of -printf
+    goes to one, and every byte when it goes anywhere else. The parent wrote
+    them whole to the terminal. Seeded names from ESC, OSC, BEL, DEL, C0,
+    C1 spelled in UTF-8, plain UTF-8 and ordinary text are made in a tree
+    and a link, and both finds run under a pty and into a pipe in the C
+    locale: -print, -printf over %p %f %h %P %l beside a format carrying its
+    own escape, -fprint /dev/tty, and -print0, which stays raw.
+    """
+    import os as _os
+    import pty
+    import random
+    import select
+    import shutil
+    reference = shutil.which("find")
+    target = Path(farm) / "find"
+    if not reference or not target.exists():
+        return 0, 1, ["find terminal needs GNU find and the candidate's"]
+
+    pieces = [b"\x1b[31m", b"\x1b]0;t\x07", b"\x07", b"\x7f", b"\x01", b"\x1b",
+              "\u00e5".encode(), b"\xc2\x9b", b"a", b"-", b"x"]
+    rng = random.Random(0x66696e64)
+
+    def through_pty(command, cwd):
+        pid, master = pty.fork()
+        if pid == 0:
+            try:
+                _os.chdir(cwd)
+                _os.execve(command[0], command, {"LC_ALL": "C", "PATH": "/usr/bin:/bin"})
+            finally:
+                _os._exit(127)
+        out = b""
+        while True:
+            ready, _, _ = select.select([master], [], [], 10)
+            if not ready:
+                break
+            try:
+                chunk = _os.read(master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out += chunk
+        _os.close(master)
+        _, status = _os.waitpid(pid, 0)
+        return status, out
+
+    passed = 0
+    notes = []
+    cases = 0
+    with tempfile.TemporaryDirectory(prefix="find-terminal-") as work:
+        top = Path(work)
+        tree = top / "t"
+        tree.mkdir()
+        for number in range(12):
+            name = b"".join(rng.choice(pieces) for _ in range(1 + rng.randrange(4)))
+            (tree / _os.fsdecode(b"n%d" % number + name)).write_bytes(b"x")
+        _os.symlink(_os.fsencode(tree) + b"/n0", _os.fsencode(tree) + b"/l\x1b[2Jk")
+        (tree / _os.fsdecode(b"d\x1b]0;x\x07")).mkdir()
+        (tree / _os.fsdecode(b"d\x1b]0;x\x07") / "in").write_bytes(b"y")
+        forms = (("-print",), ("-printf", "%p|%f|%h|%P|%l\\033[0m\\n"),
+                 ("-fprint", "/dev/tty"), ("-print0",), ("-name", "*a*", "-print"))
+        for form in forms:
+            for tty in (True, False):
+                cases += 1
+                answers = []
+                for program in (reference, str(target)):
+                    command = [program, "t", *form]
+                    if tty:
+                        answers.append(through_pty(command, work))
+                    else:
+                        ran = subprocess.run(command, cwd=work, capture_output=True,
+                                             env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+                                             stdin=subprocess.DEVNULL, timeout=10)
+                        answers.append((ran.returncode, ran.stdout))
+                # The walk's order is the directory's; the names are the
+                # question, so the lines are compared as a set.
+                want = sorted(answers[0][1].replace(b"\0", b"\n").splitlines())
+                got = sorted(answers[1][1].replace(b"\0", b"\n").splitlines())
+                if want == got and answers[0][0] == answers[1][0]:
+                    passed += 1
+                elif len(notes) < 6:
+                    notes.append("find %s %s: want %r got %r"
+                                 % (" ".join(form), "on a tty" if tty else "into a pipe",
+                                    want[:4], got[:4]))
+    return passed, cases, notes
+
+
+FILES_CHECKS = (files_column_layout, files_xargs_parallel, files_zones, files_tar,
+                files_find_terminal)
 
 # ---- domain: misc (from spec_misc.py) ----
 

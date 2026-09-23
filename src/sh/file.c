@@ -11500,6 +11500,61 @@ static string_address find_below_root()
         return path;
 }
 
+/*
+        Names on a terminal, as GNU find writes them there: a byte a
+        terminal would act on, or one ls would not show, is a '?'. A file
+        name is anyone's -- a user's file under /tmp, a tree root runs find
+        over -- and -print, -fprint and the name directives of -printf put
+        its escapes on the screen of whoever ran find. Not the format's own
+        text, which is the caller's, and not -print0, which is for a program.
+        Asked of standard output once a run, before any worker of the pool
+        walk prints, and of an -fprint file when it is written, since that
+        can be /dev/tty.
+*/
+static bool find_terminal;
+
+static bool find_names_hidden(bipolar handle)
+{
+        if (handle >= 0)
+                return stream_is_terminal((b32)handle);
+        return find_terminal;
+}
+
+static fn find_name_write(bipolar handle, string_address name)
+{
+        positive length = string_length(name);
+        positive plain = 0;
+        bool hidden = find_names_hidden(handle);
+
+        for (positive at = 0; hidden && at < length; at++)
+        {
+                if (!ls_byte_unprintable((p8)name[at]))
+                        continue;
+                // A writer takes a length of 0 as "to the end".
+                if (at > plain)
+                {
+                        if (handle >= 0)
+                                system_write_all((positive)handle, name + plain,
+                                                 at - plain);
+                        else
+                                log(name + plain, at - plain);
+                }
+                if (handle >= 0)
+                        system_write_all((positive)handle, "?", 1);
+                else
+                        log("?", 1);
+                plain = at + 1;
+        }
+        if (length > plain)
+        {
+                if (handle >= 0)
+                        system_write_all((positive)handle, name + plain,
+                                         length - plain);
+                else
+                        log(name + plain, length - plain);
+        }
+}
+
 static bool find_printf_one(p8 letter, string_address format, positive address_to at)
 {
         p8 name[FILE_PATH_MAX];
@@ -11713,7 +11768,10 @@ static fn find_printf_walk(string_address format, bipolar handle)
                         p8 next = string_get(format + at);
                         p8 named = byte_from_escape_letter(next);
 
-                        if (next && named != 0xff)
+                        // \NNN before the letters: \0 is where \033
+                        // starts, and read as the letter it wrote a NUL
+                        // and then "33".
+                        if (next && named != 0xff && !byte_is_digit(next))
                         {
                                 line[used++] = named;
                                 at++;
@@ -11803,6 +11861,12 @@ static fn find_printf_walk(string_address format, bipolar handle)
                 }
 
                 positive length = find_field_output.used;
+
+                if (string_first_of((string_address)"pfhHPl", letter) &&
+                    find_names_hidden(handle))
+                        for (positive i = 0; i < length; i++)
+                                if (ls_byte_unprintable(find_field[i]))
+                                        find_field[i] = '?';
 
                 if (precision != positive_max && precision < length)
                         length = precision;
@@ -12048,7 +12112,8 @@ static __attribute__((noinline)) bool find_true_test(find_node address_to node)
         }
 
         case 'd':
-                file_line(find_path);
+                find_name_write(-1, find_path);
+                log("\n", 1);
                 return true;
 
         case '0':
@@ -12105,8 +12170,11 @@ static __attribute__((noinline)) bool find_true_test(find_node address_to node)
         case 'e':
                 if (node->output >= 0)
                 {
-                        system_write_all((positive)node->output, find_path,
-                                         string_length(find_path));
+                        if (node->comparison == '0')
+                                system_write_all((positive)node->output, find_path,
+                                                 string_length(find_path));
+                        else
+                                find_name_write(node->output, find_path);
                         system_write_all((positive)node->output,
                                          node->comparison == '0' ? "" : "\n",
                                          node->comparison == '0' ? 0 : 1);
@@ -12461,6 +12529,11 @@ static bool find_tree_print(parallel_output address_to output, positive address_
                 return false;
         memory_copy(at, path, length);
         at[length] = terminator;
+        // -print on a terminal, as find_name_write has it; -print0 is raw.
+        if (terminator && find_terminal)
+                for (positive i = 0; i < length; i++)
+                        if (ls_byte_unprintable(at[i]))
+                                at[i] = '?';
 
         memory_copy(address_of record, output->bytes + address_to open_at, sizeof(record));
         record.bytes += (p32)(length + 1);
@@ -13036,6 +13109,7 @@ static b32 file_find()
         find_used = 0;
         find_root = -1;
         find_bad = false;
+        find_terminal = stream_is_terminal(1);
         find_has_action = false;
         find_batch_have = 0;
         find_at = 0;
