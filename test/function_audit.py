@@ -231,7 +231,15 @@ def library_routines():
 
 
 def marked_assembly(root):
-    """Return architecture bodies declared with #> arch/SYM_FUNC_START."""
+    """Return architecture bodies declared with #> arch/SYM_FUNC_START.
+
+    A directory that is not there is an error and not an empty answer: the
+    Canvas count read src/canvas for a week after the rename moved Canvas to
+    src/moonwater, and a glob of a missing path is empty, so the seal's
+    canvas_asm 0 was a directory nobody had rather than a count of nothing."""
+    if not root.is_dir():
+        raise SystemExit('function audit: %s is not a directory; the assembly '
+                         'counted there has moved' % root.relative_to(ROOT).as_posix())
     bodies = []
     for path in sorted(root.glob('*.asm')):
         architecture = None
@@ -269,7 +277,7 @@ def main():
         return 1
 
     library, library_bodies, library_aliases = library_routines()
-    canvas = marked_assembly(ROOT / 'src/canvas')
+    canvas = marked_assembly(ROOT / 'src/moonwater')
     canvas_names = {item[2] for item in canvas}
     kernel = marked_assembly(ROOT / 'kernel/replace')
 
