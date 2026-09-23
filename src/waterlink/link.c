@@ -587,14 +587,17 @@ bool waterlink_replay_new(struct waterlink_replay address_to window, p64 counter
                 p64 step = counter - window->top;
                 p64 at = window->top + 1;
 
+                //      Counted by what is left to clear, not by at <= counter:
+                //      a run that ends at the last counter there is wraps at
+                //      to zero, and that test then never fails.
                 if (step >= WATERLINK_REPLAY_WINDOW)
                         memory_zero(window->seen, sizeof(window->seen));
                 else
-                        while (at <= counter)
+                        while (step)
                         {
                                 positive low;
                                 positive high;
-                                p64 span = counter - at;
+                                p64 span = step - 1;
                                 p64 mask;
 
                                 slot = (positive)(at &
@@ -610,6 +613,7 @@ bool waterlink_replay_new(struct waterlink_replay address_to window, p64 counter
                                 window->seen[slot >> 6] &= ~mask;
 
                                 at += high - low + 1;
+                                step -= high - low + 1;
                         }
 
                 window->top = counter;

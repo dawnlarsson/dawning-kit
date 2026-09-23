@@ -52071,6 +52071,100 @@ static fn whole_path(void)
               !waterlink_replay_new(address_of window, head.counter));
 }
 
+//      The seeded generator both generated checks below draw from.
+static p64 traffic_state;
+
+static p64 traffic_next(void)
+{
+        traffic_state ^= traffic_state << 13;
+        traffic_state ^= traffic_state >> 7;
+        traffic_state ^= traffic_state << 17;
+        return traffic_state;
+}
+
+/*
+        The replay window against the set it stands for. A counter is new
+        when it is above the highest seen, or within the window below it and
+        not seen before; anything further back is refused. The model keeps
+        exactly that set, over a region four windows wide that starts at
+        zero, somewhere in the middle, or ends at the last counter there is
+        -- where clearing the slots the top passes over used to wrap its
+        own cursor and never finish.
+*/
+#define REPLAY_REGION (4 * WATERLINK_REPLAY_WINDOW)
+
+static p8 replay_model[REPLAY_REGION + 1];
+
+static fn replay_generated(void)
+{
+        positive asked = 0, wrong = 0, topped = 0;
+
+        for (positive seed = 1; seed <= 48; seed++)
+        {
+                struct waterlink_replay window;
+                p64 base;
+                p64 top = 0;
+                bool any = false;
+
+                traffic_state = 0xd1b54a32d192ed03ull * seed;
+                base = seed % 3 == 0 ? ~0ull - REPLAY_REGION
+                     : seed % 3 == 1 ? 0
+                                     : traffic_next() >> 2;
+                memory_zero(address_of window, sizeof window);
+                memory_zero(replay_model, sizeof replay_model);
+
+                for (positive op = 0; op < 3000; op++)
+                {
+                        p64 roll = traffic_next();
+                        p64 offset;
+                        p64 counter;
+                        bool want;
+                        bool got;
+
+                        if (roll % 8 == 0)
+                                offset = REPLAY_REGION;
+                        else if (any && roll % 8 < 5)
+                        {
+                                p64 at = top - base;
+                                p64 back = traffic_next() % (WATERLINK_REPLAY_WINDOW + 64);
+
+                                offset = roll % 2 ? at + traffic_next() % 70
+                                                  : (back > at ? 0 : at - back);
+                                if (offset > REPLAY_REGION)
+                                        offset = REPLAY_REGION;
+                        }
+                        else
+                                offset = traffic_next() % (REPLAY_REGION + 1);
+                        counter = base + offset;
+
+                        //      The window starts at top zero with nothing
+                        //      seen, so counter zero is new once.
+                        if (counter > top)
+                                want = true;
+                        else
+                                want = top - counter < WATERLINK_REPLAY_WINDOW &&
+                                       !replay_model[offset];
+
+                        got = waterlink_replay_new(address_of window, counter);
+                        asked++;
+                        if (got != want)
+                                wrong++;
+                        if (want)
+                        {
+                                replay_model[offset] = 1;
+                                if (counter > top)
+                                        top = counter;
+                        }
+                        any = true;
+                        topped += counter == ~0ull;
+                }
+        }
+
+        check("the replay window answers as the set it stands for", wrong == 0);
+        check("and was asked about the last counter there is", topped > 0);
+        check("and asked enough to mean it", asked == 48 * 3000);
+}
+
 b32 main(void)
 {
         sealed();
@@ -52084,6 +52178,7 @@ b32 main(void)
         malformed_bodies();
         replay();
         saturation();
+        replay_generated();
         return test_report(null);
 }
 #endif /* CHECK_waterlink */
