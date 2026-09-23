@@ -6473,6 +6473,24 @@ def files_xargs_valid(argv):
     return not any(word.startswith(batching) for word in argv)
 
 
+def env_debug_cases():
+    """-v and --debug over what env does before it runs a command, each
+    step of which the trace names: -i, -u, assignments, the three signal
+    options in both forms, -C, -a and -S, over a command that runs, one
+    that is missing and none at all."""
+    rng = random.Random(int.from_bytes(hashlib.sha256(b"env-debug").digest()[:8], "little"))
+    cleans = ((), ("-i",), ("-u", "HOME"), ("-u", "A", "-u", "HOME"), ("-u", "X", "-i"))
+    signals = ((), ("--ignore-signal=INT",), ("--default-signal",), ("--ignore-signal",), ("--block-signal",),
+               ("--block-signal=TERM", "--default-signal=TERM"), ("--default-signal=INT,TERM", "--block-signal=QUIT"),
+               ("--ignore-signal=RTMIN+1",))
+    tails = (("true",), ("-C", "dir", "pwd"), ("-a", "zz", "true", "x y", "q'z"), ("-S", "printf %s| a  b"),
+             ("nosuchcommand",), (), ("A=1", "B=2", "true"), ("A=1",), ("-0",), ("-0", "true"))
+    cases = []
+    for _ in range(96):
+        cases.append((rng.choice(("-v", "--debug")),) + rng.choice(cleans) + rng.choice(signals) + rng.choice(tails))
+    return tuple(cases)
+
+
 def files_slash_destinations(tool, flags, sources):
     """A destination spelled with a slash on the end, walked over every
     source kind the fixture has and a seeded draw of the tool's options:
@@ -6738,7 +6756,8 @@ FILES_UTILITIES = (
                       #       What the signal options hand on, read by the
                       #       command itself: its mask and what it ignores.
                       ("grep", "^Sig[BI]", "/proc/self/status")),
-            stdin=("empty",), fixture="files", stderr="exact"),
+            stdin=("empty",), fixture="files", stderr="exact",
+            extra=env_debug_cases()),
     Utility("printenv", options=(Option("-0"), Option("--null")),
             operands=((), ("PATH",), ("PATH", "HOME"), ("NOPE",), ("PATH", "NOPE"), ("PATH=anything",), ("PATH", "-0"),
                       ("",), ("HOME",), ("TZ", "LC_ALL", "LANG"), ("--bad",), ("COLUMNS", "LINES", "TERM")),

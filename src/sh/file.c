@@ -32635,7 +32635,9 @@ enum { ENV_SIGNAL_DEFAULT = 1, ENV_SIGNAL_IGNORE = 2, ENV_SIGNAL_QUIET = 4 };
 
 static p8 env_signal_wanted[ENV_SIGNALS + 1];
 static p64 env_signal_blocked;
+static p64 env_signal_unblocked;
 static bool env_signal_listed;
+static bool env_loud;
 
 static bipolar env_signal_of(string_address word);
 
@@ -32645,13 +32647,26 @@ static bool env_signal_seen(p8 letter, string_address value)
 {
         p8 want = letter == 'd' ? ENV_SIGNAL_DEFAULT : ENV_SIGNAL_IGNORE;
 
+        //      --default-signal puts the signal back as it began, which is
+        //      unblocked as well: GNU's takes it out of the mask, as
+        //      --block-signal puts it in, the later of the two winning.
         if (!value)
         {
                 for (positive number = 1; number <= ENV_SIGNALS; number++)
                         if (letter == 'b')
+                        {
                                 env_signal_blocked |= (p64)1 << (number - 1);
+                                env_signal_unblocked &= ~((p64)1 << (number - 1));
+                        }
                         else
+                        {
                                 env_signal_wanted[number] = want | ENV_SIGNAL_QUIET;
+                                if (letter == 'd')
+                                {
+                                        env_signal_unblocked |= (p64)1 << (number - 1);
+                                        env_signal_blocked &= ~((p64)1 << (number - 1));
+                                }
+                        }
                 return true;
         }
 
@@ -32681,9 +32696,19 @@ static bool env_signal_seen(p8 letter, string_address value)
                         return false;
                 }
                 if (letter == 'b')
+                {
                         env_signal_blocked |= (p64)1 << (number - 1);
+                        env_signal_unblocked &= ~((p64)1 << (number - 1));
+                }
                 else
+                {
                         env_signal_wanted[number] = want;
+                        if (letter == 'd')
+                        {
+                                env_signal_unblocked |= (p64)1 << (number - 1);
+                                env_signal_blocked &= ~((p64)1 << (number - 1));
+                        }
+                }
                 value += length;
         }
 
@@ -32708,6 +32733,24 @@ static b32 env_signals_apply(void)
 
                 if (!wanted)
                         continue;
+                if (env_loud)
+                {
+                        p8 name[16];
+
+                        //      The two the C library keeps it names by number.
+                        env_signal_name(number, name);
+                        string_format(log_error, "Reset signal %s%s (%p) to %s%s\n",
+                                      number == 32 || number == 33 ? (string_address) "SIG"
+                                                                   : (string_address) "",
+                                      (string_address)name, number,
+                                      wanted & ENV_SIGNAL_DEFAULT ? (string_address) "DEFAULT"
+                                                                  : (string_address) "IGNORE",
+                                      wanted & ENV_SIGNAL_QUIET &&
+                                              (number == 9 || number == 19 ||
+                                               number == 32 || number == 33)
+                                          ? (string_address) " (failure ignored)"
+                                          : (string_address) "");
+                }
                 if (number == 32 || number == 33)
                 {
                         if (wanted & ENV_SIGNAL_QUIET)
@@ -32724,12 +32767,32 @@ static b32 env_signals_apply(void)
                                              number, file_reason(-ERROR_INVALID));
         }
 
+        for (positive number = 1; env_loud && number <= ENV_SIGNALS; number++)
+        {
+                p64 bit = (p64)1 << (number - 1);
+                p8 name[16];
+
+                //      A C library set refuses the two it keeps, so the
+                //      reference sets neither and says nothing of them.
+                if (!((env_signal_blocked | env_signal_unblocked) & bit) ||
+                    number == 32 || number == 33)
+                        continue;
+                env_signal_name(number, name);
+                string_format(log_error, "signal %s (%p) mask set to %s\n",
+                              (string_address)name, number,
+                              env_signal_blocked & bit ? (string_address) "BLOCK"
+                                                       : (string_address) "UNBLOCK");
+        }
+
         //      glibc's full set leaves out the two it keeps for itself, and
         //      the kernel quietly drops KILL and STOP from any mask.
         p64 mask = env_signal_blocked & ~(((p64)1 << 31) | ((p64)1 << 32));
+        p64 unmask = env_signal_unblocked & ~(((p64)1 << 31) | ((p64)1 << 32));
 
         if (mask)
                 system_signal_mask(0, address_of mask, null, 8);
+        if (unmask)
+                system_signal_mask(1, address_of unmask, null, 8);
 
         if (!env_signal_listed)
                 return 0;
@@ -33062,6 +33125,7 @@ static b32 file_env()
         env_have = 0;
         env_drops = 0;
         env_signal_blocked = 0;
+        env_signal_unblocked = 0;
         env_signal_listed = false;
         memory_fill(env_signal_wanted, 0, sizeof(env_signal_wanted));
 
@@ -33098,6 +33162,24 @@ static b32 file_env()
                 if (split && !env_split(split, address_of have))
                         return 125;
 
+                /*
+                        -v, --debug: what env does, as it does it, on the
+                        standard error -- the split -S made, the environment
+                        it cleaned, unset and set, the signals, the
+                        directory, and the command with each of its words.
+                        The words are quote()'s, the directory quoteaf's.
+                */
+                if (split && (taking.flags & FILE_FLAG('v')))
+                {
+                        string_format(log_error, "split -S:  '%w'\n",
+                                      writer_terminal_quoted_name, split);
+                        for (positive word = 1; word < have; word++)
+                                string_format(log_error, "%s'%w'\n",
+                                              word == 1 ? (string_address) " into:    "
+                                                        : (string_address) "     &    ",
+                                              writer_terminal_quoted_name, env_words[word]);
+                }
+
                 if (!shell_array_room(env_words, env_words_room,
                                       have + origin_count - origin_first + 1))
                         return string_report(log_error, 125, "env: argument list is too large\n");
@@ -33125,6 +33207,8 @@ static b32 file_env()
         positive index = taking.first;
         bool empty = (taking.flags & FILE_FLAG('i')) != 0;
 
+        env_loud = (taking.flags & FILE_FLAG('v')) != 0;
+
         // A mere -, from before env had options to spell it with, means -i.
         if (index < count && string_is(argv[index], '-') &&
             string_is(argv[index] + 1, end))
@@ -33133,6 +33217,8 @@ static b32 file_env()
                 index++;
         }
 
+        if (empty && env_loud)
+                log_error("cleaning environ\n", 0);
         if (!empty)
         {
                 string_address address_to process = file_environment_all();
@@ -33156,6 +33242,10 @@ static b32 file_env()
                                             "env: cannot unset %w: %s\n",
                                             writer_terminal_quoted_name, name,
                                             file_reason(-ERROR_INVALID));
+                //      Nothing is left to unset in an environment -i
+                //      cleaned, and GNU says nothing of it.
+                if (env_loud && !empty)
+                        string_format(log_error, "unset:    %s\n", name);
                 env_drop(name);
         }
 
@@ -33173,6 +33263,8 @@ static b32 file_env()
 
         while (at < have && string_first_of(env_words[at], '='))
         {
+                if (env_loud)
+                        string_format(log_error, "setenv:   %s\n", env_words[at]);
                 if (!env_put(env_words[at++]))
                         return 125;
         }
@@ -33208,8 +33300,19 @@ static b32 file_env()
                 return string_report(log_error, 125,
                                     "env: cannot specify --null (-0) with command\n");
 
+        //      The signals first and then the directory, in GNU's order,
+        //      which is the order the trace says them in.
+        b32 refused = env_signals_apply();
+
+        if (refused)
+                return refused;
+
         if (where)
         {
+                if (env_loud)
+                        string_format(log_error, "chdir:    %w\n",
+                                      writer_shell_quoted_name, where);
+
                 bipolar changed = system_change_directory(where);
 
                 if (changed < 0)
@@ -33219,11 +33322,6 @@ static b32 file_env()
                                             file_reason(changed));
         }
 
-        b32 refused = env_signals_apply();
-
-        if (refused)
-                return refused;
-
         string_address address_to arguments = env_words + at;
         string_address name = env_words[at];
 
@@ -33232,7 +33330,19 @@ static b32 file_env()
         string_address zeroth = file_option_value(address_of taking, 'a');
 
         if (zeroth)
+        {
+                if (env_loud)
+                        string_format(log_error, "argv0:     '%w'\n",
+                                      writer_terminal_quoted_name, zeroth);
                 arguments[0] = zeroth;
+        }
+        if (env_loud)
+        {
+                string_format(log_error, "executing: %s\n", name);
+                for (positive word = 0; arguments[word]; word++)
+                        string_format(log_error, "   arg[%p]= '%w'\n", word,
+                                      writer_terminal_quoted_name, arguments[word]);
+        }
 
         log_flush();
 
