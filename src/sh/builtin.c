@@ -14434,9 +14434,12 @@ COLD fn shell_eval(writer write, string_address input)
                 string_address saved_command = shell_syntax_command;
                 positive saved_base = shell_eval_lineno_base;
 
+                positive saved_line;
+
                 shell_syntax_command = (string_address) "eval";
                 if (shell_bash_compat)
                         shell_eval_lineno_base = shell_eval_lineno_base_now();
+                saved_line = exec_line_exchange(0);
 
                 lex_nest_enter(address_of frame);
 
@@ -14466,6 +14469,7 @@ COLD fn shell_eval(writer write, string_address input)
 
                 shell_syntax_command = saved_command;
                 shell_eval_lineno_base = saved_base;
+                exec_line_exchange(saved_line);
         }
 
         memory_free(joined.bytes, joined.room);

@@ -212,6 +212,8 @@ static positive shell_eval_lineno_base;
 
 positive shell_eval_lineno_base_now();
 PURE bool exec_in_function();
+PURE bool exec_compound_now();
+positive exec_line_exchange(positive line);
 
 fn lex_prepare()
 {

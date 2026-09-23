@@ -1071,12 +1071,16 @@ bool parse_feed(string_address line)
         positive token_start;
         b32 index;
         b32 unfinished;
+        //      The line the text being lexed starts on: this one, or the one
+        //      an open quote or a trailing backslash started on.
+        positive first_line = shell_line_number ? shell_line_number : 1;
 
         // Joining first is what lets the unfinished thing be recognised at
         // all: the quote that closes is on this line and the one that opened
         // it is on the last.
         if (parse_pending_used)
         {
+                first_line = parse_pending_start_line();
                 positive length = string_length(line);
 
                 if (!shell_array_room(parse_pending, parse_pending_room,
@@ -1105,6 +1109,16 @@ bool parse_feed(string_address line)
 
         token_start = parse_token_count;
 
+        /*
+                Each token takes the physical line it starts on. A word that
+                ran over a newline used to give every token of the joined text
+                the line the text ended on, so a command whose quoted word
+                spans two lines, or that goes on after a backslash, read
+                $LINENO as its last line where bash reads its first.
+        */
+        positive counted = 0;
+        positive token_line = first_line;
+
         for (index = 0; index < count; index++)
         {
                 //      Room taken before any address into the table is,
@@ -1115,6 +1129,14 @@ bool parse_feed(string_address line)
                 if (!parse_copy_lexed(parse_tokens + parse_token_count, index,
                                       null))
                         return false;
+
+                if (lex_tokens[index].at > counted)
+                {
+                        token_line += memory_count(line + counted,
+                                                   lex_tokens[index].at - counted, '\n');
+                        counted = lex_tokens[index].at;
+                }
+                parse_tokens[parse_token_count].line = (b32)token_line;
 
                 parse_token_count++;
         }

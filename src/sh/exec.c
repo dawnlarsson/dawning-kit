@@ -7957,11 +7957,27 @@ PURE positive shell_line_now()
         if (expand_substitution_lineno)
                 return expand_substitution_lineno;
 
+        /* Inside an eval body a command that has started is on a line of
+           that body -- its own line, not how far the eval's reader got, which
+           for an if or a loop is its last line: eval 'if :; then\n echo
+           $LINENO\nfi' said the line of the fi. Before any has started, the
+           reader's line is all there is. */
         if (shell_eval_lineno_base)
                 return shell_eval_lineno_base +
-                       (shell_line_number ? shell_line_number : 1) - 1;
+                       (exec_line ? (positive)exec_line
+                                  : shell_line_number ? shell_line_number : 1) - 1;
 
         return exec_line ? (positive)exec_line : shell_line_number;
+}
+
+// The line of the command running now, handed over and taken back by eval so
+// that its body's commands count from their own first line.
+positive exec_line_exchange(positive line)
+{
+        positive was = (positive)exec_line;
+
+        exec_line = (b32)line;
+        return was;
 }
 
 PURE bool exec_in_function()
@@ -7971,17 +7987,26 @@ PURE bool exec_in_function()
 
 /*
         The line Bash reports as $LINENO for the first line of an eval body:
-        the last physical line of the eval command itself, or that command's
-        already-offset line when eval is nested inside eval.
+        the line the eval command starts on, or that command's already-offset
+        line when eval is nested inside eval. It used to be the reader's line,
+        which is the eval's last line on its own and the end of the whole
+        construct inside an if or a loop: eval "echo a\necho \$LINENO" at the
+        top of a script said 3 where bash says 2, and 7 inside an if on line 1.
 */
 positive shell_eval_lineno_base_now()
 {
         if (shell_eval_lineno_base)
                 return shell_line_now();
-        if (exec_function_depth)
-                return exec_line ? (positive)exec_line : 1;
-        return shell_line_number ? shell_line_number
-                                 : (exec_line ? (positive)exec_line : 1);
+        if (exec_line)
+                return (positive)exec_line;
+        return shell_line_number ? shell_line_number : 1;
+}
+
+// Whether a compound command is running, which the reader has already read
+// to its end.
+PURE bool exec_compound_now()
+{
+        return exec_compound_depth != 0;
 }
 
 /*
@@ -9995,6 +10020,24 @@ static b32 exec_simple(b32 index)
         // The line this command was written on, which caller and $LINENO
         // answer with for as long as it runs.
         exec_line = node->line;
+
+        /* A command made only of assignments is reported by bash at the line
+           it ends on, not the one it starts on: x=${y?<newline>unset} says
+           line 3 where echo ${y?<newline>unset} says line 2. The newlines
+           inside its words are what separate the two. */
+        {
+                b32 words = node->word_count;
+                b32 at = 0;
+
+                while (at < words &&
+                       (parse_word_flags[node->word + at] & PARSE_WORD_ASSIGNMENT))
+                        at++;
+                if (words && at == words)
+                        for (at = 0; at < words; at++)
+                                exec_line += (b32)memory_count(
+                                    parse_words[node->word + at],
+                                    parse_word_lengths[node->word + at], '\n');
+        }
         exec_wait_node = index;
         token_used = 0;
         token_overflow = false;

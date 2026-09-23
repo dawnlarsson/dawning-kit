@@ -4324,9 +4324,21 @@ static fn expand_substitution_body(string_address command, bool capture)
         // command substitution read one deeper than the shell had gone.
         /* A nested substitution keeps the outer freeze; the first one
            takes the line of the command that wrote `$(...)`. */
+        /*
+                Inside a compound command the reader has gone on to the end
+                of the whole construct before any of it runs, so its count
+                is where the construct stops -- the fi, the done -- and not
+                the line this command was written on, which is what bash
+                reads: if true; then echo $(echo $LINENO); fi said the line
+                of the fi, and a here-document's $(echo $LINENO) the line
+                after its end. Only a substitution that itself spans lines,
+                in a simple command on its own, is read as far as the reader
+                got, which is where it ends and so what bash reads for one.
+        */
         if (!expand_substitution_lineno)
         {
-                if (shell_eval_lineno_base || exec_in_function())
+                if (shell_eval_lineno_base || exec_in_function() ||
+                    exec_compound_now() || !string_first_of(command, '\n'))
                         expand_substitution_lineno = shell_line_now();
                 else
                         expand_substitution_lineno =

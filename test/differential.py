@@ -13846,6 +13846,61 @@ def shell_lang_read_field_edges(rng):
     return "read-field-edges", modes, script + "echo \"end=$?\"\n"
 
 
+def shell_lang_lineno_nesting(rng):
+    """$LINENO where the reader and the command disagree about the line.
+
+    A compound command is read to its end before any of it runs, a quoted
+    word or a backslash carries a command over a newline, a here-document's
+    body is read before its command runs, and eval counts from the line it
+    was written on. $LINENO is the line of the command in all of them --
+    and in a command substitution inside any of them -- which is what this
+    walks: constructs nested at random, with the line read out of plain
+    words, substitutions, eval bodies, here-documents, aliases, functions
+    and a sourced file. It is bash's line; dash counts a different way.
+    """
+    def simple():
+        return rng.choice((
+            'echo "L$LINENO"', 'x=$((x+1))', 'printf "%s\\n" "$LINENO"', 'false || echo f$LINENO',
+            'echo $(echo sub$LINENO)', 'echo "`echo bt$LINENO`"', "echo 'q\nq' $LINENO",
+            'echo "d\n$LINENO"', 'echo $LINENO \\\n  $LINENO', 'eval "echo ev\\$LINENO"',
+            "eval 'if true; then\n echo e$LINENO\nfi'", 'eval "echo a\necho \\$LINENO"',
+            '. ./lineno.sh', 'f', 'ALIASED', 'echo $((LINENO+0))',
+            #   A command of assignments alone is at the line it ends on.
+            'v="a\n$LINENO"; echo "$v" $LINENO',
+        ))
+
+    def heredoc():
+        kind = rng.choice(("EOF", "'EOF'", "-EOF"))
+        tag = kind.strip("'").lstrip("-")
+        body = rng.choice(("line $LINENO", "$(echo in$LINENO)", "plain", "\tTAB $LINENO"))
+        return "cat <<" + kind + "\n" + (body + "\n") * rng.randint(0, 2) + tag
+
+    def block(depth):
+        if depth > 3 or rng.random() < 0.35:
+            return heredoc() if rng.random() < 0.2 else simple()
+        kind = rng.choice(("if", "while", "for", "case", "function", "group", "subshell"))
+        inner = "\n".join(block(depth + 1) for _ in range(rng.randint(1, 3)))
+        if kind == "if":
+            return "if true; then\n" + inner + "\nfi"
+        if kind == "while":
+            return "n%d=0\nwhile [ $n%d -lt 2 ]; do\nn%d=$((n%d+1))\n" % ((depth,) * 4) + inner + "\ndone"
+        if kind == "for":
+            return "for i in 1 2; do\n" + inner + "\ndone"
+        if kind == "case":
+            return "case x in\nx)\n" + inner + "\n;;\nesac"
+        if kind == "function":
+            return "g%d() {\n%s\n}\ng%d" % (depth, inner, depth)
+        if kind == "group":
+            return "{\n" + inner + "\n}"
+        return "(\n" + inner + "\n)"
+
+    lines = ["shopt -s expand_aliases", "alias ALIASED='echo al$LINENO'", "x=0", "f() { echo fn$LINENO; }",
+             "printf '%s\\n' 'echo \"src $LINENO\"' 'if true; then' '  echo \"src2 $LINENO\"' 'fi' > lineno.sh"]
+    lines += [block(0) for _ in range(rng.randint(1, 4))]
+    lines.append('echo "end $LINENO"')
+    return "lineno-nesting", shell_BASH, shell_program(*lines)
+
+
 def shell_lang_nested_parameter(rng):
     """A parameter expansion whose word is another parameter expansion."""
     state = rng.choice(("unset", "empty", "value"))
@@ -14156,6 +14211,7 @@ SHELL_FAMILIES = (
     shell_lang_arithmetic_edges,
     shell_lang_read_field_edges,
     shell_lang_nested_parameter,
+    shell_lang_lineno_nesting,
     shell_lang_case_classes,
     shell_lang_shopt_readers,
     shell_lang_personality_split,
