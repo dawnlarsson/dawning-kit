@@ -1541,6 +1541,16 @@ static bool awk_writer_flush(awk_writer address_to which)
         if (flushed)
                 return true;
 
+        //      What is left in a command's pipe when it is closed, flushed or
+        //      the program ends goes nowhere once the command has gone, and
+        //      gawk says nothing of it and still ends with 0: only a print
+        //      or printf that finds the reader gone is refused.
+        if (which->kind == AWK_TO_PIPE && which != address_of awk_standard_out)
+        {
+                which->used = 0;
+                return true;
+        }
+
         awk_write_failed = true;
         return false;
 }

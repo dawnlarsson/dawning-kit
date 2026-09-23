@@ -3644,6 +3644,15 @@ def awk_gen_broken_pipes(rng, count):
             for tail in ("", "r = close(c); print \"closed\", r"):
                 out.append(("BEGIN { c = \"" + command + "\"; for (i = 0; i < 100000; i++) " + verb
                             + " | c; " + tail + " }",))
+    #   Little enough to stay in the buffer until the command has gone:
+    #   close, fflush and the end of the program each flush it into nothing,
+    #   and gawk says nothing and answers 0 for all three. The wait is a
+    #   loop and not system(), whose wait reaps the command in gawk and
+    #   makes its close() answer 0 whatever the command said.
+    for ending in ("close(c)", "fflush(c)", "", "r = close(c); print \"closed\", r"):
+        for command in ("exit 2", "true"):
+            out.append(("BEGIN { c = \"" + command + "\"; print \"x\" | c; "
+                        "for (i = 0; i < 3000000; i++) ; " + ending + " }",))
     return out
 
 
