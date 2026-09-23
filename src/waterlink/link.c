@@ -859,7 +859,6 @@ static p32 waterlink_band_take(struct waterlink_link address_to link, p32 band,
         {
                 struct waterlink_slot address_to slot = link->slot + at;
                 p32 next = slot->next;
-                p32 key_at;
 
                 if (waterlink_slot_late(slot, now))
                 {

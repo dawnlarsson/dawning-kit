@@ -2398,6 +2398,7 @@ static b32 host_machine_run(void)
 
                 radio_recover();
                 locale_recover();
+                link_keep();
                 failed = host_machine_wait(device, address_of control);
                 if (failed == -4 || failed == -ETIMEDOUT)
                         continue;

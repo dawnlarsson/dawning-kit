@@ -31387,7 +31387,11 @@ def harness_moonwater_cli(argv):
                 "wifi off", "wifi on", "wifi add", "bluetooth", "bluetooth off",
                 "bluetooth on", "priority internet", "priority internet wired",
                 "priority internet wifi", "priority internet cable", "wipe extra",
-                "install", "use", "update", "live extra", "boot", "ask", "machine extra"]
+                "install", "use", "update", "live extra", "boot", "ask", "machine extra",
+                "link", "link help", "link key", "link bogus", "link pair", "link pair x",
+                "link pair x y z w", "link forget nobody", "link allow nobody run",
+                "link deny", "link run", "link run nobody", "link shell", "link shell nobody",
+                "link serve extra", "link off"]
         # State the mode rules act on: neither file, then a zone with no mode.
         script = ("rm -f /root/timezone /root/timezone.mode\n" + say("timezone") +
                   "printf 'Europe/London\\n' > /root/timezone\n" + say("timezone") +
@@ -31530,6 +31534,7 @@ while True:
         script += say("keyboard xx") + "echo \"@@kept $(cat /root/keyboard)\"\n"
         script += say("ntp off") + "echo \"@@ntp $(cat /root/ntp)\"\n"
         script += say("ntp on") + "echo \"@@ntp $(cat /root/ntp)\"\n"
+        script += say("link key") + say("link off")
         script += ("mkdir -p /home/u/deep && echo x > /home/u/deep/f && echo y > /root/junk && "
                    "mkdir -p /root/dir && echo z > /bowls/one/kept\n" + say("wipe") +
                    "echo \"@@after $(ls -A /home | wc -l) $(ls /root | tr '\\n' ,) "
@@ -31552,8 +31557,10 @@ while True:
                 parts = line.split()
                 kept = set(filter(None, parts[2].split(",")))
                 check(parts[1] == "0" and "junk" not in kept and "dir" not in kept and
-                             {"keyboard", "ntp", "timezone"} <= kept and parts[3] == "z",
-                             "wipe empties /home and /root and keeps the settings and the bowls",
+                             {"keyboard", "ntp", "timezone", "link", "link.key"} <= kept and
+                             parts[3] == "z",
+                             "wipe empties /home and /root and keeps the settings, the link's "
+                             "key and switch, and the bowls",
                              line)
     return checks.verdict("moonwater cli", "moonwater-cli")
 
@@ -32317,6 +32324,275 @@ def harness_waterlink_noise(argv):
     return checks.verdict("waterlink noise:", "waterlink-noise")
 
 
+def harness_waterlink_link(argv):
+    """moonwater link between two network namespaces, as two machines.
+
+    A user namespace owns two network namespaces joined by a veth pair,
+    10.77.0.1 and 10.77.0.2, and each side gets its own /root and /run by a
+    mount namespace, so each has its own key, peers, switch and lock. A third
+    identity has a key nobody paired. Asked of `link run`: output, standard
+    error, standard input, exit statuses including a signal, a large stream
+    each way checked byte for byte. Asked of `link shell`, through a pty:
+    a typed command, a resize the far terminal sees, ^C ending the far
+    command at once, the exit status. Then netem on both ends -- delay,
+    jitter, loss, duplication, reordering -- and all of it again. Then the
+    refusals: an unpaired key and a wrong key are never answered, a peer
+    without the shell grant is told so. A rekey every second under a
+    streaming command, and `link on` / `link off` with the listener detached.
+    """
+    import platform
+    import shutil
+    import subprocess
+    import tempfile
+    parser = argparse.ArgumentParser(prog="differential.py --harness waterlink_link")
+    parser.add_argument("--shell", required=True)
+    args = parser.parse_args(argv)
+    if platform.system() != "Linux":
+        print("waterlink link: NOT RUN -- Linux namespaces")
+        return 2
+    probe = subprocess.run(["unshare", "-Urmn", "--fork", "sh", "-c",
+                            "ip link add name wa type veth peer name wb && "
+                            "tc qdisc add dev wa root netem delay 1ms"],
+                           capture_output=True)
+    if probe.returncode:
+        print("waterlink link: NOT RUN -- no unprivileged namespaces, veth or netem here: " +
+              probe.stderr.decode(errors="replace")[:200])
+        return 2
+
+    with tempfile.TemporaryDirectory(prefix="waterlink-link-") as temporary:
+        top = Path(temporary)
+        (top / "bin").mkdir()
+        shutil.copy(args.shell, top / "bin" / "shell")
+        for name in ("moonwater", "sh"):
+            (top / "bin" / name).symlink_to("shell")
+        (top / "inner.py").write_text(WATERLINK_LINK_INNER)
+        ran = subprocess.run(["unshare", "-Urmn", "--fork", sys.executable, str(top / "inner.py"),
+                              str(top)], stdin=subprocess.DEVNULL, capture_output=True,
+                             timeout=900, env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                                               "LC_ALL": "C", "TERM": "xterm"})
+        text = ran.stdout.decode(errors="replace")
+        checks = Checks()
+        asked = 0
+        for line in text.splitlines():
+            if line.startswith("ok ") or line.startswith("FAIL "):
+                asked += 1
+                checks(line.startswith("ok "), line.split(" ", 1)[1])
+            elif line.startswith("  "):
+                print(line)
+        checks(ran.returncode == 0 and asked >= 40,
+               "the scenes all ran (%d asked, status %d)%s" %
+               (asked, ran.returncode, "" if ran.returncode == 0 else
+                " -- " + ran.stderr.decode(errors="replace")[-600:]))
+        return checks.verdict("waterlink link:", "waterlink-link")
+
+
+WATERLINK_LINK_INNER = r"""
+import os, pty, sys, time, select, fcntl, termios, struct, signal, subprocess, hashlib
+
+top = sys.argv[1]
+moon = top + "/bin/moonwater"
+env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL": "C", "TERM": "xterm", "HOME": "/root"}
+
+def say(ok, what):
+    print(("ok " if ok else "FAIL ") + what, flush=True)
+    return ok
+
+for side in "abc":
+    for d in ("root", "run"):
+        os.makedirs("%s/%s/%s" % (top, side, d), exist_ok=True)
+
+subprocess.run(["ip", "link", "set", "lo", "up"], check=True)
+far = subprocess.Popen(["unshare", "-n", "sleep", "100000"])
+time.sleep(0.3)
+netns = "/proc/%d/ns/net" % far.pid
+subprocess.run(["ip", "link", "add", "name", "wa", "type", "veth", "peer", "name", "wb",
+                "netns", str(far.pid)], check=True)
+subprocess.run(["ip", "addr", "add", "10.77.0.1/24", "dev", "wa"], check=True)
+subprocess.run(["ip", "link", "set", "wa", "up"], check=True)
+for command in (["ip", "addr", "add", "10.77.0.2/24", "dev", "wb"], ["ip", "link", "set", "wb", "up"],
+                ["ip", "link", "set", "lo", "up"]):
+    subprocess.run(["nsenter", "--net=" + netns] + command, check=True)
+
+def argv_on(side, command):
+    inner = ("mount --bind {t}/{s}/root /root && mount --bind {t}/{s}/run /run && "
+             "mkdir -p /run/moonwater && cd /root && exec {c}").format(t=top, s=side, c=command)
+    word = ["unshare", "-m", "sh", "-c", inner]
+    return (["nsenter", "--net=" + netns] + word) if side == "b" else word
+
+def on(side, command, stdin=None, timeout=60, extra=None):
+    e = dict(env)
+    if extra:
+        e.update(extra)
+    try:
+        ran = subprocess.run(argv_on(side, command), input=stdin, capture_output=True,
+                             timeout=timeout, env=e)
+        return ran.returncode, ran.stdout, ran.stderr
+    except subprocess.TimeoutExpired:
+        return None, b"", b"timeout"
+
+keys = {}
+for side in "abc":
+    status, out, err = on(side, moon + " link key")
+    keys[side] = out.decode().strip()
+say(all(len(k) == 44 for k in keys.values()) and len(set(keys.values())) == 3,
+    "three machines made three keys")
+status, out, _ = on("a", moon + " link key")
+say(out.decode().strip() == keys["a"], "a key once made is the one printed after")
+mode = os.stat(top + "/a/root/link.key").st_mode & 0o777
+say(mode == 0o600, "the key file is 0600 (%o)" % mode)
+
+on("a", "%s link pair b %s 10.77.0.2" % (moon, keys["b"]))
+on("c", "%s link pair b %s 10.77.0.2" % (moon, keys["b"]))
+on("a", "%s link pair bwrong %s 10.77.0.2" % (moon, keys["c"]))
+on("b", "%s link pair a %s" % (moon, keys["a"]))
+status, out, err = on("b", moon + " link allow a run")
+say(status == 0 and b"a may verbs run" in out, "a grant is given by name")
+status, _, err = on("b", moon + " link pair 'bad name' " + keys["a"])
+say(status != 0, "a name with a space is refused")
+status, _, err = on("b", moon + " link pair x AAAA")
+say(status != 0, "a key that is not one is refused")
+status, _, err = on("b", "%s link pair me %s" % (moon, keys["b"]))
+say(status != 0, "a machine will not pair its own key")
+
+server = subprocess.Popen(argv_on("b", moon + " link serve"), stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+time.sleep(0.5)
+
+def runs(tag):
+    status, out, err = on("a", moon + " link run b 'echo hello; echo there'")
+    say(status == 0 and out == b"hello\nthere\n", tag + "run carries output and status 0 (%r %r)" % (status, out[:80]))
+    status, out, err = on("a", moon + " link run b 'echo to-error >&2; exit 7'")
+    say(status == 7 and err.endswith(b"to-error\n") and out == b"", tag + "standard error and status 7 (%r)" % (status,))
+    status, out, err = on("a", moon + " link run b 'kill -9 $$'")
+    say(status == 137, tag + "a command killed by a signal is 128 + 9 (%r)" % (status,))
+    blob = os.urandom(1500000)
+    status, out, err = on("a", moon + " link run b sha256sum", stdin=blob, timeout=120)
+    say(status == 0 and out.split()[:1] == [hashlib.sha256(blob).hexdigest().encode()],
+        tag + "1.5 MB of standard input arrives whole")
+    status, out, err = on("a", moon + " link run b 'seq 1 400000'", timeout=120)
+    want = "".join("%d\n" % i for i in range(1, 400001)).encode()
+    say(status == 0 and out == want, tag + "2.7 MB of output arrives whole and in order (%d bytes)" % len(out))
+
+def shell(tag):
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvpe(argv_on("a", moon + " link shell b")[0], argv_on("a", moon + " link shell b"), env)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    seen = [b""]
+    def until(token, limit=8.0):
+        end = time.time() + limit
+        while time.time() < end:
+            r, _, _ = select.select([fd], [], [], 0.1)
+            if r:
+                try:
+                    data = os.read(fd, 4096)
+                except OSError:
+                    return False
+                if not data:
+                    return False
+                seen[0] += data
+                if token in seen[0]:
+                    return True
+        return False
+    time.sleep(1.0)
+    os.write(fd, b"echo hi-$((6*7))\r")
+    say(until(b"hi-42"), tag + "shell: a typed command runs on the far side")
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 41, 103, 0, 0))
+    os.kill(pid, signal.SIGWINCH)
+    time.sleep(0.5)
+    os.write(fd, b"stty size\r")
+    say(until(b"41 103"), tag + "shell: a resize reaches the far terminal")
+    os.write(fd, b"sleep 100\r")
+    time.sleep(1.0)
+    began = time.time()
+    os.write(fd, b"\x03")
+    os.write(fd, b"echo after-$((1+1))\r")
+    ok = until(b"after-2", 8)
+    say(ok and time.time() - began < 4, tag + "shell: ^C ends the far command at once (%.2fs)" % (time.time() - began))
+    os.write(fd, b"exit 3\r")
+    end = time.time() + 20
+    status = None
+    while time.time() < end:
+        got, raw = os.waitpid(pid, os.WNOHANG)
+        if got:
+            status = os.WEXITSTATUS(raw) if os.WIFEXITED(raw) else -1
+            break
+        try:
+            select.select([fd], [], [], 0.1) and os.read(fd, 4096)
+        except OSError:
+            pass
+    if status is None:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+    say(status == 3, tag + "shell: exit 3 is the status here (%r)" % (status,))
+    os.close(fd)
+
+status, _, err = on("a", moon + " link shell b", stdin=b"")
+say(status == 255 and b"shell is not granted to a" in err, "a peer without the shell grant is told so")
+on("b", moon + " link allow a shell")
+runs("")
+shell("")
+
+status, out, err = on("a", moon + " link run b 'for i in $(seq 1 25); do echo line $i; sleep 0.2; done'",
+                      extra={"WATERLINK_REKEY_SECONDS": "1"}, timeout=60)
+keyed = [int(w) for w in err.split() if w.isdigit()]
+say(status == 0 and out == "".join("line %d\n" % i for i in range(1, 26)).encode(),
+    "a stream keeps going across rekeys")
+say(keyed and keyed[0] >= 4, "keyed at least four times in five seconds (%r)" % (keyed,))
+
+started = time.time()
+status, out, err = on("c", moon + " link run b echo no", timeout=30)
+say(status == 255 and b"did not answer" in err, "a key the far side never paired is not answered")
+say(time.time() - started < 12, "and the refusal takes seconds, not forever")
+status, out, err = on("a", moon + " link run bwrong echo no", timeout=30)
+say(status == 255, "a peer paired under the wrong key is not answered")
+status, out, err = on("a", moon + " link run b echo still")
+say(status == 0 and out == b"still\n", "and the listener is still there for the right one")
+
+status, out, err = on("b", moon + " link")
+text = out.decode(errors="replace")
+say("a  " in text and "may verbs run shell" in text and "heard" in text,
+    "status names the peer, its grants, and where it was heard")
+
+for dev, where in (("wa", None), ("wb", netns)):
+    command = ["tc", "qdisc", "add", "dev", dev, "root", "netem", "delay", "4ms", "2ms",
+               "loss", "3%", "duplicate", "2%", "reorder", "20%", "50%"]
+    subprocess.run((["nsenter", "--net=" + where] if where else []) + command, check=True)
+runs("lossy: ")
+shell("lossy: ")
+for dev, where in (("wa", None), ("wb", netns)):
+    subprocess.run((["nsenter", "--net=" + where] if where else []) +
+                   ["tc", "qdisc", "del", "dev", dev, "root"], check=True)
+
+server.send_signal(signal.SIGTERM)
+try:
+    server.wait(timeout=10)
+    say(server.returncode == 0, "serve ends cleanly on TERM")
+except subprocess.TimeoutExpired:
+    server.kill()
+    say(False, "serve ends cleanly on TERM")
+
+status, out, err = on("b", moon + " link on")
+say(status == 0 and b"link on" in out, "link on starts the listener (%r)" % (err[-200:],))
+status, out, err = on("b", "cat /root/link")
+say(out.strip() == b"on", "and keeps the choice in /root/link")
+status, out, err = on("a", moon + " link run b echo detached")
+say(status == 0 and out == b"detached\n", "the detached listener answers")
+status, out, err = on("b", moon + " link on")
+say(status == 0, "link on twice is still on")
+status, out, err = on("b", moon + " link off")
+say(status == 0 and b"link off" in out, "link off stops it")
+status, out, err = on("b", "cat /root/link")
+say(out.strip() == b"off", "and keeps that choice")
+status, out, err = on("a", moon + " link run b echo gone", timeout=30)
+say(status == 255, "nothing answers after link off")
+status, out, err = on("b", moon + " link")
+say(b"link off" in out, "status says off")
+
+far.kill()
+"""
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -32354,6 +32630,7 @@ HARNESS_CHECKS = {
     "tls_chains": harness_tls_chains,
     "machine_scan": harness_machine_scan,
     "waterlink_noise": harness_waterlink_noise,
+    "waterlink_link": harness_waterlink_link,
 }
 
 

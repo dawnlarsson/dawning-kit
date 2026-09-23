@@ -8509,6 +8509,10 @@ static string_address host_wipe_keep[] = {
     "ntp.server",
     "ntp.filter",
     "keyboard",
+    "link",
+    "link.key",
+    "link.peers",
+    "link.port",
     null,
 };
 
@@ -8888,6 +8892,8 @@ static fn host_usage_write(writer out)
                       "                " TERM_DIM "set the clock from the network [on]" TERM_RESET "\n"
                       TERM_BOLD "  ntp filter [on|off]" TERM_RESET
                       "         " TERM_DIM "keep the lowest-delay sample of five [on]" TERM_RESET "\n"
+                      TERM_BOLD "  link [on|off|help]" TERM_RESET
+                      "         " TERM_DIM "shell and run on paired machines, by key" TERM_RESET "\n"
                       TERM_BOLD "  keyboard [LAYOUT|list]" TERM_RESET
                       "      " TERM_DIM "Canvas keys: us uk de se no dk fi fr es it" TERM_RESET "\n"
                       TERM_BOLD "  wipe" TERM_RESET
@@ -9061,6 +9067,8 @@ static b32 host_answer(bool update, string_address disk)
         return host_take(install, update);
 }
 
+#include "../waterlink/command.c"
+
 static b32 host_main()
 {
         string_address address_to arguments = program_argument_list();
@@ -9095,6 +9103,9 @@ static b32 host_main()
         if (string_equals(verb, "timezone") || string_equals(verb, "ntp") ||
             string_equals(verb, "keyboard") || string_equals(verb, "time"))
                 return host_locale(arguments, count);
+
+        if (string_equals(verb, "link"))
+                return link_main(arguments, count);
 
         if (string_equals(verb, "wipe") && count == 2)
                 return host_wipe();

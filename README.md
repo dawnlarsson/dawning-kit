@@ -55,7 +55,32 @@ moonwater ntp filter [on|off]          keep the lowest-delay sample of five [on]
 moonwater keyboard                     Canvas layout [us]
 moonwater keyboard LAYOUT              us uk de se no dk fi fr es it
 moonwater wipe                         forget /home and extra /root; keep the machine
+
+moonwater link                         on or off, this machine's key, peers, what is open
+moonwater link on|off                  listen on udp 22348, kept across boots [off]
+moonwater link key                     this machine's public key, made on first use
+moonwater link pair NAME KEY [HOST[:PORT]]  know a machine by its key, and where it is
+moonwater link forget NAME             stop knowing it
+moonwater link allow|deny NAME GRANT...  run shell files log screen channels verbs
+moonwater link shell NAME              a terminal on NAME
+moonwater link run NAME COMMAND...     one command on NAME: its output, errors and status here
+moonwater link serve                   the listener in the foreground (what link on runs)
 ```
+
+`moonwater link` is ssh by key, over waterlink (`src/waterlink/`): UDP datagrams
+sealed with AES-128-GCM after a Noise IK handshake, no users and no passwords.
+Pair both ways, as with WireGuard: on each machine `moonwater link key` prints
+its key, and `moonwater link pair` gives it the other's. A paired machine may do
+nothing until allowed: `moonwater link allow laptop shell run`. `link shell`
+puts the local terminal in raw mode, so ^C and friends go to the far side, and
+each keystroke leaves in a datagram of its own at once; `link run` passes
+standard input through and exits with the far command's status (255 if the link
+itself failed). Both ends are Moonwater or Linux running this shell binary; only
+a direct address works, there is no NAT traversal. The key (`/root/link.key`,
+0600), the peers (`/root/link.peers`), the switch (`/root/link`) and an optional
+port (`/root/link.port`) live beside the wifi networks, so install carries them
+and wipe keeps them. The machine process starts the listener at boot when the
+switch is on and restarts it if it dies.
 
 Commands given to `moonwater` run as root through the shell, exactly as if typed
 into a terminal. bind init runs in the background and keeps each command's output
