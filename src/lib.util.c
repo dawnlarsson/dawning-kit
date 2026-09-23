@@ -19946,12 +19946,17 @@ static bool clock_tz_name(const char address_to address_to at, p8 address_to int
         const char address_to s = address_to at;
         positive n = 0;
 
+        /*      Quoted, a name is letters, digits, '+' and '-', as POSIX
+                and glibc have it. It took every byte to the '>', so a TZ an
+                untrusted caller hands over (sudo's env_keep, ssh AcceptEnv)
+                put ESC, BEL and newlines into every %Z. */
         if (s[0] == '<')
         {
                 s++;
-                while (s[0] && s[0] != '>' && n + 1 < room)
+                while ((byte_is_alnum((p8)s[0]) || s[0] == '+' || s[0] == '-') &&
+                       n + 1 < room)
                         into[n++] = (p8)s++[0];
-                if (s[0] != '>')
+                if (s[0] != '>' || n < 3)
                         return false;
                 s++;
         }
@@ -20120,8 +20125,16 @@ static bool clock_tz_parse(string_address text)
                 daylight = 0;
                 return s[0] == 0;
         }
+        /*      A summer name glibc cannot read leaves the standard zone
+                standing, as it does there, rather than no zone at all. */
         if (!clock_tz_name(address_of s, clock_dst_name, CLOCK_TZ_NAME))
-                return false;
+        {
+                string_copy_bounded(clock_dst_name, clock_std_name,
+                                    CLOCK_TZ_NAME);
+                timezone = clock_std_west;
+                daylight = 0;
+                return true;
+        }
         if (s[0] && s[0] != ',')
         {
                 if (!clock_tz_offset(address_of s, address_of clock_dst_west,

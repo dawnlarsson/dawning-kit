@@ -7951,8 +7951,55 @@ def files_find_terminal(farm):
     return passed, cases, notes
 
 
+def files_zone_names(farm):
+    """A quoted TZ name someone else wrote, against glibc's date.
+
+    POSIX and glibc take letters, digits, + and - between < and >, at least
+    three of them, and anything else is no zone. The candidate took every
+    byte to the '>', so a TZ passed through sudo's env_keep or ssh's
+    AcceptEnv put ESC, BEL and newlines into every %Z. Seeded names from
+    those bytes and plain ones, as the standard and the summer zone, printed
+    by date: the time, the offset and the name must be glibc's, except that
+    this build calls a zone it cannot read UTC where glibc leaves it
+    unnamed, which is folded, and no control byte may appear at all.
+    """
+    import random
+    import shutil
+    reference = shutil.which("date", path=os.defpath)
+    target = Path(farm) / "date"
+    if not reference or not target.exists():
+        return 0, 1, ["zone names need date on both sides"]
+    rng = random.Random(0x747a6e)
+    pieces = ("A", "B", "Z", "1", "+", "-", "\x1b", "]0;", "\x07", "\n", " ", "\x7f", "\u00e5")
+    zones = []
+    for _ in range(40):
+        name = "".join(rng.choice(pieces) for _ in range(rng.randrange(1, 6)))
+        shape = rng.randrange(3)
+        if shape == 0:
+            zones.append("<%s>%d" % (name, rng.randrange(-12, 13)))
+        elif shape == 1:
+            zones.append("<ABC>-1<%s>,M3.5.0,M10.5.0" % name)
+        else:
+            zones.append("<%s>-2<%s>" % (name, name[::-1]))
+    passed, notes = 0, []
+    for zone in zones:
+        answers = []
+        for program in (reference, str(target)):
+            ran = subprocess.run([program, "-d", "@1700000000", "+%F %T %z|%Z|"],
+                                 env={"PATH": os.defpath, "LC_ALL": "C", "TZ": zone},
+                                 capture_output=True, timeout=10)
+            answers.append(ran.stdout)
+        want = answers[0].replace(b" +0000| |", b" +0000|UTC|").replace(b"||", b"|UTC|")
+        got = answers[1]
+        if got == want and not re.search(rb"[\x00-\x09\x0b-\x1f\x7f]", got):
+            passed += 1
+        elif len(notes) < 6:
+            notes.append("TZ=%r: glibc %r ours %r" % (zone, answers[0], got))
+    return passed, len(zones), notes
+
+
 FILES_CHECKS = (files_column_layout, files_xargs_parallel, files_zones, files_tar,
-                files_find_terminal)
+                files_find_terminal, files_zone_names)
 
 # ---- domain: misc (from spec_misc.py) ----
 
