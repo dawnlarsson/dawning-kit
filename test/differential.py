@@ -15225,6 +15225,7 @@ _TEXT_FAILURE_TOOLS = (
     ("head",), ("tail",), ("fmt",), ("tac",), ("sort",), ("sed", "p"), ("rev",),
     ("grep", "x"), ("tsort",), ("cksum",), ("md5sum",), ("shuf",), ("tee",),
     ("head", "-c1"), ("tail", "-c1"), ("wc", "-l"), ("sort", "-m"), ("uniq", "-c"),
+    ("tr", "a", "b"),
 )
 
 #       Names that differ only in what a quoting has to do with them: a
@@ -15236,14 +15237,12 @@ _TEXT_FAILURE_NAMES = (
     b"h\xc3\xa9", b"a$b", b"\nlead", b"trail\n", b"q'\nx",
 )
 
-#       Where the answer is still this tool's own, and why: tsort's reader
-#       keeps no reason for a failed read, GNU tac seeks a directory and
-#       reports the EINVAL, comm and join stop at the first input that fails
-#       where these go on to the second, fmt names standard input by leaving
-#       it out, and rev takes - as a file name.
+#       Where the answer is still this tool's own, and why: rev takes - as a
+#       file name, and GNU tac's reason for a directory is the filesystem's
+#       -- Invalid argument on ext4, Is a directory on tmpfs -- from a call
+#       that is not the seek and read its source names.
 _TEXT_FAILURE_KNOWN = {
-    ("tsort", "directory"), ("tsort", "stdin-directory"), ("tac", "directory"),
-    ("tac", "stdin-directory"), ("fmt", "stdin-directory"), ("rev", "stdin-directory"),
+    ("rev", "stdin-directory"), ("tac", "directory"), ("tac", "stdin-directory"),
 }
 
 

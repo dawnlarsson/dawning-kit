@@ -617,7 +617,8 @@ static const text_failure_words text_failure_table[] = {
     {"tee", "", "", "read error", "", TEXT_SAY_QUOTEF, TEXT_SAY_NONE},
     {"cat"}, {"cut"}, {"nl"}, {"od"}, {"paste"}, {"fold"},
     {"expand"}, {"unexpand"}, {"ptx"}, {"sum"}, {"comm"},
-    {"numfmt"}, {"shuf"}, {"split"}, {"csplit"}, {"tr"},
+    {"tr", "", "", "read error", "", TEXT_SAY_QUOTEF, TEXT_SAY_NONE},
+    {"numfmt"}, {"shuf"}, {"split"}, {"csplit"},
 };
 
 static fn text_file_failed(string_address shown, bipolar reason, bool reading)
@@ -646,6 +647,14 @@ static fn text_file_failed(string_address shown, bipolar reason, bool reading)
         string_address before = (string_address)(reading ? words->read_before : words->open_before);
         string_address after = (string_address)(reading ? words->read_after : words->open_after);
         p8 quote = reading ? words->read_quote : words->open_quote;
+
+        //      fmt names every file it could not read but standard input,
+        //      which is only "read error".
+        if (reading && string_equals(text_name, "fmt") && string_equals(shown, "-"))
+        {
+                before = (string_address) "read error";
+                quote = TEXT_SAY_NONE;
+        }
 
         if (!words->open_before)
         {
@@ -14610,7 +14619,7 @@ static fn tr_parallel_job(address_any context, positive index,
                 if (read <= 0)
                 {
                         if (read < 0)
-                                run->failed[index] = 1;
+                                run->failed[index] = (p8)(read >= -255 ? -read : ERROR_INPUT_OUTPUT);
                         break;
                 }
 
@@ -14637,7 +14646,7 @@ static bool tr_parallel_sink(address_any context, positive index,
 
         if (run->failed[index])
         {
-                string_diagnostic(&text_diagnostic, 0, text_input.name, "Read error");
+                text_file_failed(text_input.name, -(bipolar)run->failed[index], true);
                 text_input.failed = true;
                 text_status = 1;
                 return false;

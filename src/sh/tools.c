@@ -4239,15 +4239,22 @@ static b32 tools_tsort()
             (positive)input, TEXT_READ_MAX, address_of length,
             address_of read_failed);
 
+        //      The whole-input read keeps whether it failed and not why, and
+        //      GNU says why: a read that failed once fails the same way
+        //      again, so the reason is asked of one more.
+        if (!bytes && read_failed)
+        {
+                p8 probe;
+                bipolar reason = system_read_retry((positive)input, address_of probe, 1);
+
+                text_file_failed(path, reason < 0 ? reason : -ERROR_INPUT_OUTPUT, true);
+        }
+
         if (close_input)
                 system_close(input);
 
         if (!bytes)
-        {
-                if (read_failed)
-                        string_diagnostic(&text_diagnostic, 0, path, "Read error");
                 return text_done(1);
-        }
 
         positive tokens = 0;
         bool inside = false;
