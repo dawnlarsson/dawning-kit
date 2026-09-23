@@ -2352,10 +2352,14 @@ static b32 text_comm()
         positive totals[3] = {0, 0, 0};
         bool disorder = false;
         bool unpaired = false;
+        //      An input that cannot be read ends the program where the
+        //      reference ends it, before the other is asked for a line: comm
+        //      d d said "Is a directory" twice where GNU says it once.
         bool have_left = text_record_next(sides, text_delimiter,
                                            null, 0, null);
-        bool have_right = text_record_next(sides + 1, text_delimiter,
-                                            null, 0, null);
+        bool have_right = !sides[0].reader.failed &&
+                          text_record_next(sides + 1, text_delimiter,
+                                           null, 0, null);
 
         while (have_left && have_right)
         {
@@ -3480,8 +3484,11 @@ static b32 text_join()
         positive group_room = 0;
 
         bool have[2];
+        //      As comm: the first input that cannot be read is the only one
+        //      named.
         have[0] = text_record_next(sides, text_delimiter, null, 0, null);
-        have[1] = text_record_next(sides + 1, text_delimiter, null, 0, null);
+        have[1] = !sides[0].reader.failed &&
+                  text_record_next(sides + 1, text_delimiter, null, 0, null);
 
         if (have[0])
                 join_cursor_key(sides, 0, separated, separator);

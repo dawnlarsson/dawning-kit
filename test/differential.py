@@ -15228,6 +15228,11 @@ _TEXT_FAILURE_TOOLS = (
     ("tr", "a", "b"),
 )
 
+#       The two programs that read two inputs side by side, each shape of
+#       failing one or both: GNU stops at the first that fails, and names
+#       only that one.
+_TEXT_FAILURE_PAIRED = (("comm",), ("join",), ("comm", "-3"), ("join", "-a1"))
+
 #       Names that differ only in what a quoting has to do with them: a
 #       plain one, a blank, each quote, a newline, a tab, an escape, a
 #       backslash, a byte outside ASCII, a dollar, and a newline at either
@@ -15256,6 +15261,16 @@ def text_failure_cases():
             cases.append((tool, "directory", (name,), None))
         cases.append((tool, "stdin-directory", (b"-",), b"dir"))
         cases.append((tool, "stdin-directory", (), b"dir"))
+    for tool in _TEXT_FAILURE_PAIRED:
+        for name in (b"dir", b"q'dir", b"new\ndir"):
+            cases.append((tool, "directory-first", (name, b"a.txt"), None))
+            cases.append((tool, "directory-second", (b"a.txt", name), None))
+            cases.append((tool, "directory-both", (name, name), None))
+        for name in _TEXT_FAILURE_NAMES[:4]:
+            cases.append((tool, "missing-both", (name, b"a.txt", ), None))
+            cases.append((tool, "missing-both", (name, name + b"2"), None))
+        cases.append((tool, "stdin-directory", (b"-", b"a.txt"), b"dir"))
+        cases.append((tool, "stdin-directory", (b"a.txt", b"-"), b"dir"))
     return [case for case in cases if (case[0][0], case[1]) not in _TEXT_FAILURE_KNOWN]
 
 
@@ -36979,13 +36994,10 @@ PINNED = r"""
 {"domain":"text","kind":"deliberate","list":"ledger","option":"--perl-regexp","reason_id":"r256","utility":"grep"},
 {"domain":"text","kind":"deliberate","list":"ledger","option":"-P","reason_id":"r256","utility":"grep"},
 {"domain":"text","kind":"deliberate","list":"ledger","option":"-P","reason_id":"r257","utility":"grep"},
-{"candidate":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":1,"stdout":"669111295bb6f5d5892bc8706f324c606505592afcb375ce28e528777e1ca7d1"},"case":{"argv":["--ignore-case","--header","--check-order","-i","--nocheck-order","-z","dir","right"],"domain":"text","family":null,"fixture":"text","input_kind":"command","mode":null,"stdin":"text_sorted_a","utility":"join"},"domain":"text","id":"0a8f122e560a610e","kind":"bug","list":"ledger","reason_id":"r258","utility":"join"},
-{"candidate":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":1,"stdout":"99bd951fb7af7f6f4db8e22a3f500c6aa2e90055b265bf11ae5364d0f2e69a99"},"case":{"argv":["-i","-o0 1.2","--header","-z","-v","2","--nocheck-order","dir","right"],"domain":"text","family":null,"fixture":"text","input_kind":"command","mode":null,"stdin":"text","utility":"join"},"domain":"text","id":"1577f0bf01d3dd31","kind":"bug","list":"ledger","reason_id":"r258","utility":"join"},
 {"candidate":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":1,"stdout":"117018074b9b9a78033af2f3e416a6a258c3141ddf69a369ef7f1864cedc2ab2"},"case":{"argv":["-1","2","-v1","--check-order","--ignore-case","--header","-22","-","right"],"domain":"text","family":null,"fixture":"text","input_kind":"command","mode":null,"stdin":"nonl","utility":"join"},"domain":"text","id":"1c9b588ac147687b","kind":"bug","list":"ledger","reason_id":"r258","utility":"join"},
 {"candidate":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":1,"stdout":"248e219be379aa3f4bd5d9b83788f2baa22a8b8c74973a6c258b6af75f565577"},"case":{"argv":["-1","18446744073709551616","--ignore-case","-i","-e","--check-order","--header","unordered","unordered2"],"domain":"text","family":null,"fixture":"text","input_kind":"command","mode":null,"stdin":"empty","utility":"join"},"domain":"text","id":"1f346aba482dcca4","kind":"bug","list":"ledger","reason_id":"r258","utility":"join"},
 {"candidate":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":0,"stdout":"b3577f507cb282f8a52a32cd3365a9d1ac51c06165406c435df79f007e3472ff"},"case":{"argv":["--ignore-case","-t",":","--zero-terminated","--header","-1","18446744073709551616","-eEMPTY","unordered","unordered2"],"domain":"text","family":null,"fixture":"text","input_kind":"command","mode":null,"stdin":"text","tier":"pinned","utility":"join"},"domain":"text","id":"2eb9b2bb7b19dc2a","kind":"bug","list":"ledger","reason":"join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.","reference":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":0,"stdout":"a9d0916854ef5194b2a19f410e044aa646069b342df199d67958dc6a1356ec39"},"utility":"join"},
 {"candidate":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":1,"stdout":"9bf51c157d0c944608d6e5e336e2e69a38ecf447596df1090eb47b8e3ba8a252"},"case":{"argv":["-1","2","-v1","--check-order","--ignore-case","--header","-22","-","right"],"domain":"text","family":null,"fixture":"text","input_kind":"command","mode":null,"stdin":"nul","tier":"pinned","utility":"join"},"domain":"text","id":"5422794e5309f7a5","kind":"bug","list":"ledger","reason":"join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.","reference":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":1,"stdout":"172e3e6372a1ba59c705ad185ebc9cd2d22d117f0b4a8986bf214baf0918b633"},"utility":"join"},
-{"candidate":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":1,"stdout":"669111295bb6f5d5892bc8706f324c606505592afcb375ce28e528777e1ca7d1"},"case":{"argv":["--ignore-case","--header","--check-order","-i","--nocheck-order","-z","dir","right"],"domain":"text","family":null,"fixture":"text","input_kind":"command","mode":null,"stdin":"edge_65537","tier":"pinned","utility":"join"},"domain":"text","id":"60c96aef78681b56","kind":"bug","list":"ledger","reason":"join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.","reference":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"utility":"join"},
 {"candidate":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":0,"stdout":"9216bef24c3b4271702848ec56b2aaae9496c6d8f25e176cfafa99e96498e51f"},"case":{"argv":["--ignore-case","-i","-z","-e","EMPTY","-1","18446744073709551616","--header","fleft","fright"],"domain":"text","family":null,"fixture":"text","input_kind":"command","mode":null,"stdin":"nul","utility":"join"},"domain":"text","id":"8c5153cfeb00db4a","kind":"bug","list":"ledger","reason_id":"r258","utility":"join"},
 {"candidate":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":0,"stdout":"f0b1bcb4cfa61749129c7b673066a111c5f5c3a40061aebec92b55b880d86477"},"case":{"argv":["--header","-21","--nocheck-order","-z","-e","","-1","2","wide","wide"],"domain":"text","family":null,"fixture":"text","input_kind":"command","mode":null,"stdin":"empty","utility":"join"},"domain":"text","id":"9ce416c113cf40aa","kind":"bug","list":"ledger","reason_id":"r258","utility":"join"},
 {"candidate":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":0,"stdout":"651eb7f7ba22a3ff5bb8162420f869e9ac28732e1ee7777b63ced51f8b83790a"},"case":{"argv":["-1","2","-v2","--header","-a2","-t\\0","-z","left","left"],"domain":"text","family":null,"fixture":"text","input_kind":"command","mode":null,"stdin":"text_join_left","tier":"pinned","utility":"join"},"domain":"text","id":"ba235f9ca29fbcd1","kind":"bug","list":"ledger","reason":"join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.","reference":{"effects":"b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a","status":0,"stdout":"2d7665f016a244f89019bd685aed6ca958d612b6728ec48bf73f2fb329c1d0dd"},"utility":"join"},
