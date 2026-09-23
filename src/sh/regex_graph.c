@@ -932,7 +932,28 @@ static bool rx_accept(rx_match *match, positive position)
                 return true;
         positive stop = position + (program->boundary == REGEX_BOUNDARY_WORD &&
                                     position < match->length);
-        if (match->best_stop == positive_max)
+        /*
+                The limit is how far any match could reach, found by walking
+                back from the end of the text to a byte a match can end on,
+                and a match that reaches it ends the search early. The walk
+                is made only when it can save something: not when no choice
+                is left to go back to, since the first match is then the
+                longest, and not for a match of nothing, since the choices
+                left are tried anyway -- the first match that has a length
+                pays for it. An empty match at every position of a long line
+                -- sed's s///g, gsub, split and FS on a pattern that may
+                match nothing -- paid the walk once per position, and 64 KiB
+                took half a second.
+        */
+        if (match->best_stop == positive_max && !match->choice_used)
+        {
+                match->best_stop = stop;
+                memory_copy_apart(match->best_slots, match->slots,
+                                  match->active_captures * sizeof(positive));
+                return true;
+        }
+        if (match->best_limit == positive_max &&
+            (stop != match->slots[0] || program->boundary == REGEX_BOUNDARY_WORD))
         {
                 match->best_limit = match->length;
                 positive least = position + (!position && program->boundary == REGEX_BOUNDARY_WORD);
@@ -965,6 +986,7 @@ static bool rx_run(rx_match *match, positive start)
                 work_limit = match->work_yield;
         bool accepted = false;
         match->frame_used = match->choice_used = match->undo_used = 0;
+        match->best_limit = positive_max;
         memory_fill(match->slots, -1, match->active_captures * sizeof(positive));
         match->slots[0] = start;
         for (;;)

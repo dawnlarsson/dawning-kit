@@ -3583,6 +3583,34 @@ def awk_gen_records(rng, count):
     return out
 
 
+def awk_gen_empty_matches(rng, count):
+    """gsub, sub, split, match and FS with a pattern that may match nothing,
+    over subjects built in the program: widths around a vector and a page,
+    and one long enough that a search walking the rest of the subject for
+    each empty match runs out of time."""
+    patterns = ("y*", "(y*|z)", "(ab)*", "x?", "(|a)", "[ab]*", "a?b?", " *", "(x|)")
+    fillers = ("x", " ", "ab x")
+    uses = (
+        "{n} = gsub(/{p}/, \"-\", s); print n, length(s), substr(s, 1, 9), substr(s, length(s) - 8)",
+        "{n} = sub(/{p}/, \"<&>\", s); print n, length(s), substr(s, 1, 9)",
+        "{n} = split(s, parts, /{p}/); print n, length(parts[1]), length(parts[{n}])",
+        "print match(s, /{p}/), RSTART, RLENGTH",
+        "FS = \"{p}\"; $0 = s; print NF, length($1), length($NF)",
+        "$0 = s; FS = \"{p}\"; $0 = \" \" $0; print NF, length($2)",
+    )
+
+    def program(size, filler, pattern, use):
+        body = use.replace("{p}", pattern).replace("{n}", "n")
+        return ("BEGIN { s = sprintf(\"%%*s\", %d, \"\"); gsub(/ /, \"%s\", s); s = substr(s, 1, %d); %s }"
+                % (size, filler, size, body))
+
+    out = [(program(600000, "x", pattern, use),) for pattern in ("y*", "(y*|z)", " *") for use in uses]
+    for _ in range(count):
+        out.append((program(rng.choice((0, 1, 63, 64, 65, 4095, 4096, 4097)), rng.choice(fillers),
+                            rng.choice(patterns), rng.choice(uses)),))
+    return out
+
+
 def awk_audit():
     """What the hand-written lane found worth asserting and no generator
     reaches on its own: evaluation order with side effects, the regex
@@ -3849,7 +3877,8 @@ def awk_extra():
             ("regex", awk_gen_regex, 900),
             ("syntax", awk_gen_syntax, 500),
             ("numbers", awk_gen_numbers, 600),
-            ("records", awk_gen_records, 150)):
+            ("records", awk_gen_records, 150),
+            ("empty-matches", awk_gen_empty_matches, 120)):
         rows.extend(generator(awk_seeded(name), count))
     rows.extend(awk_audit())
     rows.extend(awk_refusals())
@@ -15452,7 +15481,34 @@ def text_sed_valid(argv):
     return text_has_pattern(argv, ("-e", "-f"), ("--expression", "--file"), _TEXT_SED_OPERAND_SCRIPTS)
 
 
+#       Lines on which a pattern that can match nothing matches nothing at
+#       nearly every position: the widths around a vector and a page, and
+#       one long enough that a search which walks the rest of the line for
+#       each of those positions runs out of time where one that does not
+#       answers at once.
+INPUTS.update({"empty_match_%d" % size: _boundary(size) for size in (63, 64, 65, 4095, 4096, 4097)})
+INPUTS["empty_match_long"] = b"x" * 300000 + b"\n" + b"ab x" * 1000 + b"\n"
+
+
+def text_sed_empty_matches():
+    """s///g, s///N and s/// with a pattern that may match nothing, over
+    lines of every width above: an empty match is taken, then the next
+    position is searched, and so on to the end of the line. Every pattern
+    runs once on the long line; the rest is a seeded draw."""
+    rng = random.Random(int.from_bytes(hashlib.sha256(b"sed-empty-matches").digest()[:8], "little"))
+    patterns = ("y*", "(y*|z)", "(ab)*", "x?", "(|a)", "[ab]*", "a{0,2}", "(a|b)*c?", "(x|)", "b*$")
+    inputs = tuple(sorted(name for name in INPUTS if name.startswith("empty_match_")))
+    cases = [{"fixture": "text", "stdin": "empty_match_long", "argv": ("-E", "-e", "s/%s/-/g" % pattern)}
+             for pattern in patterns]
+    for _ in range(48):
+        cases.append({"fixture": "text", "stdin": rng.choice(inputs + ("text", "blanks")),
+                      "argv": ("-E", "-e", "s/%s/%s/%s" % (rng.choice(patterns), rng.choice(("-", "[&]", "")),
+                                                        rng.choice(("g", "2g", "3", "", "gp"))))})
+    return tuple(cases)
+
+
 _TEXT_SED_EXTRA = (
+    *text_sed_empty_matches(),
     #       The same question of sed's own reader, on the same engine. A
     #       bare script extra is dropped by text_sed_valid, so each of these
     #       is spelled with -e, and each carries its own set.
