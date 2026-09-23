@@ -76,7 +76,7 @@ describe()
         fold)     echo "the constant-size fold we put in the kernel string header" ;;
         allocator) echo "malloc, free, calloc and realloc against glibc's" ;;
         reserve) echo "movable mappings, growth failures, relocation and sparse-page residency" ;;
-        waterlink) echo "the waterlink core as a pure transform: supersession, reliable per-key delivery and congestion over a generated lossy network, the seal, and the replay window" ;;
+        waterlink) echo "the waterlink core as a pure transform: supersession, reliable per-key delivery and congestion over a generated lossy network, the seal, the Noise IK handshake against a reference, and the replay window" ;;
         utf8) echo "bounded UTF-8 character traversal, malformed bytes and guard pages on three machines" ;;
         hex) echo "bounded hexadecimal encoding, alignment and guard pages on three machines" ;;
         codec) echo "bounded radix codecs, malformed symbols and exact spans on three machines" ;;
@@ -2255,7 +2255,27 @@ glibc_twin()
 lane_declare()   { freestanding_checks_lane declare declare && glibc_twin declare; }
 lane_fold()      { freestanding_checks_lane fold fold; }
 lane_reserve()   { freestanding_checks_lane reserve reserve; }
-lane_waterlink() { freestanding_checks_lane waterlink waterlink; }
+#
+#       The core, the seal and the handshake in CHECK_waterlink on all three
+#       machines, then the handshake's bytes against an independent Noise:
+#       the native binary's `noise` mode against one written in the harness
+#       and, where it imports, the noiseprotocol package.
+#
+lane_waterlink()
+{
+        freestanding_checks_lane waterlink waterlink
+        waterlink_outcome=$?
+        if [ -x "$work/waterlink.$host_arch" ]; then
+                python3 test/differential.py --harness waterlink_noise \
+                        --binary "$work/waterlink.$host_arch"
+                case $? in
+                0) ;;
+                2) [ "$waterlink_outcome" != 0 ] || waterlink_outcome=2 ;;
+                *) waterlink_outcome=1 ;;
+                esac
+        fi
+        return "$waterlink_outcome"
+}
 lane_utf8()      { freestanding_checks_lane utf8 utf8; }
 lane_hex()       { freestanding_checks_lane hex hex; }
 lane_codec()     { freestanding_checks_lane codec codec; }

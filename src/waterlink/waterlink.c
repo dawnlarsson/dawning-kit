@@ -15,7 +15,10 @@
         machine willing to talk to that operator, and what may they do". A
         static key pair answers it. TLS would bring certificates and a version
         matrix for a peer we already know by key. The handshake is Noise_IK
-        over what lib.c already has -- X25519, HKDF, AES-GCM, SHA-256.
+        over what lib.c already has -- X25519, HKDF, AES-GCM, SHA-256 -- as
+        Noise_IK_25519_AES128GCM_SHA256: the standard's AESGCM is AES-256,
+        which lib.c does not carry, and handshake.c says why the name had to
+        change with it.
 
         Datagrams, not a stream, because a keystroke must not wait behind a
         video frame and one TCP connection cannot promise that: a lost segment

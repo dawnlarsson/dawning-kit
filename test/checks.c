@@ -51693,6 +51693,7 @@ b32 main(void)
 #include "../src/net/net.c"
 #include "../src/waterlink/link.c"
 #include "../src/waterlink/seal.c"
+#include "../src/waterlink/handshake.c"
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
@@ -53137,8 +53138,268 @@ static fn network_generated(void)
               sim_total.path_dropped * 10 <= sim_total.path_sent);
 }
 
+/*
+        The handshake, both ends in one process: the keys agree, a wrong
+        mac1, wrong padding or a message to the wrong key is refused at the
+        gate before any curve work, a tampered static or hello is refused
+        after it, an initiation made again is not newer, and the admission
+        bucket holds a flood to its burst. Byte-for-byte agreement with an
+        independent Noise is the harness's (differential.py --harness
+        waterlink_noise), fed by this binary's `noise` mode.
+*/
+static fn identity_seeded(struct waterlink_identity address_to identity,
+                          p8 seed)
+{
+        p8 secret[32];
+
+        for (positive i = 0; i < 32; i++)
+                secret[i] = (p8)(seed * 37 + i * 11 + 1);
+        waterlink_identity_from(identity, secret);
+}
+
+static fn random_seeded(p8 address_to into, positive length, p8 seed)
+{
+        for (positive i = 0; i < length; i++)
+                into[i] = (p8)(seed * 91 + i * 17 + 5);
+}
+
+static fn handshake(void)
+{
+        struct waterlink_identity alice, bob, eve;
+        struct waterlink_noise starting, answering;
+        p8 first[WATERLINK_DATAGRAM];
+        p8 second[WATERLINK_DATAGRAM];
+        p8 kept[WATERLINK_DATAGRAM];
+        p8 hello[WATERLINK_HELLO_BYTES];
+        p8 heard_hello[WATERLINK_HELLO_BYTES];
+        p8 who[32];
+        p8 e1[32], e2[32];
+        p8 a_send[16], a_receive[16], b_send[16], b_receive[16];
+        p32 index = 0;
+        struct waterlink_admission admission;
+        p8 source[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 10, 0, 0, 2};
+        positive admitted = 0;
+
+        identity_seeded(address_of alice, 1);
+        identity_seeded(address_of bob, 2);
+        identity_seeded(address_of eve, 3);
+        random_seeded(e1, 32, 4);
+        random_seeded(e2, 32, 5);
+        random_seeded(hello, sizeof hello, 6);
+
+        waterlink_initiate(address_of starting, address_of alice, bob.public,
+                           e1, hello, first);
+        memory_copy(kept, first, sizeof kept);
+        check("an initiation passes the responder's gate",
+              waterlink_gate_passes(address_of bob, first, WATERLINK_DATAGRAM));
+        check("and nobody else's", !waterlink_gate_passes(address_of eve, first,
+                                                          WATERLINK_DATAGRAM));
+        check("the responder learns who and what",
+              waterlink_accept(address_of answering, address_of bob, first,
+                               who, heard_hello) &&
+                      !memory_compare(who, alice.public, 32) &&
+                      !memory_compare(heard_hello, hello, sizeof hello));
+
+        waterlink_respond(address_of answering, e2, 0x11223344, 0x55667788,
+                          second);
+        check("the answer passes the initiator's gate",
+              waterlink_gate_passes(address_of alice, second,
+                                    WATERLINK_DATAGRAM));
+        check("and names the initiator's index",
+              ((struct waterlink_datagram address_to)second)->receiver ==
+                      0x11223344);
+        check("the initiator reads the answer",
+              waterlink_answered(address_of starting, address_of alice, second,
+                                 address_of index) &&
+                      index == 0x55667788);
+
+        waterlink_split(address_of starting, true, a_send, a_receive);
+        waterlink_split(address_of answering, false, b_send, b_receive);
+        check("the two ends agree on both keys",
+              !memory_compare(a_send, b_receive, 16) &&
+                      !memory_compare(a_receive, b_send, 16) &&
+                      memory_compare(a_send, a_receive, 16));
+
+        //      The gate: one bit anywhere before it, in it, or in the padding.
+        {
+                static const positive where[] = {0, 5, 16, 16 + 40,
+                                                 16 + WATERLINK_INITIATE_BYTES - 1,
+                                                 16 + WATERLINK_INITIATE_BYTES,
+                                                 WATERLINK_DATAGRAM - 1};
+                positive refused = 0;
+
+                for (positive at = 0; at < sizeof where / sizeof where[0]; at++)
+                {
+                        memory_copy(first, kept, sizeof first);
+                        first[where[at]] ^= 0x20;
+                        if (!waterlink_gate_passes(address_of bob, first,
+                                                   WATERLINK_DATAGRAM))
+                                refused++;
+                }
+                check("a wrong mac1, message or padding is refused at the gate",
+                      refused == sizeof where / sizeof where[0]);
+                check("and so is a datagram of the wrong length",
+                      !waterlink_gate_passes(address_of bob, kept,
+                                             WATERLINK_DATAGRAM - 16));
+        }
+
+        //      Past the gate, the sealed parts: made for bob, sent to eve with
+        //      eve's own mac1 on it, it does not open.
+        {
+                struct waterlink_noise other;
+                p8 gate[32];
+
+                memory_copy(first, kept, sizeof first);
+                waterlink_gate_of(eve.public, gate);
+                waterlink_mac1(gate, first, 16 + WATERLINK_INITIATE_BYTES - 16,
+                               first + 16 + WATERLINK_INITIATE_BYTES - 16);
+                check("an initiation for another key does not open",
+                      waterlink_gate_passes(address_of eve, first,
+                                            WATERLINK_DATAGRAM) &&
+                              !waterlink_accept(address_of other,
+                                                address_of eve, first, who,
+                                                heard_hello));
+
+                memory_copy(first, kept, sizeof first);
+                first[16 + 32 + 3] ^= 1;
+                waterlink_gate_of(bob.public, gate);
+                waterlink_mac1(gate, first, 16 + WATERLINK_INITIATE_BYTES - 16,
+                               first + 16 + WATERLINK_INITIATE_BYTES - 16);
+                check("a tampered static does not open",
+                      !waterlink_accept(address_of other, address_of bob,
+                                        first, who, heard_hello));
+        }
+
+        //      An answer the initiator did not ask for, or from the wrong
+        //      responder, does not open.
+        {
+                struct waterlink_noise stranger;
+
+                waterlink_initiate(address_of starting, address_of alice,
+                                   bob.public, e1, hello, first);
+                waterlink_accept(address_of answering, address_of bob, first,
+                                 who, heard_hello);
+                waterlink_initiate(address_of stranger, address_of alice,
+                                   eve.public, e2, hello, first);
+                waterlink_respond(address_of answering, e2, 1, 2, second);
+                check("an answer to another initiation does not open",
+                      !waterlink_answered(address_of stranger, address_of alice,
+                                          second, address_of index));
+        }
+
+        //      A replayed initiation carries the stamp already seen.
+        {
+                p8 last[WATERLINK_STAMP_BYTES];
+                p8 now[WATERLINK_STAMP_BYTES];
+
+                waterlink_stamp(last, 1790000000, 5);
+                waterlink_stamp(now, 1790000000, 5);
+                check("the same stamp is not newer",
+                      !waterlink_stamp_newer(now, last));
+                waterlink_stamp(now, 1790000000, 6);
+                check("a nanosecond later is", waterlink_stamp_newer(now, last));
+                waterlink_stamp(now, 1789999999, 999999999);
+                check("a second earlier is not",
+                      !waterlink_stamp_newer(now, last));
+        }
+
+        memory_zero(address_of admission, sizeof admission);
+        for (positive at = 0; at < 50; at++)
+                admitted += waterlink_admit(address_of admission, source,
+                                            1000000 + at * 1000);
+        check("a flood from one source is held to its burst",
+              admitted == WATERLINK_ADMIT_BURST);
+        check("and it earns an initiation back in a fifth of a second",
+              waterlink_admit(address_of admission, source, 1000000 + 250000));
+        source[15] = 3;
+        check("while another source is not held by it",
+              waterlink_admit(address_of admission, source, 1000000 + 50000));
+
+        check("a session is keyed again at two minutes",
+              !waterlink_rekey_due(119999999, 5) &&
+                      waterlink_rekey_due(120000000, 5) &&
+                      waterlink_rekey_due(1, WATERLINK_REKEY_MESSAGES));
+        check("and refused at three",
+              !waterlink_session_spent(179999999, 5) &&
+                      waterlink_session_spent(180000000, 5));
+}
+
+/*
+        For the harness: seeded inputs and what both messages and both keys
+        came out as, one line a seed, in hex.
+*/
+static fn hex_out(p8 address_to bytes, positive length)
+{
+        static const char digits[] = "0123456789abcdef";
+        p8 text[2 * 128 + 2];
+
+        for (positive i = 0; i < length; i++)
+        {
+                text[2 * i] = (p8)digits[bytes[i] >> 4];
+                text[2 * i + 1] = (p8)digits[bytes[i] & 15];
+        }
+        text[2 * length] = ' ';
+        text[2 * length + 1] = 0;
+        string_format(log, "%s", (string_address)text);
+}
+
+static b32 noise_vectors(positive count)
+{
+        for (positive seed = 0; seed < count; seed++)
+        {
+                struct waterlink_identity i, r;
+                struct waterlink_noise a, b;
+                p8 si[32], sr[32], ei[32], er[32];
+                p8 hello[WATERLINK_HELLO_BYTES];
+                p8 first[WATERLINK_DATAGRAM], second[WATERLINK_DATAGRAM];
+                p8 heard_hello[WATERLINK_HELLO_BYTES], who[32];
+                p8 k1[16], k2[16], k3[16], k4[16];
+                p32 index = 0;
+
+                sim_rng = 0x51ed2701ull * (seed + 1);
+                for (positive n = 0; n < 32; n++)
+                {
+                        si[n] = (p8)sim_next();
+                        sr[n] = (p8)sim_next();
+                        ei[n] = (p8)sim_next();
+                        er[n] = (p8)sim_next();
+                }
+                for (positive n = 0; n < sizeof hello; n++)
+                        hello[n] = (p8)sim_next();
+
+                waterlink_identity_from(address_of i, si);
+                waterlink_identity_from(address_of r, sr);
+                waterlink_initiate(address_of a, address_of i, r.public, ei,
+                                   hello, first);
+                if (!waterlink_accept(address_of b, address_of r, first, who,
+                                      heard_hello))
+                        return 1;
+                waterlink_respond(address_of b, er, 7, (p32)seed, second);
+                if (!waterlink_answered(address_of a, address_of i, second,
+                                        address_of index))
+                        return 1;
+                waterlink_split(address_of a, true, k1, k2);
+                waterlink_split(address_of b, false, k3, k4);
+
+                hex_out(si, 32);
+                hex_out(sr, 32);
+                hex_out(ei, 32);
+                hex_out(er, 32);
+                hex_out(hello, sizeof hello);
+                hex_out(first + 16, WATERLINK_INITIATE_BYTES - 16);
+                hex_out(second + 16, WATERLINK_RESPOND_BYTES - 16);
+                hex_out(k1, 16);
+                hex_out(k2, 16);
+                string_format(log, "\n");
+        }
+        log_flush();
+        return 0;
+}
+
 b32 main(void)
 {
+        if (program_argument_count() > 1)
+                return noise_vectors(64);
         sealed();
         sealed_short();
         whole_path();
@@ -53157,6 +53418,7 @@ b32 main(void)
         last_arrives_once();
         superseded_in_flight();
         network_generated();
+        handshake();
         return test_report(null);
 }
 #endif /* CHECK_waterlink */

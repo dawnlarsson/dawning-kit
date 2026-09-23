@@ -31972,6 +31972,166 @@ def harness_coverage_report(argv):
         Path(options["--save"]).write_text(json.dumps(blocks, sort_keys=True))
     return 0
 
+def harness_waterlink_noise(argv):
+    """waterlink's Noise IK against an independent Noise, byte for byte.
+
+    The check binary's `noise` mode prints 64 seeded handshakes: both
+    statics, both ephemerals, the hello, the two message bodies (mac1 left
+    out, since it is WireGuard's and not Noise's) and the initiator's two
+    transport keys. Each is made again by the noiseprotocol package when it
+    can be imported -- the cipher function patched to AES-128-GCM over the
+    first sixteen bytes of Noise's key and the name to
+    Noise_IK_25519_AES128GCM_SHA256, which is the one variation waterlink
+    states -- and always by a forty-line Noise written here from the spec
+    over the cryptography package. A package found on WATERLINK_NOISE_PATH
+    counts too. Either reference disagreeing is a failure; the verdict says
+    which ones ran.
+    """
+    import subprocess
+    parser = argparse.ArgumentParser(prog="differential.py --harness waterlink_noise")
+    parser.add_argument("--binary", required=True)
+    args = parser.parse_args(argv)
+    try:
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError:
+        print("waterlink noise: NOT RUN -- no cryptography package")
+        return 2
+    import hashlib
+    import hmac as hmac_module
+
+    ran = subprocess.run([args.binary, "noise"], capture_output=True, timeout=120)
+    lines = [line.split() for line in ran.stdout.decode().splitlines() if line.strip()]
+    checks = Checks()
+    checks(ran.returncode == 0 and len(lines) == 64, "the binary printed 64 handshakes")
+    name = b"Noise_IK_25519_AES128GCM_SHA256"
+    prologue = b"waterlink 1"
+
+    def public_of(secret):
+        from cryptography.hazmat.primitives import serialization
+        return X25519PrivateKey.from_private_bytes(secret).public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+    def dh(secret, public):
+        return X25519PrivateKey.from_private_bytes(secret).exchange(X25519PublicKey.from_public_bytes(public))
+
+    class Own:
+        """Noise IK from the spec: SymmetricState and CipherState, nothing else."""
+        def __init__(self, responder_static):
+            self.h = name.ljust(32, b"\0")
+            self.ck = self.h
+            self.k = None
+            self.n = 0
+            self.mix_hash(prologue)
+            self.mix_hash(responder_static)
+
+        def mix_hash(self, data):
+            self.h = hashlib.sha256(self.h + data).digest()
+
+        def hkdf(self, material):
+            prk = hmac_module.new(self.ck, material, hashlib.sha256).digest()
+            one = hmac_module.new(prk, b"\x01", hashlib.sha256).digest()
+            return one, hmac_module.new(prk, one + b"\x02", hashlib.sha256).digest()
+
+        def mix_key(self, material):
+            self.ck, self.k = self.hkdf(material)
+            self.n = 0
+
+        def seal(self, plain):
+            text = AESGCM(self.k[:16]).encrypt(b"\0\0\0\0" + self.n.to_bytes(8, "big"), plain, self.h)
+            self.n += 1
+            self.mix_hash(text)
+            return text
+
+        def split(self):
+            one, two = self.hkdf(b"")
+            return one[:16], two[:16]
+
+    def own(si, sr, ei, er, hello, index):
+        rs = public_of(sr)
+        a = Own(rs)
+        message = public_of(ei)
+        a.mix_hash(public_of(ei))
+        a.mix_key(dh(ei, rs))
+        message += a.seal(public_of(si))
+        a.mix_key(dh(si, rs))
+        message += a.seal(hello)
+        answer = public_of(er)
+        a.mix_hash(answer)
+        a.mix_key(dh(er, public_of(ei)))
+        a.mix_key(dh(er, public_of(si)))
+        answer += a.seal(index)
+        return message, answer, a.split()
+
+    def package(si, sr, ei, er, hello, index):
+        from noise.connection import NoiseConnection, Keypair
+        from noise.backends.default.ciphers import AESGCMCipher
+
+        class Cut(AESGCMCipher):
+            def initialize(self, key):
+                self.cipher = AESGCM(key[:16])
+
+        def made(initiator):
+            connection = NoiseConnection.from_name(b"Noise_IK_25519_AESGCM_SHA256")
+            connection.noise_protocol.name = name
+            connection.noise_protocol.cipher_class = Cut
+            connection.set_prologue(prologue)
+            if initiator:
+                connection.set_as_initiator()
+                connection.set_keypair_from_private_bytes(Keypair.STATIC, si)
+                connection.set_keypair_from_public_bytes(Keypair.REMOTE_STATIC, public_of(sr))
+                connection.set_keypair_from_private_bytes(Keypair.EPHEMERAL, ei)
+            else:
+                connection.set_as_responder()
+                connection.set_keypair_from_private_bytes(Keypair.STATIC, sr)
+                connection.set_keypair_from_private_bytes(Keypair.EPHEMERAL, er)
+            connection.start_handshake()
+            return connection
+
+        a, b = made(True), made(False)
+        message = bytes(a.write_message(hello))
+        heard = bytes(b.read_message(message))
+        answer = bytes(b.write_message(index))
+        a.read_message(answer)
+        state = a.noise_protocol
+        return message, answer, (bytes(state.cipher_state_encrypt.k)[:16],
+                                 bytes(state.cipher_state_decrypt.k)[:16]), heard == hello
+
+    extra = os.environ.get("WATERLINK_NOISE_PATH")
+    if extra:
+        sys.path.insert(0, extra)
+    try:
+        import noise.connection  # noqa: F401
+        have_package = True
+    except ImportError:
+        have_package = False
+
+    own_agreed = package_agreed = 0
+    for seed, fields in enumerate(lines):
+        if len(fields) != 9:
+            checks(False, "a handshake line has nine fields")
+            continue
+        si, sr, ei, er, hello, first, second, send, receive = (bytes.fromhex(f) for f in fields)
+        #       The responder's index, sealed in the answer, is the seed: the
+        #       binary writes it so.
+        index = seed.to_bytes(4, "little")
+        message, answer, keys = own(si, sr, ei, er, hello, index)
+        if message == first and answer == second and keys == (send, receive):
+            own_agreed += 1
+        if have_package:
+            message, answer, keys, heard = package(si, sr, ei, er, hello, index)
+            if message == first and answer == second and keys == (send, receive) and heard:
+                package_agreed += 1
+    checks(own_agreed == len(lines), "the spec's Noise, written here, makes the same bytes and keys "
+           "(%d of %d)" % (own_agreed, len(lines)))
+    if have_package:
+        checks(package_agreed == len(lines), "the noiseprotocol package makes the same bytes and keys "
+               "(%d of %d)" % (package_agreed, len(lines)))
+    print("waterlink noise: references run: written here%s" %
+          (", noiseprotocol" if have_package else " (noiseprotocol not importable)"))
+    return checks.verdict("waterlink noise:", "waterlink-noise")
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -32007,6 +32167,7 @@ HARNESS_CHECKS = {
     "machine_reap": harness_machine_reap,
     "tls_chains": harness_tls_chains,
     "machine_scan": harness_machine_scan,
+    "waterlink_noise": harness_waterlink_noise,
 }
 
 
