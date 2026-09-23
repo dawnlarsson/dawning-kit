@@ -4195,6 +4195,27 @@ word_done:
         return true;
 }
 
+/*
+        The ! that bash's history leaves alone because the shell itself
+        means something by it there, bash_history_inhibit_expansion's list:
+        ${!name} and ${!prefix*}, which are indirection and not an event, a
+        bracket expression's [!...] negation, and $! the last background
+        pid. Without these ${!x} at an interactive prompt answered
+        "!x}: event not found" and ran nothing, and [!a]* was an event too.
+*/
+static PURE bool history_bang_inhibited(string_address line, string_address at)
+{
+        positive before = (positive)(at - line);
+
+        if (before >= 1 && string_get(at - 1) == '[' &&
+            string_first_of(at + 1, ']'))
+                return true;
+        if (before >= 2 && string_get(at - 1) == '{' &&
+            string_get(at - 2) == '$' && string_first_of(at + 1, '}'))
+                return true;
+        return before >= 1 && string_get(at - 1) == '$';
+}
+
 /* Expand one interactive physical line.  The caller remembers the returned
    text, so `history` and `fc` see exactly what was executed. */
 b32 history_expand_line(string_address line,
@@ -4309,7 +4330,8 @@ b32 history_expand_line(string_address line,
                     string_get(at + 1) == ' ' ||
                     string_get(at + 1) == '\t' ||
                     string_get(at + 1) == '=' ||
-                    string_get(at + 1) == '(')
+                    string_get(at + 1) == '(' ||
+                    history_bang_inhibited(line, at))
                 {
                         at++;
                         continue;

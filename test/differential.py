@@ -11354,6 +11354,9 @@ shell_SESSION_FATALS = (
     'exit bad; echo SAME-LINE',
     'let 1/0; echo SAME-LINE',
     ': $((08)); echo SAME-LINE',
+    #       Not fatal at all, and that is the point: at an interactive
+    #       prompt the ! of an indirection is the shell's and not history's.
+    'v=val; y=v; echo "${!y}" ${!y} $((1+1)); echo SAME-LINE',
 )
 
 
