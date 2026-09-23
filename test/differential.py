@@ -14734,6 +14734,39 @@ def shell_signal_script(shape, entry, trap):
                          'echo "end=$?"', 'rm -f "./$shell_me"')
 
 
+#       $! is the command a background list started, not a shell standing
+#       between: the program's own pid, and `kill $!` stops it. Commands the
+#       shell execs -- a script with and without a #! line, a shell started
+#       for a string -- under prefixes that must not cost the command its own
+#       process: an assignment, a redirection, a trap the parent set, job
+#       control; and a function, where every shell keeps a subshell between.
+shell_BANG_PROGRAMS = ("string", "script-shebang", "script-plain")
+shell_BANG_PREFIXES = ("plain", "assignment", "redirection", "trap", "monitor", "function")
+
+
+def shell_bang_script(program, prefix):
+    setup = []
+    if program == "string":
+        command = './"$shell_me" -c \'echo $$ > bang.pid; sleep 3\''
+    else:
+        setup.append("printf '%%becho $$ > bang.pid\\nsleep 3\\n' %s > bang.sh; chmod +x bang.sh"
+                     % ("'#!/bin/sh\\n'" if program == "script-shebang" else "''"))
+        command = "./bang.sh"
+    line = {"plain": command + " &",
+            "assignment": "V=1 " + command + " &",
+            "redirection": command + " 2>/dev/null &",
+            "trap": "trap 'echo usr1' USR1; " + command + " &",
+            "monitor": "set -m; " + command + " &",
+            "function": "f() { " + command + "; }; f &"}[prefix]
+    return shell_program(*([shell_SELF] + setup + [
+        "rm -f bang.pid; " + line + " b=$!",
+        "i=0; while [ ! -s bang.pid ] && [ $i -lt 100 ]; do sleep 0.02; i=$((i + 1)); done",
+        '[ "$(cat bang.pid)" = "$b" ] && echo bang-is-program || echo bang-is-not-program',
+        'kill "$b"; wait "$b"; echo "wait=$?"',
+        'sleep 0.1; [ -d "/proc/$(cat bang.pid)" ] && echo program-left || echo program-stopped',
+        'rm -f "./$shell_me" bang.pid bang.sh']))
+
+
 #       Control-C at a terminal while the shell there runs something that is
 #       itself a shell: a -c string or a script, a loop of builtins or a
 #       program with more to do after it. The line discipline sends the
@@ -14853,12 +14886,23 @@ def shell_signal_dispositions(farm):
     return shell_reference_walk(farm, cases)
 
 
+def shell_background_pid(farm):
+    """$! against the pid the started program writes, wait $! after kill $!
+    and whether the program is gone, against bash and dash: every program
+    of shell_BANG_PROGRAMS under every prefix of shell_BANG_PREFIXES."""
+    cases = [(mode, "bang %s %s" % (program, prefix), shell_bang_script(program, prefix), 15, None)
+             for mode in sorted(SHELL_MODES) for program in shell_BANG_PROGRAMS
+             for prefix in shell_BANG_PREFIXES]
+    return shell_reference_walk(farm, cases)
+
+
 
 SHELL_CHECKS = (
     shell_restricted_function_import,
     shell_hostile_environment,
     shell_nesting_limits,
     shell_signal_dispositions,
+    shell_background_pid,
 )
 
 
@@ -33821,6 +33865,33 @@ def harness_guest_scenarios(argv):
         lines.append("printf '%%s' %s > /tmp/sc.want" % q("|".join(env) + "|"))
         lines.append("scen_same %s" % q("proc environ %d" % case))
     family("proc", lines)
+
+    # ------------------------------------------------------------ launch
+    #   $! is the program a background list started: the pid it writes for
+    #   itself, the one `kill $!` stops and `wait $!` reports killed. The
+    #   shell execs a background simple command in its forked child, and on
+    #   the image that exec used to be refused -- floodlight asks
+    #   /proc/PID/task/TID/children whether a child would be handed over, and
+    #   the kernel had no such file -- so the program ran one process
+    #   further down and $! named a copy of the shell.
+    lines = ["printf '#!/bin/sh\\necho $$ > /tmp/la.pid\\nsleep 5\\n' > /tmp/la-shebang",
+             "printf 'echo $$ > /tmp/la.pid\\nsleep 5\\n' > /tmp/la-plain",
+             "chmod +x /tmp/la-shebang /tmp/la-plain",
+             "scen_la_wait() { i=0; while [ ! -s /tmp/la.pid ] && [ $i -lt 150 ]; do sleep 0.02; i=$((i + 1)); done; }"]
+    programs = ("/tmp/la-shebang", "/tmp/la-plain", "sh -c 'echo $$ > /tmp/la.pid; sleep 5'",
+                "/bin/sh -c 'echo $$ > /tmp/la.pid; sleep 5'", "env sh -c 'echo $$ > /tmp/la.pid; sleep 5'")
+    prefixes = ("", "V=1 ", "LA=x ", "")
+    suffixes = ("", " > /dev/null", " 2>&1", " < /dev/null")
+    for case in range(10):
+        command = rng.choice(prefixes) + rng.choice(programs) + rng.choice(suffixes)
+        label = "launch %d" % case
+        lines.append("rm -f /tmp/la.pid; %s & b=$!; scen_la_wait; p=$(cat /tmp/la.pid 2>/dev/null)" % command)
+        lines.append("scen_count %s \"$b\" \"$p\"" % q(label + ": $! is the program"))
+        lines.append("kill \"$b\"; wait \"$b\"; scen_count %s 143 $?" % q(label + ": wait $! after kill $!"))
+        lines.append("sleep 0.1; scen_count %s 0 \"$([ -n \"$p\" ] && [ -d /proc/$p ] && echo 1 || echo 0)\"; "
+                     "[ -n \"$p\" ] && kill -KILL $p 2>/dev/null" % q(label + ": kill $! stopped it"))
+    lines.append("rm -f /tmp/la.pid /tmp/la-shebang /tmp/la-plain")
+    family("launch", lines)
 
     # ----------------------------------------------------------- signals
     #   What a command started from a non-interactive shell here finds

@@ -35,6 +35,15 @@ CONFIG_MOONWATER_CORE=y
 #
 CONFIG_MOONWATER_FLOODLIGHT=y
 
+#
+# /proc/PID/task/TID/children, which the shell reads before it replaces
+# itself with a command: a supervised shell may only exec in place when it
+# has no child to hand over, and without this file it cannot tell, so it
+# refuses and forks instead. Every `cmd &` then ran under a forked copy of
+# the shell, $! named that copy, and `kill $!` left the command running.
+#
+CONFIG_PROC_CHILDREN=y
+
 CONFIG_INITRAMFS_SOURCE="../fs"
 
 CONFIG_RD_GZIP=y
