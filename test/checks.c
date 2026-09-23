@@ -24486,10 +24486,55 @@ static fn unbounded_guard_edge(void)
 #endif
 }
 
+/*
+        strncasecmp at a page edge. A bound is not a licence to read past the
+        terminator, and the SSE2 and NEON steps of string_compare_folded_max
+        loaded sixteen bytes wherever they stood: strncasecmp("", "", 16)
+        with either NUL on a page's last byte faulted at every feature tier.
+        Both strings end on the last byte of a live page, one in capitals,
+        at every length to 72 and bounds from the length to far past it,
+        equal and with one byte made to differ.
+*/
+static fn folded_guard_edge(void)
+{
+        positive bounds[] = {16, 17, 31, 32, 64, 128, 4096, positive_max};
+
+        for (positive suffix = 1; suffix <= 72; suffix++)
+        {
+                string_address one = source_edge - suffix;
+                string_address two = twin_edge - suffix;
+
+                for (positive i = 0; i + 1 < suffix; i++)
+                {
+                        one[i] = (p8)('a' + (i * 7 + suffix) % 26);
+                        two[i] = (p8)(one[i] - 32);
+                }
+                one[suffix - 1] = two[suffix - 1] = 0;
+
+                for (positive b = 0; b < array_count(bounds); b++)
+                {
+                        positive bound = bounds[b];
+
+                        judge((string_address)"string_compare_folded_max page edge",
+                              bound, suffix,
+                              (positive)((string_compare_folded_max)(one, two, bound) != 0), 0);
+                        if (suffix < 2)
+                                continue;
+                        two[suffix - 2] = '~';
+                        judge((string_address)"string_compare_folded_max page edge differs",
+                              bound, suffix,
+                              (positive)((string_compare_folded_max)(one, two, bound) < 0),
+                              (positive)(suffix - 2 < bound));
+                        two[suffix - 2] = (p8)(one[suffix - 2] - 32);
+                }
+        }
+}
+
 b32 main(void)
 {
         fence_open();
 
+        folded_guard_edge();
         unbounded_guard_edge();
         EVERY_BOUND(LENGTH_CASE);
         EVERY_BOUND(COMPARE_CASE);

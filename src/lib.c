@@ -55113,10 +55113,13 @@ __asm__(
     ASM_RET
     ASM_END(string_compare_folded)
     //
-    //      The bound makes every read here legal without a page argument,
-    //      which is the whole difference between this and the routine above;
-    //      it also means this reads up to n bytes and not up to the
-    //      terminator, exactly as string_compare_max does.
+    //      n bounds the read but does not license it: strncasecmp may not
+    //      read past a terminator any more than strcasecmp may, and this
+    //      said it could "as string_compare_max does", which page-checks.
+    //      strncasecmp("", "", 16) with either NUL the last byte of a page
+    //      faulted at every feature level. The wide step asks the page
+    //      question string_compare_folded asks, and a pointer near the end
+    //      of one takes sixteen bytes the slow way before it asks again.
     //
     ASM_FUNC(string_compare_folded_max)
     "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
@@ -55126,7 +55129,9 @@ __asm__(
     "mov $0x9a9a9a9a, %eax\n   movd %eax, %xmm6\n   pshufd $0, %xmm6, %xmm6\n"
     "mov $0x20202020, %eax\n   movd %eax, %xmm7\n   pshufd $0, %xmm7, %xmm7\n"
     "pxor %xmm4, %xmm4\n"
-    "10:  movdqu (%rdi), %xmm0\n   movdqu (%rsi), %xmm1\n"
+    "10:  mov %edi, %ecx\n   and $0xfff, %ecx\n   cmp $0xff0, %ecx\n   ja 12f\n"
+    "mov %esi, %ecx\n   and $0xfff, %ecx\n   cmp $0xff0, %ecx\n   ja 12f\n"
+    "movdqu (%rdi), %xmm0\n   movdqu (%rsi), %xmm1\n"
     "movdqa %xmm0, %xmm2\n   paddb %xmm5, %xmm2\n   movdqa %xmm6, %xmm3\n"
     "pcmpgtb %xmm2, %xmm3\n   pand %xmm7, %xmm3\n   paddb %xmm3, %xmm0\n"
     "movdqa %xmm1, %xmm2\n   paddb %xmm5, %xmm2\n   movdqa %xmm6, %xmm3\n"
@@ -55135,6 +55140,16 @@ __asm__(
     "pmovmskb %xmm0, %ecx\n   cmp $0xffff, %ecx\n   jne 11f\n"
     "add $16, %rdi\n   add $16, %rsi\n   sub $16, %rdx\n   cmp $16, %rdx\n   jae 10b\n"
     "jmp 1f\n"
+    //      A page edge within sixteen: at least sixteen of n are left, so
+    //      sixteen bytes one at a time, then the question again.
+    "12:  mov $16, %r10d\n"
+    "13:  movzbl (%rdi), %eax\n   movzbl (%rsi), %ecx\n"
+    "lea -'A'(%rax), %r8d\n   lea 32(%rax), %r9d\n   cmp $26, %r8d\n   cmovb %r9d, %eax\n"
+    "lea -'A'(%rcx), %r8d\n   lea 32(%rcx), %r9d\n   cmp $26, %r8d\n   cmovb %r9d, %ecx\n"
+    "sub %ecx, %eax\n   jne 9f\n"
+    "test %ecx, %ecx\n   jz 9f\n"
+    "inc %rdi\n   inc %rsi\n   dec %rdx\n   dec %r10d\n   jnz 13b\n"
+    "cmp $16, %rdx\n   jae 10b\n   jmp 1f\n"
     "11:  not %ecx\n   bsf %ecx, %ecx\n   add %rcx, %rdi\n   add %rcx, %rsi\n   sub %rcx, %rdx\n"
     )
     //
@@ -56105,13 +56120,16 @@ __asm__(
     "9:  mov w0, w9\n"
     ASM_RET
     ASM_END(string_compare_folded)
-    //      n bounds the read, so nothing here asks about a page.
+    //      n bounds the read but does not license it past a terminator;
+    //      the x86 block says why the wide step asks about the page.
     ASM_FUNC(string_compare_folded_max)
     "mov w9, #0\n   cbz x2, 9f\n"
 #ifndef KERNEL_MODE
     "cmp x2, #16\n   b.lo 1f\n"
     "movi v5.16b, #25\n   movi v6.16b, #0x41  // 'A'\n   movi v7.16b, #0x20\n"
-    "10:  ldr q0, [x0]\n   ldr q1, [x1]\n"
+    "10:  and x10, x0, #0xfff\n   cmp x10, #0xff0\n   b.hi 12f\n"
+    "and x10, x1, #0xfff\n   cmp x10, #0xff0\n   b.hi 12f\n"
+    "ldr q0, [x0]\n   ldr q1, [x1]\n"
     "sub v2.16b, v0.16b, v6.16b\n   cmhs v2.16b, v5.16b, v2.16b\n"
     "and v2.16b, v2.16b, v7.16b\n   add v0.16b, v0.16b, v2.16b\n"
     "sub v2.16b, v1.16b, v6.16b\n   cmhs v2.16b, v5.16b, v2.16b\n"
@@ -56119,6 +56137,14 @@ __asm__(
     "cmeq v3.16b, v0.16b, v1.16b\n   cmeq v2.16b, v0.16b, #0\n   bic v3.16b, v3.16b, v2.16b\n"
     "uminv b4, v3.16b\n   umov w10, v4.b[0]\n   cmp w10, #0xff\n   b.ne 11f\n"
     "add x0, x0, #16\n   add x1, x1, #16\n   sub x2, x2, #16\n"
+    "cmp x2, #16\n   b.hs 10b\n   b 1f\n"
+    "12:  mov w11, #16\n"
+    "13:  ldrb w4, [x0]\n   ldrb w5, [x1]\n"
+    "sub w6, w4, #0x41\n   add w7, w4, #32\n   cmp w6, #25\n   csel w4, w7, w4, ls\n"
+    "sub w6, w5, #0x41\n   add w7, w5, #32\n   cmp w6, #25\n   csel w5, w7, w5, ls\n"
+    "subs w9, w4, w5\n   b.ne 9f\n"
+    "cbz w5, 9f\n"
+    "add x0, x0, #1\n   add x1, x1, #1\n   sub x2, x2, #1\n   subs w11, w11, #1\n   b.ne 13b\n"
     "cmp x2, #16\n   b.hs 10b\n   b 1f\n"
     "11:  mvn v3.16b, v3.16b\n   shrn v3.8b, v3.8h, #4\n   fmov x10, d3\n"
     "rbit x10, x10\n   clz x10, x10\n   lsr x10, x10, #2\n"
