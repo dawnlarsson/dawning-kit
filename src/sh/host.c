@@ -3540,6 +3540,7 @@ static b32 host_canvas(string_address address_to arguments, positive count)
 #define NL80211_ATTR_KEY_CIPHER 9
 #define NL80211_ATTR_KEY_SEQ 10
 #define NL80211_ATTR_KEY_DEFAULT 11
+#define NL80211_ATTR_IE 42
 #define NL80211_ATTR_SSID 52
 #define NL80211_ATTR_AUTH_TYPE 53
 #define NL80211_ATTR_KEY_TYPE 55
@@ -3767,8 +3768,12 @@ static COLD bool nl80211_iface_seen(netlink_header address_to header,
             body[0] != NL80211_CMD_GET_INTERFACE)
                 return true;
 
+        /* A station, and only a station: an access point, a monitor or a
+           P2P device on the same machine is not one to join from, and the
+           first of those in the dump used to be taken when no station
+           followed it. */
         type = nl80211_find_u32(header, NL80211_ATTR_IFTYPE, 0);
-        if (found->found && type != NL80211_IFTYPE_STATION)
+        if (type != NL80211_IFTYPE_STATION)
                 return true;
 
         index = nl80211_find_u32(header, NL80211_ATTR_IFINDEX, 0);
@@ -4613,6 +4618,15 @@ static COLD bipolar nl80211_connect(nl80211 address_to session, p32 index,
                                       NL80211_ATTR_CIPHER_SUITE_GROUP, ccmp);
                 nl80211_attribute_u32(address_of request, NL80211_ATTR_AKM_SUITES,
                                       psk);
+                /* The RSN element for the association request, which a
+                   driver whose station management is mac80211's builds from
+                   what it is handed and nothing else. Without it the access
+                   point was asked to associate a station that offered no
+                   security at all: hostapd took it, then started 802.1X on
+                   it, and the four-way handshake never began. The same bytes
+                   go in message 2, which the access point compares to these. */
+                netlink_attribute_add(address_of request, NL80211_ATTR_IE,
+                                      (address_any)wifi_rsn_ie, sizeof(wifi_rsn_ie));
                 if (offload)
                         netlink_attribute_add(address_of request, NL80211_ATTR_PMK, pmk,
                                               32);
@@ -4659,6 +4673,7 @@ static COLD bipolar nl80211_join(p8 address_to ssid, positive ssid_length, p8 ad
         p8 bssid[6];
         p8 sta[6];
         bool offload = false;
+        bool shook = false;
         bipolar sequence;
 
         memory_fill(bssid, 0, 6);
@@ -4723,8 +4738,11 @@ static COLD bipolar nl80211_join(p8 address_to ssid, positive ssid_length, p8 ad
                       bssid[5]))
                         failed = -1;
                 else
+                {
+                        shook = true;
                         failed = wifi_handshake(address_of session, iface.index,
                                                 (b32)eapol, sta, bssid, pmk);
+                }
         }
         if (failed && pmk && offload)
         {
@@ -4747,6 +4765,7 @@ static COLD bipolar nl80211_join(p8 address_to ssid, positive ssid_length, p8 ad
                                                 nl80211_station(
                                                     address_of session,
                                                     iface.index, bssid);
+                                        shook = true;
                                         failed = wifi_handshake(
                                             address_of session, iface.index,
                                             (b32)eapol, sta, bssid, pmk);
@@ -4757,6 +4776,11 @@ static COLD bipolar nl80211_join(p8 address_to ssid, positive ssid_length, p8 ad
 
         if (failed)
                 nl80211_disconnect(address_of session, iface.index);
+        /* Associated, and the four-way handshake did not finish: the access
+           point heard a message 2 whose MIC its key did not make, which is a
+           password it does not have. */
+        if (failed && shook)
+                failed = -13;
 
         if (eapol >= 0)
                 socket_close((b32)eapol);
@@ -5157,6 +5181,10 @@ static b32 radio_wifi_bring(bool say)
                                  : failed == -111
                                        ? host_refuse("the network refused the join%s\n",
                                                      "")
+                                 : failed == -13
+                                       ? host_refuse("the network did not accept "
+                                                     "the password%s\n",
+                                                     "")
                                        : host_fail("wifi", failed ? failed : -1);
         return 1;
 }
@@ -5274,6 +5302,12 @@ static b32 radio_wifi_add(string_address ssid, string_address pass)
                                                ? host_refuse("saved, but the "
                                                              "network refused "
                                                              "the join%s\n",
+                                                             "")
+                                         : failed == -13
+                                               ? host_refuse("saved, but the "
+                                                             "network did not "
+                                                             "accept the "
+                                                             "password%s\n",
                                                              "")
                                                : host_fail("wifi", failed);
                 if (pass && pass[0])

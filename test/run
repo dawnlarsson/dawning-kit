@@ -61,6 +61,10 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
+#       Lanes run only when named, because they need something a plain run
+#       does not have: wifi wants an image built with kernel/profile/hwsim.
+asked_lanes="wifi"
+
 lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact text_asm shell_asm known socket net waterlink link bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format machine sensors cli differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
 
 describe()
@@ -135,6 +139,7 @@ describe()
         boot)     echo "the image boots, init starts, and the shell answers" ;;
         install)  echo "Moonwater installed to a disk, started from it, asked about and updated from a stick" ;;
         canvas)   echo "what is actually on the screen, read back a pixel at a time" ;;
+        wifi)     echo "networks in the air of a machine with simulated radios, joined" ;;
         esac
 }
 
@@ -10470,6 +10475,98 @@ counted
 )
 
 #
+#       Wifi, where QEMU has no wireless card to give a machine.
+#
+#           MOONWATER_IMAGE=dist/bootx64.efi sh test/run wifi
+#
+#       with an image built with kernel/profile/hwsim added to the usual
+#       profiles. The machine boots with no radios; the script
+#       differential.py --harness wifi_air writes makes them with
+#       hwsim_radio (test/checks.c, CHECK_hwsim_radio, static) and runs
+#       access points on them with this machine's own wpa_supplicant,
+#       carried in on a stick with every library it loads and the loader
+#       that loads them. moonwater then joins from a radio of its own. Not in a plain run: only named, and only here,
+#       with an x86_64 image, a wpa_supplicant and a C compiler.
+#
+lane_wifi()
+(
+image=${MOONWATER_IMAGE:-dist/bootx64.efi}
+supplicant=$(command -v wpa_supplicant 2>/dev/null)
+
+for need in qemu-system-x86_64 timeout cc ldd; do
+        if ! command -v "$need" > /dev/null 2>&1; then
+                echo "  wifi         NOT RUN -- no $need"
+                exit 2
+        fi
+done
+if [ -z "$supplicant" ]; then
+        echo "  wifi         NOT RUN -- no wpa_supplicant to be the access points"
+        exit 2
+fi
+if [ ! -f "$image" ]; then
+        echo "  wifi         NOT RUN -- no image at $image"
+        exit 2
+fi
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT INT TERM
+counting wifi 10 24
+
+mkdir -p "$work/stick/lib"
+if ! cc -static -O2 -DCHECK_hwsim_radio -o "$work/stick/hwsim_radio" test/checks.c \
+        > "$work/cc.log" 2>&1; then
+        lost 'hwsim_radio' "$(tail -3 "$work/cc.log" | tr '\n' ' ')"
+        counted
+        exit 1
+fi
+cp -L "$supplicant" "$work/stick/wpa_supplicant"
+ldd "$supplicant" | awk '$2 == "=>" && $3 ~ /^\// { print $3 } $1 ~ /^\/.*ld-linux/ { print $1 }' |
+        while read -r library; do
+                cp -L "$library" "$work/stick/lib/"
+        done
+[ -f "$work/stick/lib/ld-linux-x86-64.so.2" ] ||
+        lost 'the loader' "ldd named no ld-linux-x86-64.so.2 for $supplicant"
+
+if ! python3 test/differential.py --harness wifi_air --seed "${MOONWATER_GUEST_SEED:-1}" \
+        > "$work/script" 2> "$work/script.err"; then
+        lost 'wifi scenarios' "the generator failed: $(tail -1 "$work/script.err")"
+        counted
+        exit 1
+fi
+{
+        echo
+        echo 'echo started'
+        echo "cat > /tmp/wifi.sh <<'WIFI'"
+        grep -v '^#expect ' "$work/script"
+        echo 'WIFI'
+        echo 'sh /tmp/wifi.sh < /dev/null'
+        echo 'poweroff'
+} > "$work/commands"
+
+set -- -cpu Nehalem
+[ -w /dev/kvm ] && set -- -enable-kvm -cpu host
+timeout 300 qemu-system-x86_64 -m 1G -smp 2 "$@" -kernel "$image" \
+        -no-reboot -display none -vga none -serial stdio \
+        -device qemu-xhci \
+        -drive "if=none,id=stick,format=raw,file=fat:ro:$work/stick,readonly=on" \
+        -device usb-storage,drive=stick,removable=on \
+        -append "console=ttyS0 drm_client_lib.active= mac80211_hwsim.radios=0" \
+        < "$work/commands" > "$work/transcript" 2>&1 || true
+
+says transcript 'simulated radios (an image with the hwsim profile)' 'no-mswh'
+while read -r mark family total; do
+        [ "$mark" = "#expect" ] || continue
+        says transcript "wifi: $family" \
+                "$(printf 'scen-%s-%s-of-%s' "$family" "$total" "$total" | rev)"
+done < "$work/script"
+tr -d '\r' < "$work/transcript" | grep -a '^scenario-miss ' | head -20 | sed 's/^/    /'
+never transcript 'kernel warned'      'cut here'
+never transcript 'no kernel panic'    'Kernel panic'
+
+counted
+)
+
+#
 #       The whole thing, started.
 #
 #           sh test/run boot          (MOONWATER_IMAGE names the image)
@@ -15560,7 +15657,7 @@ if [ "$#" -gt 1 ] && [ "$1" = coverage ]; then
 fi
 
 if [ "$#" -gt 0 ] && [ "$1" = "--list" ]; then
-        for lane in $lanes; do
+        for lane in $lanes $asked_lanes; do
                 printf '  %-19s %s\n' "$lane" "$(describe "$lane")"
         done
         exit 0
@@ -15570,7 +15667,7 @@ if [ "$#" -gt 0 ]; then
         requested=$*
 
         for lane in $requested; do
-                case " $lanes " in
+                case " $lanes $asked_lanes " in
                 *" $lane "*) ;;
                 *) echo "run: no lane called $lane" >&2; exit 2 ;;
                 esac

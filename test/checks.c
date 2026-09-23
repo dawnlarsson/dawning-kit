@@ -84603,6 +84603,170 @@ void probe_fill_32(void *d)
 }
 #endif /* CHECK_library_inline */
 
+#ifdef CHECK_hwsim_radio
+/*
+        The wifi lane's hands inside the guest: radios made and tuned where
+        the image has no tool for either. Built by test/run with the box's
+        own compiler, static, and carried in on the lane's stick.
+
+            hwsim_radio new             make a mac80211_hwsim radio; print its id
+            hwsim_radio power IF DBM    fix IF's transmit power, which is what
+                                        another radio hears as its signal
+
+        Radios outlive this program: nothing asks hwsim to destroy them when
+        the socket closes, so one made after `moonwater wifi add` is a card
+        that arrived late and stays.
+*/
+#include <linux/genetlink.h>
+#include <linux/netlink.h>
+#include <linux/nl80211.h>
+#include <net/if.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+static char hwsim_buffer[8192];
+static unsigned hwsim_sequence = 1;
+
+static int hwsim_put(char *at, int used, int type, const void *data, int length)
+{
+        struct nlattr *attribute = (struct nlattr *)(at + used);
+
+        attribute->nla_type = (unsigned short)type;
+        attribute->nla_len = (unsigned short)(NLA_HDRLEN + length);
+        memcpy((char *)attribute + NLA_HDRLEN, data, (size_t)length);
+        return used + NLA_ALIGN(attribute->nla_len);
+}
+
+/* Send one request and return the ack's error: negative errno, or what the
+   command answered, which for a new radio is its id. */
+static int hwsim_ask(int handle, int family, int command, char *attributes, int length,
+                     int want_family_id)
+{
+        struct nlmsghdr *header = (struct nlmsghdr *)hwsim_buffer;
+        struct genlmsghdr *generic = (struct genlmsghdr *)NLMSG_DATA(header);
+        int used = NLMSG_HDRLEN + GENL_HDRLEN;
+
+        memset(hwsim_buffer, 0, sizeof(hwsim_buffer));
+        memcpy(hwsim_buffer + used, attributes, (size_t)length);
+        used += length;
+        header->nlmsg_len = (unsigned)used;
+        header->nlmsg_type = (unsigned short)family;
+        header->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+        header->nlmsg_seq = ++hwsim_sequence;
+        generic->cmd = (unsigned char)command;
+        generic->version = 1;
+        if (send(handle, hwsim_buffer, (size_t)used, 0) < 0)
+                return -1;
+
+        for (;;)
+        {
+                int got = (int)recv(handle, hwsim_buffer, sizeof(hwsim_buffer), 0);
+                int found = -1000;
+
+                if (got <= 0)
+                        return -1;
+                for (header = (struct nlmsghdr *)hwsim_buffer; NLMSG_OK(header, got);
+                     header = NLMSG_NEXT(header, got))
+                {
+                        if (header->nlmsg_type == NLMSG_ERROR)
+                                return ((struct nlmsgerr *)NLMSG_DATA(header))->error;
+                        if (want_family_id && header->nlmsg_type == GENL_ID_CTRL)
+                        {
+                                char *at = (char *)NLMSG_DATA(header) + GENL_HDRLEN;
+                                int left = (int)header->nlmsg_len - NLMSG_HDRLEN - GENL_HDRLEN;
+
+                                while (left >= NLA_HDRLEN)
+                                {
+                                        struct nlattr *attribute = (struct nlattr *)at;
+
+                                        if (attribute->nla_len < NLA_HDRLEN)
+                                                break;
+                                        if (attribute->nla_type == CTRL_ATTR_FAMILY_ID)
+                                                found = *(unsigned short *)(at + NLA_HDRLEN);
+                                        left -= NLA_ALIGN(attribute->nla_len);
+                                        at += NLA_ALIGN(attribute->nla_len);
+                                }
+                        }
+                }
+                if (found != -1000)
+                        return found;
+        }
+}
+
+static int hwsim_family(int handle, const char *name)
+{
+        char attributes[64];
+        int length = hwsim_put(attributes, 0, CTRL_ATTR_FAMILY_NAME, name,
+                               (int)strlen(name) + 1);
+
+        return hwsim_ask(handle, GENL_ID_CTRL, CTRL_CMD_GETFAMILY, attributes, length, 1);
+}
+
+int main(int count, char **words)
+{
+        int handle = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
+        char attributes[64];
+        int family;
+        int answer;
+
+        if (handle < 0)
+        {
+                perror("hwsim_radio: netlink");
+                return 1;
+        }
+        if (count == 2 && !strcmp(words[1], "new"))
+        {
+                family = hwsim_family(handle, "MAC80211_HWSIM");
+                if (family < 0)
+                {
+                        fprintf(stderr, "hwsim_radio: no MAC80211_HWSIM family\n");
+                        return 1;
+                }
+                answer = hwsim_ask(handle, family, 4 /* HWSIM_CMD_NEW_RADIO */,
+                                   attributes, 0, 0);
+                if (answer < 0)
+                {
+                        fprintf(stderr, "hwsim_radio: new radio: %s\n", strerror(-answer));
+                        return 1;
+                }
+                printf("%d\n", answer);
+                return 0;
+        }
+        if (count == 4 && !strcmp(words[1], "power"))
+        {
+                unsigned index = if_nametoindex(words[2]);
+                unsigned setting = NL80211_TX_POWER_FIXED;
+                int mbm = atoi(words[3]) * 100;
+                int length = 0;
+
+                family = hwsim_family(handle, "nl80211");
+                if (!index || family < 0)
+                {
+                        fprintf(stderr, "hwsim_radio: no %s or no nl80211\n", words[2]);
+                        return 1;
+                }
+                length = hwsim_put(attributes, length, NL80211_ATTR_IFINDEX, &index, 4);
+                length = hwsim_put(attributes, length, NL80211_ATTR_WIPHY_TX_POWER_SETTING,
+                                   &setting, 4);
+                length = hwsim_put(attributes, length, NL80211_ATTR_WIPHY_TX_POWER_LEVEL,
+                                   &mbm, 4);
+                answer = hwsim_ask(handle, family, NL80211_CMD_SET_WIPHY, attributes, length,
+                                   0);
+                if (answer < 0)
+                {
+                        fprintf(stderr, "hwsim_radio: power: %s\n", strerror(-answer));
+                        return 1;
+                }
+                return 0;
+        }
+        fprintf(stderr, "usage: hwsim_radio new | power IFNAME DBM\n");
+        return 2;
+}
+#endif /* CHECK_hwsim_radio */
+
 #ifdef COVERAGE_hook
 /*
         The other half of `sh test/run coverage`: built on its own, without

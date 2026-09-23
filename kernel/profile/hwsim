@@ -1,0 +1,15 @@
+#
+# Simulated radios, for testing only
+#
+# mac80211_hwsim: radios that hear each other and nothing else, so the wifi
+# lane can put networks in the air of a virtual machine -- access points
+# started on some radios, moonwater joining from another -- where QEMU has no
+# wireless card to emulate. Never on an image for a real machine.
+#
+#       sudo sh build.sh debug_none limbo desktop wifi serial hwsim
+#       MOONWATER_IMAGE=dist/bootx64.efi sh test/run wifi
+#
+# The lane boots with mac80211_hwsim.radios=0 and makes each radio itself,
+# so a radio can also arrive after `moonwater wifi add`.
+#
+CONFIG_MAC80211_HWSIM=y

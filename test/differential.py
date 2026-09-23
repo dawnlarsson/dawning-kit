@@ -33682,6 +33682,24 @@ for holder in spaces.values():
 """
 
 
+# The helpers every generated guest script starts with: counted questions,
+# a family's tally printed reversed so the console's echo never answers.
+GUEST_PRELUDE = r'''scen_ok=0
+scen_all=0
+scen_strip() { sed 's/^.\[1m\[Moonwater\].\[0m //'; }
+scen_rep() { r=$2; while [ ${#r} -lt $1 ]; do r=$r$r; done; printf '%s\n' "$r" | cut -c1-$1; }
+scen_pass() { scen_ok=$((scen_ok + 1)); scen_all=$((scen_all + 1)); }
+scen_miss() { scen_all=$((scen_all + 1)); printf 'scenario-miss %s\n' "$*"; }
+scen_same() { if cmp -s /tmp/sc.want /tmp/sc.got; then scen_pass; else scen_miss "$1"; head -c 400 /tmp/sc.got | od -c | head -8; fi; }
+scen_same_file() { cp "$2" /tmp/sc.got 2>/dev/null || : > /tmp/sc.got; scen_same "$1"; }
+scen_status() { if [ "$2" = "$3" ]; then scen_pass; else scen_miss "$1: status $3, wanted $2"; head -c 300 /tmp/sc.got 2>/dev/null; echo; fi; }
+scen_count() { if [ "$2" = "$3" ]; then scen_pass; else scen_miss "$1: $3, wanted $2"; fi; }
+scen_done() { printf 'scen-%s-%s-of-%s\n' "$1" "$scen_ok" "$scen_all" | rev; scen_ok=0; scen_all=0; }
+scen_expect_empty() { moonwater bind init 2>&1 | grep -c 'nothing runs at boot' > /tmp/sc.got; printf '1\n' > /tmp/sc.want; scen_same 'settings start from none'; }
+scen_zombies() { n=0; for f in /proc/[0-9]*/status; do s=$(sed -n 's/^State:[[:space:]]*\(.\).*/\1/p' "$f" 2>/dev/null); pp=$(sed -n 's/^PPid:[[:space:]]*//p' "$f" 2>/dev/null); [ "$s" = Z ] && [ "$pp" = 1 ] && n=$((n + 1)); done; echo $n; }
+scen_find() { for p in /proc/[0-9]*; do c=$(tr '\000' ' ' < $p/cmdline 2>/dev/null); case $c in *"$1"*) echo ${p#/proc/};; esac; done; }'''
+
+
 def harness_guest_scenarios(argv):
     """What the booted image does with seeded settings, files, signals and
     screens, held to models of the rules rather than to remembered answers.
@@ -34213,22 +34231,141 @@ def harness_guest_scenarios(argv):
         return 0
 
     head = ["#expect %s %d" % item for item in expects]
-    prelude = r'''scen_ok=0
-scen_all=0
-scen_strip() { sed 's/^.\[1m\[Moonwater\].\[0m //'; }
-scen_rep() { r=$2; while [ ${#r} -lt $1 ]; do r=$r$r; done; printf '%s\n' "$r" | cut -c1-$1; }
-scen_pass() { scen_ok=$((scen_ok + 1)); scen_all=$((scen_all + 1)); }
-scen_miss() { scen_all=$((scen_all + 1)); printf 'scenario-miss %s\n' "$*"; }
-scen_same() { if cmp -s /tmp/sc.want /tmp/sc.got; then scen_pass; else scen_miss "$1"; head -c 400 /tmp/sc.got | od -c | head -8; fi; }
-scen_same_file() { cp "$2" /tmp/sc.got 2>/dev/null || : > /tmp/sc.got; scen_same "$1"; }
-scen_status() { if [ "$2" = "$3" ]; then scen_pass; else scen_miss "$1: status $3, wanted $2"; head -c 300 /tmp/sc.got 2>/dev/null; echo; fi; }
-scen_count() { if [ "$2" = "$3" ]; then scen_pass; else scen_miss "$1: $3, wanted $2"; fi; }
-scen_done() { printf 'scen-%s-%s-of-%s\n' "$1" "$scen_ok" "$scen_all" | rev; scen_ok=0; scen_all=0; }
-scen_expect_empty() { moonwater bind init 2>&1 | grep -c 'nothing runs at boot' > /tmp/sc.got; printf '1\n' > /tmp/sc.want; scen_same 'settings start from none'; }
-scen_zombies() { n=0; for f in /proc/[0-9]*/status; do s=$(sed -n 's/^State:[[:space:]]*\(.\).*/\1/p' "$f" 2>/dev/null); pp=$(sed -n 's/^PPid:[[:space:]]*//p' "$f" 2>/dev/null); [ "$s" = Z ] && [ "$pp" = 1 ] && n=$((n + 1)); done; echo $n; }
-scen_find() { for p in /proc/[0-9]*; do c=$(tr '\000' ' ' < $p/cmdline 2>/dev/null); case $c in *"$1"*) echo ${p#/proc/};; esac; done; }'''
+    prelude = GUEST_PRELUDE
     print("\n".join(head))
     print(prelude)
+    print("\n".join(out))
+    return 0
+
+
+def harness_wifi_air(argv):
+    """Networks in the air of a virtual machine, for the wifi lane.
+
+        wifi_air [--seed N]
+
+    Prints a POSIX sh script, with one `#expect FAMILY TOTAL` line per
+    family at its top, for an image built with kernel/profile/hwsim and
+    booted with mac80211_hwsim.radios=0 and the lane's stick as /dev/sda1:
+    hwsim_radio from test/checks.c, and this machine's wpa_supplicant with
+    every library it loads. One radio is made per access point and
+    wpa_supplicant runs each in AP mode -- open, WPA2, WPA3, or WPA2 and
+    WPA3 together -- on a 2.4 GHz channel at a transmit power, which the
+    station hears as that power less 50 dBm. Their names come from a
+    grammar of spaces, quotes and UTF-8 for the ones moonwater joins, and
+    for the rest also escape sequences, C1 controls and bytes that are no
+    UTF-8 at all, none of which may reach the terminal as they are.
+
+      join   a WPA2 network joins with its password, a wrong password is
+             "did not accept the password", and an open network joins with
+             nothing on standard input
+    """
+    import random
+    seed = 1
+    if "--seed" in argv:
+        seed = int(argv[argv.index("--seed") + 1])
+    rng = random.Random(seed)
+    out = []
+    expects = []
+
+    def q(text):
+        return "'" + text.replace("'", "'\\''") + "'"
+
+    def octal(data):
+        return "".join("\\%03o" % b for b in data)
+
+    def family(name, lines):
+        asked = sum(line.count(call) for line in lines
+                    for call in ("scen_status ", "scen_count ", "scen_same "))
+        out.append("# ---- %s" % name)
+        out.extend(lines)
+        out.append("scen_done %s" % name)
+        expects.append((name, asked))
+
+    plain = [b"moon", b"lake", b"cafe", b"home", b"north", b"guest", b" ", b"-", b"'", b"\"",
+             "é".encode(), "日本".encode(), "ø".encode(), b"5", b"_"]
+    wild = plain + [b"\x1b[31m", b"\x07", b"\xc2\x9b", b"\xff", b"\x00x", b"\t", "🙂".encode()]
+
+    def name(pieces, taken):
+        while True:
+            data = b"".join(rng.choice(pieces) for _ in range(rng.randrange(2, 6)))[:32]
+            if data and data not in taken and data.strip(b" \x00") == data and b"\n" not in data:
+                try:
+                    data.decode("utf-8")
+                    good_utf8 = True
+                except UnicodeDecodeError:
+                    good_utf8 = False
+                if pieces is plain and not good_utf8:
+                    continue
+                taken.add(data)
+                return data
+
+    # The access points: two that WPA2 joins, one open, one WPA3 alone,
+    # and up to two more of anything with any name.
+    taken = set()
+    kinds = ["wpa2", rng.choice(("wpa2", "wpa23")), "open", "wpa3"]
+    kinds += [rng.choice(("open", "wpa2", "wpa3", "wpa23")) for _ in range(rng.randrange(0, 3))]
+    powers = rng.sample(range(0, 21), len(kinds))
+    channels = [rng.choice((1, 3, 6, 9, 11)) for _ in kinds]
+    aps = []
+    for at, kind in enumerate(kinds):
+        ssid = name(plain if at < 4 else wild, taken)
+        password = "".join(rng.choice("abcdefghjkmnpqrstuvwxyz23456789 ") for _ in range(rng.randrange(8, 30))).strip()
+        while len(password) < 8:
+            password += "x"
+        aps.append({"ssid": ssid, "kind": kind, "power": powers[at], "channel": channels[at],
+                    "password": password, "dbm": powers[at] - 50})
+    good = aps[0]
+    wrong = good["password"] + "wrong"
+
+    prep = []
+    # Said reversed, so the lane can tell an image without the hwsim profile
+    # from one whose scenarios failed.
+    prep.append("[ -d /sys/module/mac80211_hwsim ] && echo hwsm-on | rev")
+    prep.append("for i in $(seq 40); do [ -b /dev/sda1 ] && break; sleep 0.25; done")
+    prep.append("mkdir -p /mnt/stick && mount -r -t vfat /dev/sda1 /mnt/stick")
+    prep.append("W=\"/mnt/stick/lib/ld-linux-x86-64.so.2 --library-path /mnt/stick/lib /mnt/stick/wpa_supplicant\"")
+    prep.append("rm -f /root/wifi /root/wifi.power /run/moonwater/wifi.last")
+    for at, ap in enumerate(aps):
+        body = ["network={", "ssid=%s" % ap["ssid"].hex(), "mode=2",
+                "frequency=%d" % (2407 + 5 * ap["channel"])]
+        if ap["kind"] == "open":
+            body.append("key_mgmt=NONE")
+        else:
+            body += ["proto=RSN", "pairwise=CCMP", "group=CCMP"]
+            body.append({"wpa2": "key_mgmt=WPA-PSK", "wpa3": "key_mgmt=SAE",
+                         "wpa23": "key_mgmt=WPA-PSK SAE"}[ap["kind"]])
+            if ap["kind"] in ("wpa2", "wpa23"):
+                body.append("psk=\"%s\"" % ap["password"])
+            if ap["kind"] in ("wpa3", "wpa23"):
+                body += ["sae_password=\"%s\"" % ap["password"],
+                         "ieee80211w=%d" % (2 if ap["kind"] == "wpa3" else 1)]
+        body.append("}")
+        prep.append("/mnt/stick/hwsim_radio new > /dev/null")
+        prep.append("printf '%%s\\n' %s > /tmp/ap%d.conf" % (" ".join(q(line) for line in body), at))
+        prep.append("$W -B -i wlan%d -c /tmp/ap%d.conf -D nl80211 -f /tmp/ap%d.log" % (at, at, at))
+    prep.append("for i in $(seq 40); do n=$(cat /tmp/ap*.log 2>/dev/null | grep -c AP-ENABLED); [ \"$n\" = %d ] && break; sleep 0.25; done" % len(aps))
+    for at, ap in enumerate(aps):
+        prep.append("/mnt/stick/hwsim_radio power wlan%d %d" % (at, ap["power"]))
+    for at, ap in enumerate(aps):
+        prep.append("ap%d=\"$(printf '%s')\"" % (at, octal(ap["ssid"])))
+    station = "wlan%d" % len(aps)
+    out.extend(prep)
+
+    out.append("/mnt/stick/hwsim_radio new > /dev/null")
+
+    # ---- join
+    lines = []
+    lines.append("moonwater wifi add \"$ap0\" %s > /tmp/sc.got 2>&1; scen_status 'join WPA2' 0 $?" % q(good["password"]))
+    lines.append("scen_count 'join WPA2 joined' 1 \"$(grep -c -x -F \"$(printf '\\033[1m[Moonwater]\\033[0m ')wifi joined $ap0\" /tmp/sc.got)\"")
+    lines.append("moonwater wifi add \"$ap1\" %s > /tmp/sc.got 2>&1; scen_status 'join wrong password' 1 $?" % q(wrong))
+    lines.append("scen_count 'join wrong password says so' 1 \"$(grep -c 'saved, but the network did not accept the password' /tmp/sc.got)\"")
+    lines.append("moonwater wifi add \"$ap2\" < /dev/null > /tmp/sc.got 2>&1; scen_status 'join open' 0 $?")
+    lines.append("scen_count 'join open joined' 1 \"$(grep -c -x -F \"$(printf '\\033[1m[Moonwater]\\033[0m ')wifi joined $ap2\" /tmp/sc.got)\"")
+    family("join", lines)
+
+    head = ["#expect %s %d" % item for item in expects]
+    print("\n".join(head))
+    print(GUEST_PRELUDE)
     print("\n".join(out))
     return 0
 
@@ -34467,6 +34604,7 @@ HARNESS_CHECKS = {
     "objtool_shape": harness_objtool_shape,
     "coverage_report": harness_coverage_report,
     "guest_scenarios": harness_guest_scenarios,
+    "wifi_air": harness_wifi_air,
     "inventory_mutations": harness_inventory_mutations,
     "terminfo_install": harness_terminfo_install,
     "dhcp_packets": harness_dhcp_packets,
