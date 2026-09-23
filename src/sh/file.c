@@ -34077,22 +34077,134 @@ static b32 file_logname()
 }
 
 // hostname ------------------------------------------------------------
-// hostname, and hostname -s for the part before the first dot.
+/*
+        hostname [-s], hostname NAME, hostname -F FILE.
+
+        Setting is the hostname these options come from, Debian's: the name
+        loses the white space around it and must then be letters, digits,
+        dots and hyphens as RFC 1035 has them -- a letter or digit at each
+        end, no hyphen beside a dot and no two dots together -- and a caller
+        the kernel refuses is told it must be root. -F takes the first line
+        of FILE that is neither empty nor a comment. A name given twice, or
+        beside -s, is a usage error, 255 there as here. This used to print
+        the current name whatever it was given, and set nothing.
+*/
+static const argument_option hostname_options[] = {
+    {"short", 's'},
+    {"file", 'F', ARGUMENT_REQUIRED},
+    {null},
+};
+
+static bool file_hostname_valid(string_address name, positive length)
+{
+        if (!length || !byte_is_alnum(name[0]) || !byte_is_alnum(name[length - 1]))
+                return false;
+
+        // Both ends are letters or digits, so a neighbour always exists.
+        for (positive at = 1; at + 1 < length; at++)
+        {
+                p8 byte = name[at];
+
+                if (!byte_is_alnum(byte) && byte != '-' && byte != '.')
+                        return false;
+                if (byte == '-' && (name[at - 1] == '.' || name[at + 1] == '.'))
+                        return false;
+                if (byte == '.' && name[at - 1] == '.')
+                        return false;
+        }
+
+        return true;
+}
+
+static b32 file_hostname_usage()
+{
+        log_error("Usage: hostname [-s] [hostname|-F file]\n", 0);
+        log_flush();
+        return 255;
+}
+
 static b32 file_hostname()
 {
         file_machine facts;
+        string_address from;
+        string_address name = null;
+        positive length;
+        bipolar failed;
+        p8 line[4096];
 
-        // -f is not here. The kernel's node name is the whole of what this
-        // knows, and the full name -f asks for is a question for a resolver.
+        file_operands_begin();
         file_taking taking = {
             .program = (string_address) "hostname",
-            .options = (const argument_option[]){
-    {"s", 0},
-    {null},
-        }};
+            .options = hostname_options,
+            .operand = file_operand,
+        };
 
         if (!file_take(address_of taking))
                 return 1;
+
+        from = file_option_value(address_of taking, 'F');
+        if (from)
+        {
+                bipolar got = file_slurp(from, line, sizeof(line) - 1);
+                p8 address_to at = line;
+                p8 address_to stop;
+
+                if (got < 0)
+                        return string_report(log_error, 1, "hostname: %s\n",
+                                             file_reason(got));
+                line[got] = end;
+                stop = line + got;
+
+                /* A line that is empty or a comment is passed over, and the
+                   last one read stands when nothing else is left: its # is
+                   what then makes the name invalid. */
+                name = (string_address)at;
+                while (at < stop)
+                {
+                        p8 address_to newline = memory_first_of(at, '\n',
+                                                                (positive)(stop - at));
+
+                        name = (string_address)at;
+                        if (*at != '\n' && *at != '#')
+                        {
+                                if (newline)
+                                        *newline = end;
+                                break;
+                        }
+                        at = newline ? newline + 1 : stop;
+                }
+        }
+
+        if (file_operand_count)
+        {
+                if (name || file_operand_count > 1)
+                        return file_hostname_usage();
+                name = file_operand_at(0);
+        }
+
+        if (name)
+        {
+                if (taking.flags & FILE_FLAG('s'))
+                        return file_hostname_usage();
+
+                while (byte_is_space(*name))
+                        name++;
+                length = string_length(name);
+                while (length && byte_is_space(name[length - 1]))
+                        length--;
+
+                if (!file_hostname_valid(name, length))
+                        return string_report(log_error, 1,
+                                             "hostname: the specified hostname is invalid\n");
+
+                failed = system_call_2(syscall(sethostname), (positive)name, length);
+                if (failed == -1)
+                        return string_report(log_error, 1,
+                                             "hostname: you must be root to change the host name\n");
+                if (failed == -22)
+                        return string_report(log_error, 1, "hostname: name too long\n");
+                return 0;
+        }
 
         if (!file_machine_read(address_of facts))
                 return string_report(log_error, 1, "hostname: cannot read system name\n");

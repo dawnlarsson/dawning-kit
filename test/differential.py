@@ -8153,8 +8153,175 @@ def files_zone_names(farm):
     return passed, len(zones), notes
 
 
+def files_hostname_set(farm):
+    """hostname NAME and hostname -F FILE, held to Debian's hostname.
+
+    The options this hostname answers are that one's, so its rules are the
+    model: white space around the name dropped; then letters, digits, dots
+    and hyphens (RFC 1035), a letter or digit at each end, no hyphen beside
+    a dot, no two dots; the kernel's EINVAL past 64 bytes is "name too long"
+    and its EPERM "you must be root to change the host name". -F takes the
+    first line that is neither empty nor a comment, and when there is none
+    the last line read stands. A second name, or a name beside -s, is a
+    usage error with status 255. Seeded names from a grammar of labels,
+    separators, padding and lengths are set in a user and UTS namespace of
+    their own and read back with uname -n, and each refusal is also asked
+    outside one, where the kernel says EPERM. A Debian hostname on PATH, if
+    the machine has one, answers each case beside the model.
+    """
+    import random
+    import shutil
+    import socket
+    import tempfile
+    candidate = Path(farm) / "hostname"
+    unshare = shutil.which("unshare")
+    if not candidate.exists():
+        return 0, 1, ["hostname is not in the farm"]
+    reference = shutil.which("hostname")
+    if reference:
+        try:
+            said = subprocess.run([reference, "-V"], capture_output=True, timeout=5).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            said = b""
+        if not said.startswith(b"hostname 3."):
+            reference = None
+
+    def valid(name):
+        if not name or not name[0].isalnum() or not name[-1].isalnum() or not name.isascii():
+            return False
+        for at, ch in enumerate(name):
+            if not (ch.isalnum() or ch in "-."):
+                return False
+            if ch == "-" and (name[at - 1] == "." or name[at + 1] == "."):
+                return False
+            if ch == "." and name[at - 1] == ".":
+                return False
+        return True
+
+    def from_file(text):
+        last = ""
+        for line in text.splitlines(keepends=True):
+            last = line
+            if line[0] not in "\n#":
+                return line.rstrip("\n")
+        return last
+
+    def model(argv, text, inside):
+        """(status, first stderr line, name afterwards or None if unchanged)"""
+        name = None
+        operands = [w for w in argv if w not in ("-s", "-F", "--") and not w.startswith("file:")]
+        if "-F" in argv:
+            if text is None:
+                return 1, "hostname: No such file or directory", None
+            name = from_file(text)
+        if operands:
+            if name is not None or len(operands) > 1:
+                return 255, "Usage:", None
+            name = operands[0]
+        if name is None:
+            return 0, "", None
+        if "-s" in argv:
+            return 255, "Usage:", None
+        name = name.strip(" \t\n\v\f\r")
+        if not valid(name):
+            return 1, "hostname: the specified hostname is invalid", None
+        if not inside:
+            return 1, "hostname: you must be root to change the host name", None
+        if len(name) > 64:
+            return 1, "hostname: name too long", None
+        return 0, "", (None if name == current else name)
+
+    current = socket.gethostname()
+    rng = random.Random(0x686e)
+    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    fixed = ["box", "a", "a-b", "a.b", "a..b", "a.-b", "a-.b", "ab-", ".ab", "ab.", "a_b",
+             "a b", " padded ", "\tpadded\n", "x" * 63, "x" * 64, "x" * 65, "y" * 70, "A1-B2.c3",
+             "café", "a@b", "9", "0-0", "a" * 30 + "." + "b" * 33, ""]
+    names = list(fixed)
+    for _ in range(40):
+        pieces = []
+        for _ in range(rng.randrange(1, 5)):
+            pieces.append("".join(rng.choice(alphabet) for _ in range(rng.randrange(1, 18))))
+            pieces.append(rng.choice((".", "-", "--", ".", "", "..", "_", ".-")))
+        name = "".join(pieces[:-1]) if rng.randrange(3) else "".join(pieces)
+        if rng.randrange(5) == 0:
+            name = rng.choice((" ", "\t", "  ")) + name + rng.choice(("", " ", "\n"))
+        names.append(name)
+
+    cases = []
+    for name in names:
+        cases.append(([name], None))
+    for name in names[:30]:
+        prelude = rng.choice(("", "# a comment\n", "\n\n", "#x\n\n# y\n"))
+        tail = rng.choice(("\n", "", "\nsecond\n", "\n# after\n"))
+        cases.append((["-F", "file:"], prelude + name + tail))
+    cases += [(["-F", "file:"], ""), (["-F", "file:"], "# only a comment\n"), (["-F", "file:"], "\n\n"),
+              (["-F", "file:"], None), (["-F", "file:", "extra"], "named\n"), (["one", "two"], None),
+              (["-s", "short"], None), (["-s"], None), ([], None), (["--", "-ab"], None),
+              (["--", current], None)]
+
+    work = Path(tempfile.mkdtemp(prefix="hostname-set-"))
+    listing = work / "name.txt"
+
+    def run(program, argv, text, inside):
+        if text is None:
+            listing.unlink(missing_ok=True)
+        else:
+            listing.write_bytes(text.encode())
+        words = [str(listing) if w == "file:" else w for w in argv]
+        if inside:
+            if not unshare:
+                return None
+            command = [unshare, "-ru", "sh", "-c",
+                       'uname -n > "$0.before"; "$@"; s=$?; '
+                       'if [ "$(uname -n)" = "$(cat "$0.before")" ]; then echo same; else uname -n; fi; exit $s',
+                       str(work / "u")] + [str(program)] + words
+        else:
+            command = [str(program)] + words
+        ran = subprocess.run(command, capture_output=True, timeout=10, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+        first = ran.stderr.decode(errors="replace").split("\n")[0]
+        first = re.sub(r"^[^:\s]*hostname: ", "hostname: ", first)
+        if first.startswith("Usage:"):
+            first = "Usage:"
+        after = None
+        if inside:
+            lines = ran.stdout.decode(errors="replace").splitlines()
+            after = None if not lines or lines[-1] == "same" else lines[-1]
+        return ran.returncode, first, after
+
+    passed = total = 0
+    notes = []
+    try:
+        for argv, text in cases:
+            for inside in (True, False):
+                if inside and not unshare:
+                    continue
+                # Outside a namespace a set that would succeed says EPERM,
+                # and a bare listing says the machine's name, which is not
+                # the model's to know.
+                if not inside and not [w for w in argv if w != "-s"]:
+                    continue
+                want = model(argv, text, inside)
+                got = run(candidate, argv, text, inside)
+                if not inside and want[0] == 0:
+                    continue
+                total += 1
+                answers = [want]
+                if reference:
+                    answers.append(run(reference, argv, text, inside))
+                if all(got == answer for answer in answers):
+                    passed += 1
+                elif len(notes) < 8:
+                    notes.append("hostname %r %s%s: want %r, got %r" % (
+                        argv, "file %r " % text if "-F" in argv else "",
+                        "in a namespace" if inside else "as a user", answers, got))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return passed, total, notes
+
+
 FILES_CHECKS = (files_column_layout, files_xargs_parallel, files_zones, files_tar,
-                files_find_terminal, files_zone_names)
+                files_find_terminal, files_zone_names, files_hostname_set)
 
 # ---- domain: misc (from spec_misc.py) ----
 
