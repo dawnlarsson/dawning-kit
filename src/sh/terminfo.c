@@ -288,16 +288,48 @@ static const unsigned char terminal_terminfo_blob[] = {
         install truncate and rewrite whatever it pointed at, with whatever
         privilege the terminal or bowl was started with.
 */
+/*
+        Every terminal that opens installs the entry, and every program
+        started in one reads it. Truncated and written in place, a program
+        starting in one window while another opened read an empty or half
+        entry and said the terminal was unknown, and a full /run left the
+        half there for good. So an entry already right is left alone, and
+        a new one is written beside it under a name of this process's own
+        and renamed over it: a reader opens the old entry or the new, whole.
+        rename replaces a link planted at the name rather than following
+        it, so what the link points at is never written.
+*/
 static fn terminal_terminfo_write(bipolar directory, string_address name)
 {
-        bipolar handle = system_open_output_at(directory, name, true, 0644);
+        p8 held[sizeof(terminal_terminfo_blob) + 1];
+        p8 beside[64];
+        bipolar got = file_slurp_once_at(directory, name, held, sizeof(held));
+        bipolar handle;
+        positive written;
 
+        if (got == (bipolar)sizeof(terminal_terminfo_blob) &&
+            !memory_compare(held, terminal_terminfo_blob, sizeof(terminal_terminfo_blob)))
+                return;
+
+        //      The longest name here, a dot word and twenty digits fit.
+        string_copy_bounded((string_address)beside, name, sizeof(beside) - 26);
+        string_append_bounded((string_address)beside, ".new.", sizeof(beside));
+        written = string_length((string_address)beside);
+        written += positive_into(beside + written,
+                                 (positive)system_call(syscall(getpid)));
+        beside[written] = 0;
+
+        handle = system_open_output_at(directory, (string_address)beside, true, 0644);
         if (handle < 0)
                 return;
 
-        system_write_all((positive)handle, terminal_terminfo_blob,
-                         sizeof(terminal_terminfo_blob));
+        written = system_write_all((positive)handle, terminal_terminfo_blob,
+                                   sizeof(terminal_terminfo_blob));
         system_close(handle);
+
+        if (written != sizeof(terminal_terminfo_blob) ||
+            system_rename_at(directory, (string_address)beside, directory, name, 0) < 0)
+                system_remove_at(directory, (string_address)beside, 0);
 }
 
 /* The directory below this one, made if it is not there and opened as

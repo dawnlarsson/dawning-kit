@@ -31195,6 +31195,40 @@ static bipolar system_write_all(positive h, const void *b, positive n) {
         return write((int)h, b, n);
 }
 static fn system_close(bipolar h) { close((int)h); }
+#include <dirent.h>
+#ifdef __APPLE__
+#define st_mtim st_mtimespec
+#endif
+#define memory_compare memcmp
+#define string_length(s) strlen(s)
+static positive string_copy_bounded(char *d, const char *s, positive n) {
+        size_t l = strlen(s), k;
+        if (n) { k = l < n - 1 ? l : n - 1; memcpy(d, s, k); d[k] = 0; }
+        return l;
+}
+static positive string_append_bounded(char *d, const char *s, positive n) {
+        size_t have = strnlen(d, n);
+        return have == n ? n + strlen(s) : have + string_copy_bounded(d + have, s, n - have);
+}
+static positive positive_into(p8 *into, positive v) {
+        char t[24];
+        int n = sprintf(t, "%lu", v);
+        memcpy(into, t, (size_t)n);
+        return (positive)n;
+}
+#define system_call(value) (value)
+#define syscall(name) name()
+static bipolar file_slurp_once_at(bipolar d, string_address p, p8 *into, positive room) {
+        int h = openat((int)d, p, O_RDONLY | O_CLOEXEC);
+        ssize_t got;
+        if (h < 0) return -1;
+        got = read(h, into, room);
+        close(h);
+        return got;
+}
+#define system_rename_at(from_at, from, to_at, to, flags) \
+        renameat((int)(from_at), from, (int)(to_at), to)
+#define system_remove_at(at, name, flags) unlinkat((int)(at), name, flags)
 #define TERM_NAME "xterm-256color"
 /*      Relative, and the fixture moves into its own tree first: an
         absolute temporary path can itself run through a symlink -- /var is
@@ -31313,6 +31347,87 @@ static void nothing_is_a_link(void) {
         }
 }
 
+static void four_directories(void) {
+        unsigned i;
+
+        mkdir("run", 0755);
+        mkdir("run/terminfo", 0755);
+        for (i = 0; i < array_count(holds); i++)
+                mkdir(holds[i], 0755);
+}
+
+static void write_whole(const char *path, const void *bytes, size_t length) {
+        int handle = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+        write(handle, bytes, length);
+        close(handle);
+}
+
+/*      Every terminal that opens installs, and every program started in one
+        reads: an entry already right is not written again -- the same file,
+        not a word changed. Past a clock tick, so a rewrite shows. */
+static void right_entry_is_left_alone(void) {
+        struct stat before[4], after;
+        unsigned i;
+
+        four_directories();
+        for (i = 0; i < array_count(names); i++) {
+                write_whole(names[i], terminal_terminfo_blob, sizeof terminal_terminfo_blob);
+                stat(names[i], &before[i]);
+        }
+        usleep(20000);
+
+        terminal_terminfo_install();
+
+        for (i = 0; i < array_count(names); i++) {
+                stat(names[i], &after);
+                check(after.st_ino == before[i].st_ino &&
+                      after.st_mtime == before[i].st_mtime &&
+                      after.st_size == before[i].st_size &&
+                      !memcmp(&after.st_mtim, &before[i].st_mtim, sizeof after.st_mtim),
+                      "an entry already right is left alone");
+        }
+}
+
+/*      A stale entry is replaced by another file renamed over it, never
+        truncated and written in place where a reader could catch it half
+        done -- and nothing written beside it is left behind. */
+static void wrong_entry_is_replaced_whole(void) {
+        struct stat before[4], after;
+        unsigned i;
+
+        four_directories();
+        for (i = 0; i < array_count(names); i++) {
+                write_whole(names[i], "stale", 5);
+                stat(names[i], &before[i]);
+        }
+
+        terminal_terminfo_install();
+
+        for (i = 0; i < array_count(names); i++) {
+                unsigned char seen[64];
+                ssize_t got = -1;
+                int handle = open(names[i], O_RDONLY);
+                DIR *directory = opendir(holds[i]);
+                struct dirent *entry;
+                int entries = 0;
+
+                if (handle >= 0) {
+                        got = read(handle, seen, sizeof seen);
+                        close(handle);
+                }
+                while (directory && (entry = readdir(directory)))
+                        entries += entry->d_name[0] != '.';
+                if (directory)
+                        closedir(directory);
+                stat(names[i], &after);
+                check(got == (ssize_t)sizeof terminal_terminfo_blob &&
+                      !memcmp(seen, terminal_terminfo_blob, sizeof terminal_terminfo_blob) &&
+                      after.st_ino != before[i].st_ino && entries == 1,
+                      "a wrong entry is replaced whole, and nothing is left beside it");
+        }
+}
+
 int main(int count, char **argument) {
         mkdir(ROOT, 0755);
         if (chdir(ROOT)) return 2;
@@ -31321,6 +31436,10 @@ int main(int count, char **argument) {
                 a_step_is_a_link();
         else if (count > 1 && argument[1][0] == 'c')
                 nothing_is_a_link();
+        else if (count > 1 && argument[1][0] == 'd')
+                right_entry_is_left_alone();
+        else if (count > 1 && argument[1][0] == 'e')
+                wrong_entry_is_replaced_whole();
         else
                 names_are_links();
         printf("%d of %d\n", checks - failures, checks);
@@ -31330,9 +31449,11 @@ int main(int count, char **argument) {
 
     compiler = os.environ.get("CC", "gcc")
     #   a and b plant a link and are the ones the parent has to lose; c
-    #   plants nothing and both installers have to win it.
-    scenes = ("a", "b", "c")
-    hostile = ("a", "b")
+    #   plants nothing and both installers have to win it. d and e hold an
+    #   entry there already, right and stale: the parent writes it in place
+    #   either way, and loses both.
+    scenes = ("a", "b", "c", "d", "e")
+    hostile = ("a", "b", "d", "e")
     tallies = {}
     with tempfile.TemporaryDirectory(prefix="moonwater-terminfo-") as temporary:
         work = Path(temporary)
