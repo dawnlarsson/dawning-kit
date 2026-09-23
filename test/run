@@ -241,6 +241,37 @@ never()
 #       assembly in lib.c calls C functions by name and the link time
 #       optimiser cannot see a call written inside a string, so it drops the
 #       callee and the link fails.
+#       Coverage. `sh test/run coverage DIR lane...` runs the lanes with
+#       MOONWATER_COVERAGE=DIR, and every freestanding binary they build --
+#       the shell and its farm, each C check, the term and edit fixtures --
+#       starts each basic block with a call into COVERAGE_hook in checks.c,
+#       which marks the block in DIR/<binary>.XXXXXX.map, a record every
+#       process that binary becomes shares. A copy of the binary goes beside
+#       it as .elf, and `differential.py --harness coverage_report DIR` reads
+#       the two into blocks, lines and functions reached per source file.
+#       x86_64 only; any other architecture builds as it always does.
+coverage_args=""
+coverage_stem=""
+
+coverage_build()
+{
+        coverage_args=""
+        coverage_stem=""
+        [ -n "${MOONWATER_COVERAGE:-}" ] && [ "$1" = x86_64 ] || return 0
+        coverage_stem=$(mktemp "$MOONWATER_COVERAGE/$(basename "$2").XXXXXX") ||
+                return 1
+        truncate -s 64M "$coverage_stem.map" || return 1
+        $compiler -O2 -c -march=x86-64 -fno-stack-protector -fno-builtin \
+                "-DCOVERAGE_PATH=\"$coverage_stem.map\"" -DCOVERAGE_hook \
+                test/checks.c -o "$coverage_stem.o" || return 1
+        coverage_args="-g -fsanitize-coverage=trace-pc $coverage_stem.o"
+}
+
+coverage_keep()
+{
+        [ -z "$coverage_stem" ] || cp "$1" "$coverage_stem.elf"
+}
+
 freestanding()
 {
         source_file=$1
@@ -267,11 +298,15 @@ freestanding()
         riscv64) set -- "$@" -march=rv64imafd_zicsr_zicntr -mabi=lp64d ;;
         esac
 
+        coverage_build "$architecture" "$output" || return 1
+
+        # shellcheck disable=SC2086
         if $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
                 -fno-builtin "$@" -w -T src/build/spark.ld -Wl,-e,_start \
-                -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
+                -Wl,--build-id=none -Wl,--no-warn-rwx-segments $coverage_args \
                 -o "$output" "$source_file" 2> "$output.err"
         then
+                coverage_keep "$output"
                 return 0
         fi
 
@@ -6436,16 +6471,19 @@ b32 main()
 }
 HARNESS
 
+coverage_build "$host_arch" "$work/term" || exit 1
+# shellcheck disable=SC2086
 if ! $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
         -fno-builtin -Wall -Wextra -Werror=unused-variable \
         -Werror=unused-but-set-variable -I "$root" -T src/build/spark.ld -Wl,-e,_start \
-        -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
+        -Wl,--build-id=none -Wl,--no-warn-rwx-segments $coverage_args \
         -o "$work/term" "$work/harness.c" 2> "$work/err"
 then
         echo "  term         harness build failed"
         sed 's/^/    /' "$work/err"
         exit 1
 fi
+coverage_keep "$work/term"
 
 #       Rows arrive one to a line and are joined by a bar, so a case that
 #       asks for several of them is still one string to compare.
@@ -8949,16 +8987,19 @@ b32 main()
 }
 HARNESS
 
+coverage_build "$host_arch" "$work/edit" || exit 1
+# shellcheck disable=SC2086
 if ! $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
         -fno-builtin -Wall -Wextra -Werror=unused-variable \
         -Werror=unused-but-set-variable -I "$root" -T src/build/spark.ld -Wl,-e,_start \
-        -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
+        -Wl,--build-id=none -Wl,--no-warn-rwx-segments $coverage_args \
         -o "$work/edit" "$work/harness.c" 2> "$work/err"
 then
         echo "  edit         harness build failed"
         sed 's/^/    /' "$work/err"
         exit 1
 fi
+coverage_keep "$work/edit"
 
 edit() { ${TEST_RUNNER:-} "$work/edit" "$@" 2>&1 | tr '\n' '|' | sed 's/|$//'; }
 
@@ -14966,6 +15007,17 @@ if [ "$#" -gt 0 ] && [ "$1" = bench ]; then
         shift
         bench_main "$@"
         exit $?
+fi
+
+if [ "$#" -gt 1 ] && [ "$1" = coverage ]; then
+        coverage_dir=$2
+        shift 2
+        mkdir -p "$coverage_dir" || exit 1
+        coverage_dir=$(cd "$coverage_dir" && pwd) || exit 1
+        MOONWATER_COVERAGE=$coverage_dir sh "$0" "$@"
+        coverage_lanes=$?
+        python3 test/differential.py --harness coverage_report "$coverage_dir" || exit 1
+        exit "$coverage_lanes"
 fi
 
 if [ "$#" -gt 0 ] && [ "$1" = "--list" ]; then

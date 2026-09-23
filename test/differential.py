@@ -29598,6 +29598,180 @@ int main(int argc, char **argv)
     return checks.verdict("machine scan", "machine-scan")
 
 
+
+def harness_coverage_report(argv):
+    """What a `sh test/run coverage DIR lane...` run reached, per source file.
+
+    Every freestanding binary the run built sits in DIR as NAME.XXXXXX.elf
+    beside NAME.XXXXXX.map, the byte-per-address record COVERAGE_hook wrote.
+    A block is a call to __sanitizer_cov_trace_pc; it was reached when the
+    byte at its return address is set. Blocks are named by source, not by
+    address -- file, function, the text of the line and which block of that
+    line it is -- so two runs over trees whose line numbers differ still
+    compare block for block, and a block present in several binaries (the
+    shell and a check that includes the same file) is one block, reached if
+    any of them reached it.
+
+        --save FILE       write the blocks and whether each was reached
+        --against FILE    say what moved since a saved run, per file
+        --files A,B       limit the table and the unreached list to these
+                          path prefixes (src/sh/tar.c,src/bowl.c)
+
+    A binary whose record is empty never ran; it is named, its blocks count
+    as unreached, and a run in which the shell never ran at all, or nothing
+    did, is refused rather than reported as 0%.
+    """
+    import json
+    import subprocess as sp
+    options = {"--save": None, "--against": None, "--files": None}
+    rest = []
+    index = 0
+    while index < len(argv):
+        if argv[index] in options and index + 1 < len(argv):
+            options[argv[index]] = argv[index + 1]
+            index += 2
+        else:
+            rest.append(argv[index])
+            index += 1
+    if len(rest) != 1:
+        print("coverage_report DIR [--save FILE] [--against FILE] [--files A,B]")
+        return 2
+    folder = Path(rest[0])
+    base = 0x400000
+    sources = {}
+
+    def source_line(name, number):
+        if name not in sources:
+            try:
+                sources[name] = (HARNESS_ROOT / name).read_text(errors="replace").split("\n")
+            except OSError:
+                sources[name] = []
+        lines = sources[name]
+        return lines[number - 1].strip() if 0 < number <= len(lines) else "#%d" % number
+
+    def relative(path):
+        path = os.path.normpath(path)
+        for mark in ("/src/", "/programs/", "/test/"):
+            if mark in path:
+                return path[path.rindex(mark) + 1:]
+        if path.startswith(("src/", "programs/", "test/")):
+            return path
+        return os.path.basename(path)
+
+    blocks = {}          # key -> reached
+    silent = []
+    ran = 0
+    for elf in sorted(folder.glob("*.elf")):
+        record = elf.with_suffix(".map")
+        if not record.exists():
+            continue
+        dump = sp.run(["objdump", "-d", "--no-show-raw-insn", str(elf)],
+                      capture_output=True, text=True).stdout.split("\n")
+        sites = []
+        for number, line in enumerate(dump):
+            if "<__sanitizer_cov_trace_pc>" not in line or "call" not in line:
+                continue
+            here = line.split(":", 1)[0].strip()
+            for following in dump[number + 1:number + 4]:
+                found = re.match(r"\s*([0-9a-f]+):", following)
+                if found:
+                    sites.append((int(here, 16), int(found.group(1), 16)))
+                    break
+        if not sites:
+            continue
+        marks = record.read_bytes()
+        reached = [0 <= back - base < len(marks) and marks[back - base] != 0
+                   for _, back in sites]
+        if any(reached):
+            ran += 1
+        else:
+            silent.append(elf.name)
+        named = sp.run(["addr2line", "-f", "-e", str(elf)],
+                       input="\n".join("%x" % call for call, _ in sites),
+                       capture_output=True, text=True).stdout.split("\n")
+        seen = {}
+        for position in range(len(sites)):
+            function = named[2 * position] if 2 * position < len(named) else "?"
+            place = named[2 * position + 1] if 2 * position + 1 < len(named) else "?:0"
+            file_name, _, line_number = place.rpartition(":")
+            line_number = re.match(r"\d*", line_number).group(0)
+            if not file_name or file_name == "??" or not line_number:
+                continue
+            name = relative(file_name)
+            text = source_line(name, int(line_number))
+            stem = (name, function, text)
+            seen[stem] = seen.get(stem, 0) + 1
+            key = "%s\t%s\t%s\t%d" % (name, function, text, seen[stem])
+            blocks[key] = blocks.get(key, False) or reached[position]
+
+    if silent:
+        print("coverage: %d binaries never ran: %s" % (len(silent), " ".join(silent)))
+    if not ran:
+        print("  FAIL no binary in %s recorded anything" % folder)
+        return 1
+    if any(name.startswith("shell.") for name in silent) and \
+            not any(elf.name.startswith("shell.") and elf.name not in silent
+                    for elf in folder.glob("*.elf")):
+        print("  FAIL the shell was built for coverage and never ran")
+        return 1
+
+    before = {}
+    if options["--against"]:
+        before = json.loads(Path(options["--against"]).read_text())
+    wanted = [item for item in (options["--files"] or "").split(",") if item]
+
+    def chosen(name):
+        return not wanted or any(name.startswith(item) for item in wanted)
+
+    files = {}
+    for key, reached in blocks.items():
+        name, function, text, _ = key.split("\t")
+        entry = files.setdefault(name, {"blocks": [0, 0], "lines": {}, "functions": {}})
+        entry["blocks"][1] += 1
+        entry["blocks"][0] += reached
+        entry["lines"][text] = entry["lines"].get(text, False) or reached
+        entry["functions"][function] = entry["functions"].get(function, False) or reached
+
+    print("%-34s %17s %15s %15s %s" % ("file", "blocks", "lines", "functions",
+                                         "new blocks" if before else ""))
+    for name in sorted(files):
+        if not chosen(name):
+            continue
+        entry = files[name]
+        lines = entry["lines"].values()
+        functions = entry["functions"].values()
+        moved = ""
+        if before:
+            then = [key for key, value in before.items() if key.startswith(name + "\t")]
+            was = sum(before[key] for key in then)
+            fresh = sum(1 for key, value in blocks.items()
+                        if key.startswith(name + "\t") and value and not before.get(key))
+            moved = "was %d/%d, %+d reached" % (was, len(then), fresh)
+        print("%-34s %8d/%-8d %7d/%-7d %7d/%-7d %s" % (
+            name, entry["blocks"][0], entry["blocks"][1], sum(lines), len(lines),
+            sum(functions), len(functions), moved))
+
+    if wanted:
+        for name in sorted(files):
+            if not chosen(name):
+                continue
+            missed = sorted((function for function, value in files[name]["functions"].items()
+                             if not value))
+            if missed:
+                print("  %s: never entered: %s" % (name, " ".join(missed)))
+            if before:
+                fresh = sorted(key.split("\t")[1] + ": " + key.split("\t")[2]
+                               for key, value in blocks.items()
+                               if key.startswith(name + "\t") and value and not before.get(key))
+                for line in fresh[:40]:
+                    print("    newly reached  %s" % line[:110])
+                if len(fresh) > 40:
+                    print("    ... and %d more" % (len(fresh) - 40))
+
+    if options["--save"]:
+        Path(options["--save"]).write_text(json.dumps(blocks, sort_keys=True))
+    return 0
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -29621,6 +29795,7 @@ HARNESS_CHECKS = {
     "bowl_roots": harness_bowl_roots,
     "riscv_builtins": harness_riscv_builtins,
     "objtool_shape": harness_objtool_shape,
+    "coverage_report": harness_coverage_report,
     "terminfo_install": harness_terminfo_install,
     "moonwater_cli": harness_moonwater_cli,
     "machine_reap": harness_machine_reap,
