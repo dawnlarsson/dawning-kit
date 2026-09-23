@@ -3,17 +3,36 @@
 #
 # The Steam Deck LCD is Realtek RTL8822CE; MediaTek MT7921/MT7922 are the
 # common M.2 cards. (The Deck OLED is Qualcomm QCA2066, ath11k, which is
-# not here.) Both need linux-firmware blobs this repository does not
-# carry -- the same rule as amdgpu. Copy the matching files into the image under
-# /lib/firmware, or onto the data partition there. Without them the
-# driver loads and the interface never appears.
+# not here.)
 #
-#   rtw88/rtw8822c_fw.bin
-#   rtw88/rtw8822c_wow_fw.bin
-#   mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin
-#   mediatek/WIFI_RAM_CODE_MT7961_1.bin
-#   rtl_bt/rtl8822cu_fw.bin
-#   mediatek/BT_RAM_CODE_MT7961_1_2_hdr.bin
+# Firmware. The rule was that this repository carries no linux-firmware
+# blobs, and without them each driver here loads and its interface never
+# appears. The rule now: no blob is in git, and a profile names every file
+# its drivers ask for, with the SHA-256 of that file at the linux-firmware
+# commit kernel/firmware/apply pins. The build fetches each one, refuses a
+# digest that differs, and puts it in the initramfs as /lib/firmware/NAME.zst
+# beside the licence texts and the WHENCE sections that cover it. The
+# drivers find them at probe time; there is no user helper.
+#
+#   rtw88       rtw8822c_fw.bin and rtw8822c_wow_fw.bin: an 8822C refuses to
+#               power on without either
+#   rtl_bt      rtl8822cu_fw.bin; rtl8822cu_config.bin is upstream's link
+#               to rtl8761bu_config.bin, carried so no boot logs its absence
+#   mt7921e     the MT7961 (MT7921) and MT7922 patch and RAM code
+#   btmtk       the MT7961 and MT7922 bluetooth RAM code
+#
+#> firmware rtw88/rtw8822c_fw.bin 3deecb31210986d98cdbfb000391e08d602a6eee4ffc883969faa2b907ab03ba
+#> firmware rtw88/rtw8822c_wow_fw.bin 6717fc6ff426a74571ac4f04cd9698fb2f356012c05c58aa64cf21ceb6b958a2
+#> firmware rtl_bt/rtl8822cu_fw.bin bb8b1221b62749baebfa3e60271d6d90b1db5e3a480e3255be82c9fb58fe9577
+#> firmware rtl_bt/rtl8822cu_config.bin 6c28a3f07c6a30ed208c4b64862a23f02b7d93543ea980edd24df16bab45095f rtl_bt/rtl8761bu_config.bin
+#> firmware mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin a276c06c2b772adb50b86639d33c82824ff4c21d617feb78caea74c040b873f6
+#> firmware mediatek/WIFI_RAM_CODE_MT7961_1.bin b94217a951518a9c14095765f367bc5dd7698f2dc033941d6f18fc2ebd6a2ab9
+#> firmware mediatek/WIFI_MT7922_patch_mcu_1_1_hdr.bin 7fc9075d6d54b31e0539734614ca971fa52caf41b642a3000c8a4501591a4d98
+#> firmware mediatek/WIFI_RAM_CODE_MT7922_1.bin d100e5e04c324fc8da6302112d1e0b4fac952286447d2419eabcd8fb0a1f5b93
+#> firmware mediatek/BT_RAM_CODE_MT7961_1_2_hdr.bin 7a440a0f7404c73a2f03d8cc0475ac9f7fdc931b494dce37705e7d578153dbae
+#> firmware mediatek/BT_RAM_CODE_MT7922_1_1_hdr.bin 299942dbec7d34af030670ea59f9f7b4fd5c64e738b9e0157d76f4dd3beb190f
+#> firmware_licence LICENCE.rtlwifi_firmware.txt a61351665b4f264f6c631364f85b907d8f8f41f8b369533ef4021765f9f3b62e
+#> firmware_licence LICENCE.mediatek a90d3f66704d85889945fec5525ea77622549da83aced1aac99828383f8f1805
 #
 # Compose it with desktop (the default image already does):
 #
@@ -21,6 +40,8 @@
 #
 CONFIG_FW_LOADER=y
 CONFIG_FW_LOADER_USER_HELPER=n
+CONFIG_FW_LOADER_COMPRESS=y
+CONFIG_FW_LOADER_COMPRESS_ZSTD=y
 
 CONFIG_WIRELESS=y
 CONFIG_CFG80211=y

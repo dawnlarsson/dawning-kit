@@ -159,6 +159,7 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
         {"monitor_source", "programs/monitor.sh"},
         {"patch_script", "kernel/patch/apply"},
         {"replace_script", "kernel/replace/apply"},
+        {"firmware_script", "kernel/firmware/apply"},
 
         /*      Booting the built image, and where the module's own build
                 products land beside its source. */
@@ -3986,6 +3987,14 @@ static b32 build_userspace()
                                null))
                         return build_die("clearing leftover root archive");
         }
+
+        /*
+                The firmware the profiles name, under /lib/firmware, and
+                nothing a previous build left there. Every build, since a
+                build without a firmware line must still clear the last one's.
+        */
+        if (build_run("sh", build_setting_get("firmware_script"), null))
+                return build_die("firmware");
 
         build_components(build_join(build_setting_get("kernel_tree"), "/.config",
                                     null));

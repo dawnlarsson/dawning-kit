@@ -10089,6 +10089,92 @@ rpi_master=$(grep -c 'raw/master' kernel/profile/post/rpi.sh)
 same 'immutable firmware source' '1:3:0' \
         "$rpi_commit_ok:$rpi_hashes:$rpi_master"
 
+#       kernel/firmware/apply, the image's /lib/firmware. A curl that serves
+#       "blob:NAME" for every NAME stands in for linux-firmware, with a WHENCE
+#       of two sections, and the script is the tree's own with only the
+#       WHENCE digest swapped for the fixture's. Every named file must land as
+#       NAME.zst unpacking to what was served, a link under its own name, the
+#       licence and the one WHENCE section that names them beside it; a
+#       digest the bytes do not have stops it with nothing new installed;
+#       and a composed config with no firmware line leaves no /lib/firmware.
+fw=$work/firmware
+mkdir -p "$fw/bin" "$fw/tree/artifacts" "$fw/tree/src/build" \
+        "$fw/tree/fs/lib/firmware/stale"
+cp src/build/host.sh "$fw/tree/src/build/"
+cat > "$fw/bin/curl" <<'SCRIPT'
+#!/bin/sh
+output=
+url=
+while [ "$#" -gt 0 ]; do
+        case $1 in
+        --output) output=$2; shift 2 ;;
+        --proto|--proto-redir) shift 2 ;;
+        -*) shift ;;
+        *) url=$1; shift ;;
+        esac
+done
+name=${url#*/plain/}
+name=${name%%\?id=*}
+case $name in
+WHENCE) printf 'Driver: x\nFile: a/one.bin\nLink: a/two.bin -> b/src.bin\nLicence: see LICENCE.x\n----------\nDriver: y\nFile: other.bin\n----------\n' ;;
+*) printf 'blob:%s' "$name" ;;
+esac > "$output"
+SCRIPT
+chmod +x "$fw/bin/curl"
+fw_digest() { printf '%s' "$1" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1; }
+fw_whence=$(printf 'Driver: x\nFile: a/one.bin\nLink: a/two.bin -> b/src.bin\nLicence: see LICENCE.x\n----------\nDriver: y\nFile: other.bin\n----------\n' |
+        { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1)
+sed "s/^whence_digest=.*/whence_digest=$fw_whence/" kernel/firmware/apply > "$fw/apply"
+{
+        printf '#> firmware a/one.bin %s\n' "$(fw_digest blob:a/one.bin)"
+        printf '#> firmware a/two.bin %s b/src.bin\n' "$(fw_digest blob:b/src.bin)"
+        printf '#> firmware_licence LICENCE.x %s\n' "$(fw_digest blob:LICENSES/LICENCE.x)"
+} > "$fw/tree/artifacts/.config"
+(cd "$fw/tree" && PATH="$fw/bin:$PATH" sh ../apply > ../log 2>&1)
+fw_status=$?
+fw_one=$(zstd -dc "$fw/tree/fs/lib/firmware/a/one.bin.zst" 2>/dev/null)
+fw_two=$(zstd -dc "$fw/tree/fs/lib/firmware/a/two.bin.zst" 2>/dev/null)
+fw_licence=$(cat "$fw/tree/fs/lib/firmware/LICENSES/LICENCE.x" 2>/dev/null)
+fw_sections=$(grep -c '^Driver:' "$fw/tree/fs/lib/firmware/WHENCE" 2>/dev/null)
+fw_stale=$(ls "$fw/tree/fs/lib/firmware" | grep -c stale)
+same 'firmware lands as zstd with its licence and WHENCE' \
+        '0:blob:a/one.bin:blob:b/src.bin:blob:LICENSES/LICENCE.x:1:0' \
+        "$fw_status:$fw_one:$fw_two:$fw_licence:$fw_sections:$fw_stale"
+
+rm -rf "$fw/tree/artifacts/firmware"
+sed 's/^\(#> firmware a\/one.bin \).*/\1'"$(fw_digest other)"'/' \
+        "$fw/tree/artifacts/.config" > "$fw/config" &&
+        mv "$fw/config" "$fw/tree/artifacts/.config"
+(cd "$fw/tree" && PATH="$fw/bin:$PATH" sh ../apply > ../log-bad 2>&1)
+fw_bad=$?
+fw_bad_cached=$(find "$fw/tree/artifacts/firmware" -name 'one.bin*' | wc -l | tr -d ' ')
+fw_bad_said=$(grep -c 'the profile pins' "$fw/log-bad")
+same 'a firmware digest that differs stops the build' '1:0:1' \
+        "$fw_bad:$fw_bad_cached:$fw_bad_said"
+
+: > "$fw/tree/artifacts/.config"
+(cd "$fw/tree" && PATH="$fw/bin:$PATH" sh ../apply > ../log-none 2>&1)
+fw_none=$?
+[ -e "$fw/tree/fs/lib/firmware" ] && fw_left=left || fw_left=gone
+same 'a build with no firmware line clears the last one' '0:gone' \
+        "$fw_none:$fw_left"
+
+#       The profiles' own lines: a pinned commit, and each line a plain path
+#       with a 64-digit digest, in a profile that also turns on the zstd
+#       reader its .zst files need. The Deck LCD's two rtw88 files, without
+#       either of which an 8822C will not power on, are named.
+fw_commit=$(sed -n 's/^commit=//p' kernel/firmware/apply | grep -E -c '^[0-9a-f]{40}$')
+fw_lines=$(grep -h '^#> firmware' kernel/profile/* | wc -l | tr -d ' ')
+fw_good=$(grep -h '^#> firmware' kernel/profile/* |
+        grep -E -c '^#> firmware(_licence)? [A-Za-z0-9._/+-]+ [0-9a-f]{64}( [A-Za-z0-9._/+-]+)?$')
+fw_zstd=0
+for profile in $(grep -l '^#> firmware ' kernel/profile/*); do
+        grep -q '^CONFIG_FW_LOADER_COMPRESS_ZSTD=y' "$profile" || fw_zstd=$((fw_zstd + 1))
+done
+fw_deck=$(grep -c '^#> firmware rtw88/rtw8822c_\(wow_\)\{0,1\}fw.bin ' kernel/profile/wifi)
+same 'firmware lines are pinned and whole' "1:$fw_lines:0:2" \
+        "$fw_commit:$fw_good:$fw_zstd:$fw_deck"
+
 #       The machine process owns its attach from the moment it has it, not
 #       from the moment it is told to stop. Its own moonwater_poweroff runs
 #       poweroff, a builtin, so the stop happens inside the event and goes

@@ -1,0 +1,185 @@
+#!/bin/sh
+#
+#       The firmware files a profile's drivers ask for, put where they look.
+#
+#           sh kernel/firmware/apply
+#
+#       A profile names each file next to the drivers that load it:
+#
+#           #> firmware rtw88/rtw8822c_fw.bin SHA256
+#           #> firmware rtl_bt/rtl8822cu_config.bin SHA256 rtl_bt/rtl8761bu_config.bin
+#           #> firmware_licence LICENCE.rtlwifi_firmware.txt SHA256
+#
+#       The path is the name the driver passes to request_firmware; a third
+#       word is the file to take it from when upstream ships that name as a
+#       link. Every file comes from linux-firmware at the one commit below,
+#       is checked against its digest before anything else sees it, is kept
+#       under artifacts/firmware/COMMIT, and goes into the image as
+#       /lib/firmware/PATH.zst -- FW_LOADER_COMPRESS_ZSTD reads it there, and
+#       the rootfs is RAM, so the compressed copy is the one that stays. A
+#       digest that does not match stops the build; nothing is ever skipped.
+#
+#       No blob is in git. The repository carries names and digests, and the
+#       build fetches the bytes, the way it fetches the kernel tarball.
+#
+#       Licences: each licence text a profile names goes into
+#       /lib/firmware/LICENSES, and the WHENCE sections that name a shipped
+#       file go into /lib/firmware/WHENCE, cut from the pinned WHENCE. Those
+#       sections are the terms the files are redistributed under; the image
+#       carries them beside the files, as linux-firmware asks.
+#
+#       The files go in the built-in initramfs, an archive of its own that
+#       the kernel unpacks as its first root filesystem -- not linked into
+#       the kernel as CONFIG_EXTRA_FIRMWARE would, which MediaTek's licence
+#       does not allow ("not as part of the Linux kernel").
+#
+#       Every build runs this, with or without a firmware line: a build that
+#       drops a profile must not ship what the last build put there.
+#
+#       Run from the repository root, after the configuration is composed.
+#
+set -eu
+
+. src/build/host.sh
+
+commit=965ee9b6ec253bf7ac7f5924b5b5585d1912bc4d
+source="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain"
+whence_digest=eeccfed23dd1f2717fe03de205972d62748ae7f0c29be404d4481eb0aea827d4
+
+config=artifacts/.config
+cache=artifacts/firmware/$commit
+image=fs/lib/firmware
+
+die() {
+        echo "kernel/firmware/apply: $*" >&2
+        exit 1
+}
+
+digest_of() {
+        if command -v sha256sum > /dev/null 2>&1; then
+                sha256sum < "$1" | cut -d' ' -f1
+        else
+                shasum -a 256 < "$1" | cut -d' ' -f1
+        fi
+}
+
+[ -f "$config" ] || die "no $config; compose the configuration first"
+
+#       What the last build left, gone first. The name is spelled out rather
+#       than built, so no empty variable can turn this into rm -rf /.
+[ ! -L fs/lib ] && [ ! -L fs/lib/firmware ] || die "fs/lib/firmware is a link"
+rm -rf -- fs/lib/firmware
+
+wanted=$(sed -n 's/^#> firmware //p; s/^#> firmware_licence /LICENSES\//p' "$config" |
+        sort -u)
+[ -n "$wanted" ] || exit 0
+
+for tool in curl zstd; do
+        command -v "$tool" > /dev/null 2>&1 ||
+                die "$tool is needed to fetch and pack the firmware"
+done
+
+#       One word each, never a path that climbs out: the names end up under
+#       fs/lib/firmware and in a URL.
+checked_path() {
+        case "$1" in
+        '' | /* | *..* | *//* | *[!A-Za-z0-9._/+-]*)
+                die "firmware name '$1' is not a plain relative path" ;;
+        esac
+}
+
+checked_digest() {
+        case "$1" in
+        *[!0-9a-f]*) die "digest for $2 is not lowercase hexadecimal" ;;
+        esac
+        [ "${#1}" = 64 ] || die "digest for $2 is not 64 characters"
+}
+
+#       artifacts/firmware/COMMIT/NAME, fetched once, checked every time it
+#       is used. A download goes to a private stage and is renamed in only
+#       after it matches.
+fetch() {
+        fetch_name=$1
+        fetch_want=$2
+        cached=$cache/$fetch_name
+
+        if [ -f "$cached" ] && [ ! -L "$cached" ] &&
+                [ "$(digest_of "$cached")" = "$fetch_want" ]; then
+                return 0
+        fi
+
+        mkdir -p -- "$(dirname -- "$cached")"
+        stage=$(mktemp "$cached.XXXXXX") || die "cannot stage $fetch_name"
+        if ! curl --fail --location --silent --show-error \
+                --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                --output "$stage" "$source/$fetch_name?id=$commit"; then
+                rm -f -- "$stage"
+                die "could not download $fetch_name"
+        fi
+        got=$(digest_of "$stage")
+        if [ "$got" != "$fetch_want" ]; then
+                rm -f -- "$stage"
+                die "$fetch_name is $got at $commit, the profile pins $fetch_want"
+        fi
+        mv -f -- "$stage" "$cached"
+}
+
+label "Firmware, linux-firmware $(printf %.12s "$commit")"
+
+mkdir -p -- "$cache" "$image/LICENSES"
+fetch WHENCE "$whence_digest"
+
+names=
+printf '%s\n' "$wanted" > "$cache/.wanted"
+while read -r name want from; do
+        checked_path "$name"
+        checked_digest "$want" "$name"
+        [ -n "$from" ] || from=$name
+        checked_path "$from"
+        case "$name" in
+        LICENSES/*)
+                fetch "$name" "$want"
+                cp -- "$cache/$name" "$image/$name"
+                chmod 0644 "$image/$name"
+                continue ;;
+        esac
+
+        fetch "$from" "$want"
+        mkdir -p -- "$(dirname -- "$image/$name")"
+        # From the file, not a pipe: the frame then carries the size, and the
+        # kernel's zstd reader refuses a frame without one.
+        zstd -q -19 -f -o "$image/$name.zst" "$cache/$from" ||
+                die "could not pack $name"
+        chmod 0644 "$image/$name.zst"
+        names="$names $name"
+done < "$cache/.wanted"
+rm -f -- "$cache/.wanted"
+
+#       The WHENCE sections that name a shipped file, whole, in WHENCE's own
+#       order: the driver, the files, the version and the licence line.
+{
+        printf '%s\n' "Taken from linux-firmware WHENCE at commit $commit," \
+                "the sections naming a file this image carries under /lib/firmware" \
+                "(each stored as NAME.zst). The licence texts are in LICENSES/." ""
+        awk -v names="$names" '
+                BEGIN { count = split(names, list, " "); for (i = 1; i <= count; i++) want[list[i]] = 1 }
+                /^----------/ {
+                        if (keep) printf "%s%s\n", section, $0
+                        section = ""; keep = 0; next
+                }
+                {
+                        section = section $0 "\n"
+                        if (($1 == "File:" || $1 == "Link:") && ($2 in want)) keep = 1
+                }
+                END { if (keep) printf "%s", section }
+        ' "$cache/WHENCE"
+} > "$image/WHENCE"
+chmod 0644 "$image/WHENCE"
+
+for name in $names; do
+        awk -v name="$name" '($1 == "File:" || $1 == "Link:") && $2 == name { found = 1 }
+                END { exit !found }' "$image/WHENCE" ||
+                die "WHENCE at $commit does not name $name"
+done
+
+echo "$(echo $names | wc -w | tr -d ' ') firmware files, $(du -sk "$image" | cut -f1) KiB in the image"

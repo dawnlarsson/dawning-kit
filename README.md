@@ -145,9 +145,12 @@ and `moonwater timezone` and `moonwater status` show it. A `/root/timezone` with
 mode beside it was set by hand before auto existed and stays manual until
 `moonwater timezone auto`.
 Canvas layouts other than US are the compositor's table, switched live.
-The Steam Deck LCD's radio (RTL8822CE) and MediaTek MT7921 cards also need the
-matching linux-firmware files under `/lib/firmware`; the drivers are in the image,
-the blobs are not. The Deck OLED's Qualcomm QCA2066 has no driver in the image.
+The wifi profile carries the firmware its drivers load -- the Steam Deck LCD's
+RTL8822CE and its bluetooth, MediaTek MT7921 and MT7922 -- in `/lib/firmware` as
+zstd files, with their licences and WHENCE entries beside them. The build fetches
+each from linux-firmware at a pinned commit and checks it against the SHA-256 the
+profile names; no blob is in this repository. The Deck OLED's Qualcomm QCA2066 has
+no driver in the image.
 Besides PCI ethernet, the desktop image drives USB ethernet
 adapters -- Realtek RTL8152/8153 (the Steam Deck dock's port and most USB-C
 adapters), CDC ECM and NCM, and ASIX AX88179.
