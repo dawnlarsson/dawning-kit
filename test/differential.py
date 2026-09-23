@@ -3611,6 +3611,20 @@ def awk_gen_empty_matches(rng, count):
     return out
 
 
+def awk_gen_broken_pipes(rng, count):
+    """Output into a command that stops reading: more than a pipe holds, so
+    the write that finds the reader gone is certain on both sides, by print
+    and by printf, closed and left open, into commands that read nothing,
+    one line, or all of it."""
+    out = []
+    for verb in ("print \"x\"", "printf \"x\\n\""):
+        for command in ("exit 2", "true", "head -1 >/dev/null", "cat >/dev/null"):
+            for tail in ("", "r = close(c); print \"closed\", r"):
+                out.append(("BEGIN { c = \"" + command + "\"; for (i = 0; i < 100000; i++) " + verb
+                            + " | c; " + tail + " }",))
+    return out
+
+
 def awk_audit():
     """What the hand-written lane found worth asserting and no generator
     reaches on its own: evaluation order with side effects, the regex
@@ -3878,7 +3892,8 @@ def awk_extra():
             ("syntax", awk_gen_syntax, 500),
             ("numbers", awk_gen_numbers, 600),
             ("records", awk_gen_records, 150),
-            ("empty-matches", awk_gen_empty_matches, 120)):
+            ("empty-matches", awk_gen_empty_matches, 120),
+            ("broken-pipes", awk_gen_broken_pipes, 0)):
         rows.extend(generator(awk_seeded(name), count))
     rows.extend(awk_audit())
     rows.extend(awk_refusals())

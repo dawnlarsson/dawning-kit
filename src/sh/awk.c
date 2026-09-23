@@ -1499,10 +1499,40 @@ static b32 awk_reader_count;
 static awk_writer awk_standard_out;
 static bool awk_write_failed;
 
+/*
+        A write into a command's pipe whose reader has gone is refused, not
+        fatal to the program: the reference ignores SIGPIPE for everything
+        but standard output, so print | "cmd" into a command that has
+        exited ends with "print to "cmd" failed" and a status of 2, where
+        the signal ended this one with 141 or, when it arrived late, with 0
+        and the lines lost unsaid. The signal is set aside only around the
+        write, so the commands awk starts are started with it as they found
+        it and standard output still dies of it quietly, as the reference's
+        does.
+*/
+#define AWK_SIGPIPE 13
+
+static bool awk_writer_quiet(awk_writer address_to which, positive address_to previous)
+{
+        return which != address_of awk_standard_out && which->handle != 2 &&
+               system_signal_install(AWK_SIGPIPE, 1, 0, 0, previous);
+}
+
+static fn awk_writer_loud(positive address_to previous)
+{
+        system_signal_action(AWK_SIGPIPE, previous, null, 8);
+}
+
 static bool awk_writer_flush(awk_writer address_to which)
 {
-        if (buffered_flush((positive)which->handle, which->buffer,
-                           address_of which->used))
+        positive previous[4];
+        bool quiet = awk_writer_quiet(which, previous);
+        bool flushed = buffered_flush((positive)which->handle, which->buffer,
+                                      address_of which->used);
+
+        if (quiet)
+                awk_writer_loud(previous);
+        if (flushed)
                 return true;
 
         awk_write_failed = true;
@@ -1522,9 +1552,15 @@ static bool awk_writer_put(awk_writer address_to which, string_address data, pos
                 return false;
         }
 
-        if (buffered_write((positive)which->handle, which->buffer,
-                           sizeof(which->buffer), address_of which->used,
-                           (address_any)data, length))
+        positive previous[4];
+        bool quiet = awk_writer_quiet(which, previous);
+        bool written = buffered_write((positive)which->handle, which->buffer,
+                                      sizeof(which->buffer), address_of which->used,
+                                      (address_any)data, length);
+
+        if (quiet)
+                awk_writer_loud(previous);
+        if (written)
                 return true;
 
         awk_write_failed = true;
