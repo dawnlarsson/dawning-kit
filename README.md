@@ -145,15 +145,11 @@ and `moonwater timezone` and `moonwater status` show it. A `/root/timezone` with
 mode beside it was set by hand before auto existed and stays manual until
 `moonwater timezone auto`.
 Canvas layouts other than US are the compositor's table, switched live.
-The wifi profile carries the firmware its drivers load -- the Steam Deck LCD's
-RTL8822CE and its bluetooth, MediaTek MT7921 and MT7922 -- in `/lib/firmware` as
-zstd files, with their licences and WHENCE entries beside them. The build fetches
-each from linux-firmware at a pinned commit and checks it against the SHA-256 the
-profile names; no blob is in this repository. The Deck OLED's Qualcomm QCA2066 has
-no driver in the image.
-Besides PCI ethernet, the desktop image drives USB ethernet
-adapters -- Realtek RTL8152/8153 (the Steam Deck dock's port and most USB-C
-adapters), CDC ECM and NCM, and ASIX AX88179.
+The image carries the firmware its wifi and bluetooth drivers load, as zstd files
+in `/lib/firmware` with their licences and WHENCE entries beside them, fetched from
+linux-firmware at a pinned commit and checked against pinned SHA-256s; no blob is
+in this repository. Besides PCI ethernet, the desktop image drives the common USB
+ethernet adapters and docks, and the standard CDC ECM and NCM classes.
 
 The same one-line shape covers the rest of the machine through bind events already:
 `mute`, `micmute`, `volume_up`, `volume_down`, `brightness_up`, `brightness_down`,
