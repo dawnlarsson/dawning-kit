@@ -231,7 +231,11 @@ DOMAIN_FLOOR = {
                    "with the work under /tmp: a run whose root is on a "
                    "filesystem mounted without nosuid and nodev cannot see "
                    "the mounts this build used to break"),
-    "files": (71691, 74132, 150,
+    "files": (73450, 75669, 150,
+              "raised 2026-09-23 from 71691 of 74132 to keep the bug pass's "
+              "gains: slash destinations in cp, mv, ln and install, du -X, "
+              "pathchk's quoting, env -v and quote() for refused values, the "
+              "lane at 73512 of 75669 on e0af8421. "
               "2342 cases are still untriaged, and a dozen causes hold most "
               "of them. kill is 2963 of 2963. leftover14 matches GNU dest "
               "-w slash strip and leftover dest-slash backup ENOTDIR, "
