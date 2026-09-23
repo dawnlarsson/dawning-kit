@@ -6373,6 +6373,28 @@ def files_xargs_valid(argv):
     return not any(word.startswith(batching) for word in argv)
 
 
+def files_slash_destinations(tool, flags, sources):
+    """A destination spelled with a slash on the end, walked over every
+    source kind the fixture has and a seeded draw of the tool's options:
+    the name missing, a file, a link to one, a dangling link, a link to a
+    directory, a path under a directory, doubled slashes. The kernel holds
+    each spelling to naming a directory; a walk that opens the parent and
+    works on a bare leaf forgets that, and cp file missing/ made a file
+    where the reference refuses."""
+    rng = random.Random(int.from_bytes(hashlib.sha256(
+        ("slash:" + tool).encode()).digest()[:8], "little"))
+    destinations = ("missing/", "a.txt/", "link/", "dangling/", "dirlink/", "dir/new/",
+                    "missing//", "hollow/x/")
+    cases = []
+    for source in sources:
+        for destination in destinations:
+            chosen = [()] + [(flag,) for flag in rng.sample(flags, 3)] + \
+                [tuple(rng.sample(flags, 2))]
+            for words in chosen:
+                cases.append(tuple(words) + (source, destination))
+    return tuple(cases)
+
+
 FILES_UTILITIES = (
     # yes is the one program here the engine cannot bound: it writes until
     # something stops it, so both sides die on the harness's file-size limit
@@ -6659,7 +6681,11 @@ FILES_UTILITIES = (
                    ("-sr", "a.txt", "deep/one/two/three/rel"), ("-sfn", "a.txt", "dirlink"), ("-sf", "a.txt", "dirlink"),
                    ("-si", "b.txt", "link"), ("-f", "-i", "-s", "b.txt", "link"), ("-i", "-f", "-s", "b.txt", "link"),
                    ("-L", "link", "followed"), ("-P", "link", "kept"), ("-st", "dir", "a.txt"), ("-sT", "a.txt", "dir"),
-                   ("-f", "missing", "a.txt"), ("-f", "a.txt", "a.txt"), ("-f", "b.txt", "a.txt"), ("-W", "a.txt", "pointer"))),
+                   ("-f", "missing", "a.txt"), ("-f", "a.txt", "a.txt"), ("-f", "b.txt", "a.txt"), ("-W", "a.txt", "pointer"),
+                   ("-s", "a.txt", "missing/x"), ("a.txt", "missing/x"), ("-sv", "a.txt", "shut/x"))
+            + files_slash_destinations(
+                "ln", ("-s", "-f", "-n", "-v", "-T", "-b", "-r", "-L", "-P", "--backup=numbered"),
+                ("a.txt", "dir", "link", "dangling"))),
     Utility("link", operands=(("a.txt", "hard"), ("link", "hard"), ("a.txt", "-W"), ("--", "-dash", "hard"), ("missing", "hard"),
                               ("dir", "hard"), ("a.txt", "b.txt"), ("a.txt",), (), ("one", "two", "three"), ("a.txt", "dir"),
                               ("a.txt", "dir/"), ("dangling", "hard"), ("a.txt", "shut/hard"), ("two words", "sp ace"),

@@ -17016,6 +17016,31 @@ static bool ln_same_dirent(string_address source, bipolar dest_dir,
         return same;
 }
 
+//      A hard link that could not be made names only the destination
+//      when the kernel says the name is already there, the quota is
+//      full, the filesystem is full or read-only; EMLINK names the
+//      source; anything else names both ends. A symbolic one names
+//      only the name it was to be given.
+static bool ln_failed(string_address target, string_address name,
+                      bipolar reason)
+{
+        if (ln_symbolic)
+                string_format(log_error, "ln: failed to create symbolic link %w: %s\n",
+                              writer_shell_quoted_name, name, file_reason(reason));
+        else if (reason == -ERROR_TOO_MANY_LINKS)
+                string_format(log_error, "ln: failed to create hard link to %w: %s\n",
+                              writer_shell_quoted_name, target, file_reason(reason));
+        else if (reason == -ERROR_EXISTS || reason == -ERROR_OVER_QUOTA ||
+                 reason == -ERROR_NO_SPACE || reason == -ERROR_READ_ONLY)
+                string_format(log_error, "ln: failed to create hard link %w: %s\n",
+                              writer_shell_quoted_name, name, file_reason(reason));
+        else
+                string_format(log_error, "ln: failed to create hard link %w => %w: %s\n",
+                              writer_shell_quoted_name, name,
+                              writer_shell_quoted_name, target, file_reason(reason));
+        return false;
+}
+
 static bool ln_make(string_address target, string_address name)
 {
         p8 relative[FILE_PATH_MAX];
@@ -17069,17 +17094,68 @@ static bool ln_make(string_address target, string_address name)
                 }
         }
 
+        /*
+                A name that cannot be reached, or one spelled with a slash on
+                the end, is refused by the kernel's link call itself: the
+                reference makes the call and names the link it failed to
+                make. A slash on the end of a name that is not a directory
+                is the name already there when something answers to it and
+                missing when nothing does -- the answers linkat and
+                symlinkat give -- and a directory never gets this far, being
+                a target to link into.
+        */
         p8 destination_leaf[FILE_PATH_MAX];
         bipolar destination_directory =
-            file_parent_open(name, destination_leaf);
+            file_name_has_trailing_slash(name)
+                ? -ERROR_NO_ENTRY
+                : file_parent_open(name, destination_leaf);
         if (destination_directory < 0)
         {
-                string_format(log_error, "ln: failed to access destination %w: %s\n",
-                              writer_shell_quoted_name, name,
-                              file_reason(destination_directory));
+                p8 bare[FILE_PATH_MAX];
+                file_facts there;
+
+                if (file_name_has_trailing_slash(name) &&
+                    file_name_without_trailing_slashes(bare, name))
+                {
+                        //      -f, -i and a backup look at the name first,
+                        //      and that look is what fails on a slash
+                        //      after something that is not a directory.
+                        bipolar reached = file_look_code(AT_FDCWD, bare, 0,
+                                                         address_of there);
+                        bool looks = ln_selected.collision == 'f' ||
+                                     ln_selected.collision == 'i' ||
+                                     file_backup_kind;
+
+                        if (reached == 0 &&
+                            (there.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                                reached = -ERROR_NOT_DIRECTORY;
+                        if (looks && reached == -ERROR_NOT_DIRECTORY)
+                        {
+                                if (source_handle >= 0)
+                                        system_close(source_handle);
+                                return string_report(log_error, false,
+                                                     "ln: failed to access %w: %s\n",
+                                                     writer_shell_quoted_name, name,
+                                                     file_reason(reached));
+                        }
+                        if (looks && reached == 0)
+                        {
+                                if (source_handle >= 0)
+                                        system_close(source_handle);
+                                return string_report(log_error, false,
+                                                     "ln: %w: cannot overwrite directory\n",
+                                                     writer_terminal_name, name);
+                        }
+
+                        bipolar looked = file_look_code(AT_FDCWD, bare,
+                                                        AT_SYMLINK_NOFOLLOW,
+                                                        address_of there);
+                        destination_directory = looked < 0 ? looked
+                                                           : -ERROR_EXISTS;
+                }
                 if (source_handle >= 0)
                         system_close(source_handle);
-                return false;
+                return ln_failed(target, name, destination_directory);
         }
 
         file_facts destination;
@@ -17182,29 +17258,8 @@ static bool ln_make(string_address target, string_address name)
         if (source_handle >= 0)
                 system_close(source_handle);
 
-        //      A hard link that could not be made names only the destination
-        //      when the kernel says the name is already there, the quota is
-        //      full, the filesystem is full or read-only; EMLINK names the
-        //      source; anything else names both ends. A symbolic one names
-        //      only the name it was to be given.
         if (done < 0)
-        {
-                if (ln_symbolic)
-                        string_format(log_error, "ln: failed to create symbolic link %w: %s\n",
-                                      writer_shell_quoted_name, name, file_reason(done));
-                else if (done == -ERROR_TOO_MANY_LINKS)
-                        string_format(log_error, "ln: failed to create hard link to %w: %s\n",
-                                      writer_shell_quoted_name, target, file_reason(done));
-                else if (done == -ERROR_EXISTS || done == -ERROR_OVER_QUOTA ||
-                         done == -ERROR_NO_SPACE || done == -ERROR_READ_ONLY)
-                        string_format(log_error, "ln: failed to create hard link %w: %s\n",
-                                      writer_shell_quoted_name, name, file_reason(done));
-                else
-                        string_format(log_error, "ln: failed to create hard link %w => %w: %s\n",
-                                      writer_shell_quoted_name, name,
-                                      writer_shell_quoted_name, target, file_reason(done));
-                return false;
-        }
+                return ln_failed(target, name, done);
 
         if (ln_loud)
         {
