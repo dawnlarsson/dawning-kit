@@ -1,9 +1,10 @@
 #
 # Wireless LAN and Bluetooth
 #
-# Steam Deck LCD is Realtek RTL8822CE, OLED is MediaTek MT7921/MT7922.
-# Both need linux-firmware blobs this repository does not carry -- the
-# same rule as amdgpu. Copy the matching files into the image under
+# The Steam Deck LCD is Realtek RTL8822CE; MediaTek MT7921/MT7922 are the
+# common M.2 cards. (The Deck OLED is Qualcomm QCA2066, ath11k, which is
+# not here.) Both need linux-firmware blobs this repository does not
+# carry -- the same rule as amdgpu. Copy the matching files into the image under
 # /lib/firmware, or onto the data partition there. Without them the
 # driver loads and the interface never appears.
 #
