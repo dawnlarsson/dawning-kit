@@ -52481,6 +52481,49 @@ static fn last_arrives_once(void)
 }
 
 /*
+        A key's last frame, replaceable with a deadline, that runs out of time
+        before it is sent. Retiring the key then, as an acknowledged last
+        frame does, starts its count over while the far side never heard it
+        end, so whatever the key carries next arrives as stale -- or nothing
+        may follow, as the contract says of a last frame.
+*/
+static fn last_outlives_deadline(void)
+{
+        p8 body[WATERLINK_PAYLOAD];
+        positive used;
+        bool alone = false;
+        bool posted;
+
+        waterlink_link_reset(address_of one);
+        heard = 0;
+        post_one(41, WATERLINK_FRAME_DURABLE, 0, 'a', 0);
+        for (p64 now = 0; now < 10; now++)
+        {
+                used = waterlink_fill(address_of one, body, now, address_of alone);
+                if (used)
+                        waterlink_deliver_at(address_of one, body, used, now,
+                                             hear, null);
+        }
+        post_one(41, WATERLINK_FRAME_REPLACEABLE | WATERLINK_FRAME_LAST, 1,
+                 'b', 10);
+        heard = 0;
+        posted = false;
+        for (p64 now = 20000; now < 20010; now++)
+        {
+                if (now == 20001)
+                        posted = waterlink_post(address_of one, 41, 0,
+                                                WATERLINK_FRAME_DURABLE, 0, 0,
+                                                body, 1, now);
+                used = waterlink_fill(address_of one, body, now, address_of alone);
+                if (used)
+                        waterlink_deliver_at(address_of one, body, used, now,
+                                             hear, null);
+        }
+        check("a key whose last frame ran out of time takes nothing it then "
+              "loses", !posted || heard >= 1);
+}
+
+/*
         An acknowledgement owed but not yet due must not keep a full frame
         back: the frame goes now and the acknowledgement rides the next
         datagram. The room kept for it stopped a full frame fitting, fill
@@ -53974,6 +54017,7 @@ b32 main(void)
         replay_generated();
         followed_outlives_deadline();
         last_arrives_once();
+        last_outlives_deadline();
         superseded_in_flight();
         full_frame_beside_owed_ack();
         network_generated();

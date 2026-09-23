@@ -551,12 +551,15 @@ static fn waterlink_slot_free(struct waterlink_link address_to link, p32 at)
         A replaceable frame whose deadline has passed is worthless -- unless a
         durable frame was posted behind it, which makes it a frame that one
         follows, and then a late truth still beats a hole the far side would
-        wait on forever.
+        wait on forever. A key's last frame is never late either: dropping it
+        would retire the key here while the far side never heard it end, and
+        the key's next frame would start its count over behind that side.
 */
 static bool waterlink_slot_late(struct waterlink_slot address_to slot,
                                 p64 now)
 {
         return slot->deadline && !slot->required &&
+               !(slot->flags & WATERLINK_FRAME_LAST) &&
                (slot->flags & WATERLINK_FRAME_REPLACEABLE) &&
                now - slot->posted > (p64)slot->deadline * 1000;
 }
