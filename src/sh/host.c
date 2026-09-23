@@ -4809,10 +4809,19 @@ static fn radio_net_wake(void)
         host_state_ready();
         system_call_4(syscall(mknodat), AT_FDCWD,
                       (positive)(string_address)NET_WAKE_PATH, S_IFIFO | 0600, 0);
+        /* The FIFO the net loop made or this did, and nothing else: the
+           open followed a link standing at the name and wrote a '1' over
+           the first byte of whatever it named, as root. */
         handle = system_open_at(AT_FDCWD, NET_WAKE_PATH,
-                                FILE_READ_WRITE | O_NONBLOCK | O_CLOEXEC);
+                                FILE_READ_WRITE | O_NONBLOCK | O_NOFOLLOW |
+                                    O_CLOEXEC);
         if (handle < 0)
                 return;
+        if (!file_handle_is_pipe(handle))
+        {
+                system_close(handle);
+                return;
+        }
 
         system_write_all((positive)handle, address_of one, 1);
         system_close(handle);
@@ -4844,8 +4853,10 @@ static bipolar radio_lock(bool wait)
         bipolar locked;
 
         host_state_ready();
+        // Not through a link: the lock is made where it is named.
         handle = system_open_at_mode(AT_FDCWD, RADIO_LOCK_PATH,
-                                     FILE_READ_WRITE | FILE_CREATE | O_CLOEXEC,
+                                     FILE_READ_WRITE | FILE_CREATE |
+                                         O_NOFOLLOW | O_CLOEXEC,
                                      0600);
         if (handle < 0)
                 return handle;

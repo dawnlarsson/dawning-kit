@@ -1595,8 +1595,16 @@ static COLD bipolar net_wake_listen(void)
         system_call_4(syscall(mknodat), AT_FDCWD,
                       (positive)(string_address)NET_WAKE_PATH,
                       S_IFIFO | 0600, 0);
-        return system_open_at(AT_FDCWD, NET_WAKE_PATH,
-                              FILE_READ_WRITE | O_NONBLOCK | O_CLOEXEC);
+        // The FIFO itself, never what a link standing there names.
+        bipolar handle = system_open_at(AT_FDCWD, NET_WAKE_PATH,
+                                        FILE_READ_WRITE | O_NONBLOCK |
+                                            O_NOFOLLOW | O_CLOEXEC);
+        if (handle >= 0 && !file_handle_is_pipe(handle))
+        {
+                system_close((positive)handle);
+                return -ERROR_INVALID;
+        }
+        return handle;
 }
 
 static COLD fn net_wake_drain(b32 handle)

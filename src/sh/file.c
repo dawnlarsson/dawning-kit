@@ -593,6 +593,16 @@ bool file_look_link(string_address path, file_facts address_to out)
         return file_look(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, out);
 }
 
+// Whether an open descriptor is a FIFO: a wake-up pipe opened by name.
+static bool file_handle_is_pipe(bipolar handle)
+{
+        file_facts facts;
+
+        return file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                         address_of facts) &&
+               (facts.mode & MODE_FORMAT) == MODE_PIPE;
+}
+
 bool file_is_directory(bipolar directory, string_address path)
 {
         file_facts facts;

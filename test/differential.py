@@ -29395,11 +29395,18 @@ def harness_host_writes(argv):
     root = HARNESS_ROOT
     allowed = {
         "host_copy_file": "the image goes onto the ESP, FAT, which has no links",
+        "host_settings_stamp": "the image host_copy_file just wrote onto the ESP",
         "term_oom_adjust": "/proc/self, which is the kernel's",
     }
     failures, sites = [], 0
     opener = re.compile(r"system_open_at(?:_mode)?\s*\(")
-    for name in ("src/sh/host.c", "src/moonwater/moonwater.c", "src/sh/screen.c"):
+    #   A read-write open writes as surely as FILE_WRITE: the wake FIFO's
+    #   open took a '1' through a link planted at its name, and the radio
+    #   lock's FILE_CREATE made its file wherever one pointed, and neither
+    #   was looked at because the pattern named only write flags. A device
+    #   named by a literal /dev/ path is the kernel's node, not a file.
+    for name in ("src/sh/host.c", "src/moonwater/moonwater.c", "src/sh/screen.c",
+                 "src/sh/net.c"):
         text = (root / name).read_text()
         if name.endswith("moonwater.c"):
             text = text[text.index("#ifdef MOONWATER_CLI"):]
@@ -29409,7 +29416,11 @@ def harness_host_writes(argv):
                 depth += {"(": 1, ")": -1}.get(text[at], 0)
                 at += 1
             call = text[found.start():at]
-            if not re.search(r"FILE_WRITE|FILE_APPEND|O_CREAT|O_TRUNC", call):
+            if not re.search(r"FILE_WRITE|FILE_APPEND|FILE_READ_WRITE|FILE_CREATE|O_CREAT|O_TRUNC",
+                             call):
+                continue
+            if re.search(r'^system_open_at(?:_mode)?\s*\(\s*AT_FDCWD\s*,\s*(?:"/dev/|SPARK_DEVICE\b)',
+                         call):
                 continue
             sites += 1
             if re.search(r"O_NOFOLLOW|FILE_EXCLUSIVE|O_EXCL", call):
