@@ -52263,6 +52263,40 @@ static bool kernel_settings_read_only(string_address path)
         where no such namespace can be made -- a hardened host, or qemu-user,
         which is threaded -- the tables are what is checked.
 */
+/* Root inside a user namespace just made, as the check's own user
+   outside: without a mapping a file created on a tmpfs there has no owner
+   the kernel can store, and its creation fails. */
+static bool namespace_root(positive user, positive group)
+{
+        static const struct { string_address path; bool id; bool of_group; } maps[] = {
+            {"/proc/self/setgroups", false, false},
+            {"/proc/self/gid_map", true, true},
+            {"/proc/self/uid_map", true, false}};
+
+        for (positive at = 0; at < array_count(maps); at++)
+        {
+                p8 line[64] = "deny\n";
+                positive length = 5;
+                bipolar handle = system_open_at(AT_FDCWD, maps[at].path,
+                                                FILE_WRITE | O_CLOEXEC);
+
+                if (maps[at].id)
+                {
+                        memory_copy(line, "0 ", 2);
+                        length = 2 + positive_into_string(
+                                         line + 2, maps[at].of_group ? group : user);
+                        memory_copy(line + length, " 1\n", 3);
+                        length += 3;
+                }
+
+                if (handle < 0 ||
+                    system_write_all((positive)handle, line, length) != length)
+                        return false;
+                system_close(handle);
+        }
+        return true;
+}
+
 static fn kernel_settings(void)
 {
         struct bowl_mount_point address_to sysfs = null;
@@ -52291,35 +52325,8 @@ static fn kernel_settings(void)
                                                         CLONE_NEWNET | CLONE_NEWPID) < 0)
                         exit(77);
 
-                /* Root inside, as the check's own user outside: without a
-                   mapping a file created on the tmpfs below has no owner the
-                   kernel can store, and its creation fails. */
-                static const struct { string_address path; bool id; bool of_group; } maps[] = {
-                    {"/proc/self/setgroups", false, false},
-                    {"/proc/self/gid_map", true, true},
-                    {"/proc/self/uid_map", true, false}};
-
-                for (positive at = 0; at < array_count(maps); at++)
-                {
-                        p8 line[64] = "deny\n";
-                        positive length = 5;
-                        bipolar handle = system_open_at(AT_FDCWD, maps[at].path,
-                                                        FILE_WRITE | O_CLOEXEC);
-
-                        if (maps[at].id)
-                        {
-                                memory_copy(line, "0 ", 2);
-                                length = 2 + positive_into_string(
-                                                 line + 2, maps[at].of_group ? group : user);
-                                memory_copy(line + length, " 1\n", 3);
-                                length += 3;
-                        }
-
-                        if (handle < 0 ||
-                            system_write_all((positive)handle, line, length) != length)
-                                exit(77);
-                        system_close(handle);
-                }
+                if (!namespace_root(user, group))
+                        exit(77);
 
                 bipolar inside = system_fork();
 
@@ -53148,12 +53155,76 @@ static fn executable_in_root(void)
         bowl_forget_path(root);
 }
 
+/*
+        An isolated bowl's root is bound onto itself before it becomes /, and
+        that bind carried every mount below it: bound MS_REC, a tmpfs, a disk
+        or a host directory an operator (or a guest, last time) had mounted
+        under /bowls/NAME came into the view the guest pivots into, against
+        bowl_bind_ro's rule that a bowl root is a tree and not a tree of
+        mounts. The real bowl_isolated_enter is run in a namespace of the
+        check's own with a tmpfs mounted below the root; the pivot is made
+        before populate asks for devtmpfs, which the namespace refuses, so
+        what the guest would see is asked right after it.
+*/
+static fn isolated_root_children(void)
+{
+        positive user = (positive)system_call(syscall(getuid));
+        positive group = (positive)system_call(syscall(getgid));
+        p8 root[96] = "/tmp/bowl-children-";
+        bipolar child;
+
+        root[19 + positive_into(root + 19, (positive)system_call(syscall(getpid)))] = end;
+        if (system_make_directory_at(AT_FDCWD, root, 0700) < 0)
+                return;
+        child = system_fork();
+        if (child == 0)
+        {
+                p8 below[128];
+                bipolar made;
+
+                if (system_call_1(syscall(unshare), CLONE_NEWUSER | CLONE_NEWNS) < 0 ||
+                    !namespace_root(user, group) ||
+                    system_mount(0, "/", 0, MS_REC | MS_PRIVATE, 0) ||
+                    system_mount("tmpfs", root, "tmpfs", 0, 0))
+                        exit(77);
+                string_copy_bounded(below, root, sizeof below);
+                string_append_bounded(below, "/below", sizeof below);
+                if (system_make_directory_at(AT_FDCWD, below, 0755) < 0 ||
+                    system_mount("tmpfs", below, "tmpfs", 0, 0))
+                        exit(77);
+                string_append_bounded(below, "/mounted", sizeof below);
+                made = system_open_at_mode(AT_FDCWD, below, FILE_WRITE | O_CLOEXEC, 0644);
+                if (made < 0)
+                        exit(77);
+                system_close(made);
+
+                (void)bowl_isolated_enter(root);
+                if (system_access_at(AT_FDCWD, "/below", 0) < 0)
+                        exit(2);
+                exit(system_access_at(AT_FDCWD, "/below/mounted", 0) == 0 ? 1 : 0);
+        }
+
+        positive status = 0;
+        b32 code = child >= 0 &&
+                           system_wait4_retry(child, address_of status, 0, null) >= 0
+                       ? wait_status_code(status)
+                       : 77;
+
+        system_remove_at(AT_FDCWD, root, AT_REMOVEDIR);
+        if (code == 77)
+                return;
+        check("An isolated bowl pivots into its root", code != 2);
+        check("An isolated bowl does not carry a mount below its root into the view",
+              code == 0);
+}
+
 b32 main(void)
 {
         names();
         launchers();
         isolation();
         kernel_settings();
+        isolated_root_children();
         room();
         archive_policy();
         landing();

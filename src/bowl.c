@@ -992,12 +992,17 @@ static bipolar bowl_isolated_populate(void)
         The bind makes the new root a mount point. pivot_root with the same
         path twice stacks the old root there, where it can be detached without
         requiring a writable put_old directory inside the distribution.
+
+        It is not recursive, for bowl_bind_ro's reason: a bowl root is an
+        unpacked tree, and a recursive bind brought along whatever an
+        operator, or a guest the last time, had mounted below it -- a host
+        directory bound in for a copy was then the guest's to write.
 */
 static bipolar bowl_isolated_enter(string_address root)
 {
         bipolar failed;
 
-        failed = system_mount(root, root, 0, MS_BIND | MS_REC, 0);
+        failed = system_mount(root, root, 0, MS_BIND, 0);
         if (failed)
                 return failed;
 
