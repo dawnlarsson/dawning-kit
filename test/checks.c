@@ -62584,6 +62584,757 @@ b32 main(void)
 }
 #endif /* CHECK_machine */
 
+#ifdef CHECK_sensors
+#include "../src/lib.util.c"
+#include "../src/moonwater/spark.c"
+#include "../src/sh/shell.c"
+
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+
+/*
+        The monitor's hardware rows, against sysfs trees made up here.
+
+        A seeded grammar builds each tree: hwmon chips by name (the ones the
+        monitor knows and ones it does not), temperatures, labels, fans and
+        a GPU's draw, a battery and the mains, processors with and without a
+        clock, and every file's text drawn from good numbers, zero, negative,
+        too large, empty, not a number, and a number with more after it. A
+        model written from the rules as the monitor's comment states them
+        says what the two rows must read, and the rows are compared as text.
+        Around it, the cases a grammar walks past: slow sensors held between
+        reads, the energy counter's watts, a chip gone and one arrived, and
+        more chips than there is room for.
+*/
+
+static p8 sensors_base[96];
+static p8 sensors_out[4096];
+static positive sensors_used;
+static p64 sensors_state = 0x9e3779b97f4a7c15ull;
+
+static positive sensors_next(positive below)
+{
+        sensors_state ^= sensors_state << 13;
+        sensors_state ^= sensors_state >> 7;
+        sensors_state ^= sensors_state << 17;
+        return below ? (positive)(sensors_state % below) : 0;
+}
+
+static fn sensors_capture(address_any data, positive length)
+{
+        if (sensors_used + length >= sizeof(sensors_out))
+                length = sizeof(sensors_out) - 1 - sensors_used;
+        memory_copy_apart(sensors_out + sensors_used, data, length);
+        sensors_used += length;
+        sensors_out[sensors_used] = end;
+}
+
+static fn sensors_mkdir_parents(string_address path)
+{
+        p8 part[256];
+        positive length = string_length(path);
+
+        for (positive at = 1; at <= length && at < sizeof(part); at++)
+                if (path[at] == '/' || at == length)
+                {
+                        memory_copy_apart(part, path, at);
+                        part[at] = end;
+                        system_call_3(syscall(mkdirat), AT_FDCWD,
+                                      (positive)part, 0755);
+                }
+}
+
+//      A file under the tree, its directories made on the way.
+static fn sensors_put(string_address root, string_address relative,
+                      string_address text)
+{
+        p8 path[256];
+        p8 directory[256];
+
+        path_join(path, sizeof(path), root, relative);
+        path_head_copy(directory, sizeof(directory), path);
+        sensors_mkdir_parents(directory);
+
+        b32 made = system_call_4(syscall(openat), AT_FDCWD, (positive)path,
+                                 FILE_CREATE | FILE_WRITE | O_TRUNC, 0644);
+
+        if (made >= 0)
+        {
+                system_call_3(syscall(write), made, (positive)text,
+                              string_length(text));
+                system_call_1(syscall(close), made);
+        }
+}
+
+static fn sensors_remove(string_address path)
+{
+        file_walk walk;
+        struct linux_dirent64 address_to entry;
+
+        if (file_walk_open(address_of walk, AT_FDCWD, path))
+        {
+                while ((entry = file_walk_next(address_of walk)))
+                {
+                        p8 inner[256];
+
+                        if (string_equals(entry->d_name, ".") ||
+                            string_equals(entry->d_name, ".."))
+                                continue;
+                        path_join(inner, sizeof(inner), path, entry->d_name);
+                        sensors_remove(inner);
+                }
+                file_walk_close(address_of walk);
+                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)path,
+                              AT_REMOVEDIR);
+        }
+        else
+                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)path, 0);
+}
+
+//      A named question about the rows, which says what they read when
+//      the answer is no.
+static fn sensors_expect(string_address name, bool right)
+{
+        checks++;
+        if (!right)
+        {
+                failures++;
+                string_format(log, "  FAIL %s: rows [%s]\n", name, sensors_out);
+        }
+}
+
+static fn sensors_rows(monitor_hardware address_to hardware)
+{
+        sensors_used = 0;
+        sensors_out[0] = end;
+        if (monitor_hardware_row(hardware, false, sensors_capture))
+                sensors_capture("|", 1);
+        if (monitor_hardware_row(hardware, true, sensors_capture))
+                sensors_capture("|", 1);
+}
+
+//      A value the grammar writes, and what the model makes of it: the
+//      number when the whole file is one, else nothing.
+typedef struct
+{
+        p8 text[40];
+        bool number;
+        bipolar value;
+} sensors_value;
+
+static fn sensors_draw(sensors_value address_to into, bipolar good_low,
+                       bipolar good_high)
+{
+        positive shape = sensors_next(10);
+        bipolar value = good_low + (bipolar)sensors_next(
+                                       (positive)(good_high - good_low));
+        positive at = 0;
+
+        into->number = true;
+        switch (shape)
+        {
+        case 0: value = 0; break;
+        case 1: value = -(bipolar)sensors_next(100000) - 1; break;
+        case 2: value = good_high + 1 + (bipolar)sensors_next(1000000); break;
+        case 3: into->text[0] = end; into->number = false; return;
+        case 4: memory_copy_apart(into->text, "n/a\n", 5); into->number = false; return;
+        case 5:
+                at = positive_into(into->text, (positive)value);
+                memory_copy_apart(into->text + at, "x\n", 3);
+                into->number = false;
+                return;
+        default: break;
+        }
+
+        into->value = value;
+        if (value < 0)
+        {
+                into->text[at++] = '-';
+                value = -value;
+        }
+        at += positive_into(into->text + at, (positive)value);
+        if (sensors_next(4))
+                into->text[at++] = '\n';
+        into->text[at] = end;
+}
+
+//      The model's rows, built beside the tree.
+static p8 model_temp[2048];
+static p8 model_power[2048];
+static positive model_count;
+
+static fn model_append(p8 address_to row, string_address text)
+{
+        positive length = string_length(row);
+
+        string_copy_bounded(row + length, text, 2048 - length);
+}
+
+static fn model_number(p8 address_to row, positive value)
+{
+        p8 digits[24];
+
+        digits[positive_into(digits, value)] = end;
+        model_append(row, digits);
+}
+
+static fn model_item(p8 address_to row, string_address label)
+{
+        model_append(row, row[0] ? "  " : (row == model_temp ? " temp  " : " power "));
+        if (string_length(row) == 7)
+                model_append(row, " ");
+        model_append(row, label);
+        model_append(row, " ");
+}
+
+//      One sensor the monitor would find: counted against the room it has,
+//      and drawn when its value is one.
+static bool model_room(void)
+{
+        return model_count++ < MONITOR_SENSORS;
+}
+
+static fn model_temperature(string_address label, sensors_value address_to value)
+{
+        if (!value->number || !model_room())
+                return;
+        if (value->value > 0 && value->value <= 200000)
+        {
+                model_item(model_temp, label);
+                model_number(model_temp, ((positive)value->value + 500) / 1000);
+                model_append(model_temp, "\xc2\xb0" "C");
+        }
+}
+
+static fn model_fan(sensors_value address_to value)
+{
+        if (!value->number || !model_room())
+                return;
+        if (value->value > 0 && value->value < 30000)
+        {
+                model_item(model_temp, "fan");
+                model_number(model_temp, (positive)value->value);
+                model_append(model_temp, " rpm");
+        }
+}
+
+static fn model_watts(p8 address_to row, positive microwatts)
+{
+        positive tenths = (microwatts + 50000) / 100000;
+
+        model_number(row, tenths / 10);
+        model_append(row, ".");
+        model_number(row, tenths % 10);
+        model_append(row, " W");
+}
+
+static fn sensors_file_name(p8 address_to into, string_address stem,
+                            positive index, string_address tail)
+{
+        positive length = string_length(stem);
+
+        memory_copy_apart(into, stem, length);
+        length += positive_into(into + length, index);
+        string_copy_bounded(into + length, tail, 32);
+}
+
+static fn sensors_chip(string_address root, positive number, bool address_to have_cpu)
+{
+        static string_address names[] = {"k10temp", "coretemp", "amdgpu", "nvme",
+                                         "drivetemp", "acpitz", "nct6775", "it87",
+                                         "zenpower", "cpu_thermal", "mystery"};
+        string_address name = names[sensors_next(array_count(names))];
+        p8 directory[64];
+        p8 file[64];
+        p8 relative[128];
+
+        sensors_file_name(directory, "class/hwmon/hwmon", number, "");
+        path_join(relative, sizeof(relative), directory, "name");
+        sensors_put(root, relative, name);
+        //      A name file with its newline, as the kernel writes it,
+        //      more often than not.
+        if (sensors_next(3))
+        {
+                p8 named[32];
+
+                string_copy_bounded(named, name, sizeof(named) - 1);
+                model_append(named, "");
+                positive length = string_length(named);
+                named[length] = '\n';
+                named[length + 1] = end;
+                sensors_put(root, relative, named);
+        }
+
+        string_address label = null;
+        positive index = 1;
+        bool cpu = false;
+
+        if (string_equals(name, "k10temp") || string_equals(name, "zenpower") ||
+            string_equals(name, "coretemp"))
+        {
+                string_address want = string_equals(name, "coretemp")
+                                          ? "Package id 0\n"
+                                          : sensors_next(2) ? "Tctl\n" : "Tdie\n";
+                cpu = true;
+                label = "cpu";
+                //      The label at a drawn place, or none: temp1 then.
+                if (sensors_next(3))
+                {
+                        index = 1 + sensors_next(3);
+                        sensors_file_name(file, "/temp", index, "_label");
+                        string_copy_bounded(relative, directory, sizeof(relative));
+                        model_append(relative, file);
+                        sensors_put(root, relative, want);
+                }
+                //      A decoy label ahead of it, which must not be taken.
+                if (index > 1 && sensors_next(2))
+                {
+                        sensors_file_name(file, "/temp", index - 1, "_label");
+                        string_copy_bounded(relative, directory, sizeof(relative));
+                        model_append(relative, file);
+                        sensors_put(root, relative, "Tccd1\n");
+                }
+        }
+        else if (string_equals(name, "cpu_thermal"))
+                cpu = true, label = "cpu";
+        else if (string_equals(name, "amdgpu"))
+                label = "gpu";
+        else if (string_equals(name, "nvme"))
+                label = "nvme";
+        else if (string_equals(name, "drivetemp"))
+                label = "disk";
+        else if (string_equals(name, "acpitz"))
+                label = "acpi";
+
+        if (cpu)
+        {
+                if (address_to have_cpu)
+                        label = null;
+                address_to have_cpu = true;
+        }
+
+        //      Every chip gets temperatures on three places; only the one
+        //      the rules pick may show.
+        for (positive at = 1; at <= 3; at++)
+        {
+                sensors_value value;
+
+                sensors_draw(address_of value, 20000, 110000);
+                sensors_file_name(file, "/temp", at, "_input");
+                string_copy_bounded(relative, directory, sizeof(relative));
+                model_append(relative, file);
+                if (sensors_next(5))
+                        sensors_put(root, relative, value.text);
+                else if (at == index && label)
+                        continue;
+                if (at == index && label)
+                        model_temperature(label, address_of value);
+        }
+
+        if (label && string_equals(label, "gpu"))
+        {
+                sensors_value value;
+                positive which = sensors_next(3);
+
+                sensors_draw(address_of value, 1000000, 300000000);
+                if (which < 2)
+                {
+                        string_copy_bounded(relative, directory, sizeof(relative));
+                        model_append(relative, which ? "/power1_input" : "/power1_average");
+                        sensors_put(root, relative, value.text);
+                        if (value.number && model_room() && value.value > 0 &&
+                            value.value < 2000000000)
+                        {
+                                model_item(model_power, "gpu");
+                                model_watts(model_power, (positive)value.value);
+                        }
+                }
+        }
+
+        for (positive at = 1; at <= 8; at++)
+        {
+                if (sensors_next(3))
+                        continue;
+
+                sensors_value value;
+
+                sensors_draw(address_of value, 300, 9000);
+                sensors_file_name(file, "/fan", at, "_input");
+                string_copy_bounded(relative, directory, sizeof(relative));
+                model_append(relative, file);
+                sensors_put(root, relative, value.text);
+                model_fan(address_of value);
+        }
+}
+
+static fn sensors_supplies(string_address root)
+{
+        positive batteries = sensors_next(3);
+        bool mains = sensors_next(2);
+
+        //      power_supply is walked in name order: AC before BAT0.
+        if (mains)
+        {
+                positive shape = sensors_next(4);
+
+                sensors_put(root, "class/power_supply/AC/type", "Mains\n");
+                sensors_put(root, "class/power_supply/AC/online",
+                            shape == 0   ? "1\n"
+                            : shape == 1 ? "0\n"
+                            : shape == 2 ? "2\n"
+                                         : "on\n");
+                if (shape != 3 && model_room() && shape < 2)
+                {
+                        model_item(model_power, "ac");
+                        model_append(model_power, shape == 0 ? "on" : "off");
+                }
+        }
+
+        for (positive at = 0; at < batteries; at++)
+        {
+                p8 directory[64];
+                p8 relative[128];
+                bool device = sensors_next(4) == 0;
+                sensors_value capacity;
+
+                sensors_file_name(directory, "class/power_supply/BAT", at, "");
+                path_join(relative, sizeof(relative), directory, "type");
+                sensors_put(root, relative, "Battery\n");
+                if (device)
+                {
+                        path_join(relative, sizeof(relative), directory, "scope");
+                        sensors_put(root, relative, "Device\n");
+                }
+                sensors_draw(address_of capacity, 1, 100);
+                path_join(relative, sizeof(relative), directory, "capacity");
+                sensors_put(root, relative, capacity.text);
+
+                string_address status = sensors_next(2) ? "Discharging\n"
+                                                        : "Not charging\n";
+                bool has_status = sensors_next(4) != 0;
+
+                if (has_status)
+                {
+                        path_join(relative, sizeof(relative), directory, "status");
+                        sensors_put(root, relative, status);
+                }
+
+                positive power = 0;
+                positive how = sensors_next(3);
+
+                if (how == 0)
+                {
+                        power = 1000000 + sensors_next(30000000);
+                        p8 text[24];
+
+                        text[positive_into(text, power)] = end;
+                        path_join(relative, sizeof(relative), directory, "power_now");
+                        sensors_put(root, relative, text);
+                }
+                else if (how == 1)
+                {
+                        positive current = 100000 + sensors_next(3000000);
+                        positive voltage = 7000000 + sensors_next(9000000);
+                        p8 text[24];
+
+                        text[positive_into(text, current)] = end;
+                        path_join(relative, sizeof(relative), directory, "current_now");
+                        sensors_put(root, relative, text);
+                        text[positive_into(text, voltage)] = end;
+                        path_join(relative, sizeof(relative), directory, "voltage_now");
+                        sensors_put(root, relative, text);
+                        power = current * voltage / 1000000;
+                }
+
+                //      A Device battery is not added; one whose capacity is
+                //      not a number is not found at all.
+                if (device || !capacity.number || !model_room())
+                        continue;
+                if (capacity.value < 0 || capacity.value > 100)
+                        continue;
+
+                model_item(model_power, "battery");
+                model_number(model_power, (positive)capacity.value);
+                model_append(model_power, "%");
+                if (has_status)
+                        model_append(model_power, string_equals(status, "Discharging\n")
+                                                      ? " discharging"
+                                                      : " not charging");
+                if (power)
+                {
+                        model_append(model_power, " ");
+                        model_watts(model_power, power);
+                }
+        }
+}
+
+static fn sensors_grammar(void)
+{
+        positive wrong = 0;
+        positive clocks_wrong = 0;
+        positive cases = 600;
+
+        for (positive round = 0; round < cases; round++)
+        {
+                p8 root[128];
+                static monitor_hardware hardware;
+                static system_snapshot sample;
+                static struct snapshot_cpu cpus[9];
+                bool have_cpu = false;
+
+                sensors_file_name(root, (string_address)sensors_base, round, "");
+                sensors_mkdir_parents(root);
+                model_temp[0] = end;
+                model_power[0] = end;
+                model_count = 0;
+
+                //      Chips numbered out of order and sparse, sometimes
+                //      past ten so hwmon10 must come after hwmon9.
+                positive chips = sensors_next(7);
+                positive used_numbers = 0;
+
+                for (positive chip = 0; chip < chips; chip++)
+                {
+                        used_numbers += 1 + sensors_next(6);
+                        sensors_chip(root, used_numbers, address_of have_cpu);
+                }
+
+                sensors_supplies(root);
+
+                //      Processors: the aggregate and up to eight, each with a
+                //      clock or not.
+                positive processors = sensors_next(9);
+                positive sum = 0;
+                positive known = 0;
+                positive want_khz[8];
+
+                cpus[0].id = ~0u;
+                for (positive at = 0; at < processors; at++)
+                {
+                        sensors_value value;
+                        p8 relative[128];
+
+                        cpus[at + 1].id = (unsigned int)at;
+                        sensors_draw(address_of value, 400000, 5800000);
+                        want_khz[at] = 0;
+                        if (!sensors_next(4))
+                                continue;
+                        sensors_file_name(relative, "devices/system/cpu/cpu", at,
+                                          "/cpufreq/scaling_cur_freq");
+                        sensors_put(root, relative, value.text);
+                        if (value.number && value.value > 0 && value.value < 20000000)
+                        {
+                                want_khz[at] = (positive)value.value;
+                                sum += want_khz[at];
+                                known++;
+                        }
+                }
+
+                memory_fill(address_of hardware, 0, sizeof(hardware));
+                memory_fill(address_of sample, 0, sizeof(sample));
+                sample.cpus = cpus;
+                sample.header.cpu_count = (unsigned int)(processors + 1);
+                hardware.root = root;
+                monitor_hardware_read(address_of hardware, address_of sample,
+                                      SYSTEM_NANOSECONDS);
+                sensors_rows(address_of hardware);
+
+                p8 want[4200];
+
+                want[0] = end;
+                if (model_temp[0])
+                {
+                        string_copy_bounded(want, model_temp, sizeof(want));
+                        model_append(want, "|");
+                }
+                if (model_power[0])
+                {
+                        positive length = string_length(want);
+
+                        string_copy_bounded(want + length, model_power,
+                                            sizeof(want) - length);
+                        length = string_length(want);
+                        string_copy_bounded(want + length, "|", sizeof(want) - length);
+                }
+
+                checks++;
+                if (!string_equals(sensors_out, want))
+                {
+                        failures++;
+                        if (wrong++ < 5)
+                                string_format(log, "  FAIL sensors tree %p: got [%s] want [%s]\n",
+                                              round, sensors_out, want);
+                }
+
+                bool clocks_right = hardware.clocks == known &&
+                                    hardware.khz_average == (known ? sum / known : 0);
+
+                for (positive at = 0; at < processors; at++)
+                        clocks_right = clocks_right && hardware.khz[at] == want_khz[at];
+
+                checks++;
+                if (!clocks_right)
+                {
+                        failures++;
+                        if (clocks_wrong++ < 5)
+                                string_format(log, "  FAIL sensors clocks %p: %p known of %p, average %p of %p\n",
+                                              round, hardware.clocks, known,
+                                              hardware.khz_average, known ? sum / known : 0);
+                }
+
+                sensors_remove(root);
+        }
+}
+
+static fn sensors_moments(void)
+{
+        static monitor_hardware hardware;
+        p8 root[128];
+        positive second = SYSTEM_NANOSECONDS;
+
+        sensors_file_name(root, (string_address)sensors_base, 9999, "");
+        sensors_mkdir_parents(root);
+
+        //      Nothing at all: no rows and no clock column.
+        memory_fill(address_of hardware, 0, sizeof(hardware));
+        hardware.root = root;
+        monitor_hardware_read(address_of hardware, null, second);
+        sensors_rows(address_of hardware);
+        sensors_expect("an empty tree draws no rows", sensors_out[0] == end);
+        sensors_expect("and has no clock", hardware.clocks == 0);
+
+        //      A drive's temperature is held between reads five seconds apart.
+        sensors_put(root, "class/hwmon/hwmon0/name", "nvme\n");
+        sensors_put(root, "class/hwmon/hwmon0/temp1_input", "41850\n");
+        sensors_put(root, "class/hwmon/hwmon1/name", "k10temp\n");
+        sensors_put(root, "class/hwmon/hwmon1/temp1_input", "55000\n");
+        hardware.found = false;
+        monitor_hardware_read(address_of hardware, null, 2 * second);
+        sensors_rows(address_of hardware);
+        sensors_expect("a drive and the processor are read",
+              string_equals(sensors_out, " temp   nvme 42\xc2\xb0" "C  cpu 55\xc2\xb0" "C|"));
+        sensors_put(root, "class/hwmon/hwmon0/temp1_input", "60000\n");
+        sensors_put(root, "class/hwmon/hwmon1/temp1_input", "70000\n");
+        monitor_hardware_read(address_of hardware, null, 3 * second);
+        sensors_rows(address_of hardware);
+        sensors_expect("the drive is held and the processor read again",
+              string_equals(sensors_out, " temp   nvme 42\xc2\xb0" "C  cpu 70\xc2\xb0" "C|"));
+        monitor_hardware_read(address_of hardware, null, 7 * second + 1);
+        sensors_rows(address_of hardware);
+        sensors_expect("until five seconds have gone",
+              string_equals(sensors_out, " temp   nvme 60\xc2\xb0" "C  cpu 70\xc2\xb0" "C|"));
+
+        //      The drive unplugged: gone at once, not drawn from its last
+        //      reading, even though it is a slow one.
+        p8 gone[160];
+
+        path_join(gone, sizeof(gone), root, "class/hwmon/hwmon0");
+        sensors_remove(gone);
+        monitor_hardware_read(address_of hardware, null, 13 * second);
+        sensors_rows(address_of hardware);
+        sensors_expect("a chip that went is not drawn",
+              string_equals(sensors_out, " temp   cpu 70\xc2\xb0" "C|"));
+        sensors_expect("and the chips are found again", hardware.found == false);
+
+        //      A chip that arrived is found with the next search, the one a
+        //      failed read asked for.
+        sensors_put(root, "class/hwmon/hwmon7/name", "amdgpu\n");
+        sensors_put(root, "class/hwmon/hwmon7/temp1_input", "48000\n");
+        sensors_put(root, "class/hwmon/hwmon7/power1_average", "5150000\n");
+        sensors_put(root, "class/hwmon/hwmon7/fan1_input", "1800\n");
+        monitor_hardware_read(address_of hardware, null, 14 * second);
+        sensors_rows(address_of hardware);
+        sensors_expect("a chip that arrived is drawn",
+              string_equals(sensors_out, " temp   cpu 70\xc2\xb0" "C  gpu 48\xc2\xb0" "C  fan 1800 rpm| power  gpu 5.2 W|"));
+
+        //      And one that arrives with nothing failing waits for the
+        //      thirty-second search.
+        sensors_put(root, "class/hwmon/hwmon8/name", "acpitz\n");
+        sensors_put(root, "class/hwmon/hwmon8/temp1_input", "50000\n");
+        monitor_hardware_read(address_of hardware, null, 20 * second);
+        sensors_rows(address_of hardware);
+        sensors_expect("a quiet arrival waits for the search",
+              string_search_folded(sensors_out, "acpi") == null);
+        monitor_hardware_read(address_of hardware, null, 45 * second);
+        sensors_rows(address_of hardware);
+        sensors_expect("and is drawn after it",
+              string_search_folded(sensors_out, "acpi 50\xc2\xb0" "C") != null);
+
+        //      The energy counter: nothing on the first read, watts from
+        //      its climb after, and nothing again when it wraps.
+        sensors_put(root, "class/powercap/intel-rapl:0/energy_uj", "1000000\n");
+        hardware.found = false;
+        monitor_hardware_read(address_of hardware, null, 50 * second);
+        sensors_rows(address_of hardware);
+        sensors_expect("an energy counter read once gives no watts",
+              string_search_folded(sensors_out, "power  gpu 5.2 W|") != null);
+        sensors_put(root, "class/powercap/intel-rapl:0/energy_uj", "13500000\n");
+        monitor_hardware_read(address_of hardware, null, 50 * second + second / 2);
+        sensors_rows(address_of hardware);
+        sensors_expect("and 12.5 J over half a second is 25 W",
+              string_search_folded(sensors_out, "power  gpu 5.2 W  cpu 25.0 W|") != null);
+        sensors_put(root, "class/powercap/intel-rapl:0/energy_uj", "20\n");
+        monitor_hardware_read(address_of hardware, null, 51 * second);
+        sensors_rows(address_of hardware);
+        sensors_expect("a wrapped counter gives none that frame",
+              string_search_folded(sensors_out, "cpu 25") == null &&
+                  string_search_folded(sensors_out, "power  gpu 5.2 W|") != null);
+
+        sensors_remove(root);
+
+        //      More chips than there is room for: sixteen sensors are kept,
+        //      in hwmon order, and the row is cut at the screen's width.
+        sensors_mkdir_parents(root);
+        for (positive at = 0; at < 40; at++)
+        {
+                p8 relative[96];
+
+                sensors_file_name(relative, "class/hwmon/hwmon", at, "/name");
+                sensors_put(root, relative, "nvme\n");
+                sensors_file_name(relative, "class/hwmon/hwmon", at, "/temp1_input");
+                sensors_put(root, relative, at < 10 ? "30000\n" : "31000\n");
+        }
+        memory_fill(address_of hardware, 0, sizeof(hardware));
+        hardware.root = root;
+        monitor_hardware_read(address_of hardware, null, second);
+        sensors_expect("forty chips keep sixteen sensors", hardware.count == MONITOR_SENSORS);
+        sensors_expect("the lowest sixteen in hwmon order, whatever readdir gave",
+              string_search_folded(hardware.sensor[9].path, "/hwmon9/temp1_input") &&
+                  string_search_folded(hardware.sensor[10].path, "/hwmon10/temp1_input") &&
+                  string_search_folded(hardware.sensor[15].path, "/hwmon15/temp1_input"));
+        sensors_rows(address_of hardware);
+        {
+                positive drawn = 0;
+
+                for (string_address at = sensors_out;
+                     (at = string_search_folded(at, "nvme ")); at++)
+                        drawn++;
+                sensors_expect("and all sixteen are drawn", drawn == MONITOR_SENSORS);
+        }
+        sensors_remove(root);
+}
+
+b32 main(void)
+{
+        p8 digits[24];
+
+        digits[positive_into(digits, (positive)system_call_1(syscall(getpid), 0))] = end;
+        string_copy_bounded(sensors_base, "/tmp/dawning-sensors.", sizeof(sensors_base));
+        model_append(sensors_base, digits);
+        model_append(sensors_base, "/t");
+        sensors_grammar();
+        sensors_moments();
+        {
+                p8 top[96];
+
+                path_head_copy(top, sizeof(top), sensors_base);
+                sensors_remove(top);
+        }
+        return test_report(null);
+}
+#endif /* CHECK_sensors */
+
 #ifdef CHECK_probe
 #include "../src/lib.util.c"
 #include "../src/moonwater/spark.c"
