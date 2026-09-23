@@ -79453,7 +79453,7 @@ static p16 compression_probs[768];
 static volatile positive compression_sink;
 static p32 (*volatile compression_crc32_call)(p32,address_any,positive) = hash_crc32;
 static p64 (*volatile compression_crc64_call)(p64,address_any,positive) = hash_crc64;
-static address_any (*volatile compression_copy_call)(address_any,address_any,positive) = memory_copy_apart;
+static __typeof__(memory_copy_apart) *volatile compression_copy_call = memory_copy_apart;
 static positive (*volatile compression_huffman_call)(address_any,address_any,positive,address_any) = huffman_encode_back;
 
 static __attribute__((noinline)) p32 compression_crc_scalar(p32 crc, p8 address_to p, positive n)
