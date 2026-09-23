@@ -24406,10 +24406,91 @@ static fn model_room(positive allowed)
         CASE(56); CASE(57); CASE(58); CASE(59); CASE(60); CASE(61); CASE(62);  \
         CASE(63); CASE(64)
 
+/*
+        A bound past the end of memory. strnlen(s, SIZE_MAX) and
+        strncmp(a, b, (size_t)-1) are legal C, "no bound" to the imported
+        code that writes them, and the narrow x86_64 bodies and every riscv64
+        one computed the end as start plus bound, which wrapped below the
+        string: string_length_max answered SIZE_MAX, string_first_of_max
+        missed a byte that was there, string_compare_max called two strings
+        equal, and string_duplicate_max then took SIZE_MAX plus one bytes --
+        none -- and copied the rest of memory into it. Every bound whose sum
+        with the address overflows, from one past to all of it, at every x86
+        feature tier, on a subject whose terminator is the page's last byte.
+*/
+static fn unbounded_guard_edge(void)
+{
+#if X64
+        p8 wide = cpu_has_avx2, widest = cpu_has_avx512;
+        positive tiers = 3;
+#else
+        positive tiers = 1;
+#endif
+        static b8 letters[256];
+
+        for (positive c = 'a'; c <= 'z'; c++)
+                letters[c] = 1;
+
+        for (positive tier = 0; tier < tiers; tier++)
+        {
+#if X64
+                cpu_has_avx2 = tier < 2 ? wide : 0;
+                cpu_has_avx512 = tier < 1 ? widest : 0;
+#endif
+                for (positive suffix = 1; suffix <= 72; suffix++)
+                {
+                        string_address source = source_edge - suffix;
+                        string_address twin = twin_edge - suffix;
+                        positive start = (positive)source;
+                        positive bounds[] = {positive_max, positive_max / 2 + 1,
+                                             0 - start, 0 - start + 1,
+                                             0 - start + suffix, positive_max - 7};
+
+                        for (positive i = 0; i < suffix; i++)
+                                source[i] = twin[i] =
+                                    (p8)('a' + (i * 7 + suffix) % 23);
+                        source[suffix - 1] = twin[suffix - 1] = 0;
+                        if (suffix > 1)
+                                source[suffix - 2] = (p8)'z';
+
+                        for (positive b = 0; b < array_count(bounds); b++)
+                        {
+                                positive bound = bounds[b];
+
+                                judge((string_address)"string_length_max past memory",
+                                      bound, suffix,
+                                      (string_length_max)(source, bound), suffix - 1);
+                                judge((string_address)"string_first_of_max past memory",
+                                      bound, suffix,
+                                      (positive)(string_first_of_max)(source, bound, (p8)'z'),
+                                      suffix > 1 ? (positive)(source + suffix - 2) : 0);
+                                judge((string_address)"string_span_max past memory",
+                                      bound, suffix,
+                                      (string_span_max)(source, bound, letters), suffix - 1);
+                                if (suffix > 1)
+                                        judge((string_address)"string_compare_max past memory",
+                                              bound, suffix,
+                                              (positive)((string_compare_max)(source, twin, bound) != 0),
+                                              (positive)(twin[suffix - 2] != 'z'));
+                                string_address copy = string_duplicate_max(source, bound);
+                                judge((string_address)"string_duplicate_max past memory",
+                                      bound, suffix,
+                                      copy ? string_length(copy) : positive_max, suffix - 1);
+                                memory_give(copy);
+                        }
+                }
+        }
+#if X64
+        cpu_has_avx2 = wide;
+        cpu_has_avx512 = widest;
+#endif
+}
+
 b32 main(void)
 {
         fence_open();
 
+        unbounded_guard_edge();
         EVERY_BOUND(LENGTH_CASE);
         EVERY_BOUND(COMPARE_CASE);
         EVERY_BOUND(COPY_CASE);

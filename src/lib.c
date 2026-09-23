@@ -5931,7 +5931,14 @@ __asm__(
     //      ways out.
     //
     "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n   movzbl %dl, %r8d  # the byte hunted, out of the way of the broadcast\n"
-    "lea (%rdi,%rsi), %r9  # one past the last byte we may report\n"
+    //
+    //      One past the last byte, but never past the end of memory: a
+    //      bound of SIZE_MAX is strnlen's and strndup's "no bound", and the
+    //      sum wrapped below the string, so a byte that was there was
+    //      reported missing.
+    //
+    "mov %rdi, %r9\n   add %rsi, %r9  # one past the last byte we may report\n"
+    "jnc 31f\n   mov $-1, %r9  # a bound past the end of memory is the end\n31:\n"
     "mov %rsi, %rdx  # what is left to look at\n"
     ASM_USERSPACE_WIDE(
         WIDE_PICK_MAX
@@ -6190,7 +6197,13 @@ __asm__(
         "7:\n" ASM_NARROW("cpu_has_avx2", "5f")
         WIDE_LENGTH_MAX(AVX2_WIDTH, AVX2_ZEROED, AVX2_ZEROS, AVX2_LEAVE, "jmp 5f\n", "5f")
     )
-    "5:  test %rdx, %rdx\n   jz 3f\n   lea (%rdi,%rdx), %r9  # one past the last byte we may report\n"
+    //
+    //      Saturated, as string_first_of_max's is: a bound of SIZE_MAX
+    //      wrapped the end below the string and answered SIZE_MAX, which
+    //      strndup then asked memory_take for plus one.
+    //
+    "5:  test %rdx, %rdx\n   jz 3f\n   mov %rdi, %r9\n   add %rdx, %r9  # one past the last byte we may report\n"
+    "jnc 31f\n   mov $-1, %r9\n31:\n"
     "mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n   mov (%rdi), %rdx\n"
     "shl $3, %ecx\n   mov $1, %rax\n   shl %cl, %rax\n   dec %rax\n"
     "or %rax, %rdx  # ones below where we are, so it cannot end there\n"
@@ -31420,6 +31433,7 @@ __asm__(
     "beqz a1, 8f\n   andi a2, a2, 0xff\n   lui t0, 0x1010\n   addi t0, t0, 257\n"
     "slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n"
     "slli t1, t0, 7\n   mul a3, a2, t0\n   add a4, a0, a1  # one past the last byte we may report\n"
+    "bgeu a4, a0, 31f\n   li a4, -1  # never past the end of memory; see x86_64\n31:\n"
     "andi t2, a0, 7\n   andi a5, a0, -8\n   ld a6, 0(a5)\n   slli t2, t2, 3\n"
     "li a7, -1\n   sll a7, a7, t2\n   addi a1, a2, 1\n   andi a1, a1, 0xff\n"
     "seqz t2, a1\n   add a1, a1, t2  # never zero, never it\n"
@@ -31534,6 +31548,7 @@ __asm__(
     //
     ASM_FUNC(string_compare_max)
     "add a4, a0, a2  # one past the last byte the bound lets either be read at\n"
+    "bgeu a4, a0, 31f\n   li a4, -1  # never past the end of memory: strncmp(a, b, -1)\n31:\n"
     "li t2, 8\n   bltu a2, t2, 2f  # under a word, and no wide step pays for itself\n"
     "xor t2, a0, a1\n   andi t2, t2, 7\n"
     "bnez t2, 2f  # residues differ: no aligned pair of words exists\n"
@@ -31611,6 +31626,7 @@ __asm__(
     "beqz a1, 9f\n   lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n"
     "add t0, t0, t1  # 0x0101010101010101\n"
     "slli t1, t0, 7\n   add a4, a0, a1  # one past the last byte we may report\n"
+    "bgeu a4, a0, 31f\n   li a4, -1  # never past the end of memory; see x86_64\n31:\n"
     "andi a3, a0, 7\n   andi a5, a0, -8  # align down: same page, cannot fault\n"
     "ld a6, 0(a5)\n   beqz a3, 1f\n   slli a3, a3, 3\n   li a7, 1\n"
     "sll a7, a7, a3\n   addi a7, a7, -1\n   or a6, a6, a7  # ones below the string, so it cannot end there\n"
@@ -44298,6 +44314,7 @@ ASM_FUNC(positive_to_string)
     // mean the byte test cannot also be the loop branch.
     ASM_FUNC(string_span_max)
     "mv a3, a0\n   add a1, a0, a1\n"
+    "bgeu a1, a0, 31f\n   li a1, -1  # never past the end of memory\n31:\n"
     "1:  bgeu a0, a1, 9f\n   lbu t1, 0(a0)\n   add t2, a2, t1\n   lbu t3, 0(t2)\n"
     "beqz t3, 9f\n   addi a0, a0, 1\n   bgeu a0, a1, 9f\n"
     "lbu t1, 0(a0)\n   add t2, a2, t1\n   lbu t3, 0(t2)\n"
