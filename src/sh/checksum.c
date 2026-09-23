@@ -286,6 +286,11 @@ static fn checksum_name_put(writer write, string_address name)
 */
 static b32 checksum_blame(string_address name, string_address reason)
 {
+        //      Standard input with no operand at all arrives without a name,
+        //      and quoting nothing read address zero: cksum < dir died of
+        //      SIGSEGV where coreutils says "cksum: -: Is a directory".
+        if (!name)
+                name = (string_address) "-";
         text_flush();
         return string_report(writer_stderr, 0, "%s: %w: %s\n", text_name,
                              checksum_name_put, name, reason);
