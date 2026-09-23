@@ -1902,19 +1902,23 @@ typedef struct build_asm_group
 static build_asm_group build_asm_groups[BUILD_ASM_GROUPS];
 static positive build_asm_group_count;
 
+static string_address build_arch_name(string_address word);
+
+/*      An architecture as the asm grouper spells it, from the one table that
+        says which words name one: this kept a table of its own, and x86-64
+        and arm were a machine to build.sh and to --arch and an unknown
+        architecture in a "#> arch" line. */
 static string_address build_asm_normalize(string_address name)
 {
-        if (word_is(name, "x86_64") || word_is(name, "amd64") ||
-            word_is(name, "x64"))
+        string_address machine = build_arch_name(name);
+
+        if (!machine)
+                return null;
+        if (word_is(machine, "x64"))
                 return "x86_64";
-
-        if (word_is(name, "aarch64") || word_is(name, "arm64"))
+        if (word_is(machine, "arm64"))
                 return "aarch64";
-
-        if (word_is(name, "riscv64") || word_is(name, "riscv"))
-                return "riscv64";
-
-        return null;
+        return machine;
 }
 
 static bool build_asm_fail(string_address source, positive line,

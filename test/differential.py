@@ -20355,6 +20355,40 @@ int main(void) {
 
 
 class HarnessBuildTools(unittest.TestCase):
+    def test_architecture_names_agree(self):
+        """build.sh's arch_name, build.c's build_arch_name and the asm
+        grouper's build_asm_normalize are three tables answering one
+        question, and they disagreed: x86-64 and arm were a machine to the
+        first two and an unknown architecture to the third. Every spelling
+        any of them takes must be taken by all three, as the same machine."""
+        root = HARNESS_ROOT
+        machine = {"x64": "x64", "x86_64": "x64", "arm64": "arm64",
+                   "aarch64": "arm64", "riscv64": "riscv64"}
+        shell = (root / "build.sh").read_text()
+        block = shell[shell.index("arch_name() {"):]
+        block = block[:block.index("\n}\n")]
+        tables = {"build.sh": {}}
+        for words, name in re.findall(r"^\s*([\w| -]+)\)\s*echo\s+(\w+)", block, re.M):
+            for word in words.split("|"):
+                tables["build.sh"][word.strip()] = machine[name]
+        source = (root / "src/build/build.c").read_text()
+        for function in ("build_arch_name", "build_asm_normalize"):
+            start = re.search(r"static string_address %s\([^;{]*\)\s*\{" % function, source).start()
+            body = source[start:source.index("\n}\n", start)]
+            if "build_arch_name(" in body.split("{", 1)[1]:
+                tables[function] = dict(tables["build_arch_name"])
+                continue
+            tables[function] = {}
+            for condition, name in re.findall(r"if \(([^;]*?)\)\s*return \"(\w+)\";", body, re.S):
+                for word in re.findall(r'word_is\(\w+, "([^"]+)"\)', condition):
+                    tables[function][word] = machine[name]
+        spellings = set().union(*tables.values())
+        self.assertTrue(spellings >= {"x64", "x86_64", "arm64", "aarch64", "riscv64"}, tables)
+        for spelling in sorted(spellings):
+            answers = {table: names.get(spelling) for table, names in tables.items()}
+            self.assertEqual(len(set(answers.values())), 1,
+                             "%r is %r" % (spelling, answers))
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="moonwater-build-")
         self.work = Path(self.temporary.name)
