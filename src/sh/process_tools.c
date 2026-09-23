@@ -371,7 +371,7 @@ static bool stdbuf_mode(string_address text, bool input,
         return true;
 
 invalid:
-        return string_report(log_error, false, "stdbuf: invalid mode '%s'\n", text);
+        return string_report(log_error, false, "stdbuf: invalid mode '%w'\n", writer_terminal_quoted_name, text);
 }
 
 static bool stdbuf_preload(string_address library)
@@ -479,8 +479,8 @@ static b32 process_stdbuf()
                     forced);
 
         if (target_found && stdbuf_target_kind(target) == STDBUF_ELF_STATIC)
-                return string_report(log_error, 125, "stdbuf: '%s' is statically linked; preload buffering cannot apply\n",
-                              words[0]);
+                return string_report(log_error, 125, "stdbuf: '%w' is statically linked; preload buffering cannot apply\n",
+                              writer_terminal_quoted_name, words[0]);
 
         if (!stdbuf_preload(stdbuf_library))
                 return string_report(log_error, 125, "stdbuf: environment is too large\n");
@@ -1361,9 +1361,9 @@ static bool process_timeout_seen(p8 letter, string_address value)
 
                 if (named < 0 || named > 64)
                 {
-                        return string_report(log_error, false, "timeout: '%s': invalid signal\n"
+                        return string_report(log_error, false, "timeout: '%w': invalid signal\n"
                                                  "Try 'timeout --help' for more information.\n",
-                                      value);
+                                      writer_terminal_quoted_name, value);
                 }
         }
         if (letter == 'k' && value)
@@ -1372,9 +1372,9 @@ static bool process_timeout_seen(p8 letter, string_address value)
 
                 if (!process_timeout_duration(value, address_of after))
                 {
-                        return string_report(log_error, false, "timeout: invalid time interval '%s'\n"
+                        return string_report(log_error, false, "timeout: invalid time interval '%w'\n"
                                                  "Try 'timeout --help' for more information.\n",
-                                      value);
+                                      writer_terminal_quoted_name, value);
                 }
         }
         return true;
@@ -1400,9 +1400,9 @@ static b32 process_timeout()
         string_address interval = program_argument((b32)taking.first++);
 
         if (!process_timeout_duration(interval, address_of duration))
-                return string_report(log_error, 125, "timeout: invalid time interval '%s'\n"
+                return string_report(log_error, 125, "timeout: invalid time interval '%w'\n"
                                                      "Try 'timeout --help' for more information.\n",
-                                     interval);
+                                     writer_terminal_quoted_name, interval);
         if (taking.first >= count)
                 return string_report(log_error, 125, "Try 'timeout --help' for more information.\n");
 

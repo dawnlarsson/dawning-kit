@@ -322,8 +322,8 @@ static b32 text_argmatch(string_address option, string_address value,
                          string_address list, string_address usage)
 {
         text_flush();
-        string_format(writer_stderr, "%s: invalid argument '%s' for '%s'\n%s%s",
-                      text_name, value, option, list, usage ? usage : (string_address) "");
+        string_format(writer_stderr, "%s: invalid argument '%w' for '%w'\n%s%s",
+                      text_name, writer_terminal_quoted_name, value, writer_terminal_quoted_name, option, list, usage ? usage : (string_address) "");
         return string_report(writer_stderr, 1, "Try '%s --help' for more information.\n",
                       text_name);
 }
@@ -25121,8 +25121,8 @@ static bipolar sort_temporary()
         }
 
         text_flush();
-        string_format(writer_stderr, "%s: cannot create temporary file in '%s': %s\n",
-                      text_name, directory, file_reason(handle));
+        string_format(writer_stderr, "%s: cannot create temporary file in '%w': %s\n",
+                      text_name, writer_terminal_quoted_name, directory, file_reason(handle));
         return -1;
 }
 
@@ -26871,8 +26871,8 @@ static bool sort_key_seen(p8 letter, string_address value)
                 if (value[1] && !escaped)
                 {
                         text_flush();
-                        return string_report(writer_stderr, false, "%s: multi-character tab '%s'\n",
-                                      text_name, value);
+                        return string_report(writer_stderr, false, "%s: multi-character tab '%w'\n",
+                                      text_name, writer_terminal_quoted_name, value);
                 }
 
                 tab = escaped ? 0 : value[0];

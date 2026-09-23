@@ -5170,7 +5170,7 @@ static fn numfmt_invalid_value(p8 address_to bytes, positive length)
                 else if (digits && rest < length)
                         reason = "invalid suffix in input";
 
-                string_format(writer_stderr, "numfmt: %s: '%s'%s\n", reason, shown,
+                string_format(writer_stderr, "numfmt: %s: '%w'%s\n", reason, writer_terminal_quoted_name, shown,
                               note);
         }
 
@@ -5270,8 +5270,8 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
                         numfmt_short_form(bytes + sign, whole, sign != 0, shown);
                         text_flush();
                         string_format(writer_stderr,
-                            "numfmt: value too large to be printed: '%s' (consider using --to)\n",
-                            shown);
+                            "numfmt: value too large to be printed: '%w' (consider using --to)\n",
+                            writer_terminal_quoted_name, shown);
                         numfmt.failed = true;
                         numfmt.stop = true;
                         return false;
@@ -5309,8 +5309,8 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
                         shown[take] = end;
                         text_flush();
                         string_format(writer_stderr,
-                            "numfmt: large input value '%s': possible precision loss\n",
-                            shown);
+                            "numfmt: large input value '%w': possible precision loss\n",
+                            writer_terminal_quoted_name, shown);
                 }
         }
 
@@ -5543,11 +5543,11 @@ static bool numfmt_word_refuse(string_address option, string_address value,
 {
         text_flush();
         string_format(writer_stderr,
-                      "numfmt: invalid argument '%s' for '%s'\nValid arguments are:\n",
-                      value, option);
+                      "numfmt: invalid argument '%w' for '%w'\nValid arguments are:\n",
+                      writer_terminal_quoted_name, value, writer_terminal_quoted_name, option);
 
         for (positive at = 0; at < count; at++)
-                string_format(writer_stderr, "  - '%s'\n", words[at]);
+                string_format(writer_stderr, "  - '%w'\n", writer_terminal_quoted_name, words[at]);
 
         return numfmt_hint();
 }
@@ -5623,7 +5623,7 @@ static bool numfmt_fields_refuse(string_address value)
 
         if (!shaped)
                 string_format(writer_stderr,
-                              "numfmt: invalid field value '%s'\n", value);
+                              "numfmt: invalid field value '%w'\n", writer_terminal_quoted_name, value);
         else if (decreasing)
                 string_format(writer_stderr,
                               "numfmt: invalid decreasing range\n");
@@ -5632,7 +5632,7 @@ static bool numfmt_fields_refuse(string_address value)
                               "numfmt: fields are numbered from 1\n");
         else
                 string_format(writer_stderr,
-                              "numfmt: invalid field value '%s'\n", value);
+                              "numfmt: invalid field value '%w'\n", writer_terminal_quoted_name, value);
 
         return numfmt_hint();
 }
@@ -5669,7 +5669,7 @@ static bool numfmt_option_seen(p8 letter, string_address value)
                 {
                         text_flush();
                         return string_report(writer_stderr, false,
-                                      "numfmt: invalid header value '%s'\n", value);
+                                      "numfmt: invalid header value '%w'\n", writer_terminal_quoted_name, value);
                 }
         }
         if (letter == 'r' && value &&
@@ -5688,7 +5688,7 @@ static bool numfmt_option_seen(p8 letter, string_address value)
                 {
                         text_flush();
                         return string_report(writer_stderr, false,
-                                      "numfmt: invalid unit size: '%s'\n", value);
+                                      "numfmt: invalid unit size: '%w'\n", writer_terminal_quoted_name, value);
                 }
 
                 if (letter == 'R')
@@ -5702,7 +5702,7 @@ static bool numfmt_option_seen(p8 letter, string_address value)
         {
                 text_flush();
                 return string_report(writer_stderr, false,
-                              "numfmt: invalid padding value '%s'\n", value);
+                              "numfmt: invalid padding value '%w'\n", writer_terminal_quoted_name, value);
         }
         if (letter == 'u' && value)
         {
@@ -5829,14 +5829,14 @@ static b32 tools_numfmt()
                         text_flush();
                         if (numfmt_format_kind == NUMFMT_FORMAT_NONE)
                                 string_format(writer_stderr,
-                                    "numfmt: format '%s' has no %% directive\n", value);
+                                    "numfmt: format '%w' has no %% directive\n", writer_terminal_quoted_name, value);
                         else if (numfmt_format_kind == NUMFMT_FORMAT_MANY)
                                 string_format(writer_stderr,
-                                    "numfmt: format '%s' has too many %% directives\n", value);
+                                    "numfmt: format '%w' has too many %% directives\n", writer_terminal_quoted_name, value);
                         else
                                 string_format(writer_stderr,
-                                    "numfmt: invalid format '%s', directive must be %%[0]['][-][N][.][N]f\n",
-                                    value);
+                                    "numfmt: invalid format '%w', directive must be %%[0]['][-][N][.][N]f\n",
+                                    writer_terminal_quoted_name, value);
                         return text_done(1);
                 }
                 numfmt.have_format = true;
@@ -7551,8 +7551,8 @@ static b32 dd_complain(string_address message, string_address value)
 {
         text_flush();
         return string_report(writer_stderr, 1,
-                      "dd: %s: '%s'\nTry 'dd --help' for more information.\n",
-                      message, value);
+                      "dd: %s: '%w'\nTry 'dd --help' for more information.\n",
+                      message, writer_terminal_quoted_name, value);
 }
 
 static bool dd_quantity(string_address text, positive address_to out,
@@ -7571,8 +7571,8 @@ static bool dd_quantity(string_address text, positive address_to out,
         {
                 text_flush();
                 string_format(writer_stderr,
-                    "dd: invalid number: '%s': Value too large for defined data type\n",
-                    text);
+                    "dd: invalid number: %w: Value too large for defined data type\n",
+                    writer_shell_quoted_name, text);
                 dd_refused = true;
                 return false;
         }
@@ -7732,8 +7732,8 @@ static positive dd_output(positive handle, string_address name,
                 {
                         text_flush();
                         string_format(writer_stderr,
-                            "dd: failed to turn off O_DIRECT: '%s': %s\n",
-                            name ? name : (string_address)"standard output",
+                            "dd: failed to turn off O_DIRECT: '%w': %s\n",
+                            writer_terminal_quoted_name, name ? name : (string_address)"standard output",
                             file_reason(set));
                 }
         }
@@ -7802,8 +7802,8 @@ static bool dd_truncate_failed(positive handle, string_address output,
         if (told < 0)
         {
                 text_flush();
-                return string_report(writer_stderr, true, "dd: cannot fstat '%s': %s\n",
-                                     output ? output : (string_address)"standard output",
+                return string_report(writer_stderr, true, "dd: cannot fstat '%w': %s\n",
+                                     writer_terminal_quoted_name, output ? output : (string_address)"standard output",
                                      file_reason(told));
         }
 
@@ -7814,8 +7814,8 @@ static bool dd_truncate_failed(positive handle, string_address output,
 
         text_flush();
         return string_report(writer_stderr, true,
-                             "dd: failed to truncate to %p bytes in output file '%s': %s\n",
-                             length, output ? output : (string_address)"standard output",
+                             "dd: failed to truncate to %p bytes in output file '%w': %s\n",
+                             length, writer_terminal_quoted_name, output ? output : (string_address)"standard output",
                              file_reason(refused));
 }
 
@@ -7952,9 +7952,9 @@ static b32 tools_dd(void)
                                             "dd: warning: '0x' is a zero multiplier; use '00x' if that is intended\n");
                                 return string_report(writer_stderr, 1,
                                     dd_overflow
-                                        ? (string_address)"dd: invalid number: '%s': Value too large for defined data type\n"
-                                        : (string_address)"dd: invalid number: '%s'\n",
-                                    value);
+                                        ? (string_address)"dd: invalid number: %w: Value too large for defined data type\n"
+                                        : (string_address)"dd: invalid number: %w\n",
+                                    writer_shell_quoted_name, value);
                         }
                         if (numbers[n].seen)
                                 *numbers[n].seen = true;
@@ -8030,9 +8030,9 @@ static b32 tools_dd(void)
 
                         text_flush();
                         return string_report(writer_stderr, 1,
-                            "dd: unrecognized operand '%s'\n"
+                            "dd: unrecognized operand '%w'\n"
                             "Try 'dd --help' for more information.\n",
-                            argument);
+                            writer_terminal_quoted_name, argument);
                 }
         }
 
@@ -8058,14 +8058,14 @@ static b32 tools_dd(void)
                         string_format(writer_stderr,
                             "dd: warning: '0x' is a zero multiplier; use '00x' if that is intended\n");
                 return string_report(writer_stderr, 1,
-                                     "dd: invalid number: '%s'\n", input_size);
+                                     "dd: invalid number: %w\n", writer_shell_quoted_name, input_size);
         }
 
         if (!obs || obs > positive_max - 31)
         {
                 text_flush();
                 return string_report(writer_stderr, 1,
-                                     "dd: invalid number: '%s'\n", output_size);
+                                     "dd: invalid number: %w\n", writer_shell_quoted_name, output_size);
         }
 
         if ((count_set && count > (positive)bipolar_max) ||
@@ -8090,8 +8090,8 @@ static b32 tools_dd(void)
                 if (opened < 0)
                 {
                         text_flush();
-                        return string_report(writer_stderr, 1, "dd: failed to open '%s': %s\n",
-                                             input, file_reason(opened));
+                        return string_report(writer_stderr, 1, "dd: failed to open %w: %s\n",
+                                             writer_shell_quoted_name, input, file_reason(opened));
                 }
 
                 in_handle = (positive)opened;
@@ -8123,8 +8123,8 @@ static b32 tools_dd(void)
                 if (opened < 0)
                 {
                         text_flush();
-                        return string_report(writer_stderr, 1, "dd: failed to open '%s': %s\n",
-                                             output, file_reason(opened));
+                        return string_report(writer_stderr, 1, "dd: failed to open %w: %s\n",
+                                             writer_shell_quoted_name, output, file_reason(opened));
                 }
 
                 out_handle = (positive)opened;
@@ -8225,8 +8225,8 @@ static b32 tools_dd(void)
                 if (landed < 0)
                 {
                         text_flush();
-                        string_format(writer_stderr, "dd: '%s': cannot seek: %s\n",
-                                      output ? output : (string_address)"standard output",
+                        string_format(writer_stderr, "dd: '%w': cannot seek: %s\n",
+                                      writer_terminal_quoted_name, output ? output : (string_address)"standard output",
                                       file_reason(landed));
                         status = 1;
                 }
@@ -8314,8 +8314,8 @@ static b32 tools_dd(void)
                         {
                                 text_flush();
                                 string_format(writer_stderr,
-                                    "dd: error reading '%s': %s\n",
-                                    input ? input : (string_address)"standard input",
+                                    "dd: error reading '%w': %s\n",
+                                    writer_terminal_quoted_name, input ? input : (string_address)"standard input",
                                     file_reason(got));
                         }
 
@@ -8467,8 +8467,8 @@ static b32 tools_dd(void)
                 else if (done < 0)
                 {
                         text_flush();
-                        string_format(writer_stderr, "dd: fdatasync failed for '%s': %s\n",
-                                      output ? output : (string_address)"standard output",
+                        string_format(writer_stderr, "dd: fdatasync failed for '%w': %s\n",
+                                      writer_terminal_quoted_name, output ? output : (string_address)"standard output",
                                       file_reason(done));
                         result = 1;
                 }
@@ -8481,8 +8481,8 @@ static b32 tools_dd(void)
                 if (done < 0)
                 {
                         text_flush();
-                        string_format(writer_stderr, "dd: fsync failed for '%s': %s\n",
-                                      output ? output : (string_address)"standard output",
+                        string_format(writer_stderr, "dd: fsync failed for '%w': %s\n",
+                                      writer_terminal_quoted_name, output ? output : (string_address)"standard output",
                                       file_reason(done));
                         result = 1;
                 }
@@ -8757,8 +8757,8 @@ static bool dump_od_number_refuse(string_address option, string_address value,
         text_flush();
 
         if (kind == DUMP_OD_NUMBER_SUFFIX)
-                string_format(writer_stderr, "od: invalid suffix in %s argument '%s'\n",
-                              option, value);
+                string_format(writer_stderr, "od: invalid suffix in %s argument '%w'\n",
+                              option, writer_terminal_quoted_name, value);
         else if (kind == DUMP_OD_NUMBER_LARGE)
                 string_format(writer_stderr, "od: %s argument '%s' too large\n",
                               option, value);
@@ -9094,9 +9094,9 @@ static bool dump_od_seen(p8 letter, string_address value)
                 {
                         text_flush();
                         string_format(writer_stderr,
-                                      "od: invalid type string '%s';\n"
+                                      "od: invalid type string '%w';\n"
                                       "this system doesn't provide a %p-byte integral type\n",
-                                      value, dump_od_type_size);
+                                      writer_terminal_quoted_name, value, dump_od_type_size);
                         dump_od_type_failed = true;
                 }
                 else if (kind == DUMP_OD_TYPE_CHARACTER)
@@ -9105,8 +9105,8 @@ static bool dump_od_seen(p8 letter, string_address value)
 
                         text_flush();
                         string_format(writer_stderr,
-                                      "od: invalid character '%s' in type string '%s'\n",
-                                      shown, value);
+                                      "od: invalid character '%s' in type string '%w'\n",
+                                      shown, writer_terminal_quoted_name, value);
                         dump_od_type_failed = true;
                 }
         }
@@ -9118,10 +9118,10 @@ static bool dump_od_seen(p8 letter, string_address value)
                 {
                         text_flush();
                         return string_report(writer_stderr, false,
-                                      "od: invalid argument '%s' for '--endian'\n"
+                                      "od: invalid argument '%w' for '--endian'\n"
                                       "Valid arguments are:\n  - 'little'\n  - 'big'\n"
                                       "Try 'od --help' for more information.\n",
-                                      value);
+                                      writer_terminal_quoted_name, value);
                 }
 
                 dump_arguments.big_endian = value && string_equals(value, "big");
@@ -9150,8 +9150,8 @@ static bool dump_od_seen(p8 letter, string_address value)
 
                         text_flush();
                         return string_report(writer_stderr, false,
-                            "od: invalid output address radix '%s'; it must be one character from [doxn]\n",
-                            shown);
+                            "od: invalid output address radix '%w'; it must be one character from [doxn]\n",
+                            writer_terminal_quoted_name, shown);
                 }
 
                 return true;
@@ -9988,7 +9988,7 @@ static b32 tools_od(void)
                         if (!dump_od_offset(last, address_of offset))
                         {
                                 string_format(writer_stderr,
-                                              "od: invalid offset '%s'\n", last);
+                                              "od: invalid offset '%w'\n", writer_terminal_quoted_name, last);
                                 return text_done(1);
                         }
                         dump_arguments.skip = offset;
@@ -10011,9 +10011,9 @@ static b32 tools_od(void)
         {
                 text_flush();
                 return text_done(string_report(writer_stderr, 1,
-                    "od: extra operand '%s'\nod: compatibility mode supports at most one file\n"
+                    "od: extra operand '%w'\nod: compatibility mode supports at most one file\n"
                     "Try 'od --help' for more information.\n",
-                    program_argument((b32)(taking.first + 1))));
+                    writer_terminal_quoted_name, program_argument((b32)(taking.first + 1))));
         }
 
         if (taking.flags & FILE_FLAG('S'))
@@ -11901,8 +11901,8 @@ static bool diff_context_set(string_address value)
         {
                 text_flush();
                 return string_report(writer_stderr, false,
-                    "diff: invalid context length '%s'\n"
-                    "diff: Try 'diff --help' for more information.\n", value);
+                    "diff: invalid context length '%w'\n"
+                    "diff: Try 'diff --help' for more information.\n", writer_terminal_quoted_name, value);
         }
 
         diff_context = context;
@@ -12029,10 +12029,11 @@ static b32 tools_diff(void)
         {
                 text_flush();
                 string_format(writer_stderr,
-                              "diff: missing operand after '%s'\n"
+                              "diff: missing operand after '%w'\n"
                               "diff: Try 'diff --help' for more information.\n",
                               // The word diff was reading when it ran out,
                               // which is the last one it was handed.
+                              writer_terminal_quoted_name,
                               program_argument(text_argument_count - 1));
                 return text_done(2);
         }
@@ -12040,9 +12041,9 @@ static b32 tools_diff(void)
         {
                 text_flush();
                 string_format(writer_stderr,
-                              "diff: extra operand '%s'\n"
+                              "diff: extra operand '%w'\n"
                               "diff: Try 'diff --help' for more information.\n",
-                              program_argument(first + 2));
+                              writer_terminal_quoted_name, program_argument(first + 2));
                 return text_done(2);
         }
 

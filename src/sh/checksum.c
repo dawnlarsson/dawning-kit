@@ -178,22 +178,22 @@ static b32 checksum_blake2b_length(string_address program, string_address text,
         {
                 text_flush();
                 return text_done(string_report(writer_stderr, 1,
-                    "%s: invalid length: '%s'\n", program, text));
+                    "%s: invalid length: '%w'\n", program, writer_terminal_quoted_name, text));
         }
         if (bits > 512)
         {
                 text_flush();
                 return text_done(string_report(writer_stderr, 1,
-                    "%s: invalid length: '%s'\n"
+                    "%s: invalid length: '%w'\n"
                     "%s: maximum digest length for 'BLAKE2b' is 512 bits\n",
-                    program, text, program));
+                    program, writer_terminal_quoted_name, text, program));
         }
         if (bits % 8)
         {
                 text_flush();
                 return text_done(string_report(writer_stderr, 1,
-                    "%s: invalid length: '%s'\n%s: length is not a multiple of 8\n",
-                    program, text, program));
+                    "%s: invalid length: '%w'\n%s: length is not a multiple of 8\n",
+                    program, writer_terminal_quoted_name, text, program));
         }
 
         address_to bytes = bits ? bits / 8 : 64;
@@ -1605,8 +1605,8 @@ static bool cksum_option_seen(p8 letter, string_address value)
 
         text_flush();
         string_format(writer_stderr,
-            "cksum: invalid argument '%s' for '--algorithm'\nValid arguments are:\n",
-            value);
+            "cksum: invalid argument '%w' for '--algorithm'\nValid arguments are:\n",
+            writer_terminal_quoted_name, value);
         for (positive at = 0; at < array_count(known); at++)
                 string_format(writer_stderr, "  - '%s'\n", known[at]);
         return string_report(writer_stderr, false, "Try 'cksum --help' for more information.\n");
@@ -1655,7 +1655,7 @@ static b32 cksum_main()
         {
                 text_flush();
                 return text_done(string_report(writer_stderr, 1,
-                    "cksum: invalid length: '%s'\n", length));
+                    "cksum: invalid length: '%w'\n", writer_terminal_quoted_name, length));
         }
         if (lengthed && bits && !blake2b && !sha2 && !sha3)
         {
@@ -1674,9 +1674,9 @@ static b32 cksum_main()
         {
                 text_flush();
                 return text_done(string_report(writer_stderr, 1,
-                    "cksum: invalid length: '%s'\n"
-                    "cksum: digest length for '%s' must be 224, 256, 384, or 512\n",
-                    length, sha2 ? (string_address) "SHA2" : (string_address) "SHA3"));
+                    "cksum: invalid length: '%w'\n"
+                    "cksum: digest length for '%w' must be 224, 256, 384, or 512\n",
+                    writer_terminal_quoted_name, length, writer_terminal_quoted_name, sha2 ? (string_address) "SHA2" : (string_address) "SHA3"));
         }
         // The SHA-2 and SHA-3 families need their width said, before any
         // complaint about the other mode's options.

@@ -4102,20 +4102,20 @@ static b32 file_word_choose(string_address program, string_address option,
         if (answer >= 0 && !ambiguous)
                 return answer;
 
-        string_format(log_error, "%s: %s argument '%s' for '%s'\nValid arguments are:\n",
-                      program, ambiguous ? "ambiguous" : "invalid", value, option);
+        string_format(log_error, "%s: %s argument '%w' for '%w'\nValid arguments are:\n",
+                      program, ambiguous ? "ambiguous" : "invalid", writer_terminal_quoted_name, value, writer_terminal_quoted_name, option);
 
         for (positive i = 0; i < count; i++)
         {
                 if (i && !words[i].alone && words[i].answer == words[i - 1].answer)
                 {
-                        string_format(log_error, ", '%s'", words[i].word);
+                        string_format(log_error, ", '%w'", writer_terminal_quoted_name, words[i].word);
                         continue;
                 }
 
                 if (i)
                         log_error("\n", 1);
-                string_format(log_error, "  - '%s'", words[i].word);
+                string_format(log_error, "  - '%w'", writer_terminal_quoted_name, words[i].word);
         }
 
         log_error("\n", 1);
@@ -8816,8 +8816,8 @@ static bool ls_count_option(string_address value, string_address what,
         if (!value || !string_digits_checked(address_of at, 10, address_of parsed) ||
             string_get(at) || !string_get(value))
         {
-                return string_report(log_error, false, "%s: invalid %s: '%s'\n", ls_program, what,
-                              value ? value : (string_address) "");
+                return string_report(log_error, false, "%s: invalid %s: '%w'\n", ls_program, what,
+                              writer_terminal_quoted_name, value ? value : (string_address) "");
         }
 
         address_to into = parsed;
@@ -9250,14 +9250,14 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                 else if (!string_equals(style, "locale"))
                 {
                         return string_report(log_error, 2,
-                                      "%s: invalid argument '%s' for 'time style'\n"
+                                      "%s: invalid argument '%w' for 'time style'\n"
                                       "Valid arguments are:\n"
                                       "  - [posix-]full-iso\n"
                                       "  - [posix-]long-iso\n"
                                       "  - [posix-]iso\n"
                                       "  - [posix-]locale\n"
                                       "  - +FORMAT (e.g., +%%H:%%M) for a 'date'-style format\n",
-                                      program, style);
+                                      program, writer_terminal_quoted_name, style);
                 }
         }
         if (ls_selected.stamp == 'M')
@@ -14995,14 +14995,14 @@ static bool du_time_style_read(string_address style)
         else
         {
                 string_format(log_error,
-                              "du: invalid argument '%s' for 'time style'\n"
+                              "du: invalid argument '%w' for 'time style'\n"
                               "Valid arguments are:\n"
                               "  - full-iso\n"
                               "  - long-iso\n"
                               "  - iso\n"
                               "  - +FORMAT (e.g., +%%H:%%M) for a 'date'-style format\n"
                               "Try 'du --help' for more information.\n",
-                              style);
+                              writer_terminal_quoted_name, style);
                 return false;
         }
 
@@ -15060,8 +15060,8 @@ static b32 file_du()
 
                 if (!given)
                         return string_report(log_error, 1,
-                                             "du: invalid maximum depth '%s'\n",
-                                             (string_address) "");
+                                             "du: invalid maximum depth '%w'\n",
+                                             writer_terminal_quoted_name, (string_address) "");
 
                 negative = string_is(written, '-');
 
@@ -15070,8 +15070,8 @@ static b32 file_du()
 
                 if (!string_digits_exact(written, address_of maximum))
                         return string_report(log_error, 1,
-                                             "du: invalid maximum depth '%s'\n",
-                                             given);
+                                             "du: invalid maximum depth '%w'\n",
+                                             writer_terminal_quoted_name, given);
 
                 du_maximum = negative ? 0 : maximum;
         }
@@ -15852,8 +15852,8 @@ static fn chmod_report(string_address shown, chmod_outcome address_to out)
 
         case CHMOD_INVALID:
                 if (!chmod_quiet)
-                        string_format(log_error, "chmod: invalid mode: '%s'\n",
-                                      chmod_specification);
+                        string_format(log_error, "chmod: invalid mode: '%w'\n",
+                                      writer_terminal_quoted_name, chmod_specification);
                 chmod_status = 1;
                 return;
 
@@ -16249,8 +16249,8 @@ static b32 file_chmod()
 
         if (!chmod_referenced &&
             !file_mode_of(chmod_specification, 0, false, address_of mode_probe))
-                return string_report(log_error, 1, "chmod: invalid mode: '%s'\n",
-                                     chmod_specification);
+                return string_report(log_error, 1, "chmod: invalid mode: '%w'\n",
+                                     writer_terminal_quoted_name, chmod_specification);
 
         chmod_umask = file_umask();
 
@@ -16879,8 +16879,8 @@ static bool chown_spec_read(string_address who, bipolar address_to user,
 
         if (string_get(who + length) && !string_is(who + length, ':') &&
             !string_is(who + length, '.'))
-                return string_report(log_error, false, "%s: invalid spec: '%s'\n",
-                                     chown_program, who);
+                return string_report(log_error, false, "%s: invalid spec: '%w'\n",
+                                     chown_program, writer_terminal_quoted_name, who);
 
         string_address rest = null;
 
@@ -16892,16 +16892,16 @@ static bool chown_spec_read(string_address who, bipolar address_to user,
         //      on either side of it names nobody in particular, which is
         //      what --from= means and is not a refusal.
         if (length && rest && !string_get(rest))
-                return string_report(log_error, false, "%s: invalid spec: '%s'\n",
-                                     chown_program, who);
+                return string_report(log_error, false, "%s: invalid spec: '%w'\n",
+                                     chown_program, writer_terminal_quoted_name, who);
 
         if (length > 0)
         {
                 address_to user = file_identity_of(name, false);
 
                 if (address_to user < 0)
-                        return string_report(log_error, false, "%s: invalid user: '%s'\n",
-                                             chown_program, who);
+                        return string_report(log_error, false, "%s: invalid user: '%w'\n",
+                                             chown_program, writer_terminal_quoted_name, who);
         }
 
         if (rest && string_get(rest))
@@ -16909,8 +16909,8 @@ static bool chown_spec_read(string_address who, bipolar address_to user,
                 address_to group = file_identity_of(rest, true);
 
                 if (address_to group < 0)
-                        return string_report(log_error, false, "%s: invalid group: '%s'\n",
-                                             chown_program, who);
+                        return string_report(log_error, false, "%s: invalid group: '%w'\n",
+                                             chown_program, writer_terminal_quoted_name, who);
         }
 
         return true;
@@ -16987,8 +16987,8 @@ static b32 file_chown_common(string_address program, bool groups_only)
                 if (first >= count)
                         return string_report(log_error, 1, "%s: missing operand\n", program);
 
-                return string_report(log_error, 1, "%s: missing operand after '%s'\n",
-                                     program, program_argument((b32)(count - 1)));
+                return string_report(log_error, 1, "%s: missing operand after '%w'\n",
+                                     program, writer_terminal_quoted_name, program_argument((b32)(count - 1)));
         }
 
         if (like)
@@ -17036,7 +17036,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
                 if (chown_group < 0 && string_get(who))
                 {
-                        return string_report(log_error, 1, "%s: invalid group: '%s'\n", program, who);
+                        return string_report(log_error, 1, "%s: invalid group: '%w'\n", program, writer_terminal_quoted_name, who);
                 }
 
                 chown_paths(first, count);
@@ -19524,8 +19524,8 @@ static b32 file_mkdir()
                                0777, true, mask,
                                address_of mode, address_of touched)))
         {
-                return string_report(log_error, 1, "mkdir: invalid mode '%s'\n",
-                              file_option_value(address_of taking, 'm'));
+                return string_report(log_error, 1, "mkdir: invalid mode '%w'\n",
+                              writer_terminal_quoted_name, file_option_value(address_of taking, 'm'));
         }
 
         b32 status = 0;
@@ -19795,8 +19795,8 @@ static b32 file_mknod()
         {
                 if (file_operand_count > 2)
                 {
-                        string_format(log_error, "mknod: extra operand '%s'\n",
-                                      file_operand_at(2));
+                        string_format(log_error, "mknod: extra operand '%w'\n",
+                                      writer_terminal_quoted_name, file_operand_at(2));
                         /* GNU names the first spare word always, and adds the
                            fifo trailer only when both a major and a minor
                            were given (`node p 1` vs `node p 1 2`). */
@@ -19808,8 +19808,8 @@ static b32 file_mknod()
         }
         else if (file_operand_count < 4)
         {
-                string_format(log_error, "mknod: missing operand after '%s'\n",
-                              file_operand_at(file_operand_count - 1));
+                string_format(log_error, "mknod: missing operand after '%w'\n",
+                              writer_terminal_quoted_name, file_operand_at(file_operand_count - 1));
 
                 //      The line about what a special file needs is written
                 //      only when nothing but the name and the type were
@@ -19820,8 +19820,8 @@ static b32 file_mknod()
                 return 1;
         }
         else if (file_operand_count > 4)
-                return string_report(log_error, 1, "mknod: extra operand '%s'\n",
-                                     file_operand_at(4));
+                return string_report(log_error, 1, "mknod: extra operand '%w'\n",
+                                     writer_terminal_quoted_name, file_operand_at(4));
 
         string_address path = file_operand_at(0);
         p8 type = string_get(file_operand_at(1));
@@ -19836,13 +19836,13 @@ static b32 file_mknod()
 
                 if (!file_device_number(file_operand_at(2), address_of major))
                         return string_report(log_error, 1,
-                                      "mknod: invalid major device number '%s'\n",
-                                      file_operand_at(2));
+                                      "mknod: invalid major device number '%w'\n",
+                                      writer_terminal_quoted_name, file_operand_at(2));
 
                 if (!file_device_number(file_operand_at(3), address_of minor))
                         return string_report(log_error, 1,
-                                      "mknod: invalid minor device number '%s'\n",
-                                      file_operand_at(3));
+                                      "mknod: invalid minor device number '%w'\n",
+                                      writer_terminal_quoted_name, file_operand_at(3));
 
                 kind = type == 'b' ? MODE_BLOCK : MODE_CHARACTER;
                 device = file_device(major, minor);
@@ -19858,8 +19858,8 @@ static b32 file_mknod()
                 }
         }
         else
-                return string_report(log_error, 1, "mknod: invalid device type '%s'\n",
-                              file_operand_at(1));
+                return string_report(log_error, 1, "mknod: invalid device type '%w'\n",
+                              writer_terminal_quoted_name, file_operand_at(1));
 
 
         b32 status = file_make_node((string_address) "mknod", path, kind,
@@ -20533,8 +20533,8 @@ static bool split_chunks(string_address text, split_chunk address_to chunk)
         if (!split_chunk_decimal(text, address_of rest, address_of first) ||
             !first)
                 return string_report(log_error, false,
-                                     "split: invalid number of chunks: '%s'\n",
-                                     text);
+                                     "split: invalid number of chunks: '%w'\n",
+                                     writer_terminal_quoted_name, text);
 
         chunk->kind = kind;
         after_k = rest;
@@ -20545,8 +20545,8 @@ static bool split_chunks(string_address text, split_chunk address_to chunk)
                 if (!split_chunk_decimal(rest + 1, address_of rest, address_of n) ||
                     string_get(rest) || !n)
                         return string_report(log_error, false,
-                                             "split: invalid number of chunks: '%s'\n",
-                                             text);
+                                             "split: invalid number of chunks: '%w'\n",
+                                             writer_terminal_quoted_name, text);
                 if (first > n)
                 {
                         p8 shown[32];
@@ -20555,8 +20555,8 @@ static bool split_chunks(string_address text, split_chunk address_to chunk)
 
                         memory_copy_end(shown, text, wide);
                         return string_report(log_error, false,
-                                             "split: invalid chunk number: '%s'\n",
-                                             shown);
+                                             "split: invalid chunk number: '%w'\n",
+                                             writer_terminal_quoted_name, shown);
                 }
                 chunk->k = first;
                 chunk->n = n;
@@ -20565,8 +20565,8 @@ static bool split_chunks(string_address text, split_chunk address_to chunk)
 
         if (string_get(rest))
                 return string_report(log_error, false,
-                                     "split: invalid number of chunks: '%s'\n",
-                                     text);
+                                     "split: invalid number of chunks: '%w'\n",
+                                     writer_terminal_quoted_name, text);
 
         chunk->k = 0;
         chunk->n = first;
@@ -20797,8 +20797,8 @@ static bool split_separator(string_address text, p8 address_to separator)
                 address_to separator = 0;
                 return true;
         }
-        return string_report(log_error, false, "split: multi-character separator '%s'\n",
-                      text);
+        return string_report(log_error, false, "split: multi-character separator '%w'\n",
+                      writer_terminal_quoted_name, text);
 }
 
 static p8 split_way;
@@ -20838,10 +20838,10 @@ static bool split_option_seen(p8 letter, string_address value)
 
                 if (!split_parse_size(value, suffixes, false, address_of piece))
                         return string_report(log_error, false,
-                                      "split: invalid number of %s: '%s'\n",
+                                      "split: invalid number of %s: '%w'\n",
                                       lines ? (string_address) "lines"
                                             : (string_address) "bytes",
-                                      value ? value : (string_address) "");
+                                      writer_terminal_quoted_name, value ? value : (string_address) "");
                 return true;
         }
 
@@ -20866,8 +20866,8 @@ static bool split_option_seen(p8 letter, string_address value)
                 if (!string_digits_checked_exact(value, 10, address_of width) ||
                     width > SPLIT_SUFFIX_MAX)
                         return string_report(log_error, false,
-                                      "split: invalid suffix length: '%s'\n",
-                                      value ? value : (string_address) "");
+                                      "split: invalid suffix length: '%w'\n",
+                                      writer_terminal_quoted_name, value ? value : (string_address) "");
                 return true;
         }
 
@@ -20876,8 +20876,8 @@ static bool split_option_seen(p8 letter, string_address value)
                 if (value && string_first_of(value, '/'))
                 {
                         string_format(log_error,
-                                      "split: invalid suffix '%s', contains directory separator\n",
-                                      value);
+                                      "split: invalid suffix '%w', contains directory separator\n",
+                                      writer_terminal_quoted_name, value);
                         return split_try_help(null);
                 }
                 return true;
@@ -20891,8 +20891,8 @@ static bool split_option_seen(p8 letter, string_address value)
                 if (!string_digits_checked_exact(value, radix, address_of start))
                 {
                         string_format(log_error,
-                                      "split: '%s': invalid start value for %s suffix\n",
-                                      value,
+                                      "split: '%w': invalid start value for %s suffix\n",
+                                      writer_terminal_quoted_name, value,
                                       letter == 'x' ? (string_address) "hexadecimal"
                                                     : (string_address) "numerical");
                         return split_try_help(null);
@@ -20950,18 +20950,18 @@ static b32 file_split()
 
         if (measure && mode != 'n' &&
             !split_parse_size(measure, mode != 'l', false, address_of piece))
-                return string_report(log_error, 1, "split: invalid number of %s: '%s'\n",
+                return string_report(log_error, 1, "split: invalid number of %s: '%w'\n",
                               mode == 'b' ? (string_address) "bytes"
                                           : (string_address) "lines",
-                              measure);
+                              writer_terminal_quoted_name, measure);
 
         split_chunk chunk = {0};
         if (mode == 'n' &&
             (!measure || !split_chunks(measure, address_of chunk)))
                 return measure ? 1
                                : string_report(log_error, 1,
-                                               "split: invalid number of chunks: '%s'\n",
-                                               (string_address) "");
+                                               "split: invalid number of chunks: '%w'\n",
+                                               writer_terminal_quoted_name, (string_address) "");
 
         positive suffix_length = 2;
         string_address width = file_option_value(address_of taking, 'a');
@@ -20972,8 +20972,8 @@ static b32 file_split()
                 if (!string_digits_checked_exact(width, 10, address_of suffix_length) ||
                     suffix_length > SPLIT_SUFFIX_MAX)
                         return string_report(log_error, 1,
-                                      "split: invalid suffix length: '%s'\n",
-                                      width);
+                                      "split: invalid suffix length: '%w'\n",
+                                      writer_terminal_quoted_name, width);
                 /* GNU xdectoimax min is 0; set_suffix_length then treats 0 as
                    unset and restores the default width, so -a 0 is not fixed. */
                 if (suffix_length)
@@ -21048,8 +21048,8 @@ static b32 file_split()
                                                  address_of output.number))
                 {
                         string_format(log_error,
-                                      "split: '%s': invalid start value for %s suffix\n",
-                                      first_suffix,
+                                      "split: '%w': invalid start value for %s suffix\n",
+                                      writer_terminal_quoted_name, first_suffix,
                                       output.radix == 16 ? (string_address) "hexadecimal"
                                                          : (string_address) "numerical");
                         split_try_help(null);
@@ -21248,7 +21248,7 @@ static bool csplit_seen(p8 letter, string_address value)
         if (!string_digits_checked(address_of at, 10, address_of digits) ||
             string_get(at) || digits > 32)
                 return string_report(log_error, false,
-                                     "csplit: invalid number: '%s'\n", value);
+                                     "csplit: invalid number: '%w'\n", writer_terminal_quoted_name, value);
 
         return true;
 }
@@ -21667,8 +21667,8 @@ static b32 file_csplit()
                 if (!string_digits_checked(address_of at, 10,
                                            address_of digits) ||
                     string_get(at) || digits > 32)
-                        return string_report(log_error, 1, "csplit: invalid number: '%s'\n",
-                                      digit_text);
+                        return string_report(log_error, 1, "csplit: invalid number: '%w'\n",
+                                      writer_terminal_quoted_name, digit_text);
         }
 
         /* GNU reads every line-number pattern before the first section, so
@@ -22253,12 +22253,12 @@ static bool truncate_option_seen(p8 letter, string_address value)
 
                 if (truncate_too_large)
                         return string_report(log_error, false,
-                                             "truncate: Invalid number: '%s': "
+                                             "truncate: Invalid number: '%w': "
                                              "Value too large for defined data type\n",
-                                             value);
+                                             writer_terminal_quoted_name, value);
 
                 return string_report(log_error, false,
-                                     "truncate: Invalid number: '%s'\n", value);
+                                     "truncate: Invalid number: '%w'\n", writer_terminal_quoted_name, value);
         }
 
         //      A rounding step of nothing is a division by nothing, and the
@@ -23670,11 +23670,11 @@ static bool shred_option_seen(p8 letter, string_address value)
         if (letter == 'n' && value &&
             !file_unsigned_decimal(value, address_of shred_iterations))
                 return string_report(log_error, false,
-                                     "shred: invalid number of passes: '%s'\n", value);
+                                     "shred: invalid number of passes: '%w'\n", writer_terminal_quoted_name, value);
 
         if (letter == 's' && value && !shred_size(value, address_of shred_asked_size))
                 return string_report(log_error, false,
-                                     "shred: invalid file size: '%s'\n", value);
+                                     "shred: invalid file size: '%w'\n", writer_terminal_quoted_name, value);
 
         if (letter == 'u' && value)
         {
@@ -24163,7 +24163,7 @@ static bool shuf_seen(p8 letter, string_address value)
 
                 if (!file_unsigned_decimal(value, address_of lines))
                         return string_report(log_error, false,
-                                             "shuf: invalid line count: '%s'\n", value);
+                                             "shuf: invalid line count: '%w'\n", writer_terminal_quoted_name, value);
 
                 if (!shuf_limited || lines < shuf_wanted)
                         shuf_wanted = lines;
@@ -24186,7 +24186,7 @@ static bool shuf_seen(p8 letter, string_address value)
                 if (!shuf_range(value, address_of low, address_of high) ||
                     high - low == positive_max)
                         return string_report(log_error, false,
-                                             "shuf: invalid input range: '%s'\n", value);
+                                             "shuf: invalid input range: '%w'\n", writer_terminal_quoted_name, value);
 
                 shuf_ranged = true;
         }
@@ -24286,8 +24286,8 @@ static b32 file_shuf()
                 if (!shuf_range(range_text, address_of low, address_of high) ||
                     high - low == positive_max)
                 {
-                        string_format(log_error, "shuf: invalid input range: '%s'\n",
-                                      range_text);
+                        string_format(log_error, "shuf: invalid input range: '%w'\n",
+                                      writer_terminal_quoted_name, range_text);
                         utility_arena.used = 0;
                         return 1;
                 }
@@ -28230,8 +28230,8 @@ static bool install_identity(string_address text, bool group,
         bipolar found = file_identity_of(text, group);
 
         if (found < 0)
-                return string_report(log_error, false, "install: invalid %s '%w'\n",
-                              group ? "group" : "user", writer_terminal_quoted_name,
+                return string_report(log_error, false, "install: invalid %s %w\n",
+                              group ? "group" : "user", writer_shell_quoted_name,
                               text);
 
         address_to identity = found;
@@ -30926,8 +30926,8 @@ static b32 file_rm()
 
                 if (which && string_compare(which, (string_address) "all"))
                         return string_report(log_error, 1,
-                                             "rm: unrecognized --preserve-root argument: '%s'\n",
-                                             which);
+                                             "rm: unrecognized --preserve-root argument: %w\n",
+                                             writer_shell_quoted_name, which);
 
                 rm_preserve_all = which != null;
         }
@@ -31255,7 +31255,7 @@ static bool touch_option_seen(p8 letter, string_address value)
         {
                 if (!touch_stamp(value, file_now(), address_of touch_stamp_seconds))
                         return string_report(log_error, false,
-                                             "touch: invalid date format '%s'\n", value);
+                                             "touch: invalid date format '%w'\n", writer_terminal_quoted_name, value);
 
                 touch_stamp_given = true;
         }
@@ -31334,7 +31334,7 @@ static b32 file_touch()
                                                    from ? times[at + 1] : 0,
                                                    address_of seconds,
                                                    address_of fraction))
-                                return string_report(log_error, 1, "touch: invalid date format '%s'\n", written);
+                                return string_report(log_error, 1, "touch: invalid date format '%w'\n", writer_terminal_quoted_name, written);
                         times[at] = (p64)seconds;
                         times[at + 1] = fraction;
                 }
@@ -31611,8 +31611,8 @@ static b32 file_sleep()
                 if (!sleep_read(word, address_of wanted[0],
                                 address_of wanted[1]))
                 {
-                        return string_report(log_error, 1, "sleep: invalid time interval '%s'\n",
-                                      program_argument((b32)i));
+                        return string_report(log_error, 1, "sleep: invalid time interval '%w'\n",
+                                      writer_terminal_quoted_name, program_argument((b32)i));
                 }
 
                 // A signal that arrives partway through leaves the remainder
@@ -31681,8 +31681,8 @@ static b32 file_tty()
                 return 2;
 
         if (file_operand_count)
-                return string_report(log_error, 2, "tty: extra operand '%s'\n",
-                              file_operand_at(0));
+                return string_report(log_error, 2, "tty: extra operand '%w'\n",
+                              writer_terminal_quoted_name, file_operand_at(0));
 
         if (taking.flags & FILE_FLAG('s'))
                 return stream_is_terminal(0) ? 0 : 1;
@@ -32183,8 +32183,8 @@ static b32 file_seq()
                 return string_report(log_error, 1, "seq: missing operand\n");
 
         if (given > 3)
-                return string_report(log_error, 1, "seq: extra operand '%s'\n",
-                                     program_argument((b32)(index + 3)));
+                return string_report(log_error, 1, "seq: extra operand '%w'\n",
+                                     writer_terminal_quoted_name, program_argument((b32)(index + 3)));
 
         seq_format format = {.text = "", .flags = CONVERSION_FLAG_ZERO};
 
@@ -32200,14 +32200,14 @@ static b32 file_seq()
 
                 if (seq_format_wrong == SEQ_FORMAT_MANY)
                         string_format(log_error,
-                                      "seq: format '%s' has too many %% directives\n",
-                                      format_text);
+                                      "seq: format '%w' has too many %% directives\n",
+                                      writer_terminal_quoted_name, format_text);
                 else if (seq_format_wrong == SEQ_FORMAT_ENDS)
-                        string_format(log_error, "seq: format '%s' ends in %%\n", format_text);
+                        string_format(log_error, "seq: format '%w' ends in %%\n", writer_terminal_quoted_name, format_text);
                 else
                         string_format(log_error,
-                                      "seq: format '%s' has unknown %%%s directive\n",
-                                      format_text, named);
+                                      "seq: format '%w' has unknown %%%s directive\n",
+                                      writer_terminal_quoted_name, format_text, named);
 
                 return 1;
         }
@@ -32224,9 +32224,9 @@ static b32 file_seq()
                 p8 named[2] = {seq_format_letter, end};
 
                 return string_report(log_error, 1,
-                                     "seq: format '%s' asks for the %%%s conversion, which needs "
+                                     "seq: format '%w' asks for the %%%s conversion, which needs "
                                      "floating point this seq has not got\n",
-                                     format_text, named);
+                                     writer_terminal_quoted_name, format_text, named);
         }
 
         seq_decimal number[3];
@@ -32249,11 +32249,11 @@ static b32 file_seq()
                             (string_is(at + 2, 'n') || string_is(at + 2, 'N')) &&
                             !string_get(at + 3))
                                 return string_report(log_error, 1,
-                                                     "seq: invalid 'not-a-number' argument: '%s'\n",
-                                                     text);
+                                                     "seq: invalid 'not-a-number' argument: '%w'\n",
+                                                     writer_terminal_quoted_name, text);
 
-                        return string_report(log_error, 1, "seq: invalid floating point argument: '%s'\n",
-                                      text);
+                        return string_report(log_error, 1, "seq: invalid floating point argument: '%w'\n",
+                                      writer_terminal_quoted_name, text);
                 }
 
         seq_decimal first = given == 1 ? (seq_decimal){.coefficient = 1} : number[0];
@@ -32269,8 +32269,8 @@ static b32 file_seq()
 
         if (!step.coefficient)
         {
-                return string_report(log_error, 1, "seq: invalid Zero increment value: '%s'\n",
-                              program_argument((b32)(index + 1)));
+                return string_report(log_error, 1, "seq: invalid Zero increment value: '%w'\n",
+                              writer_terminal_quoted_name, program_argument((b32)(index + 1)));
         }
 
         bool step_negative = step.coefficient < 0;
@@ -33705,8 +33705,8 @@ static b32 file_id()
 
                         if (user < 0 || group < 0)
                         {
-                                string_format(log_error, "id: '%s': no such user\n",
-                                              program_argument((b32)(first - 1)));
+                                string_format(log_error, "id: '%w': no such user\n",
+                                              writer_terminal_quoted_name, program_argument((b32)(first - 1)));
                                 status = 1;
                                 continue;
                         }
@@ -33827,7 +33827,7 @@ static b32 file_groups()
                         if (user < 0 || group < 0)
                         {
                                 string_format(log_error,
-                                              "groups: '%s': no such user\n", who);
+                                              "groups: '%w': no such user\n", writer_terminal_quoted_name, who);
                                 status = 1;
                                 continue;
                         }
@@ -33867,8 +33867,8 @@ static b32 file_whoami()
                 return 1;
 
         if (file_operand_count)
-                return string_report(log_error, 1, "whoami: extra operand '%s'\n",
-                              file_operand_at(0));
+                return string_report(log_error, 1, "whoami: extra operand '%w'\n",
+                              writer_terminal_quoted_name, file_operand_at(0));
 
         positive user = (positive)system_call(syscall(geteuid));
         p8 name[FILE_NAME_MAX];
@@ -34035,8 +34035,8 @@ static b32 file_logname()
                 return 1;
 
         if (file_operand_count)
-                return string_report(log_error, 1, "logname: extra operand '%s'\n",
-                              file_operand_at(0));
+                return string_report(log_error, 1, "logname: extra operand '%w'\n",
+                              writer_terminal_quoted_name, file_operand_at(0));
 
         p8 loginuid[32];
         positive user = positive_max;
@@ -34150,8 +34150,8 @@ static b32 file_uname()
 
         if (taking.first < (positive)program_argument_count())
         {
-                return string_report(log_error, 1, "uname: extra operand '%s'\n",
-                              program_argument((b32)taking.first));
+                return string_report(log_error, 1, "uname: extra operand '%w'\n",
+                              writer_terminal_quoted_name, program_argument((b32)taking.first));
         }
 
         positive flags = taking.flags;
@@ -34534,7 +34534,7 @@ static bool nproc_option_seen(p8 letter, string_address value)
                 return true;
 
         if (!nproc_decimal(value, true, false, false, address_of nproc_ignore))
-                return string_report(log_error, false, "nproc: invalid number: '%s'\n", value);
+                return string_report(log_error, false, "nproc: invalid number: '%w'\n", writer_terminal_quoted_name, value);
 
         return true;
 }
@@ -34595,8 +34595,8 @@ static b32 file_nproc()
                 return 1;
 
         if (file_operand_count)
-                return string_report(log_error, 1, "nproc: extra operand '%s'\n",
-                              file_operand_at(0));
+                return string_report(log_error, 1, "nproc: extra operand '%w'\n",
+                              writer_terminal_quoted_name, file_operand_at(0));
 
         positive count = nproc_count((taking.flags & FILE_FLAG('a')) != 0,
                                       nproc_ignore);
@@ -34748,13 +34748,13 @@ static b32 file_mktemp()
         {
                 if (!template_length || template[template_length - 1] != 'X')
                         return string_report(log_error, 1,
-                                             "mktemp: with --suffix, template '%s' must end in X\n",
-                                             template);
+                                             "mktemp: with --suffix, template '%w' must end in X\n",
+                                             writer_terminal_quoted_name, template);
 
                 if (string_first_of(suffix, '/'))
                         return string_report(log_error, 1,
-                                             "mktemp: invalid suffix '%s', contains directory separator\n",
-                                             suffix);
+                                             "mktemp: invalid suffix '%w', contains directory separator\n",
+                                             writer_terminal_quoted_name, suffix);
         }
 
         positive run_end = template_length;
@@ -34771,8 +34771,8 @@ static b32 file_mktemp()
         }
 
         if (marks < MKTEMP_LEAST)
-                return string_report(log_error, 1, "mktemp: too few X's in template '%s'\n",
-                                     template);
+                return string_report(log_error, 1, "mktemp: too few X's in template '%w'\n",
+                                     writer_terminal_quoted_name, template);
 
         positive suffix_length = suffix ? string_length(suffix) : 0;
 
@@ -34788,8 +34788,8 @@ static b32 file_mktemp()
 
         if (!suffix && string_first_of(whole + run_end, '/'))
                 return string_report(log_error, 1,
-                                     "mktemp: invalid suffix '%s', contains directory separator\n",
-                                     whole + run_end);
+                                     "mktemp: invalid suffix '%w', contains directory separator\n",
+                                     writer_terminal_quoted_name, whole + run_end);
 
         /*
                 Where it goes. -t is the deprecated spelling and answers with
@@ -34802,16 +34802,16 @@ static b32 file_mktemp()
         {
                 if (string_first_of(whole, '/'))
                         return string_report(log_error, 1,
-                                             "mktemp: invalid template, '%s', contains directory separator\n",
-                                             whole);
+                                             "mktemp: invalid template, '%w', contains directory separator\n",
+                                             writer_terminal_quoted_name, whole);
 
                 base = null;
                 named_where = true;
         }
         else if (named_where && string_is(whole, '/'))
                 return string_report(log_error, 1,
-                                     "mktemp: invalid template, '%s'; with --tmpdir, it may not be absolute\n",
-                                     whole);
+                                     "mktemp: invalid template, '%w'; with --tmpdir, it may not be absolute\n",
+                                     writer_terminal_quoted_name, whole);
 
         if (named_where && !string_is(whole, '/'))
         {
@@ -36915,13 +36915,13 @@ static bool date_batch(string_address path, string_address format, b64 now)
                 if (file_is_directory_through(path))
                         return string_report(
                             log_error, false, "date: %w: read error: %s\n",
-                            writer_terminal_name, path,
+                            writer_shell_name, path,
                             file_reason(-ERROR_IS_DIRECTORY));
 
                 handle = system_open_at(AT_FDCWD, path, FILE_READ);
                 if (handle < 0)
                         return string_report(log_error, false, "date: %w: %s\n",
-                                             writer_terminal_name, path,
+                                             writer_shell_name, path,
                                              file_reason(handle));
                 close_handle = true;
         }
@@ -36938,7 +36938,7 @@ static bool date_batch(string_address path, string_address format, b64 now)
         {
                 if (read_failed)
                         string_format(log_error, "date: %w: read error\n",
-                                      writer_terminal_name, path);
+                                      writer_shell_name, path);
                 return false;
         }
 
@@ -36960,8 +36960,8 @@ static bool date_batch(string_address path, string_address format, b64 now)
                 if (!file_moment_read_exact(input + start, now, address_of when,
                                             address_of ns))
                 {
-                        string_format(log_error, "date: invalid date '%s'\n",
-                                      input + start);
+                        string_format(log_error, "date: invalid date '%w'\n",
+                                      writer_terminal_quoted_name, input + start);
                         ok = false;
                 }
                 else if (!date_emit(format, when, ns))
@@ -37033,11 +37033,11 @@ static b32 file_date()
                         if (sources || set_date)
                                 return string_report(
                                     log_error, 1,
-                                    "date: the argument '%s' lacks a leading '+';\n"
+                                    "date: the argument '%w' lacks a leading '+';\n"
                                     "when using an option to specify date(s), any non-option\n"
                                     "argument must be a format string beginning with '+'\n"
                                     "Try 'date --help' for more information.\n",
-                                    argument);
+                                    writer_terminal_quoted_name, argument);
 
                         return string_report(log_error, 1,
                                              "date: cannot set the date: %s\n",
@@ -37047,8 +37047,8 @@ static b32 file_date()
                 /* GNU names a spare operand before it names two formats. */
                 if (index < count)
                         return string_report(log_error, 1,
-                                             "date: extra operand '%s'\n",
-                                             program_argument((b32)index));
+                                             "date: extra operand '%w'\n",
+                                             writer_terminal_quoted_name, program_argument((b32)index));
 
                 if (format)
                         return string_report(
@@ -37077,7 +37077,7 @@ static b32 file_date()
 
                 if (looked < 0)
                         return string_report(log_error, 1, "date: %w: %s\n",
-                                             writer_terminal_name, of_file,
+                                             writer_shell_name, of_file,
                                              file_reason(looked));
 
                 when = (b64)facts.modified.seconds;
@@ -37098,7 +37098,7 @@ static b32 file_date()
                 if (!file_moment_read_exact(text, file_now(), address_of when,
                                             address_of nanoseconds))
                         return string_report(log_error, 1,
-                                             "date: invalid date '%s'\n", text);
+                                             "date: invalid date '%w'\n", writer_terminal_quoted_name, text);
         }
         else
         {

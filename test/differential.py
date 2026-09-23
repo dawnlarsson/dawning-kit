@@ -33569,13 +33569,50 @@ def harness_entry():
 
 # ---- registry ----
 
+#       A value an option takes, holding a control byte and a quote. GNU names
+#       an argument it refuses with quote(), which spells the byte as \001 and
+#       the quote as \' inside single quotes; a message that wrote the word
+#       with '%s' put the raw byte on the terminal, and no grammar had ever
+#       handed an option anything but a printable word.
+HOSTILE_VALUE = "x\x01'y"
+HOSTILE_SKIP = frozenset(("logger", "script", "hardlink", "cal", "pr", "tail"))
+
+
+def with_hostile_values(utilities):
+    """Each program with one more extra case per option that takes a value:
+    that option given HOSTILE_VALUE, in the option's first spelling, before
+    the program's first operand shape."""
+    out = []
+    for utility in utilities:
+        #   logger's values are names it resolves and structured data it
+        #   validates, and script's are files it writes timing into from a
+        #   policy farm: neither is a refused value's spelling. hardlink,
+        #   cal, pr and tail answer an odd value in words of their own or
+        #   not at all, which is a gap of its own and not this one.
+        if utility.name in HOSTILE_SKIP:
+            out.append(utility)
+            continue
+        cases = []
+        for option in utility.options:
+            #   --context names an SELinux context this suite pins as
+            #   refused wherever it is spelled.
+            if option.values is None or option.spell == "--context":
+                continue
+            form = Option(option.spell, (HOSTILE_VALUE,), option.attached).forms()[0]
+            case = tuple(form) + tuple(utility.operands[0])
+            if case not in cases:
+                cases.append(case)
+        out.append(dataclasses.replace(utility, extra=tuple(utility.extra) + tuple(cases)))
+    return tuple(out)
+
+
 SPECS = {
     "awk": (globals().get("AWK_UTILITIES", ()), globals().get("AWK_FAMILIES", ()), globals().get("AWK_CHECKS", ())),
     "builtins": (globals().get("BUILTINS_UTILITIES", ()), globals().get("BUILTINS_FAMILIES", ()), globals().get("BUILTINS_CHECKS", ())),
-    "files": (globals().get("FILES_UTILITIES", ()), globals().get("FILES_FAMILIES", ()), globals().get("FILES_CHECKS", ())),
-    "misc": (globals().get("MISC_UTILITIES", ()), globals().get("MISC_FAMILIES", ()), globals().get("MISC_CHECKS", ())),
+    "files": (with_hostile_values(globals().get("FILES_UTILITIES", ())), globals().get("FILES_FAMILIES", ()), globals().get("FILES_CHECKS", ())),
+    "misc": (with_hostile_values(globals().get("MISC_UTILITIES", ())), globals().get("MISC_FAMILIES", ()), globals().get("MISC_CHECKS", ())),
     "shell": (globals().get("SHELL_UTILITIES", ()), globals().get("SHELL_FAMILIES", ()), globals().get("SHELL_CHECKS", ())),
-    "text": (globals().get("TEXT_UTILITIES", ()), globals().get("TEXT_FAMILIES", ()), globals().get("TEXT_CHECKS", ())),
+    "text": (with_hostile_values(globals().get("TEXT_UTILITIES", ())), globals().get("TEXT_FAMILIES", ()), globals().get("TEXT_CHECKS", ())),
     "util_linux": (globals().get("UTIL_LINUX_UTILITIES", ()), globals().get("UTIL_LINUX_FAMILIES", ()), globals().get("UTIL_LINUX_CHECKS", ())),
 }
 
@@ -37028,8 +37065,6 @@ PINNED = r"""
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-n0","--remove=wipe","a.txt"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","utility":"shred"},"domain":"files","id":"ff1eecc298697d7f","kind":"deliberate","list":"ledger","reason_id":"r123","utility":"shred"},
 {"domain":"files","kind":"deliberate","list":"ledger","option":"--random-source","reason_id":"r124","utility":"shred"},
 {"domain":"files","kind":"deliberate","list":"ledger","option":"--random-source","reason_id":"r126","utility":"shuf"},
-{"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-t","\\n","c.txt"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"text","utility":"split"},"domain":"files","id":"3fd51671646117ff","kind":"bug","list":"ledger","reason_id":"r128","utility":"split"},
-{"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-t\\n","c.txt"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"text","utility":"split"},"domain":"files","id":"8eafcb3204a2cca1","kind":"bug","list":"ledger","reason_id":"r128","utility":"split"},
 {"candidate":{"effects":"21f705d5c06efcc6c78538e1374d32e2e5aa9b2e61bf62d4fbcf832d58b17426","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-a1","-b1","binary","short-"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"text","utility":"split"},"domain":"files","id":"da7a75c8303bfb78","kind":"bug","list":"ledger","reason_id":"r128","utility":"split"},
 {"domain":"files","kind":"bug","list":"ledger","option":"--filter","reason_id":"r129","utility":"split"},
 {"domain":"files","kind":"bug","list":"ledger","option":"--unbuffered","reason_id":"r129","utility":"split"},
