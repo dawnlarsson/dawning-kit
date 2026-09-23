@@ -11280,6 +11280,40 @@ static decimal printf_decimal(string_address word)
         return printf_number_done(word, at, stopped, 0) ? value : 0.0;
 }
 
+/*
+        A width or precision taken from an argument, which bash holds to an
+        int: past it the argument is "Numerical result out of range", the
+        status is 1 and the conversion goes on with no width or precision.
+        Taken whole, printf "%*d" 9223372036854775807 1 padded without end
+        and printf -v spun on padding a store that had long since refused.
+*/
+static bool printf_star(string_address word, bipolar address_to value)
+{
+        string_address at;
+        string_address stopped;
+        positive quoted;
+        b32 out_of_range = 0;
+
+        if (!printf_number_at(word, address_of at, address_of quoted))
+        {
+                address_to value = (bipolar)quoted;
+                return true;
+        }
+
+        bipolar read = string_to_number_checked(at, address_of stopped, 0,
+                                                address_of out_of_range);
+
+        if (read > 2147483647 || read < -2147483647 - 1)
+                out_of_range = 1;
+        if (!printf_number_done(word, at, stopped, out_of_range))
+        {
+                address_to value = 0;
+                return true;
+        }
+        address_to value = read;
+        return !out_of_range;
+}
+
 fn printf_one(writer write, string_address format)
 {
         string_address step = format;
@@ -11314,9 +11348,13 @@ fn printf_one(writer write, string_address format)
                 for (p8 field = 0; field < parsed.fields; field++)
                         if (parsed.stars & (1u << field))
                         {
-                                bipolar value = (bipolar)printf_integer(printf_next(), true);
+                                bipolar value = 0;
+                                bool held = printf_star(printf_next(), address_of value);
+
                                 if (field)
-                                        precision = value < 0 ? -1 : value;
+                                        precision = !held || value < 0 ? -1 : value;
+                                else if (!held)
+                                        width = 0;
                                 else
                                 {
                                         parsed.flags |= value < 0 ? CONVERSION_FLAG_LEFT : 0;

@@ -5251,6 +5251,38 @@ def builtins_printf_dynamic_fields(rng):
     return "builtins-printf-dynamic-fields", ALL, script
 
 
+def builtins_printf_star_range(rng):
+    """A width or precision from an argument past what bash holds to an int.
+
+    bash refuses a star argument outside int with "Numerical result out of
+    range", status 1, and carries on with no width or no precision; this
+    printf took it whole, so "%*d" 9223372036854775807 1 padded without end
+    and printf -v spun padding a store that had refused. Values either side
+    of the int bounds and of the 64-bit ones, as the width and as the
+    precision, printed and stored with -v; the widths that stay in range are
+    small, so every case is cheap for both.
+    """
+    far = ("2147483648", "-2147483649", "4294967296", "9223372036854775807",
+           "-9223372036854775808", "99999999999999999999", "-99999999999999999999")
+    near = ("0", "3", "-4", "12")
+    width = rng.choice(far + near)
+    precision = rng.choice(far + near + ("2147483647",))
+    if width not in far and precision not in far:
+        width = rng.choice(far)
+    value = rng.choice(("abcdef", "42", "-7"))
+    form = rng.choice(("<%*.*s>", "<%*.*d>", "<%-*s>", "<%.*s>", "<%*d>"))
+    stars = form.count("*")
+    operands = [width, precision][:stars] + [value]
+    if stars == 1 and form.startswith("<%.*"):
+        operands = [precision, value]
+    quoted = " ".join(shlex.quote(word) for word in operands)
+    script = ("printf " + shlex.quote(form) + " " + quoted + " 2>/dev/null"
+              "\ns=$?\nprintf '\\nstatus:%s\\n' \"$s\"\n"
+              "printf -v held " + shlex.quote(form) + " " + quoted + " 2>/dev/null"
+              "\ns=$?\nprintf 'held:%s:%s\\n' \"${#held}\" \"$s\"\n")
+    return "builtins-printf-star-range", BASH_ONLY, script
+
+
 def builtins_printf_escapes(rng):
     """The escape language echo -e, %b and the format string share."""
     text = rng.choice((r"a\tb", r"x\0101y", r"x\101y", r"x\01012y", r"x\1012y",
@@ -5650,6 +5682,7 @@ def builtins_global_declaration(rng):
 
 
 BUILTINS_FAMILIES = (
+    builtins_printf_star_range,
     builtins_listing, builtins_query_namespaces, builtins_declaration_lifecycle,
     builtins_inventory_state, builtins_read_fields, builtins_read_ifs_snapshot,
     builtins_read_limit_state, builtins_read_array_state, builtins_printf_formats,
