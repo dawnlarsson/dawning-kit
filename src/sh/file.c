@@ -28899,10 +28899,11 @@ static string_address rm_prompt(bipolar directory, string_address name,
 
         positive kind = facts->mode & MODE_FORMAT;
 
+        //      "inaccessible" is for a directory that cannot be read, which
+        //      rm_tree knows and says itself; one that is only write-
+        //      protected is that, with -r or without.
         if (kind == MODE_DIRECTORY)
-                return rm_recursive
-                           ? (string_address) "remove write-protected directory"
-                           : (string_address) "attempt removal of inaccessible directory";
+                return (string_address) "remove write-protected directory";
 
         if (kind != MODE_FILE)
                 return (string_address) "remove write-protected";
@@ -29187,6 +29188,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
 
         bipolar inside = -1;
         bool asked_remove = false;
+        bipolar unread = 0;
         if (rm_recursive)
         {
                 if (depth == 0)
@@ -29207,6 +29209,20 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                         /* GNU FTS_DNR: unreadable dir is PA_REMOVE_DIR, not
                            descend. Ask to remove and skip the walk. */
                         empty_directory = emptiness > 0 || emptiness < 0;
+                        if (emptiness < 0)
+                                unread = emptiness;
+                        //      One that cannot be read is asked about only
+                        //      under -d, which is what makes taking an
+                        //      empty directory a thing rm does; without it
+                        //      GNU says why it cannot and does not try.
+                        if (emptiness < 0 && !rm_empty_directories)
+                        {
+                                string_format(log_error, "rm: cannot remove %w: %s\n",
+                                              writer_shell_quoted_name, shown,
+                                              file_reason(emptiness));
+                                rm_status = 1;
+                                return false;
+                        }
                         if (empty_directory)
                         {
                                 if (!file_ask((string_address) "rm",
@@ -29231,11 +29247,34 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
 
                 if (inside < 0)
                 {
+                        /*
+                                A directory that will not be read may still
+                                be empty, and GNU tries it: an unreadable
+                                empty one goes, and one that will not go is
+                                reported as not removed, for the reason that
+                                stopped the read -- not "cannot read".
+                        */
                         if (!rm_force || inside != -ERROR_NO_ENTRY)
                         {
-                                string_format(log_error, "rm: cannot read %w: %s\n",
+                                bipolar gone = inside == -ERROR_NO_ENTRY
+                                                   ? inside
+                                                   : file_remove_same(directory, name,
+                                                                      AT_REMOVEDIR,
+                                                                      address_of facts);
+
+                                if (gone == 0)
+                                {
+                                        if (rm_loud)
+                                                string_format(log, "removed directory %w\n",
+                                                              writer_shell_quoted_name, shown);
+                                        return true;
+                                }
+                                string_format(log_error, "rm: cannot remove %w: %s\n",
                                               writer_shell_quoted_name, shown,
-                                              file_reason(inside));
+                                              file_reason(gone == -ERROR_NOT_EMPTY ||
+                                                                  gone == -ERROR_NO_ENTRY
+                                                              ? inside
+                                                              : gone));
                                 rm_status = 1;
                         }
 
@@ -29272,9 +29311,36 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
            handle rm_contents just walked; answering no to a thousand of them
            spent a thousand descriptors and the walk then stopped on EMFILE
            partway through the tree. Every other exit here closes it. */
+        /*
+                -d without -r under -i asks only about a directory it could
+                take: one with something in it is refused as a directory at
+                once, as GNU refuses it, and one it cannot read at all is the
+                "inaccessible" one -- whatever its mode says, which is how a
+                readable 555 directory full of files was asked about as
+                inaccessible here and refused as a directory there.
+        */
+        bool inaccessible = false;
+
+        if (!rm_recursive && rm_prompting == 'i')
+        {
+                bipolar emptiness = file_directory_empty_same(
+                    directory, name, address_of facts, O_NOFOLLOW);
+
+                if (emptiness == 0)
+                {
+                        string_format(log_error, "rm: cannot remove %w: Is a directory\n",
+                                      writer_shell_quoted_name, shown);
+                        rm_status = 1;
+                        return false;
+                }
+                inaccessible = emptiness < 0;
+        }
+
         if (rm_prompting == 'i' && !asked_remove &&
             !file_ask((string_address) "rm",
-                      rm_prompt(directory, name, address_of facts, false), shown))
+                      inaccessible ? (string_address) "attempt removal of inaccessible directory"
+                                   : rm_prompt(directory, name, address_of facts, false),
+                      shown))
         {
                 if (inside >= 0)
                         system_close(inside);
@@ -29291,6 +29357,12 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                                         address_of facts);
         if (inside >= 0)
                 system_close(inside);
+
+        //      A directory that could not be read and then would not go was
+        //      not empty for the reason that stopped the read, and that is
+        //      the reason GNU gives: Permission denied, not Directory not empty.
+        if (gone == -ERROR_NOT_EMPTY && unread < 0)
+                gone = unread;
 
         if (gone < 0)
         {
@@ -30410,7 +30482,9 @@ static b32 file_rm()
                         it hangs under, and taking it would take a filesystem
                         rather than a tree.
                 */
-                if (here && rm_preserve_all)
+                //      Only a walk that would go into the directory asks about its
+                //      parent: -d alone takes the name and never descends.
+                if (here && rm_preserve_all && rm_recursive)
                 {
                         p8 above[FILE_PATH_MAX];
                         file_facts parent;
