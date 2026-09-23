@@ -7789,6 +7789,19 @@ static bool exec_function_import_one(string_address entry)
                 return false;
 
         name_length = (positive)(equal - entry) - (sizeof(prefix) - 1) - 2;
+        /* A name with a slash in it is a path, and a function by that name
+           runs where a script wrote /usr/bin/id to be sure of the program:
+           bash refuses to import one, and so does this. */
+        if (memory_first_of((address_any)(entry + sizeof(prefix) - 1), '/',
+                            name_length))
+        {
+                // Before any line is read, so the name and no line.
+                string_format(log_error, "%s: ", shell_where_invoked());
+                log_error(str("error importing function definition for `"));
+                log_error(entry + sizeof(prefix) - 1, name_length);
+                log_error(str("'\n"));
+                return false;
+        }
         value = equal + 1;
         value_length = entry_length - (positive)(value - entry);
         if (!name_length || value_length < 4 || value[0] != '(' ||

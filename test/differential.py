@@ -11257,7 +11257,80 @@ def shell_restricted_function_import(farm):
         return passed, len(invocations), notes
 
 
-SHELL_CHECKS = (shell_restricted_function_import,)
+def shell_hostile_environment(farm):
+    """What a shell takes from an environment someone else wrote, against bash.
+
+    Three names a caller controls and bash refuses to trust: a function
+    exported under a name with a slash in it, which ran in place of
+    /usr/bin/id wherever a script wrote the path to be sure of the program;
+    IFS, which an inherited IFS=/ turned into the system() attack on an
+    unquoted path; and PS4 when the shell runs as root, whose $(...) ran on
+    the first line set -x traced. A seeded grammar draws function names
+    (slashes anywhere, plain names beside them), IFS values and PS4
+    payloads, each case run by bash and by this shell with the same
+    environment, and as root in a user namespace when unshare can make one.
+    The first line of a diagnostic names the shell; that word is folded.
+    """
+    import random
+    import shutil
+    reference = shutil.which("bash")
+    unshare = shutil.which("unshare")
+    target = Path(farm) / "bash"
+    if not reference or not target.exists():
+        return 0, 1, ["hostile environment needs bash and the candidate's bash"]
+
+    rng = random.Random(0x656e76)
+    paths = ("/usr/bin/id", "/bin/true", "./x", "a/b", "/", "id/", "/usr/bin/printf")
+    plain = ("ok", "f1", "_g")
+    separators = ("/", ":", "", "a", "/:", " ", "\t", "x/y")
+    probe = ('x=/usr/bin/id; $x -u >/dev/null && echo split-ok; '
+             'printf "[%s]\\n" "$IFS"; /usr/bin/id -u >/dev/null && echo path-ok; '
+             'declare -F; ok 2>/dev/null; set -x; : traced')
+    cases = []
+    for number in range(40):
+        environment = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "HOME": "/nonexistent"}
+        for _ in range(rng.randrange(3)):
+            name = rng.choice(paths)
+            environment["BASH_FUNC_%s%%%%" % name] = "() { echo HIJACK; }"
+        if rng.randrange(2):
+            environment["BASH_FUNC_%s%%%%" % rng.choice(plain)] = "() { echo fine; }"
+        if rng.randrange(3):
+            environment["IFS"] = rng.choice(separators).replace("\\t", "\t")
+        if rng.randrange(2):
+            environment["PS4"] = "$(echo PS4RAN >&2)%s+ " % rng.choice(("", "x", ">"))
+        root = bool(unshare) and number % 2 == 1
+        cases.append((environment, root))
+
+    def run(shell, environment, root):
+        command = [shell, "-c", probe]
+        if root:
+            command = [unshare, "-r"] + command
+        ran = subprocess.run(command, env=environment, capture_output=True, timeout=10)
+        err = ran.stderr.replace(shell.encode() + b": ", b"bash: ")
+        return ran.returncode, ran.stdout, err
+
+    passed = 0
+    notes = []
+    namespaced = 0
+    for environment, root in cases:
+        want = run(reference, environment, root)
+        if root and want[0] != 0 and b"unshare" in want[2]:
+            root = False
+            want = run(reference, environment, root)
+        namespaced += int(root)
+        got = run(str(target), environment, root)
+        if got == want:
+            passed += 1
+        elif len(notes) < 6:
+            notes.append("hostile environment %r%s: want %r got %r"
+                         % (sorted(k for k in environment if k not in ("PATH", "LC_ALL", "HOME")),
+                            " as root" if root else "", want, got))
+    if not namespaced:
+        notes.append("hostile environment: no case ran as root (no user namespace)")
+    return passed, len(cases), notes
+
+
+SHELL_CHECKS = (shell_restricted_function_import, shell_hostile_environment)
 
 
 # ----------------------------------------------------------------------------

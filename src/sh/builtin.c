@@ -2520,6 +2520,18 @@ fn shell_env_init(string_address address_to process_environment)
                    the listed options on, and reads build the live listing. */
                 if (env_optlist_take(process_environment[at]))
                         continue;
+                /* IFS is the shell's own, as bash and dash have it: an
+                   inherited IFS=/ split x=/usr/bin/id into "" usr bin id,
+                   the system() attack, where every other shell starts from
+                   the three bytes the defaults below put back. */
+                if (string_has_prefix(process_environment[at], "IFS="))
+                        continue;
+                /* Nor does a shell running as root take PS4 from whoever
+                   started it, as bash has not since 4.4: its $(...) ran as
+                   root on the first line set -x traced. */
+                if (string_has_prefix(process_environment[at], "PS4=") &&
+                    !system_call_1(syscall(geteuid), 0))
+                        continue;
                 // Duplicate names are legal; keep the old last-one-wins
                 // behavior without creating a second index entry.
                 env_borrow_assignment(process_environment[at], true);
