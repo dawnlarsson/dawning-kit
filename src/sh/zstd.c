@@ -1698,11 +1698,14 @@ static bool zstd_skippable(void)
         return zstd_in_skip_bytes(size);
 }
 
-/*      Whether this stream has shown a frame of either kind yet: input that
-        ends before it has is refused, as zstd refuses it -- "unexpected end
-        of file" for an empty .zst, which decoded here to nothing and 0. A
-        stream of skippable frames alone is still a stream. */
+/*      Whether this stream has shown a frame of either kind yet. The command
+        refuses input that ends before it has, as zstd refuses it --
+        "unexpected end of file" for an empty .zst, which decoded here to
+        nothing and 0 -- where the memory API keeps answering an empty input
+        with an empty output, which is what its callers ask of it. A stream
+        of skippable frames alone is still a stream. */
 static bool zstd_began;
+static bool zstd_empty_refused;
 
 static bool zstd_stream(void)
 {
@@ -1744,7 +1747,7 @@ static bool zstd_stream(void)
                         {
                                 if (zstd_src.eof && zstd_src.at == zstd_src.have)
                                 {
-                                        if (!zstd_began)
+                                        if (!zstd_began && zstd_empty_refused)
                                                 return zstd_fail("zstd unexpected end of file");
                                         zstd_why = null;
                                         break;
@@ -1756,7 +1759,7 @@ static bool zstd_stream(void)
                 {
                         if (zstd_src.eof && zstd_src.at == zstd_src.have)
                         {
-                                if (!zstd_began)
+                                if (!zstd_began && zstd_empty_refused)
                                         return zstd_fail("zstd unexpected end of file");
                                 zstd_why = null;
                                 break;
@@ -5138,7 +5141,9 @@ static b32 zstd_one(bipolar in, bipolar out)
         zstd_frame_open = false;
         zstd_paused = false;
         zstd_need_trailer = false;
+        zstd_empty_refused = true;
         ok = zstd_stream();
+        zstd_empty_refused = false;
         if (ok)
                 ok = zstd_flush();
         zstd_window_close();
