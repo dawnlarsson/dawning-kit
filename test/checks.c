@@ -59542,7 +59542,10 @@ static fn storage_test_capture(address_any bytes, positive length)
 
 /* Independent scalar oracle: all non-NUL bytes, both root policies, duplicate
    projections, and raw+pairs precedence. OPTIONS points into read-only data;
-   bounded output must never temporarily terminate a borrowed option token. */
+   bounded output must never temporarily terminate a borrowed option token.
+   The padded listing spells as libsmartcols does in the C locale: a control
+   byte, DEL or one past ASCII as \xNN, and a backslash only where an x
+   follows it; its column is as wide as what it shows. */
 static positive storage_test_encode(p8 address_to into, string_address text,
                                      bool raw, bool pairs)
 {
@@ -59550,8 +59553,10 @@ static positive storage_test_encode(p8 address_to into, string_address text,
         for (positive i = 0; text[i]; i++)
         {
                 p8 byte = text[i];
-                if ((raw || pairs) && (byte < 32 || byte >= 127 || byte == '\\' ||
-                    (pairs ? byte == '"' : byte == ' ')))
+                if ((raw || pairs) ? (byte < 32 || byte >= 127 || byte == '\\' ||
+                                      (pairs ? byte == '"' : byte == ' '))
+                                   : (byte < 32 || byte >= 127 ||
+                                      (byte == '\\' && text[i + 1] == 'x')))
                 {
                         into[used++] = '\\';
                         into[used++] = 'x';
@@ -59598,7 +59603,11 @@ static fn storage_test_findmnt(void)
                                 positive selected = (i + byte) % array_count(columns);
                                 if (byte & 1) selected = i % 2; // Duplicate computed cells.
                                 options.columns[i] = columns[selected];
-                                positive length = string_length(values[selected]);
+                                p8 spelled[256];
+                                positive length = options.raw || options.pairs
+                                        ? string_length(values[selected])
+                                        : storage_test_encode(spelled, values[selected],
+                                                              false, false);
                                 widths[options.columns[i]] = length + options.columns[i] % 4;
                                 check("findmnt count/write projection agreement",
                                       storage_findmnt_cell(null, address_of mount,
