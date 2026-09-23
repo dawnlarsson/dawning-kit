@@ -224,6 +224,12 @@ static decimal awk_power(decimal base, decimal exponent)
         bare body. That body carries a minus whenever the sign bit is set,
         -0 included, which is how the reference writes one.
 */
+/* The places a conversion may ask for: the integer part of the largest
+   double, its sign, point and exponent fit in the slack, and a precision
+   past the maximum is a room no allocation would give. */
+#define AWK_PLACES_SLACK 400
+#define AWK_PLACES_MAX ((positive)1 << 26)
+
 static positive awk_write_decimal(decimal value, b32 precision, p8 address_to out,
                                   positive room, p8 conversion, bool alternate)
 {
@@ -2308,6 +2314,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                 awk_value address_to argument = took ? address_of arguments[taken++]
                                                      : address_of nothing;
                 p8 room[2048];
+                p8 address_to grown = null;
                 p8 prefix[4];
                 b32 prefixed = 0;
                 positive body = 0;
@@ -2498,20 +2505,40 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                 break;
                         }
 
-                        if (places > 1000)
-                                places = 1000;
+                        /*
+                                A precision past what the room holds is
+                                given a room of its own: the formatter
+                                writes a double's digits exactly, as many as
+                                are asked for, and the reference writes
+                                them all. The places were cut at a thousand,
+                                so %.1500f of a third was five hundred
+                                digits short with nothing said. A precision
+                                no memory could hold is refused as the
+                                reference refuses it.
+                        */
+                        p8 address_to digits = room;
+                        positive digits_room = sizeof(room);
 
-                        body = awk_write_decimal(value, places, room, sizeof(room),
+                        if ((positive)places > AWK_PLACES_MAX)
+                                awk_leave(string_diagnostic(&text_diagnostic, 2, null, "out of memory"));
+                        if ((positive)places + AWK_PLACES_SLACK > sizeof(room))
+                        {
+                                digits_room = (positive)places + AWK_PLACES_SLACK;
+                                digits = grown = (p8 address_to)awk_take(digits_room);
+                        }
+
+                        body = awk_write_decimal(value, places, digits, digits_room,
                                                       conversion, alternate);
+                        body_at = digits;
 
                         // The minus is the formatter's and the field is
                         // awk's: it has to stand in front of the zero fill,
                         // so it moves out of the body and into the prefix.
-                        if (room[0] == '-')
+                        if (digits[0] == '-')
                         {
                                 prefix[prefixed++] = '-';
                                 body--;
-                                body_at = room + 1;
+                                body_at = digits + 1;
                         }
                         else if (sign)
                                 prefix[prefixed++] = '+';
@@ -2561,6 +2588,8 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
 
                 awk_builder_fill(address_of build, '0', zeros);
                 awk_builder_put(address_of build, body_at, body);
+                if (grown)
+                        memory_give(grown);
 
                 if (padding && left)
                         awk_builder_fill(address_of build, ' ', padding);

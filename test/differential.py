@@ -3611,6 +3611,28 @@ def awk_gen_empty_matches(rng, count):
     return out
 
 
+def awk_gen_precision(rng, count):
+    """A floating conversion asked for more places than a double has
+    digits, around the thousand the conversion was once cut at and the
+    1074 the smallest subnormal needs written out whole, over every
+    floating conversion and the values whose digits run longest; and a
+    seeded draw of precisions given through *."""
+    values = "1/3, -2e300, 5e-324, 0, 1e22, -0.1"
+    out = []
+    for places in (999, 1000, 1001, 1074, 1075, 1500, 4096):
+        for conversion in ("f", "e", "g", "E", "G", "F", "#g", "#e", "+.0f"):
+            spec = "%" + (conversion[:-1] if len(conversion) > 1 else "") + "." + str(places) + conversion[-1]
+            if conversion == "+.0f":
+                spec = "%+." + str(places) + "f"
+            out.append(("BEGIN { printf \"" + "|".join([spec] * 6) + "\\n\", " + values + " }",))
+    for _ in range(count):
+        out.append(("BEGIN { printf \"%%.*%s|%%*.*%s\\n\", %d, %s, %d, %d, %s }"
+                    % (rng.choice("feEgG"), rng.choice("feEgG"), rng.choice((998, 1001, 2048, 1100)),
+                       rng.choice(("1/3", "1/9", "-1e-300", "123.456")), rng.choice((0, 1500, -1500)),
+                       rng.choice((1000, 1200)), rng.choice(("1/7", "1e308", "5e-324"))),))
+    return out
+
+
 def awk_gen_broken_pipes(rng, count):
     """Output into a command that stops reading: more than a pipe holds, so
     the write that finds the reader gone is certain on both sides, by print
@@ -3893,6 +3915,7 @@ def awk_extra():
             ("numbers", awk_gen_numbers, 600),
             ("records", awk_gen_records, 150),
             ("empty-matches", awk_gen_empty_matches, 120),
+            ("precision", awk_gen_precision, 24),
             ("broken-pipes", awk_gen_broken_pipes, 0)):
         rows.extend(generator(awk_seeded(name), count))
     rows.extend(awk_audit())
