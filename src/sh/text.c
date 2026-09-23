@@ -25033,9 +25033,18 @@ static bipolar sort_temporary_named(string_address directory)
 
         for (b32 attempt = 0; attempt < 64; attempt++)
         {
+                /* Random, as mktemp's are: from the pid and a counter, every
+                   one of the 64 names was one another user of a shared
+                   TMPDIR could make first, and sort then had nowhere to
+                   spill. The counter stands in only where the kernel has no
+                   entropy to give. */
                 positive stamp = (positive)system_call_1(syscall(getpid), 0) *
                                      0x9e3779b1u +
                                  serial++;
+                positive drawn = 0;
+
+                if (!system_random_fill(address_of drawn, sizeof(drawn), 1))
+                        stamp ^= drawn;
                 p8 address_to at = path + length;
 
                 memory_copy_apart(at, "/sort", 5);
