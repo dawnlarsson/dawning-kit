@@ -35,9 +35,10 @@ moonwater bind exit remove ID|"command"
 moonwater canvas                       whether the desktop is on, and on which screens
 moonwater canvas on|off                start or stop the desktop [on]
 
-moonwater wifi                         the wireless radio, and saved networks
+moonwater wifi                         the radio, saved networks, and the networks in range, or why there are none
 moonwater wifi on|off                  unblock or block wifi
-moonwater wifi add SSID [PASSWORD]     remember a network and join it [open if no password]
+moonwater wifi add SSID [PASSWORD|-]   remember a network and join it; asks for the password at a terminal,
+                                       - reads it from standard input [open if none]
 moonwater bluetooth                    the bluetooth radio, and remembered devices
 moonwater bluetooth on|off             unblock or block bluetooth
 moonwater bluetooth add NAME           remember a bluetooth device
@@ -113,6 +114,17 @@ and cannot be bound. Bound keys go only to the binding; keys are not grabbed, so
 unbound one still types. `/root/main.moonwater.sh` overlays the kernel's builtin
 machine script: see `main.moonwater.sh` in this repository.
 
+Bare `moonwater wifi` lists the networks in range strongest first, with signal,
+security and channel, `*` on the one joined and `+` on the saved ones, from the
+kernel's last scan unless that is older than thirty seconds, when root asks for a
+new one and waits five seconds at most. When wifi cannot be used it says why
+instead, in one line that `moonwater status` shows too: no wireless hardware, a
+card with no driver in the image, the firmware file its driver could not load, an
+rfkill switch, wifi switched off, or the reason the last join failed. A password
+given on the command line is visible to every user through `ps`; leave it off to be
+asked, or pass `-` and pipe it in. Only open and WPA2 (and WPA2/WPA3 mixed) networks
+can be joined; a network that asks for WPA3 alone, 802.1X or WEP is saved and not
+tried. A network saved while there is no radio is joined when one appears.
 Wifi passwords and the internet preference live on the data partition (`/root/wifi`,
 `/root/internet`), not in the image, so `moonwater update` keeps them. When a cable
 and wifi both have carrier, `/ip watch` uses the preference (`wired` if unset).

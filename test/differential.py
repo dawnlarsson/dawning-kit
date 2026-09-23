@@ -33944,7 +33944,7 @@ def harness_guest_scenarios(argv):
                 want_ssid = False
                 continue
             if current is not None:
-                if line and (len(line) > 63 or any(b < 32 for b in line)):
+                if line and (len(line) > 64 or any(b < 32 for b in line)):
                     pass
                 else:
                     networks.append(current)
@@ -33953,7 +33953,9 @@ def harness_guest_scenarios(argv):
         if not want_ssid and len(networks) < 16 and current is not None:
             networks.append(current)
         lines.append("printf %s > /root/wifi" % fmt(data))
-        want_lines = b"wifi on\n" + b"".join(b"  " + n + b"\n" for n in networks)
+        # and, since no machine that boots this has a radio, why
+        want_lines = (b"wifi on\n" + b"".join(b"  " + n + b"\n" for n in networks) +
+                      b"wifi: no wireless hardware found\n")
         lines.append("rm -f /root/wifi.power")
         lines.append("printf %s > /tmp/sc.want" % fmt(want_lines))
         lines.append("moonwater wifi 2>&1 | scen_strip > /tmp/sc.got")
@@ -33963,7 +33965,7 @@ def harness_guest_scenarios(argv):
             ("''", "", "that network name is empty or too long"),
             ('"$(scen_rep 33 n)"', "", "that network name is empty or too long"),
             ("net", "short77", "a WPA password is 8 to 63 characters"),
-            ("net", "p" * 64, "that password is too long"),
+            ("net", "p" * 64, "a WPA password is 8 to 63 characters"),
             ("net", "p" * 70, "that password is too long"),
             ('"$(printf \'a\\tb\')"', "", "that network name cannot be stored"),
             ("net", "pass\x01word", None),
@@ -33984,6 +33986,117 @@ def harness_guest_scenarios(argv):
         lines.append("cmp -s /tmp/sc.file /root/wifi 2>/dev/null || [ ! -e /root/wifi ]; scen_status %s 0 $?" % q("wifi refusal %d leaves the file" % run))
     lines.append("if [ \"$scen_wifi_had\" = 0 ]; then cp /tmp/scen-wifi.kept /root/wifi; else rm -f /root/wifi; fi")
     family("wifi", lines)
+
+    # ------------------------------------------------------------- radio
+    # Why wifi cannot be used, asked of sysfs trees laid over the real ones
+    # with tmpfs: cards by PCI class or by a USB wifi driver, a driver bound
+    # or not, what the kernel said about the card -- lines written into
+    # /dev/kmsg as a driver writes them -- whether the file it wanted is in
+    # /lib/firmware now, rfkill switches, and wifi switched off. The model
+    # is radio_wifi_why's order. Each card gets an address of its own, so
+    # a line written for one never answers for the next.
+    lines = []
+    lines.append("cp /root/wifi /tmp/scen-radio.kept 2>/dev/null; scen_radio_had=$?")
+    lines.append("rm -f /root/wifi /root/wifi.power /run/moonwater/wifi.last")
+    # The machine as it is: no radio, so add saves and says so at once.
+    lines.append("moonwater wifi add scen-none passpass1 > /tmp/sc.got 2>&1; scen_status 'radio add, no radio' 1 $?")
+    lines.append("scen_count 'radio add says why' 1 \"$(grep -c 'saved; wifi: no wireless hardware found' /tmp/sc.got)\"")
+    lines.append("scen_count 'radio add saved it' 1 \"$(grep -c -x scen-none /root/wifi)\"")
+    lines.append("moonwater status > /tmp/sc.got 2>&1; scen_count 'radio status says why' 1 \"$(grep -c -x '  wifi: no wireless hardware found' /tmp/sc.got)\"")
+    # The password kept out of argv: from standard input with -, and none
+    # at all when nobody is at a terminal; a 64-digit key is a key.
+    secret = "".join(rng.choice("abcdef XYZ 0189!#") for _ in range(rng.randrange(8, 40))).strip() or "stdin-pass"
+    if len(secret) < 8:
+        secret = secret + "12345678"
+    key = "".join(rng.choice("0123456789abcdefABCDEF") for _ in range(64))
+    lines.append("printf '%%s\\n' %s | moonwater wifi add scen-stdin - > /tmp/sc.got 2>&1; scen_status 'radio add from stdin' 1 $?" % q(secret))
+    lines.append("scen_count 'radio stdin password kept' 1 \"$(grep -A1 -x scen-stdin /root/wifi | grep -c -x -F -- %s)\"" % q(secret))
+    lines.append("moonwater wifi add scen-hex %s > /tmp/sc.got 2>&1; scen_status 'radio add a hex key' 1 $?" % key)
+    lines.append("scen_count 'radio hex key kept' 1 \"$(grep -A1 -x scen-hex /root/wifi | grep -c -x %s)\"" % key)
+    lines.append("moonwater wifi add scen-open < /dev/null > /tmp/sc.got 2>&1; scen_status 'radio add open' 1 $?")
+    lines.append("scen_count 'radio open has no password' 1 \"$(grep -A1 -x scen-open /root/wifi | tail -1 | grep -c -x '')\"")
+
+    chips = [(0x10ec, 0xc822, "Realtek RTL8822CE"), (0x14c3, 0x0616, "MediaTek MT7922"),
+             (0x17cb, 0x1103, "Qualcomm QCA2066"), (0x8086, 0x2725, "Intel Wi-Fi 6E AX210"),
+             (0x10ec, 0x1234, "Realtek wireless 10ec:1234"), (0x1ab4, 0x0007, "wireless 1ab4:0007")]
+    usb = [(0x0bda, 0x8179, "rtl8xxxu", "Realtek USB wireless 0bda:8179"),
+           (0x0e8d, 0x7961, "mt7921u", "MediaTek USB wireless 0e8d:7961"),
+           (0x2357, 0x0120, "rtw88_8821cu", "USB wireless 2357:0120")]
+    trees = "/sys/bus/pci/devices /sys/bus/usb/devices /sys/class/rfkill /sys/class/net /lib/firmware"
+    for run in range(12):
+        slot = 0x20 + run
+        address = "0000:%02x:00.0" % slot
+        kind = rng.choice(("pci", "pci", "pci", "usb", "none"))
+        driver = None
+        log = rng.choice((None, "missing", "present", "probe", "probe"))
+        rfkill = rng.choice((0, 0, 0, 1, 2))
+        off = rng.random() < 0.1
+        firmware = "scen/fw-%d.bin" % run
+        steps = ["for d in %s; do mount -t tmpfs scen $d; done" % trees]
+        if kind == "pci":
+            vendor, device, name = rng.choice(chips)
+            driver = rng.choice((None, None, "rtw_8822ce", "mt7921e"))
+            steps.append("mkdir -p /sys/bus/pci/devices/%s" % address)
+            steps.append("echo 0x028000 > /sys/bus/pci/devices/%s/class; echo 0x%04x > /sys/bus/pci/devices/%s/vendor; echo 0x%04x > /sys/bus/pci/devices/%s/device"
+                         % (address, vendor, address, device, address))
+            if driver:
+                steps.append("ln -s ../../../bus/pci/drivers/%s /sys/bus/pci/devices/%s/driver" % (driver, address))
+            # a network card beside it, which is no radio
+            steps.append("mkdir -p /sys/bus/pci/devices/0000:%02x:01.0 && echo 0x020000 > /sys/bus/pci/devices/0000:%02x:01.0/class" % (slot, slot))
+        elif kind == "usb":
+            vendor, device, driver, name = rng.choice(usb)
+            address = "9-%d:1.0" % (run + 1)
+            parent = "9-%d" % (run + 1)
+            steps.append("mkdir -p /sys/bus/usb/devices/%s /sys/bus/usb/devices/%s" % (address, parent))
+            steps.append("echo %04x > /sys/bus/usb/devices/%s/idVendor; echo %04x > /sys/bus/usb/devices/%s/idProduct"
+                         % (vendor, parent, device, parent))
+            steps.append("ln -s ../../../bus/usb/drivers/%s /sys/bus/usb/devices/%s/driver" % (driver, address))
+        if kind != "none" and log in ("missing", "present"):
+            steps.append("printf '%%s\\n' '%s %s: Direct firmware load for %s failed with error -2' > /dev/kmsg"
+                         % (driver or "scen", address, firmware))
+            if log == "present":
+                steps.append("mkdir -p /lib/firmware/scen && : > /lib/firmware/%s.zst" % firmware)
+        if kind != "none" and log == "probe":
+            steps.append("printf '%%s\\n' '%s %s: probe with driver %s failed with error -22' > /dev/kmsg"
+                         % (driver or "scen", address, driver or "scen"))
+        radio = rfkill == 1 and rng.random() < 0.7
+        if rfkill:
+            steps.append("mkdir -p /sys/class/rfkill/rfkill9 && echo wlan > /sys/class/rfkill/rfkill9/type && echo %d > /sys/class/rfkill/rfkill9/hard && echo %d > /sys/class/rfkill/rfkill9/soft"
+                         % (1 if rfkill == 2 else 0, 1 if rfkill == 1 else 0))
+        if radio:
+            steps.append("mkdir -p /sys/class/net/wlan9/phy80211")
+        if off:
+            steps.append("echo off > /root/wifi.power")
+        # radio_wifi_why, in its order
+        if off:
+            why = "switched off (moonwater wifi on)"
+        elif rfkill == 2:
+            why = "blocked by rfkill (hard): a switch or key on the machine"
+        elif radio:
+            why = "blocked by rfkill (soft)"
+        elif kind == "none":
+            why = "no wireless hardware found"
+        elif log == "missing":
+            why = "%s found, firmware %s missing" % (name, firmware)
+        elif log == "present":
+            why = "%s found, firmware %s came after its driver gave up; reboot" % (name, firmware)
+        elif not driver and log == "probe":
+            why = "%s found, its driver failed with error -22" % name
+        elif not driver:
+            why = "%s found, no driver for it in this image" % name
+        else:
+            why = "%s found, driver %s gave it no interface" % (name, driver)
+        lines.extend(steps)
+        lines.append("printf '%%s\\n' %s > /tmp/sc.want" % q("wifi: " + why))
+        lines.append("moonwater wifi 2>&1 | scen_strip | tail -1 > /tmp/sc.got")
+        lines.append("scen_same %s" % q("radio %d why" % run))
+        lines.append("moonwater status 2>&1 | grep -c -x -F -- %s > /tmp/sc.got; echo 1 > /tmp/sc.want; scen_same %s"
+                     % (q("  wifi: " + why), q("radio %d status" % run)))
+        lines.append("for d in %s; do umount $d; done; rm -f /root/wifi.power" % trees[::-1].replace(" ", "\x00")[::-1].replace("\x00", " ") if False else
+                     "for d in /lib/firmware /sys/class/net /sys/class/rfkill /sys/bus/usb/devices /sys/bus/pci/devices; do umount $d; done; rm -f /root/wifi.power")
+    lines.append("if [ \"$scen_radio_had\" = 0 ]; then cp /tmp/scen-radio.kept /root/wifi; else rm -f /root/wifi; fi")
+    lines.append("rm -f /run/moonwater/wifi.last")
+    family("radio", lines)
 
     # --------------------------------------------------------- bluetooth
     lines = []
@@ -34255,9 +34368,17 @@ def harness_wifi_air(argv):
     for the rest also escape sequences, C1 controls and bytes that are no
     UTF-8 at all, none of which may reach the terminal as they are.
 
-      join   a WPA2 network joins with its password, a wrong password is
-             "did not accept the password", and an open network joins with
-             nothing on standard input
+      late   a network saved before there is a station radio is joined by
+             the machine, with no command, once one arrives; the password
+             went in on standard input
+      join   a wrong password is "did not accept the password", an open
+             network joins with nothing on standard input, and a network
+             that asks for WPA3 alone is saved and not tried
+      air    bare moonwater wifi against a model of radio_wifi_status once
+             the scan the joins left has expired: every network strongest
+             first, marked joined or saved, its name made safe; then with
+             only a network whose password is wrong saved, why the machine
+             is not joined, there and in moonwater status
     """
     import random
     seed = 1
@@ -34280,6 +34401,32 @@ def harness_wifi_air(argv):
         out.extend(lines)
         out.append("scen_done %s" % name)
         expects.append((name, asked))
+
+    def display(data):
+        # radio_display: printable ASCII and UTF-8 from U+00A0 as they are,
+        # anything else as \xNN; the columns are code points and escapes.
+        text, columns, at = "", 0, 0
+        while at < len(data):
+            byte = data[at]
+            span = 4 if 0xf0 <= byte < 0xf5 else 3 if byte >= 0xe0 else 2 if 0xc2 <= byte < 0xe0 else 1
+            if span > 1 and at + span <= len(data) and 0xc2 <= byte < 0xf5:
+                try:
+                    point = ord(data[at:at + span].decode("utf-8"))
+                except (UnicodeDecodeError, TypeError):
+                    point = -1
+                if point >= 0xa0:
+                    text += data[at:at + span].decode("utf-8")
+                    columns += 1
+                    at += span
+                    continue
+            if 0x20 <= byte < 0x7f:
+                text += chr(byte)
+                columns += 1
+            else:
+                text += "\\x%02x" % byte
+                columns += 4
+            at += 1
+        return text, columns
 
     plain = [b"moon", b"lake", b"cafe", b"home", b"north", b"guest", b" ", b"-", b"'", b"\"",
              "é".encode(), "日本".encode(), "ø".encode(), b"5", b"_"]
@@ -34306,6 +34453,7 @@ def harness_wifi_air(argv):
     kinds += [rng.choice(("open", "wpa2", "wpa3", "wpa23")) for _ in range(rng.randrange(0, 3))]
     powers = rng.sample(range(0, 21), len(kinds))
     channels = [rng.choice((1, 3, 6, 9, 11)) for _ in kinds]
+    words = {"open": "open", "wpa2": "WPA2", "wpa3": "WPA3", "wpa23": "WPA2/3"}
     aps = []
     for at, kind in enumerate(kinds):
         ssid = name(plain if at < 4 else wild, taken)
@@ -34314,7 +34462,7 @@ def harness_wifi_air(argv):
             password += "x"
         aps.append({"ssid": ssid, "kind": kind, "power": powers[at], "channel": channels[at],
                     "password": password, "dbm": powers[at] - 50})
-    good = aps[0]
+    good, bad, opened, sae = aps[0], aps[1], aps[2], aps[3]
     wrong = good["password"] + "wrong"
 
     prep = []
@@ -34351,17 +34499,61 @@ def harness_wifi_air(argv):
     station = "wlan%d" % len(aps)
     out.extend(prep)
 
-    out.append("/mnt/stick/hwsim_radio new > /dev/null")
+    # ---- late: saved first, the radio after
+    lines = []
+    lines.append("printf '%%s\\n' %s | moonwater wifi add \"$ap0\" - > /tmp/sc.got 2>&1; scen_status 'late add, no station' 1 $?" % q(good["password"]))
+    lines.append("scen_count 'late add says so' 1 \"$(grep -c 'saved, but there is no wireless interface' /tmp/sc.got)\"")
+    lines.append("scen_count 'late password not in argv' 0 \"$(grep -c -F -- %s /tmp/sc.got)\"" % q(good["password"]))
+    lines.append("/mnt/stick/hwsim_radio new > /dev/null")
+    lines.append("for i in $(seq 60); do moonwater status 2>/dev/null | grep -q -x -F \"  wifi joined $ap0\" && break; sleep 0.5; done")
+    lines.append("scen_count 'late radio joined with no command' 1 \"$(moonwater status 2>/dev/null | grep -c -x -F \"  wifi joined $ap0\")\"")
+    family("late", lines)
 
     # ---- join
     lines = []
-    lines.append("moonwater wifi add \"$ap0\" %s > /tmp/sc.got 2>&1; scen_status 'join WPA2' 0 $?" % q(good["password"]))
-    lines.append("scen_count 'join WPA2 joined' 1 \"$(grep -c -x -F \"$(printf '\\033[1m[Moonwater]\\033[0m ')wifi joined $ap0\" /tmp/sc.got)\"")
     lines.append("moonwater wifi add \"$ap1\" %s > /tmp/sc.got 2>&1; scen_status 'join wrong password' 1 $?" % q(wrong))
     lines.append("scen_count 'join wrong password says so' 1 \"$(grep -c 'saved, but the network did not accept the password' /tmp/sc.got)\"")
     lines.append("moonwater wifi add \"$ap2\" < /dev/null > /tmp/sc.got 2>&1; scen_status 'join open' 0 $?")
     lines.append("scen_count 'join open joined' 1 \"$(grep -c -x -F \"$(printf '\\033[1m[Moonwater]\\033[0m ')wifi joined $ap2\" /tmp/sc.got)\"")
+    lines.append("moonwater wifi add \"$ap3\" %s > /tmp/sc.got 2>&1; scen_status 'join WPA3 alone' 1 $?" % q(sae["password"]))
+    lines.append("scen_count 'join WPA3 alone refused' 1 \"$(grep -c 'saved, but it asks for WPA3, which moonwater cannot join yet' /tmp/sc.got)\"")
+    lines.append("scen_count 'join WPA3 still joined to the open one' 1 \"$(moonwater status 2>/dev/null | grep -c -x -F \"  wifi joined $ap2\")\"")
     family("join", lines)
+
+    # ---- air
+    lines = []
+    saved = [good["ssid"], bad["ssid"], opened["ssid"], sae["ssid"]]
+    order = sorted(aps, key=lambda ap: -ap["dbm"])
+    width = 4
+    for ap in order[:16]:
+        width = max(width, min(display(ap["ssid"])[1], 28))
+    want = ["wifi on"] + ["  " + n.decode("utf-8") for n in saved]
+    for ap in order[:16]:
+        text, columns = display(ap["ssid"])
+        mark = "* " if ap is opened else "+ " if ap["ssid"] in saved else "  "
+        dbm = ap["dbm"]
+        bars = 4 if dbm >= -55 else 3 if dbm >= -67 else 2 if dbm >= -75 else 1 if dbm >= -85 else 0
+        row = mark + text + " " * max(0, width + 2 - columns)
+        row += ("%d" % dbm).rjust(4) + " dBm " + "#" * bars + "." * (4 - bars) + "  "
+        row += words[ap["kind"]].ljust(8) + "2.4 GHz ch %d" % ap["channel"]
+        want.append(row)
+    want.append("* joined  + saved  moonwater wifi add SSID asks for its password")
+    lines.append("sleep 31")
+    lines.append("printf '%%s\\n' %s > /tmp/sc.want" % " ".join(q(w) for w in want))
+    lines.append("moonwater wifi 2>&1 | scen_strip > /tmp/sc.got")
+    lines.append("scen_same 'air the networks, strongest first'")
+    # Only the network whose password is wrong left saved: the machine
+    # cannot join, and says why.
+    lines.append("{ printf '%%s\\n' \"$ap1\"; printf '%%s\\n' %s; } > /root/wifi" % q(wrong))
+    # Not wifi off and on to leave the network: rfkill is every wlan
+    # switch, and here the access points' radios are wlan too.
+    lines.append("moonwater wifi add \"$ap1\" %s > /tmp/sc.got 2>&1; scen_status 'air a wrong password again' 1 $?" % q(wrong))
+    lines.append("scen_count 'air bare wifi says why' 1 \"$(moonwater wifi 2>&1 | scen_strip | grep -c -x -F \"not joined: $ap1 did not accept the password\")\"")
+    lines.append("scen_count 'air status says why' 1 \"$(moonwater status 2>&1 | grep -c -x -F \"  wifi on, not joined: $ap1 did not accept the password\")\"")
+    lines.append("printf '%s\\n' 'nowhere near' '' > /root/wifi; moonwater wifi on > /dev/null 2>&1")
+    lines.append("scen_count 'air none in range' 1 \"$(moonwater wifi 2>&1 | scen_strip | grep -c -x 'not joined: no saved network is in range')\"")
+    lines.append("rm -f /root/wifi /run/moonwater/wifi.last")
+    family("air", lines)
 
     head = ["#expect %s %d" % item for item in expects]
     print("\n".join(head))

@@ -139,7 +139,7 @@ describe()
         boot)     echo "the image boots, init starts, and the shell answers" ;;
         install)  echo "Moonwater installed to a disk, started from it, asked about and updated from a stick" ;;
         canvas)   echo "what is actually on the screen, read back a pixel at a time" ;;
-        wifi)     echo "networks in the air of a machine with simulated radios, joined" ;;
+        wifi)     echo "networks in the air of a machine with simulated radios, joined and listed" ;;
         esac
 }
 
@@ -10485,7 +10485,8 @@ counted
 #       hwsim_radio (test/checks.c, CHECK_hwsim_radio, static) and runs
 #       access points on them with this machine's own wpa_supplicant,
 #       carried in on a stick with every library it loads and the loader
-#       that loads them. moonwater then joins from a radio of its own. Not in a plain run: only named, and only here,
+#       that loads them. moonwater then joins, lists and explains from a
+#       radio of its own. Not in a plain run: only named, and only here,
 #       with an x86_64 image, a wpa_supplicant and a C compiler.
 #
 lane_wifi()

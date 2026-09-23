@@ -3577,6 +3577,7 @@ typedef struct
         b32 handle;
         p16 family;
         p32 mlme;
+        p32 scan;
 } nl80211;
 
 typedef struct
@@ -3602,6 +3603,7 @@ typedef struct
 {
         p16 family;
         p32 mlme;
+        p32 scan;
 } nl80211_family_info;
 
 static COLD bool nl80211_begin(netlink_buffer address_to buffer, p16 family, p8 command,
@@ -3695,6 +3697,9 @@ static COLD bool nl80211_family_seen(netlink_header address_to header,
                 if (name && name_length >= 4 && id && id_length >= 4 &&
                     !memory_compare(name, "mlme", 4))
                         info->mlme = memory_load_unaligned(p32, id);
+                if (name && name_length >= 5 && id && id_length >= 4 &&
+                    !memory_compare(name, "scan", 5))
+                        info->scan = memory_load_unaligned(p32, id);
                 cursor += netlink_align(attribute->length);
         }
 
@@ -3742,6 +3747,7 @@ static COLD bipolar nl80211_open(nl80211 address_to session)
 
         session->handle = (b32)handle;
         session->family = info.family;
+        session->scan = info.scan;
         return 0;
 }
 
@@ -4807,7 +4813,7 @@ static bipolar nl80211_disconnect(nl80211 address_to session, p32 index)
 
 
 #define RADIO_SSID_MOST 32
-#define RADIO_PASS_MOST 63
+#define RADIO_PASS_MOST 64
 #define RADIO_WIFI_MOST 16
 #define RADIO_RFKILL_WLAN 1
 #define RADIO_RFKILL_BLUETOOTH 2
@@ -5070,6 +5076,1200 @@ static bipolar radio_wifi_save(radio_network address_to networks, positive count
         }
 }
 
+/* ---- wifi: why there is nothing to join with ---- */
+
+/*
+        The one line that says why wifi cannot be used, from what the kernel
+        shows anybody: sysfs for the cards, their drivers and the rfkill
+        switches, /dev/kmsg for what a driver said as it gave up (readable
+        without privilege here, since the image leaves DMESG_RESTRICT off),
+        and the firmware directories for whether the file it asked for is
+        there now.
+
+        The two drivers the image carries fail differently without their
+        firmware. rtw88 fails its probe and leaves the card with no driver;
+        mt7921e stays bound and never registers a radio. Both leave "Direct
+        firmware load for NAME failed" against the card's address, so the
+        card is found by its PCI class, 0x0280, and the file by that line.
+        A USB radio has no class of its own, so it is found only by a wifi
+        driver bound to it.
+*/
+
+#define RADIO_WHY_ROOM 192
+#define RADIO_LAST_PATH NET_STATE_DIR "/wifi.last"
+
+typedef struct
+{
+        p16 vendor;
+        p16 device;
+        string_address name;
+} radio_chip;
+
+/* The names these parts are sold by. Anything else is its vendor and IDs. */
+static const radio_chip radio_chips[] = {
+    {0x10ec, 0xc822, (string_address) "Realtek RTL8822CE"},
+    {0x10ec, 0xb822, (string_address) "Realtek RTL8822BE"},
+    {0x10ec, 0xc821, (string_address) "Realtek RTL8821CE"},
+    {0x10ec, 0xd723, (string_address) "Realtek RTL8723DE"},
+    {0x10ec, 0x8852, (string_address) "Realtek RTL8852AE"},
+    {0x10ec, 0xb852, (string_address) "Realtek RTL8852BE"},
+    {0x10ec, 0xc852, (string_address) "Realtek RTL8852CE"},
+    {0x14c3, 0x7961, (string_address) "MediaTek MT7921"},
+    {0x14c3, 0x0608, (string_address) "MediaTek MT7921K"},
+    {0x14c3, 0x0616, (string_address) "MediaTek MT7922"},
+    {0x14c3, 0x7920, (string_address) "MediaTek MT7920"},
+    {0x14c3, 0x7925, (string_address) "MediaTek MT7925"},
+    {0x17cb, 0x1103, (string_address) "Qualcomm QCA2066"},
+    {0x168c, 0x003e, (string_address) "Qualcomm Atheros QCA6174"},
+    {0x8086, 0x2723, (string_address) "Intel Wi-Fi 6 AX200"},
+    {0x8086, 0x2725, (string_address) "Intel Wi-Fi 6E AX210"},
+    {0x8086, 0x272b, (string_address) "Intel Wi-Fi 7 BE200"},
+};
+
+static const radio_chip radio_vendors[] = {
+    {0x10ec, 0, (string_address) "Realtek"},  {0x14c3, 0, (string_address) "MediaTek"},
+    {0x8086, 0, (string_address) "Intel"},    {0x168c, 0, (string_address) "Qualcomm Atheros"},
+    {0x17cb, 0, (string_address) "Qualcomm"}, {0x14e4, 0, (string_address) "Broadcom"},
+    {0x0bda, 0, (string_address) "Realtek"},  {0x0e8d, 0, (string_address) "MediaTek"},
+    {0x148f, 0, (string_address) "Ralink"},
+};
+
+/* The drivers a USB radio is known by, as the start of their names. */
+static const string_address radio_usb_drivers[] = {
+    (string_address) "rtw88_",    (string_address) "rtw89_",   (string_address) "rtl8xxxu",
+    (string_address) "rtl8192cu", (string_address) "rtl8187",  (string_address) "mt7601u",
+    (string_address) "mt76x0u",   (string_address) "mt76x2u",  (string_address) "mt7663u",
+    (string_address) "mt7921u",   (string_address) "mt7925u",  (string_address) "rt2800usb",
+    (string_address) "rt73usb",   (string_address) "ath9k_htc", (string_address) "carl9170",
+    (string_address) "ath10k_usb", (string_address) "ath6kl_usb", (string_address) "ar5523",
+    (string_address) "brcmfmac",  (string_address) "zd1211rw", (string_address) "mwifiex_usb",
+};
+
+typedef struct
+{
+        p8 address[48];
+        p8 name[64];
+        p8 driver[48];
+        bool found;
+} radio_card;
+
+/* Pieces joined into a bounded line; a null ends the list early. */
+static fn radio_line(p8 address_to into, positive room, string_address a,
+                     string_address b, string_address c, string_address d,
+                     string_address e)
+{
+        string_address parts[5] = {a, b, c, d, e};
+
+        into[0] = end;
+        for (positive at = 0; at < 5 && parts[at]; at++)
+                string_append_bounded(into, parts[at], room);
+}
+
+static p32 radio_hex(p8 address_to text)
+{
+        p32 value = 0;
+
+        if (text[0] == '0' && (text[1] | 32) == 'x')
+                text += 2;
+        for (; byte_is_hexadecimal(*text); text++)
+                value = value * 16 + (byte_is_digit(*text) ? (p32)(*text - '0')
+                                                           : (p32)((*text | 32) - 'a' + 10));
+        return value;
+}
+
+static fn radio_hex4(p8 address_to into, p32 value)
+{
+        static const p8 digits[] = "0123456789abcdef";
+
+        for (positive at = 0; at < 4; at++)
+                into[at] = digits[(value >> (12 - 4 * at)) & 15];
+        into[4] = end;
+}
+
+/* directory/name/leaf, or false if it does not fit. */
+static bool radio_sys_path(p8 address_to into, positive room, string_address directory,
+                           string_address name, string_address leaf)
+{
+        return host_join(into, room, directory, (string_address) "/") &&
+               string_append_bounded(into, name, room) < room &&
+               string_append_bounded(into, leaf, room) < room;
+}
+
+static bipolar radio_sys_read(string_address directory, string_address name,
+                              string_address leaf, p8 address_to into, positive room)
+{
+        p8 path[256];
+
+        if (!radio_sys_path(path, sizeof(path), directory, name, leaf))
+        {
+                into[0] = end;
+                return -1;
+        }
+        return host_read_text((string_address)path, into, room);
+}
+
+/* The name of the driver bound to a device, or empty. */
+static fn radio_sys_driver(string_address directory, string_address name,
+                           p8 address_to into, positive room)
+{
+        p8 path[256];
+        p8 target[256];
+        bipolar got;
+        positive from = 0;
+
+        into[0] = end;
+        if (!radio_sys_path(path, sizeof(path), directory, name,
+                            (string_address) "/driver"))
+                return;
+        got = system_read_link_at(AT_FDCWD, path, target, sizeof(target) - 1);
+        if (got <= 0)
+                return;
+        for (positive at = 0; at < (positive)got; at++)
+                if (target[at] == '/')
+                        from = at + 1;
+        target[got] = end;
+        string_copy_bounded(into, target + from, room);
+}
+
+static fn radio_card_name(radio_card address_to card, p32 vendor, p32 device,
+                          string_address kind)
+{
+        p8 ids[12];
+        string_address maker = null;
+
+        for (positive at = 0; at < array_count(radio_chips); at++)
+                if (radio_chips[at].vendor == vendor && radio_chips[at].device == device)
+                {
+                        string_copy_bounded(card->name, radio_chips[at].name,
+                                            sizeof(card->name));
+                        return;
+                }
+        for (positive at = 0; at < array_count(radio_vendors); at++)
+                if (radio_vendors[at].vendor == vendor)
+                        maker = radio_vendors[at].name;
+        radio_hex4(ids, vendor);
+        ids[4] = ':';
+        radio_hex4(ids + 5, device);
+        radio_line(card->name, sizeof(card->name), maker ? maker : (string_address) "",
+                   maker ? (string_address) " " : (string_address) "", kind,
+                   (string_address) " ", ids);
+}
+
+static bool radio_pci_visit(string_address directory, string_address name,
+                            address_any context)
+{
+        radio_card address_to card = (radio_card address_to)context;
+        p8 text[24];
+        p32 vendor;
+
+        if (radio_sys_read(directory, name, (string_address) "/class", text,
+                           sizeof(text)) < 0 ||
+            !host_starts((string_address)text, (string_address) "0x0280"))
+                return true;
+        radio_sys_read(directory, name, (string_address) "/vendor", text, sizeof(text));
+        vendor = radio_hex(text);
+        radio_sys_read(directory, name, (string_address) "/device", text, sizeof(text));
+        radio_card_name(card, vendor, radio_hex(text), (string_address) "wireless");
+        string_copy_bounded(card->address, name, sizeof(card->address));
+        radio_sys_driver(directory, name, card->driver, sizeof(card->driver));
+        card->found = true;
+        return false;
+}
+
+static bool radio_usb_visit(string_address directory, string_address name,
+                            address_any context)
+{
+        radio_card address_to card = (radio_card address_to)context;
+        p8 driver[48];
+        p8 parent[48];
+        p8 text[16];
+        p32 vendor;
+        positive at = 0;
+        bool wifi = false;
+
+        if (!string_find(name, (string_address) ":"))
+                return true;
+        radio_sys_driver(directory, name, driver, sizeof(driver));
+        for (positive which = 0; which < array_count(radio_usb_drivers); which++)
+                if (host_starts((string_address)driver, radio_usb_drivers[which]))
+                        wifi = true;
+        if (!wifi)
+                return true;
+
+        while (name[at] && name[at] != ':' && at + 1 < sizeof(parent))
+        {
+                parent[at] = name[at];
+                at++;
+        }
+        parent[at] = end;
+        radio_sys_read(directory, (string_address)parent, (string_address) "/idVendor",
+                       text, sizeof(text));
+        vendor = radio_hex(text);
+        radio_sys_read(directory, (string_address)parent, (string_address) "/idProduct",
+                       text, sizeof(text));
+        radio_card_name(card, vendor, radio_hex(text), (string_address) "USB wireless");
+        string_copy_bounded(card->address, name, sizeof(card->address));
+        string_copy_bounded(card->driver, driver, sizeof(card->driver));
+        card->found = true;
+        return false;
+}
+
+static bool radio_net_visit(string_address directory, string_address name,
+                            address_any context)
+{
+        p8 path[256];
+
+        if (radio_sys_path(path, sizeof(path), directory, name,
+                           (string_address) "/phy80211") &&
+            system_access_at(AT_FDCWD, path, 0) >= 0)
+        {
+                *(bool address_to)context = true;
+                return false;
+        }
+        return true;
+}
+
+/* 2 when a wireless switch is hard-blocked, 1 when only soft, else 0. */
+static bool radio_rfkill_visit(string_address directory, string_address name,
+                               address_any context)
+{
+        p8 address_to state = (p8 address_to)context;
+        p8 text[16];
+
+        if (radio_sys_read(directory, name, (string_address) "/type", text,
+                           sizeof(text)) < 0 ||
+            !string_equals((string_address)text, (string_address) "wlan"))
+                return true;
+        if (radio_sys_read(directory, name, (string_address) "/hard", text,
+                           sizeof(text)) >= 0 &&
+            string_equals((string_address)text, (string_address) "1"))
+                *state = 2;
+        else if (radio_sys_read(directory, name, (string_address) "/soft", text,
+                                sizeof(text)) >= 0 &&
+                 string_equals((string_address)text, (string_address) "1") &&
+                 *state < 1)
+                *state = 1;
+        return true;
+}
+
+/*
+        What the kernel said about one device: the last firmware file a load
+        failed for, and the error its last failed probe gave. A record is
+        "PRIORITY,SEQUENCE,TIME,FLAGS;TEXT" and a device's messages start
+        its text with its driver and its address.
+*/
+typedef struct
+{
+        p8 firmware[128];
+        p8 probe[16];
+} radio_said;
+
+static fn radio_kernel_said(string_address address, radio_said address_to said)
+{
+        p8 record[2048];
+        p8 load[96];
+        p8 probe[96];
+        bipolar handle;
+
+        said->firmware[0] = end;
+        said->probe[0] = end;
+        radio_line(load, sizeof(load), address,
+                   (string_address) ": Direct firmware load for ", null, null, null);
+        radio_line(probe, sizeof(probe), address,
+                   (string_address) ": probe with driver ", null, null, null);
+        handle = system_open_at(AT_FDCWD, "/dev/kmsg", FILE_READ | O_NONBLOCK | O_CLOEXEC);
+        if (handle < 0)
+                return;
+
+        for (;;)
+        {
+                bipolar got = system_read_once(handle, record, sizeof(record) - 1);
+                string_address text;
+                string_address found;
+                positive at;
+
+                // Interrupted, or a record overwritten before it was read.
+                if (got == -4 || got == -32)
+                        continue;
+                if (got <= 0)
+                        break;
+                record[got] = end;
+                text = string_find(record, (string_address) ";");
+                if (!text)
+                        continue;
+                text++;
+                for (at = 0; text[at] && text[at] != '\n'; at++)
+                        ;
+                text[at] = end;
+
+                found = string_find(text, load);
+                if (found)
+                {
+                        found += string_length(load);
+                        for (at = 0; found[at] && found[at] != ' ' &&
+                                     at + 1 < sizeof(said->firmware);
+                             at++)
+                                said->firmware[at] = found[at];
+                        said->firmware[at] = end;
+                        continue;
+                }
+                found = string_find(text, probe);
+                if (found && (found = string_find(found, (string_address) "with error ")))
+                        string_copy_bounded(said->probe, found + 11, sizeof(said->probe));
+        }
+        system_close(handle);
+}
+
+/* Where request_firmware looks, in its order, as the file or its .zst/.xz. */
+static bool radio_firmware_present(string_address name)
+{
+        static const string_address tails[] = {(string_address) "", (string_address) ".zst",
+                                               (string_address) ".xz"};
+        p8 custom[256];
+        p8 release[80];
+        p8 updates[160];
+        p8 versioned[160];
+        p8 path[512];
+        string_address roots[5];
+        positive count = 0;
+
+        host_read_text((string_address) "/sys/module/firmware_class/parameters/path",
+                       custom, sizeof(custom));
+        host_read_text((string_address) "/proc/sys/kernel/osrelease", release,
+                       sizeof(release));
+        radio_line(updates, sizeof(updates), (string_address) "/lib/firmware/updates/",
+                   release, null, null, null);
+        radio_line(versioned, sizeof(versioned), (string_address) "/lib/firmware/",
+                   release, null, null, null);
+        if (custom[0])
+                roots[count++] = custom;
+        roots[count++] = updates;
+        roots[count++] = (string_address) "/lib/firmware/updates";
+        roots[count++] = versioned;
+        roots[count++] = (string_address) "/lib/firmware";
+
+        for (positive root = 0; root < count; root++)
+                for (positive tail = 0; tail < array_count(tails); tail++)
+                {
+                        radio_line(path, sizeof(path), roots[root], (string_address) "/",
+                                   name, tails[tail], null);
+                        if (system_access_at(AT_FDCWD, path, 0) >= 0)
+                                return true;
+                }
+        return false;
+}
+
+static bool radio_has_interface(void)
+{
+        bool radio = false;
+
+        host_each_entry((string_address) "/sys/class/net", radio_net_visit,
+                        address_of radio);
+        return radio;
+}
+
+/*
+        Why wifi cannot be used, into why, or false when the machine shows
+        nothing wrong: a radio is there and nothing blocks it.
+*/
+static bool radio_wifi_why(p8 address_to why, positive room)
+{
+        radio_card card;
+        radio_said said;
+        p8 rfkill = 0;
+
+        why[0] = end;
+        if (radio_word_is(NET_WIFI_POWER, "off"))
+        {
+                radio_line(why, room, (string_address) "switched off (moonwater wifi on)",
+                           null, null, null, null);
+                return true;
+        }
+
+        host_each_entry((string_address) "/sys/class/rfkill", radio_rfkill_visit,
+                        address_of rfkill);
+        if (rfkill == 2)
+        {
+                radio_line(why, room,
+                           (string_address) "blocked by rfkill (hard): a switch or key on the machine",
+                           null, null, null, null);
+                return true;
+        }
+
+        if (radio_has_interface())
+        {
+                if (rfkill == 1)
+                        radio_line(why, room, (string_address) "blocked by rfkill (soft)",
+                                   null, null, null, null);
+                return rfkill == 1;
+        }
+
+        memory_fill(address_of card, 0, sizeof(card));
+        host_each_entry((string_address) "/sys/bus/pci/devices", radio_pci_visit,
+                        address_of card);
+        if (!card.found)
+                host_each_entry((string_address) "/sys/bus/usb/devices", radio_usb_visit,
+                                address_of card);
+        if (!card.found)
+        {
+                radio_line(why, room, (string_address) "no wireless hardware found", null,
+                           null, null, null);
+                return true;
+        }
+
+        radio_kernel_said(card.address, address_of said);
+        if (said.firmware[0] && !radio_firmware_present(said.firmware))
+                radio_line(why, room, card.name, (string_address) " found, firmware ",
+                           said.firmware, (string_address) " missing", null);
+        else if (said.firmware[0])
+                radio_line(why, room, card.name, (string_address) " found, firmware ",
+                           said.firmware,
+                           (string_address) " came after its driver gave up; reboot",
+                           null);
+        else if (!card.driver[0] && said.probe[0])
+                radio_line(why, room, card.name,
+                           (string_address) " found, its driver failed with error ",
+                           said.probe, null, null);
+        else if (!card.driver[0])
+                radio_line(why, room, card.name,
+                           (string_address) " found, no driver for it in this image",
+                           null, null, null);
+        else
+                radio_line(why, room, card.name, (string_address) " found, driver ",
+                           card.driver, (string_address) " gave it no interface", null);
+        return true;
+}
+
+/* ---- wifi: the networks in the air ---- */
+
+/*
+        What the radio has heard, one row a network: its strongest access
+        point's signal and channel, what it asks of a station, and whether
+        this machine is joined to it or has it saved. The kernel keeps the
+        last scan's results; a new scan is asked for only when the last one
+        asked for here is older than RADIO_AIR_STALE_MS, only by root, and
+        waited on for RADIO_AIR_WAIT_SECONDS at most. What the kernel holds
+        cannot say how old it is as a whole: a join scans for its one name,
+        which leaves a list of the few that answered looking fresh, so the
+        time of the last whole scan is kept in RADIO_SCAN_PATH. A join the
+        machine is making scans too; the kernel then answers EBUSY, the wait
+        is for that scan's results, and those are not a whole scan.
+
+        A name is the network's to choose and arrives over the air, so it is
+        written through radio_display: printable ASCII and valid UTF-8 from
+        U+00A0 up as they are, every other byte as \xNN, so no name can put
+        a control sequence in front of the terminal's parser.
+*/
+
+#define NL80211_CMD_GET_SCAN 32
+#define NL80211_CMD_TRIGGER_SCAN 33
+#define NL80211_CMD_NEW_SCAN_RESULTS 34
+#define NL80211_CMD_SCAN_ABORTED 35
+#define NL80211_ATTR_BSS 47
+#define NL80211_BSS_FREQUENCY 2
+#define NL80211_BSS_CAPABILITY 5
+#define NL80211_BSS_INFORMATION_ELEMENTS 6
+#define NL80211_BSS_SIGNAL_MBM 7
+#define NL80211_BSS_STATUS 9
+#define NL80211_BSS_SEEN_MS_AGO 10
+#define NL80211_BSS_BEACON_IES 11
+#define NL80211_BSS_STATUS_ASSOCIATED 1
+#define NL80211_ATTR_STA_INFO 21
+#define NL80211_STA_INFO_STA_FLAGS 17
+
+#define RADIO_AIR_MOST 64
+#define RADIO_AIR_SHOWN 16
+#define RADIO_AIR_STALE_MS 30000u
+#define RADIO_AIR_WAIT_SECONDS 5
+#define RADIO_SCAN_PATH NET_STATE_DIR "/wifi.scan"
+
+enum
+{
+        RADIO_OPEN,
+        RADIO_WEP,
+        RADIO_WPA,
+        RADIO_WPA2,
+        RADIO_WPA23,
+        RADIO_WPA3,
+        RADIO_OWE,
+        RADIO_EAP,
+};
+
+static const string_address radio_security_words[] = {
+    (string_address) "open", (string_address) "WEP",    (string_address) "WPA",
+    (string_address) "WPA2", (string_address) "WPA2/3", (string_address) "WPA3",
+    (string_address) "OWE",  (string_address) "802.1X",
+};
+
+typedef struct
+{
+        p8 ssid[RADIO_SSID_MOST + 1];
+        p8 ssid_length;
+        p8 security;
+        bool joined;
+        b32 mbm;
+        p32 frequency;
+} radio_heard;
+
+typedef struct
+{
+        radio_heard heard[RADIO_AIR_MOST];
+        positive count;
+        p32 freshest;
+        bool any;
+} radio_air;
+
+/* What an RSN element's key management suites ask of a station. */
+static p8 radio_rsn_security(p8 address_to element, positive length)
+{
+        positive at = 2 + 4;
+        positive count;
+        bool psk = false, sae = false, eap = false, owe = false;
+
+        if (length < at + 2)
+                return RADIO_WPA2;
+        count = element[at] | (element[at + 1] << 8);
+        at += 2 + 4 * count;
+        if (length < at + 2)
+                return RADIO_WPA2;
+        count = element[at] | (element[at + 1] << 8);
+        at += 2;
+        for (positive which = 0; which < count && at + 4 <= length; which++, at += 4)
+        {
+                p8 suite = element[at + 3];
+
+                if (element[at] != 0x00 || element[at + 1] != 0x0f || element[at + 2] != 0xac)
+                        continue;
+                if (suite == 2 || suite == 4 || suite == 6)
+                        psk = true;
+                else if (suite == 8 || suite == 9 || suite == 24 || suite == 25)
+                        sae = true;
+                else if (suite == 18)
+                        owe = true;
+                else
+                        eap = true;
+        }
+        return psk && sae ? RADIO_WPA23
+               : sae      ? RADIO_WPA3
+               : psk      ? RADIO_WPA2
+               : owe      ? RADIO_OWE
+               : eap      ? RADIO_EAP
+                          : RADIO_WPA2;
+}
+
+static bool radio_air_seen(netlink_header address_to header, address_any context)
+{
+        radio_air address_to air = (radio_air address_to)context;
+        p8 address_to body = (p8 address_to)header + NETLINK_HEADER;
+        positive length = 0;
+        positive size = 0;
+        p8 address_to bss;
+        p8 address_to elements;
+        p8 address_to value;
+        radio_heard one;
+        bool rsn = false, wpa = false;
+        p16 capability = 0;
+
+        if (header->length < NETLINK_HEADER + GENL_HEADER ||
+            body[0] != NL80211_CMD_NEW_SCAN_RESULTS)
+                return true;
+        bss = (p8 address_to)netlink_find(header, GENL_HEADER, NL80211_ATTR_BSS,
+                                          address_of length);
+        if (!bss)
+                return true;
+
+        memory_fill(address_of one, 0, sizeof(one));
+        one.mbm = -10000;
+        one.security = RADIO_OPEN;
+        value = (p8 address_to)netlink_find_span(bss, length, NL80211_BSS_SIGNAL_MBM,
+                                                 address_of size);
+        if (value && size >= 4)
+                one.mbm = memory_load_unaligned(b32, value);
+        value = (p8 address_to)netlink_find_span(bss, length, NL80211_BSS_FREQUENCY,
+                                                 address_of size);
+        if (value && size >= 4)
+                one.frequency = memory_load_unaligned(p32, value);
+        value = (p8 address_to)netlink_find_span(bss, length, NL80211_BSS_STATUS,
+                                                 address_of size);
+        one.joined = value && size >= 4 &&
+                     memory_load_unaligned(p32, value) == NL80211_BSS_STATUS_ASSOCIATED;
+        value = (p8 address_to)netlink_find_span(bss, length, NL80211_BSS_CAPABILITY,
+                                                 address_of size);
+        if (value && size >= 2)
+                capability = memory_load_unaligned(p16, value);
+        /* How old the scan is, from what is not joined: the network the
+           machine is on stays in the kernel's list, renewed by every
+           beacon, while the rest expire after thirty seconds, so a list of
+           that one alone is a scan long gone. */
+        value = (p8 address_to)netlink_find_span(bss, length, NL80211_BSS_SEEN_MS_AGO,
+                                                 address_of size);
+        if (value && size >= 4 && !one.joined &&
+            (!air->any || memory_load_unaligned(p32, value) < air->freshest))
+        {
+                air->freshest = memory_load_unaligned(p32, value);
+                air->any = true;
+        }
+
+        elements = (p8 address_to)netlink_find_span(bss, length,
+                                                    NL80211_BSS_INFORMATION_ELEMENTS,
+                                                    address_of size);
+        if (!elements)
+                elements = (p8 address_to)netlink_find_span(bss, length,
+                                                            NL80211_BSS_BEACON_IES,
+                                                            address_of size);
+        for (positive at = 0; elements && at + 2 <= size;)
+        {
+                p8 id = elements[at];
+                p8 span = elements[at + 1];
+                p8 address_to data = elements + at + 2;
+
+                if (at + 2 + span > size)
+                        break;
+                if (id == 0 && span <= RADIO_SSID_MOST && !one.ssid_length)
+                {
+                        memory_copy(one.ssid, data, span);
+                        one.ssid_length = span;
+                }
+                else if (id == 48 && !rsn)
+                {
+                        rsn = true;
+                        one.security = radio_rsn_security(data, span);
+                }
+                else if (id == 221 && span >= 4 && data[0] == 0x00 && data[1] == 0x50 &&
+                         data[2] == 0xf2 && data[3] == 1)
+                        wpa = true;
+                at += 2 + span;
+        }
+        if (!rsn)
+                one.security = wpa ? RADIO_WPA : (capability & 0x10) ? RADIO_WEP : RADIO_OPEN;
+
+        // A hidden network's name is empty or zeros; it has no row.
+        {
+                bool named = false;
+
+                for (positive at = 0; at < one.ssid_length; at++)
+                        named |= one.ssid[at] != 0;
+                if (!named)
+                        return true;
+        }
+
+        for (positive at = 0; at < air->count; at++)
+        {
+                radio_heard address_to have = air->heard + at;
+
+                if (have->ssid_length != one.ssid_length ||
+                    memory_compare(have->ssid, one.ssid, one.ssid_length))
+                        continue;
+                have->joined |= one.joined;
+                if (one.mbm > have->mbm)
+                {
+                        have->mbm = one.mbm;
+                        have->frequency = one.frequency;
+                        have->security = one.security;
+                }
+                return true;
+        }
+        if (air->count < RADIO_AIR_MOST)
+                air->heard[air->count++] = one;
+        return true;
+}
+
+static fn radio_number(p8 address_to into, bipolar value)
+{
+        p8 digits[24];
+        positive count = 0;
+        positive used = 0;
+        positive magnitude = value < 0 ? (positive)(-value) : (positive)value;
+
+        do
+        {
+                digits[count++] = (p8)('0' + magnitude % 10);
+                magnitude /= 10;
+        } while (magnitude);
+        if (value < 0)
+                into[used++] = '-';
+        while (count)
+                into[used++] = digits[--count];
+        into[used] = end;
+}
+
+/* Whether the station the machine is associated through is authorized: a
+   join whose password is wrong is associated for the eight seconds its
+   handshake waits, and is not joined for any of them. */
+static bool radio_authorized_seen(netlink_header address_to header, address_any context)
+{
+        positive length = 0;
+        positive size = 0;
+        p8 address_to info = (p8 address_to)netlink_find(header, GENL_HEADER,
+                                                         NL80211_ATTR_STA_INFO,
+                                                         address_of length);
+        p8 address_to flags = info ? (p8 address_to)netlink_find_span(
+                                          info, length, NL80211_STA_INFO_STA_FLAGS,
+                                          address_of size)
+                                   : null;
+
+        if (flags && size >= 8 &&
+            (memory_load_unaligned(p32, flags + 4) & (1u << NL80211_STA_FLAG_AUTHORIZED)))
+                *(bool address_to)context = true;
+        return true;
+}
+
+static bool radio_authorized(nl80211 address_to session, p32 index)
+{
+        netlink_buffer request = {0};
+        p32 sequence = netlink_sequence_take();
+        bool authorized = false;
+
+        if (!nl80211_begin(address_of request, session->family, NL80211_CMD_GET_STATION,
+                           NLM_REQUEST | NLM_DUMP, sequence))
+                return false;
+        nl80211_attribute_u32(address_of request, NL80211_ATTR_IFINDEX, index);
+        netlink_transact(session->handle, address_of request, sequence,
+                         radio_authorized_seen, address_of authorized);
+        return authorized;
+}
+
+/* Milliseconds since the last whole scan asked for here, or the most there is. */
+static p64 radio_scan_age(void)
+{
+        p8 text[24];
+        p64 now = system_clock_ns(HOST_CLOCK_BOOTTIME) / 1000000;
+        p64 then;
+
+        if (host_read_text(RADIO_SCAN_PATH, text, sizeof(text)) <= 0)
+                return ~(p64)0;
+        then = string_to_positive(text);
+        return then <= now ? now - then : ~(p64)0;
+}
+
+static fn radio_air_dump(nl80211 address_to session, p32 index, radio_air address_to air)
+{
+        netlink_buffer request = {0};
+        p32 sequence = netlink_sequence_take();
+
+        memory_fill(air, 0, sizeof(*air));
+        if (!nl80211_begin(address_of request, session->family, NL80211_CMD_GET_SCAN,
+                           NLM_REQUEST | NLM_DUMP, sequence))
+                return;
+        nl80211_attribute_u32(address_of request, NL80211_ATTR_IFINDEX, index);
+        netlink_transact(session->handle, address_of request, sequence, radio_air_seen,
+                         air);
+}
+
+/* A scan asked for and waited on: its results, an abort, or the time up. */
+static fn radio_air_scan(nl80211 address_to session, p32 index)
+{
+        netlink_buffer request = {0};
+        netlink_buffer reply = {0};
+        network_deadline deadline;
+        p32 sequence = netlink_sequence_take();
+        bool acked = false;
+        bool whole = false;
+
+        if (!session->scan ||
+            socket_option_set(session->handle, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP,
+                              address_of session->scan, sizeof(session->scan)) < 0)
+                return;
+        if (!nl80211_begin(address_of request, session->family, NL80211_CMD_TRIGGER_SCAN,
+                           NLM_REQUEST | NLM_ACK, sequence))
+                return;
+        nl80211_attribute_u32(address_of request, NL80211_ATTR_IFINDEX, index);
+        if (request.failed ||
+            socket_send(session->handle, request.bytes, request.used, 0, 0, 0) < 0 ||
+            !network_deadline_begin(address_of deadline, RADIO_AIR_WAIT_SECONDS, 0))
+        {
+                netlink_forget(address_of request);
+                return;
+        }
+        netlink_forget(address_of request);
+
+        while (network_wait_readable_until(session->handle, address_of deadline) > 0)
+        {
+                p32 local_port = 0;
+                bipolar got = netlink_receive(session->handle, address_of reply,
+                                              address_of local_port);
+                positive at = 0;
+
+                if (got == NETWORK_INTERRUPTED)
+                        continue;
+                if (got < 0)
+                        break;
+                while (at + NETLINK_HEADER <= reply.used)
+                {
+                        netlink_header address_to header =
+                            (netlink_header address_to)(reply.bytes + at);
+                        p8 address_to body = (p8 address_to)header + NETLINK_HEADER;
+
+                        if (header->length < NETLINK_HEADER || at + header->length > reply.used)
+                                break;
+                        // Refused for any reason but a scan already running:
+                        // no results are coming, so the cached ones stand.
+                        if (header->type == NLMSG_IS_ERROR && header->sequence == sequence &&
+                            !acked)
+                        {
+                                bipolar status = netlink_status(header, false);
+
+                                acked = true;
+                                whole = status >= 0;
+                                if (status < 0 && status != -16)
+                                {
+                                        netlink_forget(address_of reply);
+                                        return;
+                                }
+                        }
+                        else if (header->type == session->family &&
+                                 header->length >= NETLINK_HEADER + GENL_HEADER &&
+                                 (body[0] == NL80211_CMD_NEW_SCAN_RESULTS ||
+                                  body[0] == NL80211_CMD_SCAN_ABORTED) &&
+                                 nl80211_find_u32(header, NL80211_ATTR_IFINDEX, 0) == index)
+                        {
+                                if (whole && body[0] == NL80211_CMD_NEW_SCAN_RESULTS)
+                                {
+                                        p8 number[24];
+
+                                        radio_number(number, (bipolar)(system_clock_ns(HOST_CLOCK_BOOTTIME) / 1000000));
+                                        host_state_ready();
+                                        host_write_file(RADIO_SCAN_PATH, number, string_length(number),
+                                                        0644, false);
+                                }
+                                netlink_forget(address_of reply);
+                                return;
+                        }
+                        at += netlink_align(header->length);
+                }
+        }
+        netlink_forget(address_of reply);
+}
+
+/*
+        The networks in the air, strongest first. fresh is RADIO_AIR_CACHED
+        for what was heard last and nothing more, RADIO_AIR_STALE for a new
+        scan when that is stale, RADIO_AIR_NOW for one whatever it is; a
+        scan needs root and a link that is up. False when there is no
+        wireless interface to ask.
+*/
+#define RADIO_AIR_CACHED 0
+#define RADIO_AIR_STALE 1
+#define RADIO_AIR_NOW 2
+
+static bool radio_air_take(radio_air address_to air, p8 fresh)
+{
+        nl80211 session;
+        nl80211_iface iface;
+
+        memory_fill(air, 0, sizeof(*air));
+        if (nl80211_open(address_of session) < 0)
+                return false;
+        if (nl80211_interface(address_of session, address_of iface) < 0)
+        {
+                nl80211_close(address_of session);
+                return false;
+        }
+        radio_air_dump(address_of session, iface.index, air);
+        if (fresh && bowl_is_root() &&
+            (fresh == RADIO_AIR_NOW || !air->any || air->freshest > RADIO_AIR_STALE_MS ||
+             radio_scan_age() > RADIO_AIR_STALE_MS))
+        {
+                bipolar route = netlink_open_groups(0);
+
+                if (route >= 0)
+                {
+                        netlink_link_up((b32)route, iface.index);
+                        socket_close((b32)route);
+                }
+                radio_air_scan(address_of session, iface.index);
+                radio_air_dump(address_of session, iface.index, air);
+        }
+        {
+                bool joined = false;
+
+                for (positive at = 0; at < air->count; at++)
+                        joined |= air->heard[at].joined;
+                if (joined && !radio_authorized(address_of session, iface.index))
+                        for (positive at = 0; at < air->count; at++)
+                                air->heard[at].joined = false;
+        }
+        nl80211_close(address_of session);
+
+        for (positive at = 1; at < air->count; at++)
+                for (positive back = at; back > 0 && air->heard[back].mbm >
+                                                         air->heard[back - 1].mbm;
+                     back--)
+                {
+                        radio_heard swap = air->heard[back];
+
+                        air->heard[back] = air->heard[back - 1];
+                        air->heard[back - 1] = swap;
+                }
+        return true;
+}
+
+static radio_heard address_to radio_air_find(radio_air address_to air, string_address ssid)
+{
+        positive length = string_length(ssid);
+
+        for (positive at = 0; at < air->count; at++)
+                if (air->heard[at].ssid_length == length &&
+                    !memory_compare(air->heard[at].ssid, ssid, length))
+                        return air->heard + at;
+        return null;
+}
+
+/* A name made safe to print, and how many columns it takes. */
+static positive radio_display(p8 address_to into, positive room, p8 address_to name,
+                              positive length)
+{
+        static const p8 digits[] = "0123456789abcdef";
+        positive used = 0;
+        positive columns = 0;
+        positive at = 0;
+
+        while (at < length && used + 5 < room)
+        {
+                p8 byte = name[at];
+                positive span = byte >= 0xf0 && byte < 0xf5 ? 4
+                                : byte >= 0xe0              ? 3
+                                : byte >= 0xc2 && byte < 0xe0 ? 2
+                                                              : 1;
+                p32 point = 0;
+                bool good = byte >= 0x20 && byte < 0x7f;
+
+                if (span > 1 && at + span <= length && byte >= 0xc2 && byte < 0xf5)
+                {
+                        point = byte & (0x7f >> span);
+                        good = true;
+                        for (positive next = 1; next < span; next++)
+                        {
+                                good &= (name[at + next] & 0xc0) == 0x80;
+                                point = (point << 6) | (name[at + next] & 0x3f);
+                        }
+                        good &= point >= 0xa0 && (point < 0xd800 || point > 0xdfff) &&
+                                point < 0x110000 &&
+                                point >= (span == 3 ? 0x800u : span == 4 ? 0x10000u : 0x80u);
+                }
+                else
+                        span = 1;
+
+                if (good && used + span < room)
+                {
+                        memory_copy(into + used, name + at, span);
+                        used += span;
+                        at += span;
+                        columns++;
+                        continue;
+                }
+                into[used++] = '\\';
+                into[used++] = 'x';
+                into[used++] = digits[byte >> 4];
+                into[used++] = digits[byte & 15];
+                columns += 4;
+                at++;
+        }
+        into[used] = end;
+        return columns;
+}
+
+/* One row: marker, name, signal, security, band and channel. */
+static fn radio_air_row(radio_heard address_to heard, positive width, bool saved)
+{
+        p8 name[RADIO_SSID_MOST * 4 + 1];
+        p8 line[320];
+        p8 number[24];
+        positive columns = radio_display(name, sizeof(name), heard->ssid, heard->ssid_length);
+        bipolar dbm = heard->mbm / 100;
+        p32 mhz = heard->frequency;
+        positive bars = dbm >= -55 ? 4 : dbm >= -67 ? 3 : dbm >= -75 ? 2 : dbm >= -85 ? 1 : 0;
+        string_address band = mhz >= 5925   ? (string_address) "6 GHz"
+                              : mhz >= 4900 ? (string_address) "5 GHz"
+                                            : (string_address) "2.4 GHz";
+        p32 channel = mhz == 2484   ? 14
+                      : mhz >= 5950 ? (mhz - 5950) / 5
+                      : mhz >= 4900 ? (mhz - 5000) / 5
+                      : mhz >= 2407 ? (mhz - 2407) / 5
+                                    : 0;
+
+        radio_line(line, sizeof(line), heard->joined ? (string_address) "* "
+                                       : saved       ? (string_address) "+ "
+                                                     : (string_address) "  ",
+                   name, null, null, null);
+        for (; columns < width + 2; columns++)
+                string_append_bounded(line, (string_address) " ", sizeof(line));
+        radio_number(number, dbm);
+        for (positive pad = string_length(number); pad < 4; pad++)
+                string_append_bounded(line, (string_address) " ", sizeof(line));
+        radio_line(line + string_length(line), sizeof(line) - string_length(line), number,
+                   (string_address) " dBm ", null, null, null);
+        for (positive at = 0; at < 4; at++)
+                string_append_bounded(line, at < bars ? (string_address) "#" : (string_address) ".",
+                                      sizeof(line));
+        string_append_bounded(line, (string_address) "  ", sizeof(line));
+        string_append_bounded(line, radio_security_words[heard->security], sizeof(line));
+        for (positive pad = string_length(radio_security_words[heard->security]); pad < 8;
+             pad++)
+                string_append_bounded(line, (string_address) " ", sizeof(line));
+        radio_number(number, (bipolar)channel);
+        radio_line(line + string_length(line), sizeof(line) - string_length(line), band,
+                   (string_address) " ch ", number, null, null);
+        string_format(log, host_label "%s\n", line);
+}
+
+/* Whether moonwater can join what a network asks for. */
+static bool radio_security_joinable(p8 security)
+{
+        return security == RADIO_OPEN || security == RADIO_WPA2 || security == RADIO_WPA23;
+}
+
+/* ---- wifi: what the last join said, and the password asked for ---- */
+
+/* The reason a join gave, as the words that follow the network's name. */
+static string_address radio_join_words(bipolar failed)
+{
+        return failed == -110   ? (string_address) "did not associate"
+               : failed == -111 ? (string_address) "refused the join"
+               : failed == -13  ? (string_address) "did not accept the password"
+                                : (string_address) "could not be joined";
+}
+
+/* The network the machine last failed to join and why, for bare wifi and
+   status; gone once a join works. */
+static fn radio_last_set(string_address ssid, bipolar failed)
+{
+        p8 text[RADIO_SSID_MOST + 32];
+        p8 number[24];
+
+        if (!failed || failed == -19)
+        {
+                system_remove_at(AT_FDCWD, RADIO_LAST_PATH, 0);
+                return;
+        }
+        radio_number(number, -failed);
+        radio_line(text, sizeof(text), ssid, (string_address) "\n", number,
+                   (string_address) "\n", null);
+        host_state_ready();
+        host_write_file(RADIO_LAST_PATH, text, string_length(text), 0644, false);
+}
+
+static bool radio_last_get(p8 address_to ssid, positive room, bipolar address_to failed)
+{
+        p8 text[RADIO_SSID_MOST + 32];
+        positive at = 0;
+
+        if (host_read_text(RADIO_LAST_PATH, text, sizeof(text)) <= 0)
+                return false;
+        while (text[at] && text[at] != '\n')
+                at++;
+        if (!text[at] || at > RADIO_SSID_MOST)
+                return false;
+        text[at] = end;
+        string_copy_bounded(ssid, text, room);
+        *failed = -(bipolar)string_to_positive(text + at + 1);
+        return true;
+}
+
+/*
+        A password, without argv: ps shows every process's arguments to
+        every user. At a terminal it is asked for with the echo off and the
+        line read here, a byte at a time, so Control-C and Control-D cancel
+        with the terminal put back rather than killing the process with the
+        echo still off. Anywhere else it is one line of standard input.
+        Negative when cancelled; else its length, 0 for an open network.
+*/
+#define RADIO_TERMINAL_GET 0x5401
+#define RADIO_TERMINAL_SET 0x5402
+
+static bipolar radio_password_read(p8 address_to into, positive room,
+                                   string_address ssid, bool only_asked)
+{
+        p8 saved[64];
+        p8 quiet[64];
+        p8 shown[RADIO_SSID_MOST * 4 + 1];
+        bool terminal = system_call_3(syscall(ioctl), 0, RADIO_TERMINAL_GET,
+                                      (positive)saved) >= 0;
+        positive used = 0;
+        bipolar result = 0;
+
+        into[0] = end;
+        if (only_asked && !terminal)
+                return 0;
+        if (terminal)
+        {
+                p32 modes;
+
+                memory_copy(quiet, saved, sizeof(quiet));
+                modes = memory_load_unaligned(p32, quiet + 12);
+                modes &= ~(p32)(0x8 | 0x2 | 0x1); // ECHO, ICANON, ISIG
+                memory_copy(quiet + 12, address_of modes, 4);
+                quiet[17 + 6] = 1; // VMIN
+                quiet[17 + 5] = 0; // VTIME
+                radio_display(shown, sizeof(shown), ssid, string_length(ssid));
+                string_format(log_error, host_label "password for %s (empty for an open network): ",
+                              shown);
+                log_flush();
+                system_call_3(syscall(ioctl), 0, RADIO_TERMINAL_SET, (positive)quiet);
+        }
+
+        for (;;)
+        {
+                p8 byte;
+                bipolar got = system_read_once(0, address_of byte, 1);
+
+                if (got == -4)
+                        continue;
+                if (got <= 0)
+                {
+                        if (terminal && !used)
+                                result = -1;
+                        break;
+                }
+                if (byte == '\n' || byte == '\r')
+                        break;
+                if (terminal)
+                {
+                        if (byte == 3 || (byte == 4 && !used))
+                        {
+                                result = -1;
+                                break;
+                        }
+                        if (byte == 0x7f || byte == 8)
+                        {
+                                while (used && (into[used - 1] & 0xc0) == 0x80)
+                                        used--;
+                                if (used)
+                                        used--;
+                                continue;
+                        }
+                        if (byte == 0x15)
+                        {
+                                used = 0;
+                                continue;
+                        }
+                        if (byte < 32)
+                                continue;
+                }
+                if (used + 1 < room)
+                        into[used++] = byte;
+        }
+
+        if (terminal)
+        {
+                system_call_3(syscall(ioctl), 0, RADIO_TERMINAL_SET, (positive)saved);
+                string_format(log_error, "\n");
+                log_flush();
+        }
+        into[used] = end;
+        crypto_forget(quiet, sizeof(quiet));
+        return result < 0 ? result : (bipolar)used;
+}
+
+/* A 64-character password is the key itself, in hex. */
+static bool radio_hex_key(string_address pass)
+{
+        for (positive at = 0; pass[at]; at++)
+                if (!byte_is_hexadecimal(pass[at]))
+                        return false;
+        return true;
+}
+
 static bipolar radio_wifi_join(string_address ssid, string_address pass)
 {
         p8 pmk[32];
@@ -5141,6 +6341,7 @@ static b32 radio_wifi_bring(bool say)
         {
                 failed = radio_wifi_join((string_address)networks[at].ssid,
                                          (string_address)networks[at].pass);
+                radio_last_set((string_address)networks[at].ssid, failed);
                 if (!failed)
                 {
                         joined = true;
@@ -5172,20 +6373,18 @@ static b32 radio_wifi_bring(bool say)
         if (joined)
                 return 0;
 
+        if (say && failed == -19)
+        {
+                p8 why[RADIO_WHY_ROOM];
+
+                return radio_wifi_why(why, sizeof(why))
+                           ? host_refuse("wifi: %s\n", why)
+                           : host_refuse("no wireless interface%s\n", "");
+        }
         if (say)
-                return failed == -19
-                           ? host_refuse("no wireless interface%s\n", "")
-                           : failed == -110
-                                 ? host_refuse("the network did not associate%s\n",
-                                               "")
-                                 : failed == -111
-                                       ? host_refuse("the network refused the join%s\n",
-                                                     "")
-                                 : failed == -13
-                                       ? host_refuse("the network did not accept "
-                                                     "the password%s\n",
-                                                     "")
-                                       : host_fail("wifi", failed ? failed : -1);
+                return failed == -110 || failed == -111 || failed == -13
+                           ? host_refuse("the network %s\n", radio_join_words(failed))
+                           : host_fail("wifi", failed ? failed : -1);
         return 1;
 }
 
@@ -5233,8 +6432,10 @@ static b32 radio_wifi_add(string_address ssid, string_address pass)
                                    "");
         if (pass_length > RADIO_PASS_MOST)
                 return host_refuse("that password is too long%s\n", "");
-        if (pass_length && pass_length < 8 && pass_length != 64)
-                return host_refuse("a WPA password is 8 to 63 characters%s\n",
+        if (pass_length && (pass_length < 8 ||
+                            (pass_length == 64 && !radio_hex_key(pass))))
+                return host_refuse("a WPA password is 8 to 63 characters, "
+                                   "or a key of 64 hex digits%s\n",
                                    "");
         if (!radio_text_plain(ssid, ssid_length) ||
             (pass_length && !radio_text_plain(pass, pass_length)))
@@ -5274,42 +6475,66 @@ static b32 radio_wifi_add(string_address ssid, string_address pass)
 
         radio_write_word(NET_WIFI_POWER, "on");
         radio_rfkill(RADIO_RFKILL_WLAN, false);
+        crypto_forget(networks, sizeof(networks));
+
+        /*      What the air already says about it, from the last scan and
+                without asking for another: a network that asks for what the
+                join cannot give is saved and not tried, which would only
+                have waited out the association timeout to say less. */
+        {
+                radio_air air;
+                radio_heard address_to heard;
+
+                if (radio_air_take(address_of air, RADIO_AIR_STALE) &&
+                    ((heard = radio_air_find(address_of air, ssid)) ||
+                     (radio_air_take(address_of air, RADIO_AIR_NOW) &&
+                      (heard = radio_air_find(address_of air, ssid)))))
+                {
+                        if (!radio_security_joinable(heard->security))
+                                return host_refuse("saved, but it asks for %s, which "
+                                                   "moonwater cannot join yet\n",
+                                                   radio_security_words[heard->security]);
+                        if (heard->security != RADIO_OPEN && !pass_length)
+                                return host_refuse("saved with no password, but it "
+                                                   "asks for one%s\n",
+                                                   "");
+                }
+        }
 
         {
                 bipolar lock = radio_lock(true);
                 bipolar failed;
+                p8 why[RADIO_WHY_ROOM];
 
                 if (lock < 0)
-                {
-                        crypto_forget(networks, sizeof(networks));
                         return host_fail("wifi", lock);
-                }
-                failed = radio_wifi_join(ssid, pass);
+                /*      No radio at all is not one that is still arriving:
+                        the join's eight seconds of asking are for a card
+                        whose interface is on its way at boot. */
+                failed = radio_has_interface() ? radio_wifi_join(ssid, pass) : -19;
                 radio_unlock(lock);
+                radio_last_set(ssid, failed);
 
                 radio_net_wake();
-                crypto_forget(networks, sizeof(networks));
-                if (failed < 0)
-                        return failed == -19
-                                   ? host_refuse("saved, but there is no "
+                if (failed == -19)
+                        return radio_wifi_why(why, sizeof(why))
+                                   ? host_refuse("saved; wifi: %s\n", why)
+                                   : host_refuse("saved, but there is no "
                                                  "wireless interface%s\n",
-                                                 "")
-                                   : failed == -110
-                                         ? host_refuse("saved, but the network "
-                                                       "did not associate%s\n",
-                                                       "")
-                                         : failed == -111
-                                               ? host_refuse("saved, but the "
-                                                             "network refused "
-                                                             "the join%s\n",
-                                                             "")
-                                         : failed == -13
-                                               ? host_refuse("saved, but the "
-                                                             "network did not "
-                                                             "accept the "
-                                                             "password%s\n",
-                                                             "")
-                                               : host_fail("wifi", failed);
+                                                 "");
+                if (failed == -110 || failed == -111 || failed == -13)
+                {
+                        radio_air air;
+
+                        if (failed == -110 &&
+                            radio_air_take(address_of air, RADIO_AIR_CACHED) &&
+                            air.count && !radio_air_find(address_of air, ssid))
+                                return host_refuse("saved, but it is not in range%s\n", "");
+                        return host_refuse("saved, but the network %s\n",
+                                           radio_join_words(failed));
+                }
+                if (failed < 0)
+                        return host_fail("wifi", failed);
                 if (pass && pass[0])
                         crypto_forget((address_any)pass, string_length(pass));
         }
@@ -5319,18 +6544,112 @@ static b32 radio_wifi_add(string_address ssid, string_address pass)
         return 0;
 }
 
+/*
+        Bare wifi: the switch and the saved networks as they always were,
+        then why wifi cannot be used, or what is in the air -- the saved and
+        joined ones marked -- and why the machine is not joined when it is
+        not. Scripts that read the first lines still find them first.
+*/
 static b32 radio_wifi_status(void)
 {
         radio_network networks[RADIO_WIFI_MOST];
         positive count = radio_wifi_load(networks, RADIO_WIFI_MOST);
         positive at;
         bool off = radio_word_is(NET_WIFI_POWER, "off");
+        bool joined = false;
+        p8 why[RADIO_WHY_ROOM];
+        p8 last[RADIO_SSID_MOST + 1];
+        bipolar failed = 0;
+        radio_air air;
 
         string_format(log, host_label "wifi %s\n",
                       off ? (string_address) "off" : (string_address) "on");
         for (at = 0; at < count; at++)
                 string_format(log, host_label "  %s\n",
                               (string_address)networks[at].ssid);
+
+        if (radio_wifi_why(why, sizeof(why)) ||
+            !radio_air_take(address_of air, RADIO_AIR_STALE))
+        {
+                string_format(log, host_label "wifi: %s\n",
+                              why[0] ? (string_address)why
+                                     : (string_address) "no wireless interface");
+                log_flush();
+                crypto_forget(networks, sizeof(networks));
+                return 0;
+        }
+
+        if (!air.count)
+                string_format(log, host_label "no networks heard%s\n",
+                              bowl_is_root() ? (string_address) ""
+                                             : (string_address) " (a new scan needs root)");
+        else
+        {
+                positive width = 4;
+                positive shown = air.count < RADIO_AIR_SHOWN ? air.count : RADIO_AIR_SHOWN;
+
+                for (at = 0; at < shown; at++)
+                {
+                        p8 name[RADIO_SSID_MOST * 4 + 1];
+                        positive columns = radio_display(name, sizeof(name),
+                                                         air.heard[at].ssid,
+                                                         air.heard[at].ssid_length);
+
+                        if (columns > width)
+                                width = columns > 28 ? 28 : columns;
+                }
+                for (at = 0; at < shown; at++)
+                {
+                        bool saved = false;
+
+                        for (positive have = 0; have < count; have++)
+                                saved |= networks[have].ssid_length ==
+                                             air.heard[at].ssid_length &&
+                                         !memory_compare(networks[have].ssid,
+                                                         air.heard[at].ssid,
+                                                         air.heard[at].ssid_length);
+                        radio_air_row(air.heard + at, width, saved);
+                }
+                if (air.count > shown)
+                        string_format(log, host_label "  and %p more\n",
+                                      air.count - shown);
+        }
+
+        for (at = 0; at < air.count; at++)
+                joined |= air.heard[at].joined;
+        if (!joined && count && !off)
+        {
+                radio_heard address_to heard = null;
+
+                last[0] = end;
+                if (radio_last_get(last, sizeof(last), address_of failed))
+                        heard = radio_air_find(address_of air, last);
+                p8 name[RADIO_SSID_MOST * 4 + 1];
+
+                radio_display(name, sizeof(name), last, string_length(last));
+                if (heard && !radio_security_joinable(heard->security))
+                        string_format(log, host_label "not joined: %s asks for %s, which "
+                                                      "moonwater cannot join yet\n",
+                                      (string_address)name,
+                                      radio_security_words[heard->security]);
+                else if (heard)
+                        string_format(log, host_label "not joined: %s %s\n",
+                                      (string_address)name, radio_join_words(failed));
+                else
+                {
+                        bool near = false;
+
+                        for (at = 0; at < count; at++)
+                                near |= radio_air_find(address_of air,
+                                                       networks[at].ssid) != null;
+                        if (!near)
+                                string_format(log, host_label "not joined: no saved "
+                                                              "network is in range\n");
+                }
+        }
+
+        string_format(log, host_label "* joined  + saved  "
+                                      "moonwater wifi add SSID asks for its password\n");
         log_flush();
         crypto_forget(networks, sizeof(networks));
         return 0;
@@ -5523,7 +6842,11 @@ static fn radio_wifi_keep(void)
         bipolar child;
 
         radio_rfkill(RADIO_RFKILL_WLAN, false);
-        if (radio_child > 0 || nl80211_associated())
+        /*      A saved network and no radio forked a join every pass that
+                spent eight seconds finding no interface. The radio's arrival
+                -- firmware put in place, a card rebound, a stick plugged in
+                -- is what the next pass after it notices. */
+        if (radio_child > 0 || !radio_has_interface() || nl80211_associated())
                 return;
 
         lock = radio_lock(false);
@@ -5616,19 +6939,30 @@ static b32 host_radio(string_address address_to arguments, positive count)
                         return radio_wifi_off(true);
                 if (string_equals(word, "add") && count >= 4 && count <= 5)
                 {
-                        p8 pass[RADIO_PASS_MOST + 1];
-                        string_address secret = count == 5 ? arguments[4]
-                                                           : (string_address)"";
-                        positive length = string_length(secret);
+                        p8 pass[256];
+                        positive length;
                         b32 result;
 
-                        if (length > RADIO_PASS_MOST)
-                                return host_refuse("that password is too long%s\n",
-                                                   "");
-                        memory_copy(pass, secret, length);
-                        pass[length] = end;
-                        if (count == 5)
+                        /*      No password: asked for at a terminal, open
+                                anywhere else, as it always was. "-": one
+                                line of standard input. Either keeps it out
+                                of argv, where ps shows it to everybody. */
+                        if (count == 4 ||
+                            string_equals(arguments[4], (string_address) "-"))
+                        {
+                                if (radio_password_read(pass, sizeof(pass), arguments[3],
+                                                        count == 4) < 0)
+                                        return host_refuse("nothing saved%s\n", "");
+                        }
+                        else
+                        {
+                                length = string_length(arguments[4]);
+                                if (length >= sizeof(pass))
+                                        return host_refuse("that password is too long%s\n",
+                                                           "");
+                                memory_copy(pass, arguments[4], length + 1);
                                 crypto_forget(arguments[4], length);
+                        }
                         result = radio_wifi_add(arguments[3], pass);
                         crypto_forget(pass, sizeof(pass));
                         return result;
@@ -8908,8 +10242,9 @@ static fn host_usage_write(writer out)
                       "             " TERM_DIM "the desktop" TERM_RESET "\n"
                       TERM_BOLD "  wifi [on|off]" TERM_RESET
                       "               " TERM_DIM "the wireless radio" TERM_RESET "\n"
-                      TERM_BOLD "  wifi add SSID [PASSWORD]" TERM_RESET
-                      "    " TERM_DIM "remember a network and join it" TERM_RESET "\n"
+                      TERM_BOLD "  wifi add SSID [PASSWORD|-]" TERM_RESET
+                      "  " TERM_DIM "remember a network and join it; asks for" TERM_RESET "\n"
+                      "                              " TERM_DIM "the password, - reads it from stdin" TERM_RESET "\n"
                       TERM_BOLD "  bluetooth [on|off]" TERM_RESET
                       "          " TERM_DIM "the bluetooth radio" TERM_RESET "\n"
                       TERM_BOLD "  bluetooth add NAME" TERM_RESET
@@ -8946,6 +10281,43 @@ static b32 host_usage(void)
         host_title(log_error);
         host_usage_write(log_error);
         return 2;
+}
+
+/*
+        The wifi line of status, from what the kernel already holds: status
+        never scans. Joined and where, why wifi cannot be used, or what the
+        last join said.
+*/
+static fn host_status_wifi(void)
+{
+        p8 why[RADIO_WHY_ROOM];
+        p8 last[RADIO_SSID_MOST + 1];
+        p8 name[RADIO_SSID_MOST * 4 + 1];
+        bipolar failed = 0;
+        radio_air air;
+
+        if (radio_wifi_why(why, sizeof(why)))
+        {
+                string_format(log, "  wifi: %s\n", why);
+                return;
+        }
+        if (radio_air_take(address_of air, RADIO_AIR_CACHED))
+                for (positive at = 0; at < air.count; at++)
+                        if (air.heard[at].joined)
+                        {
+                                radio_display(name, sizeof(name), air.heard[at].ssid,
+                                              air.heard[at].ssid_length);
+                                string_format(log, "  wifi joined %s\n", name);
+                                return;
+                        }
+        if (radio_last_get(last, sizeof(last), address_of failed))
+        {
+                radio_display(name, sizeof(name), last, string_length(last));
+                string_format(log, "  wifi on, not joined: %s %s\n", name,
+                              radio_join_words(failed));
+                return;
+        }
+        string_format(log, "  wifi on\n");
 }
 
 /*
@@ -9034,6 +10406,8 @@ static b32 host_status(void)
                               keyboard[0] ? (string_address)keyboard
                                           : (string_address) "us");
         }
+
+        host_status_wifi();
 
         (void)host_bind_each("  ", false);
 
