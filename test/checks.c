@@ -5878,7 +5878,9 @@ static fn terminal_fixture_start(unsigned int columns, unsigned int rows)
         window->max_columns = GRID_STRIDE;
         window->max_rows = GRID_HISTORY;
 
-        COLUMNS = columns;
+        //      Clamped as grid_take clamps: a grid wider than its lines are
+        //      apart runs each row into the next, a state no window reaches.
+        COLUMNS = columns < GRID_STRIDE ? columns : GRID_STRIDE;
         ROWS = rows;
         full_reset();
 }

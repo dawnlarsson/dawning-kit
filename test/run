@@ -7561,6 +7561,23 @@ same 'erased in colour' '[          ]|7,4' \
                                                  20 2 in 'xxxxxxxxxxxxxxxxxxxx' resize '10x2' \
                                                  in '\e[H\e[44m\e[K' row 0 attr '0,9'
 
+group streams
+#       Seeded streams from a grammar of everything that reaches the emulator,
+#       with resizes between pieces: each has to finish, exit cleanly and keep
+#       the cursor and the region on the grid. It is the kernel console's
+#       emulator too, fed under a spinlock with interrupts off, so a stream
+#       that does not finish is a hard lockup there. The cases above name
+#       the sequences; this is what nobody named.
+if [ -z "${TEST_RUNNER:-}" ] && command -v python3 > /dev/null 2>&1; then
+        if python3 test/differential.py --harness term_streams "$work/term" 3000 \
+                > "$work/streams.out" 2>&1
+        then
+                won
+        else
+                lost 'generated streams' "$(grep -v '^term streams' "$work/streams.out" | head -3 | tr '\n' ' ')"
+        fi
+fi
+
 section ""
 
 total=$((pass + fail))
