@@ -11,6 +11,9 @@
                 link deny NAME GRANT...
                 link shell NAME         a terminal on NAME
                 link run NAME COMMAND...
+                link push NAME FILE PATH   a file there, whole or not at all
+                link pull NAME PATH FILE   and back
+                link log NAME           follow the far kernel log
                 link serve              the listener, in the foreground
 
         Pairing is by key and both ways, as WireGuard's is: each machine is
@@ -49,6 +52,12 @@ static fn link_usage_write(writer out)
                       "             " TERM_DIM "a terminal on NAME" TERM_RESET "\n"
                       TERM_BOLD "  link run NAME COMMAND..." TERM_RESET
                       "    " TERM_DIM "one command on NAME, its output and status here" TERM_RESET "\n"
+                      TERM_BOLD "  link push NAME FILE PATH" TERM_RESET
+                      "    " TERM_DIM "a file here to PATH there" TERM_RESET "\n"
+                      TERM_BOLD "  link pull NAME PATH FILE" TERM_RESET
+                      "    " TERM_DIM "PATH there to a file here" TERM_RESET "\n"
+                      TERM_BOLD "  link log NAME" TERM_RESET
+                      "               " TERM_DIM "follow NAME's kernel log" TERM_RESET "\n"
                       TERM_BOLD "  link serve" TERM_RESET
                       "                  " TERM_DIM "the listener in the foreground" TERM_RESET "\n");
         log_flush();
@@ -534,6 +543,14 @@ static b32 link_main(string_address address_to arguments, positive count)
         if (string_equals(verb, "run") && count >= 5)
                 return link_client_run(arguments[3], LINK_KIND_RUN,
                                        arguments + 4, count - 4);
+        if (string_equals(verb, "push") && count == 6)
+                return link_client_run(arguments[3], LINK_KIND_PUSH,
+                                       arguments + 4, 2);
+        if (string_equals(verb, "pull") && count == 6)
+                return link_client_run(arguments[3], LINK_KIND_PULL,
+                                       arguments + 4, 2);
+        if (string_equals(verb, "log") && count == 4)
+                return link_client_run(arguments[3], LINK_KIND_LOG, null, 0);
 
         return link_usage();
 }

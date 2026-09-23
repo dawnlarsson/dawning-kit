@@ -64,6 +64,9 @@ moonwater link forget NAME             stop knowing it
 moonwater link allow|deny NAME GRANT...  run shell files log screen channels verbs
 moonwater link shell NAME              a terminal on NAME
 moonwater link run NAME COMMAND...     one command on NAME: its output, errors and status here
+moonwater link push NAME FILE PATH     a file to PATH on NAME, whole or not at all (grant files)
+moonwater link pull NAME PATH FILE     PATH on NAME to a file here (grant files)
+moonwater link log NAME                follow NAME's kernel log (grant log)
 moonwater link serve                   the listener in the foreground (what link on runs)
 ```
 

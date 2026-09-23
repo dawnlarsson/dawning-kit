@@ -11375,6 +11375,32 @@ trap 'rm -rf "$work"' EXIT INT TERM
 counting install 12 30
 
 #
+#       moonwater link across the install: this machine stands in for a second
+#       one, with its own /root and /run by a mount namespace and the shell
+#       binary as its moonwater. The live session pairs it, allows it run and
+#       switches the link on; the disk boot must have the listener up again
+#       from what the install carried, and this side reaches it through a
+#       forwarded UDP port and runs a command there.
+#
+link_host=""
+link_port=$((20000 + $$ % 20000))
+if command -v unshare > /dev/null 2>&1 && unshare -Urm true 2> /dev/null &&
+        need_shell > /dev/null 2>&1; then
+        link_host=$work/link-host
+        mkdir -p "$link_host/root" "$link_host/run" "$link_host/bin"
+        ln -sf "$shell_binary" "$link_host/bin/moonwater"
+        ln -sf "$shell_binary" "$link_host/bin/sh"
+fi
+link_on_host()
+{
+        unshare -Urm sh -c "mount --bind $link_host/root /root &&
+                mount --bind $link_host/run /run && mkdir -p /run/moonwater &&
+                cd /root && $*"
+}
+link_host_key=none
+[ -z "$link_host" ] || link_host_key=$(link_on_host "$link_host/bin/moonwater link key")
+
+#
 #       The image as firmware reads it: a PE whose sections run in order,
 #       aligned, inside the file and the image and overlapping nothing, and
 #       whose settings section is where the moonwater command looks for it --
@@ -11547,6 +11573,12 @@ printf 'in-memory-%s\n' $(( $(grep -c 'this session only: sda1 is read-only' /tm
 moonwater bind init add "echo boot >> /root/boots" > /dev/null 2>&1
 moonwater bind exit add "echo stop >> /root/stops" > /dev/null 2>&1
 printf 'listed-%s\n' $(( $(moonwater bind init | grep -c -e '^1  echo carried' -e '^2  echo boot') * 7 ))
+moonwater link key > /tmp/linkkey 2>&1
+moonwater link pair host LINK_HOST_KEY > /dev/null 2>&1
+moonwater link allow host run log > /dev/null 2>&1
+moonwater link on > /tmp/linkon 2>&1
+printf 'link-on-%s\n' $(( $(grep -c 'link on,' /tmp/linkon) * 7 ))
+printf 'link-key-%s\n' "$(cat /tmp/linkkey)"
 printf 'no\n' | moonwater install nvme0n1 > /tmp/refused 2>&1
 printf 'unconfirmed-%s\n' $(( $? + 40 ))
 printf 'sda\n' | moonwater install sda > /tmp/removable 2>&1
@@ -11559,6 +11591,9 @@ printf 'bound-%s\n' "$(rev < /root/probe)"
 printf 'mounts-%s\n' $(( $(grep -c -e ' /root ' -e ' /home ' -e ' /bowls ' /proc/self/mounts) * 11 ))
 poweroff
 COMMANDS
+
+sed "s|LINK_HOST_KEY|$link_host_key|" "$work/live.commands" > "$work/live.keyed" &&
+        mv "$work/live.keyed" "$work/live.commands"
 
 # shellcheck disable=SC2086
 install_boot live $stick
@@ -11580,6 +11615,10 @@ disk_checks live
 cat > "$work/disk.commands" <<'COMMANDS'
 this line is eaten by the console
 printf 'verdict-%s\n' "$(rev < /run/moonwater/verdict)"
+i=0; until moonwater link 2>/dev/null | grep -q 'link on,' || [ $i -ge 30 ]; do sleep 1; i=$((i + 1)); done
+printf 'link-kept-%s\n' $(( $(moonwater link 2>/dev/null | grep -c 'link on,') * 7 ))
+i=0; until [ -e /root/link-asked ] || [ $i -ge 45 ]; do sleep 1; i=$((i + 1)); done
+printf 'link-asked-%s\n' "$(rev < /root/link-asked)"
 printf 'kept-%s\n' "$(rev < /bowls/probe/file)"
 printf 'root-%s\n' "$(rev < /root/probe)"
 printf 'second\n' > /root/second
@@ -11608,7 +11647,35 @@ printf 'status-other-%s\n' $(( $(grep -c 'installed on nvme0n1, another build' /
 poweroff
 COMMANDS
 
-install_boot disk
+#       The far side asks the disk's listener until it answers, while the
+#       disk boot waits for the file it writes.
+link_asker=""
+if [ -n "$link_host" ]; then
+        link_guest_key=$(grep -o 'link-key-[A-Za-z0-9+/]\{43\}=' "$work/live" |
+                head -1 | sed 's/^link-key-//')
+        link_on_host "$link_host/bin/moonwater link pair guest $link_guest_key 127.0.0.1:$link_port" \
+                > /dev/null 2>&1
+        (
+                tries=0
+                while [ "$tries" -lt 40 ]; do
+                        [ -s "$work/link-log" ] ||
+                                link_on_host "timeout 6 $link_host/bin/moonwater link log guest" \
+                                2> /dev/null | head -5 > "$work/link-log"
+                        answer=$(link_on_host "timeout 20 $link_host/bin/moonwater link run guest 'echo asked > /root/link-asked; echo from-the-disk'" 2> /dev/null)
+                        if [ "$answer" = from-the-disk ]; then
+                                echo "$answer" > "$work/link-run"
+                                break
+                        fi
+                        tries=$((tries + 1))
+                        sleep 1
+                done
+        ) &
+        link_asker=$!
+fi
+
+install_boot disk -netdev "user,id=net0,hostfwd=udp:127.0.0.1:$link_port-:22348" \
+        -device virtio-net-pci,netdev=net0
+[ -z "$link_asker" ] || kill "$link_asker" 2> /dev/null
 says disk 'the disk alone is found'      'verdict-1n0emvn ksid'
 says disk 'the bowl probe was kept'      'kept-tpek'
 says disk 'root was kept'                'root-emoh'
@@ -11621,6 +11688,23 @@ says disk 'and reads back from it'       'disk-listed-14'
 says disk 'a machine script overlays mute' 'script-7'
 says disk 'SET is refused at the script' 'refused-7'
 says disk 'init stays the stored list without moonwater_init' 'init-kept-7'
+says live 'link on starts the listener'  'link-on-7'
+says disk 'the link switch came through the install and the reboot' 'link-kept-7'
+if [ -n "$link_host" ]; then
+        says disk 'a paired machine ran a command there' 'link-asked-deksa'
+        if [ "$(cat "$work/link-run" 2> /dev/null)" = from-the-disk ]; then
+                won
+        else
+                lost 'disk link' 'link run got no answer from the disk boot'
+        fi
+        if grep -q '^\[ *[0-9]*\.[0-9]\{6\}\] ' "$work/link-log" 2> /dev/null; then
+                won
+        else
+                lost 'disk link' 'link log showed no kernel log line'
+        fi
+else
+        printf '  %-30s NOT RUN -- no unprivileged namespaces for a second machine\n' 'disk link'
+fi
 disk_checks disk
 
 cat > "$work/update.commands" <<'COMMANDS'

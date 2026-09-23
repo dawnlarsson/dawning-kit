@@ -85,10 +85,16 @@
 
 #define LINK_ASK_SHELL 'S'
 #define LINK_ASK_RUN 'R'
+#define LINK_ASK_PUSH 'P'
+#define LINK_ASK_PULL 'G'
+#define LINK_ASK_LOG 'L'
 
 #define LINK_KIND_NONE 0
 #define LINK_KIND_SHELL 1
 #define LINK_KIND_RUN 2
+#define LINK_KIND_PUSH 3
+#define LINK_KIND_PULL 4
+#define LINK_KIND_LOG 5
 
 #define LINK_EXIT_BUSY 3
 #define LINK_FAILED 255
@@ -817,6 +823,8 @@ struct link_session {
         bool error_read;
         bool error_ended;
         bool exit_sent;
+        bool failed;
+        p8 push_name[LINK_REQUEST_MAX + 1];
         p8 address_to pending;
         positive pending_at;
         positive pending_length;
@@ -1344,6 +1352,78 @@ static bool link_start_run(struct link_session address_to s,
         return true;
 }
 
+/*
+        push, pull and log: the same streams as run, with a file or the
+        kernel log where the command's pipes were and no process behind them.
+        A pushed file is written where it is named but never through a link
+        standing at that name, and is only there under its name once it is
+        whole; a pulled file is read as it is.
+*/
+static bool link_start_file(struct link_session address_to s, p8 ask,
+                            p8 address_to request, positive length)
+{
+        p8 path[LINK_REQUEST_MAX + 16];
+        p32 mode = 0644;
+        bipolar handle;
+
+        if (ask == LINK_ASK_LOG)
+        {
+                handle = system_open_at(AT_FDCWD, "/dev/kmsg",
+                                        FILE_READ | O_NONBLOCK | O_CLOEXEC);
+                if (handle < 0)
+                        return false;
+                s->output = handle;
+                s->kind = LINK_KIND_LOG;
+                s->error_read = true;
+                s->error_ended = true;
+                return true;
+        }
+
+        if (ask == LINK_ASK_PUSH)
+        {
+                if (length < 4)
+                        return false;
+                memory_copy(address_of mode, request, 4);
+                mode &= 07777;
+                request += 4;
+                length -= 4;
+        }
+        if (!length || length > LINK_REQUEST_MAX)
+                return false;
+        memory_copy(path, request, length);
+        path[length] = 0;
+        if (string_length((string_address)path) != length)
+                return false;
+
+        if (ask == LINK_ASK_PULL)
+        {
+                handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_CLOEXEC);
+                if (handle < 0)
+                        return false;
+                s->output = handle;
+                s->kind = LINK_KIND_PULL;
+                s->error_read = true;
+                return true;
+        }
+
+        //      Beside its name, then renamed over it: a push cut short leaves
+        //      the name as it was.
+        memory_copy(path + length, ".link-part", 11);
+        handle = system_open_at_mode(AT_FDCWD, path,
+                                     FILE_WRITE | O_NOFOLLOW | O_CLOEXEC, mode);
+        if (handle < 0)
+                return false;
+        (void)system_call_2(syscall(fchmod), (positive)handle, mode);
+        memory_copy(s->push_name, path, length);
+        s->push_name[length] = 0;
+        s->input = handle;
+        s->kind = LINK_KIND_PUSH;
+        s->output_read = true;
+        s->error_read = true;
+        return true;
+}
+
 static fn link_refuse(struct link_session address_to s, string_address why)
 {
         (void)link_post(s, LINK_KEY_ANSWER,
@@ -1390,10 +1470,41 @@ static fn link_request(struct link_session address_to s, p8 address_to payload,
                 return;
         }
 
+        if ((payload[0] == LINK_ASK_PUSH || payload[0] == LINK_ASK_PULL) &&
+            !(may & WATERLINK_MAY_FILES))
+        {
+                string_copy((string_address)why, "files is not granted to ");
+                string_copy((string_address)why + string_length((string_address)why),
+                            (string_address)s->name);
+                link_refuse(s, (string_address)why);
+                return;
+        }
+        if (payload[0] == LINK_ASK_LOG && !(may & WATERLINK_MAY_LOG))
+        {
+                string_copy((string_address)why, "log is not granted to ");
+                string_copy((string_address)why + string_length((string_address)why),
+                            (string_address)s->name);
+                link_refuse(s, (string_address)why);
+                return;
+        }
+
         if (payload[0] == LINK_ASK_SHELL)
                 started = link_start_shell(s, payload + 1, length - 1);
         else if (payload[0] == LINK_ASK_RUN)
                 started = link_start_run(s, payload + 1, length - 1);
+        else if (payload[0] == LINK_ASK_PUSH || payload[0] == LINK_ASK_PULL ||
+                 payload[0] == LINK_ASK_LOG)
+        {
+                started = link_start_file(s, payload[0], payload + 1,
+                                          length - 1);
+                if (!started)
+                {
+                        link_refuse(s, payload[0] == LINK_ASK_LOG
+                                               ? "the kernel log cannot be read"
+                                               : "that file cannot be opened there");
+                        return;
+                }
+        }
         else
         {
                 link_refuse(s, "that is not something this machine offers");
@@ -1503,6 +1614,95 @@ static fn link_server_hear(address_any context,
         }
 }
 
+static fn link_push_done(struct link_session address_to s, p64 now)
+{
+        //      The part file becomes the name only whole.
+        if (!s->failed)
+        {
+                p8 part[LINK_REQUEST_MAX + 16];
+                p8 whole[LINK_REQUEST_MAX + 16];
+                positive length = string_length((string_address)s->push_name);
+
+                memory_copy(whole, s->push_name, length + 1);
+                memory_copy(part, s->push_name, length);
+                memory_copy(part + length, ".link-part", 11);
+                if (system_rename_at(AT_FDCWD, part, AT_FDCWD, whole, 0) < 0)
+                        s->failed = true;
+        }
+        s->exited = true;
+        s->exited_at = now;
+        s->status = s->failed ? 1 : 0;
+}
+
+/*
+        The kernel log a record at a time, as /dev/kmsg hands it out, written
+        as dmesg writes it: the seconds since boot in brackets, then the text.
+        The record's continuation lines -- the dictionary -- are left out.
+*/
+static fn link_log_read(struct link_session address_to s)
+{
+        p8 record[8192];
+
+        while (link_room(s))
+        {
+                bipolar got = system_read_once(s->output, record,
+                                               sizeof record - 1);
+                p8 line[WATERLINK_FRAME_MAX];
+                positive used = 0;
+                positive at = 0;
+                p64 micro = 0;
+                positive field = 0;
+
+                if (got == -32)
+                        continue; // EPIPE: records were overwritten
+                if (got <= 0)
+                        break;
+
+                while (at < (positive)got && record[at] != ';')
+                {
+                        if (record[at] == ',')
+                                field++;
+                        else if (field == 2 && record[at] >= '0' &&
+                                 record[at] <= '9')
+                                micro = micro * 10 + (record[at] - '0');
+                        at++;
+                }
+                at++;
+
+                line[used++] = '[';
+                {
+                        p8 digits[24];
+                        positive count = positive_into(digits,
+                                                       (positive)(micro / 1000000));
+                        p64 fraction = micro % 1000000;
+
+                        for (positive pad = count; pad < 5; pad++)
+                                line[used++] = ' ';
+                        memory_copy(line + used, digits, count);
+                        used += count;
+                        line[used++] = '.';
+                        for (bipolar place = 5; place >= 0; place--)
+                        {
+                                p64 tenth = 1;
+
+                                for (bipolar k = 0; k < place; k++)
+                                        tenth *= 10;
+                                line[used++] = (p8)('0' + fraction / tenth % 10);
+                        }
+                }
+                line[used++] = ']';
+                line[used++] = ' ';
+
+                while (at < (positive)got && record[at] != '\n' &&
+                       used < sizeof line - 2)
+                        line[used++] = record[at++];
+                line[used++] = '\n';
+
+                (void)link_post(s, LINK_KEY_OUTPUT, WATERLINK_FRAME_DURABLE,
+                                LINK_DATA, line, used);
+        }
+}
+
 // The command's streams, moved: input to it, output from it, and its end.
 static fn link_session_streams(struct link_session address_to s, p64 now)
 {
@@ -1516,6 +1716,17 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
                                                   s->pending + s->pending_at,
                                                   s->pending_length);
 
+                if (wrote < 0 && wrote != -EAGAIN && wrote != -4 &&
+                    s->kind == LINK_KIND_PUSH)
+                {
+                        //      A disk that refuses: the rest is dropped and
+                        //      the push fails, rather than reading forever.
+                        s->failed = true;
+                        s->consumed += s->pending_length;
+                        s->pending_length = 0;
+                        s->pending_at = 0;
+                        break;
+                }
                 if (wrote <= 0)
                         break;
                 s->pending_at += (positive)wrote;
@@ -1526,8 +1737,13 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
         }
         if (s->pending_end && !s->pending_length && s->input >= 0)
         {
+                if (s->kind == LINK_KIND_PUSH &&
+                    system_call_1(syscall(fsync), (positive)s->input) < 0)
+                        s->failed = true;
                 system_close(s->input);
                 s->input = -1;
+                if (s->kind == LINK_KIND_PUSH)
+                        link_push_done(s, now);
         }
         if (s->consumed + LINK_INPUT_ROOM >= s->credited + LINK_INPUT_ROOM / 4)
         {
@@ -1536,6 +1752,12 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
                 if (link_post(s, LINK_KEY_CREDIT, WATERLINK_FRAME_REPLACEABLE,
                               'C', (p8 address_to)address_of credit, 8))
                         s->credited = credit;
+        }
+
+        if (s->kind == LINK_KIND_LOG)
+        {
+                link_log_read(s);
+                return;
         }
 
         //      Output, while the link has room for it.
@@ -1561,6 +1783,13 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
                                 //      A terminal whose last holder closed it
                                 //      reads as EIO: that is its end.
                                 address_to done = true;
+                                if (s->kind == LINK_KIND_PULL)
+                                {
+                                        s->failed = got < 0;
+                                        s->exited = true;
+                                        s->exited_at = now;
+                                        s->status = s->failed ? 1 : 0;
+                                }
                                 break;
                         }
                         (void)link_post(s, turn ? LINK_KEY_ERROR
@@ -1928,8 +2157,11 @@ static fn link_state_write(p64 now)
                             (string_address)s->name);
                 link_append(text, address_of used, sizeof text,
                             s->kind == LINK_KIND_SHELL  ? " shell "
-                            : s->kind == LINK_KIND_RUN ? " run "
-                                                       : " open ");
+                            : s->kind == LINK_KIND_RUN  ? " run "
+                            : s->kind == LINK_KIND_PUSH ? " push "
+                            : s->kind == LINK_KIND_PULL ? " pull "
+                            : s->kind == LINK_KIND_LOG  ? " log "
+                                                        : " open ");
                 link_append_number(text, address_of used, sizeof text,
                                    (now - s->opened) / 1000000);
                 link_append(text, address_of used, sizeof text, " ");
@@ -2243,9 +2475,12 @@ typedef struct
         bool raw;
         terminal_modes saved;
         p8 refusal[128];
+        bipolar input;  // standard input, or the file a push sends
+        bipolar output; // standard output, or the file a pull fills
+        bool output_failed;
 } link_client_state;
 
-static link_client_state link_client;
+static link_client_state link_client = {.input = 0, .output = 1};
 
 static fn link_client_hear(address_any context,
                            struct waterlink_frame address_to head,
@@ -2284,8 +2519,10 @@ static fn link_client_hear(address_any context,
                                     8);
                 break;
         case LINK_KEY_OUTPUT:
-                if (payload[0] == LINK_DATA)
-                        (void)system_write_all(1, payload + 1, length - 1);
+                if (payload[0] == LINK_DATA &&
+                    system_write_all((positive)link_client.output, payload + 1,
+                                     length - 1) != length - 1)
+                        link_client.output_failed = true;
                 else if (payload[0] == LINK_EXIT && length >= 5)
                 {
                         memory_copy(address_of link_client.status, payload + 1,
@@ -2433,8 +2670,42 @@ static b32 link_client_run(string_address name, p8 kind,
         //      The request, before anything is sent: a command that cannot be
         //      asked for is refused here.
         request[request_length++] = kind == LINK_KIND_SHELL ? LINK_ASK_SHELL
-                                                            : LINK_ASK_RUN;
-        if (kind == LINK_KIND_SHELL)
+                                    : kind == LINK_KIND_PUSH ? LINK_ASK_PUSH
+                                    : kind == LINK_KIND_PULL ? LINK_ASK_PULL
+                                    : kind == LINK_KIND_LOG  ? LINK_ASK_LOG
+                                                             : LINK_ASK_RUN;
+        if (kind == LINK_KIND_PUSH || kind == LINK_KIND_PULL)
+        {
+                //      words: the source, then where it goes.
+                string_address far = kind == LINK_KIND_PUSH ? words[1] : words[0];
+                positive length = string_length(far);
+
+                if (!length || length > LINK_REQUEST_MAX - 8)
+                        return host_refuse("%s is not a path the far side "
+                                           "can take\n",
+                                           far);
+                if (kind == LINK_KIND_PUSH)
+                {
+                        file_facts facts;
+                        p32 mode;
+
+                        link_client.input = system_open_at(AT_FDCWD, words[0],
+                                                           FILE_READ | O_CLOEXEC);
+                        if (link_client.input < 0)
+                                return host_fail(words[0], link_client.input);
+                        mode = file_look(link_client.input, (string_address) "",
+                                         AT_EMPTY_PATH, address_of facts)
+                                       ? facts.mode & 0777
+                                       : 0644;
+                        memory_copy(request + request_length, address_of mode, 4);
+                        request_length += 4;
+                }
+                memory_copy(request + request_length, far, length);
+                request_length += length;
+        }
+        else if (kind == LINK_KIND_LOG)
+                ;
+        else if (kind == LINK_KIND_SHELL)
         {
                 winsize size = {24, 80, 0, 0};
                 string_address term = file_environment((string_address) "TERM");
@@ -2528,8 +2799,25 @@ static b32 link_client_run(string_address name, p8 kind,
                 return LINK_FAILED;
         }
 
+        if (kind == LINK_KIND_PULL)
+        {
+                p8 part[4096];
+                positive length = string_length(words[1]);
+
+                if (length + 11 > sizeof part)
+                        return host_refuse("%s is too long a name\n", words[1]);
+                memory_copy(part, words[1], length);
+                memory_copy(part + length, ".link-part", 11);
+                link_client.output = system_open_at_mode(
+                        AT_FDCWD, part, FILE_WRITE | O_NOFOLLOW | O_CLOEXEC, 0644);
+                if (link_client.output < 0)
+                        return host_fail((string_address)part, link_client.output);
+        }
+
         link_client.kind = kind;
         link_client.credit = kind == LINK_KIND_SHELL ? ~0ull : 0;
+        if (kind == LINK_KIND_PULL || kind == LINK_KIND_LOG)
+                link_client.input_done = true;
         (void)waterlink_post(s->link, LINK_KEY_REQUEST, 0,
                              WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_URGENT |
                                      WATERLINK_FRAME_LAST,
@@ -2601,7 +2889,7 @@ static b32 link_client_run(string_address name, p8 kind,
                 }
 
                 if (link_client.output_done &&
-                    (kind == LINK_KIND_SHELL || link_client.error_done))
+                    (kind != LINK_KIND_RUN || link_client.error_done))
                 {
                         //      Acknowledge what ended it, then say goodbye.
                         link_session_flush(s, now);
@@ -2614,8 +2902,11 @@ static b32 link_client_run(string_address name, p8 kind,
                 if (now - s->heard > LINK_DEAD || s->finished)
                 {
                         link_client_restore();
-                        string_format(log_error, host_label "the link to %s "
-                                                            "was lost\n",
+                        string_format(log_error,
+                                      s->finished
+                                              ? host_label "%s closed the link\n"
+                                              : host_label "the link to %s "
+                                                           "was lost\n",
                                       name);
                         log_flush();
                         answer = LINK_FAILED;
@@ -2656,7 +2947,7 @@ static b32 link_client_run(string_address name, p8 kind,
                              link_client.sent < link_client.credit;
                 if (read_input)
                 {
-                        watch[watching].descriptor = 0;
+                        watch[watching].descriptor = (b32)link_client.input;
                         watch[watching].events = SYSTEM_POLL_READ;
                         watching++;
                 }
@@ -2680,7 +2971,7 @@ static b32 link_client_run(string_address name, p8 kind,
                         if (link_client.credit - link_client.sent < room)
                                 room = (positive)(link_client.credit -
                                                   link_client.sent);
-                        got = system_read_once(0, buffer, room);
+                        got = system_read_once(link_client.input, buffer, room);
                         if (got > 0)
                         {
                                 //      A keystroke leaves alone and at once.
@@ -2732,6 +3023,27 @@ static b32 link_client_run(string_address name, p8 kind,
 
         (void)started;
         link_client_restore();
+
+        //      A pulled file is only there under its name once it is whole.
+        if (kind == LINK_KIND_PULL && link_client.output >= 0)
+        {
+                p8 part[4096];
+                positive length = string_length(words[1]);
+
+                memory_copy(part, words[1], length);
+                memory_copy(part + length, ".link-part", 11);
+                if (!answer && !link_client.output_failed &&
+                    system_call_1(syscall(fsync), (positive)link_client.output) >= 0 &&
+                    system_rename_at(AT_FDCWD, part, AT_FDCWD, words[1], 0) >= 0)
+                        ;
+                else
+                {
+                        system_remove_at(AT_FDCWD, part, 0);
+                        if (!answer)
+                                answer = 1;
+                }
+                system_close(link_client.output);
+        }
         if (rekey_after < (p64)WATERLINK_REKEY_SECONDS * 1000000)
         {
                 string_format(log_error, host_label "keyed %p times\n",

@@ -32540,6 +32540,35 @@ say(status == 0 and out == "".join("line %d\n" % i for i in range(1, 26)).encode
     "a stream keeps going across rekeys")
 say(keyed and keyed[0] >= 4, "keyed at least four times in five seconds (%r)" % (keyed,))
 
+# push and pull: whole files, the grant, and a link at the far name.
+blob = os.urandom(3000000)
+with open(top + "/a/root/blob", "wb") as f:
+    f.write(blob)
+os.chmod(top + "/a/root/blob", 0o640)
+status, out, err = on("a", moon + " link push b /root/blob /root/got")
+say(status == 255 and b"files is not granted to a" in err, "push without the files grant is told so")
+on("b", moon + " link allow a files log")
+status, out, err = on("a", moon + " link push b /root/blob /root/got", timeout=120)
+got = open(top + "/b/root/got", "rb").read() if os.path.exists(top + "/b/root/got") else b""
+say(status == 0 and got == blob, "push carries 3 MB whole (%r, %d bytes)" % (status, len(got)))
+say(os.stat(top + "/b/root/got").st_mode & 0o777 == 0o640 if got else False, "and its mode")
+say(not os.path.exists(top + "/b/root/got.link-part"), "and leaves no part file")
+status, out, err = on("a", moon + " link pull b /root/got /root/back", timeout=120)
+back = open(top + "/a/root/back", "rb").read() if os.path.exists(top + "/a/root/back") else b""
+say(status == 0 and back == blob, "pull brings it back whole")
+with open(top + "/b/root/target", "wb") as f:
+    f.write(b"untouched")
+os.symlink(top + "/b/root/target", top + "/b/root/planted")
+status, out, err = on("a", moon + " link push b /root/blob /root/planted", timeout=120)
+say(open(top + "/b/root/target", "rb").read() == b"untouched",
+    "a push onto a link replaces the link and never writes through it")
+status, out, err = on("a", moon + " link pull b /root/nothing-here /root/nothing", timeout=30)
+say(status == 255 and b"cannot be opened" in err and not os.path.exists(top + "/a/root/nothing"),
+    "pulling what is not there fails and leaves nothing here")
+status, out, err = on("a", "timeout 5 " + moon + " link log b", timeout=30)
+say(out.startswith(b"[") or b"kernel log cannot be read" in err,
+    "log follows the kernel log, or says it cannot be read")
+
 started = time.time()
 status, out, err = on("c", moon + " link run b echo no", timeout=30)
 say(status == 255 and b"did not answer" in err, "a key the far side never paired is not answered")
