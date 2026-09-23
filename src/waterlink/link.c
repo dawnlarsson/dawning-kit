@@ -708,9 +708,13 @@ bool waterlink_post(struct waterlink_link address_to link, p64 key, p16 channel,
 
 /*
         The probe timer, from the estimate: before any sample, the first
-        guess; after, the smoothed round trip and four deviations (a
-        millisecond at least), doubled for each expiry since the last
-        acknowledgement.
+        guess; after, the smoothed round trip, four deviations (a millisecond
+        at least) and the longest the far side may hold an acknowledgement,
+        doubled for each expiry since the last acknowledgement. Leave the
+        acknowledgement delay out and a sender that stops -- at the end of a
+        burst, or waiting on the far side's credit -- times out on every
+        last datagram the far side is still entitled to sit on: 223 expiries
+        in a 100 MB stream over loopback, at 71 MB/s.
 */
 static p64 waterlink_timeout(struct waterlink_link address_to link)
 {
@@ -720,7 +724,7 @@ static p64 waterlink_timeout(struct waterlink_link address_to link)
 
         if (spread < WATERLINK_GRANULE)
                 spread = WATERLINK_GRANULE;
-        base = link->smoothed ? link->smoothed + spread
+        base = link->smoothed ? link->smoothed + spread + WATERLINK_ACK_DELAY
                               : 3 * WATERLINK_RTT_FIRST;
         base <<= doubling;
         return base < WATERLINK_RTO_MOST ? base : WATERLINK_RTO_MOST;
@@ -1011,7 +1015,7 @@ positive waterlink_fill(struct waterlink_link address_to link,
         p8 address_to bytes = (p8 address_to)out;
         positive used = 0;
         positive room = WATERLINK_PAYLOAD;
-        bool paced = false;
+        positive paced = 0;
         bool probed = false;
         bool full = false;
 
@@ -1053,8 +1057,21 @@ positive waterlink_fill(struct waterlink_link address_to link,
                         slot = link->slot + at;
                         if (used + WATERLINK_HEADER + slot->length > room)
                         {
-                                full = true;
-                                break;
+                                //      Only the acknowledgements' room stands
+                                //      in a full frame's way: the frame goes
+                                //      and they ride the next datagram. Kept
+                                //      back instead, a full frame waited for
+                                //      the acknowledgement to fall due -- a
+                                //      millisecond of a stream stopped, with
+                                //      wake saying now the whole time.
+                                if (!used && WATERLINK_HEADER + slot->length <=
+                                                     WATERLINK_PAYLOAD)
+                                        room = WATERLINK_PAYLOAD;
+                                else
+                                {
+                                        full = true;
+                                        break;
+                                }
                         }
 
                         head.key = slot->key;
@@ -1080,7 +1097,7 @@ positive waterlink_fill(struct waterlink_link address_to link,
                         else if (link->probes)
                                 probed = true;
                         else
-                                paced = true;
+                                paced += WATERLINK_HEADER + slot->length;
 
                         waterlink_band_unlink(link, band, at, prior);
                         slot->state = WATERLINK_SLOT_FLIGHT;
@@ -1115,15 +1132,20 @@ positive waterlink_fill(struct waterlink_link address_to link,
                 }
         }
 
-        /*      The pacer: a datagram's share of a round trip at a quarter over
-                the window's rate, with up to a burst of credit banked while
-                the link sat idle. */
+        /*      The pacer: the bytes this datagram carried, as a share of a
+                round trip at a quarter over the window's rate, with up to a
+                burst of credit banked while the link sat idle. Charged by
+                what was carried and not by the datagram: a datagram holding
+                one small control frame charged as a full one held the next
+                small frame a millisecond on a quiet link, which was every
+                round of a flow-controlled stream. */
         if (paced && link->smoothed)
         {
-                p64 gap = link->smoothed * WATERLINK_DATAGRAM * 4 /
-                          (link->window * 5);
-                p64 floor = now > gap * WATERLINK_PACE_BURST
-                                    ? now - gap * WATERLINK_PACE_BURST
+                p64 gap = link->smoothed * paced * 4 / (link->window * 5);
+                p64 whole = link->smoothed * WATERLINK_DATAGRAM * 4 /
+                            (link->window * 5);
+                p64 floor = now > whole * WATERLINK_PACE_BURST
+                                    ? now - whole * WATERLINK_PACE_BURST
                                     : 0;
 
                 if (link->pace < floor)

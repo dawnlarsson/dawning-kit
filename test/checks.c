@@ -52474,6 +52474,38 @@ static fn last_arrives_once(void)
                       waterlink_idle(address_of one));
 }
 
+/*
+        An acknowledgement owed but not yet due must not keep a full frame
+        back: the frame goes now and the acknowledgement rides the next
+        datagram. The room kept for it stopped a full frame fitting, fill
+        sent nothing, and the stream stood still until the acknowledgement
+        fell due a millisecond later -- stdin through link run ran at 71 MB/s
+        over loopback against 890 once fixed.
+*/
+static fn full_frame_beside_owed_ack(void)
+{
+        p8 body[WATERLINK_PAYLOAD];
+        p8 big[WATERLINK_FRAME_MAX];
+        positive used;
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+        post_one(3, WATERLINK_FRAME_REPLACEABLE, 0, 'c', 0);
+        used = waterlink_fill(address_of one, body, 0, address_of alone);
+        waterlink_deliver_at(address_of one, body, used, 0, null, null);
+        check("one frame in is an acknowledgement owed, not yet due",
+              one.acks == 1 && waterlink_fill(address_of one, body, 10,
+                                               address_of alone) == 0);
+
+        memory_zero(big, sizeof big);
+        big[0] = 'F';
+        waterlink_post(address_of one, 4, 0, WATERLINK_FRAME_DURABLE, 0, 0,
+                       big, WATERLINK_FRAME_MAX, 20);
+        used = waterlink_fill(address_of one, body, 20, address_of alone);
+        check("a full frame goes at once beside an acknowledgement owed",
+              used == WATERLINK_PAYLOAD);
+}
+
 static fn superseded_in_flight(void)
 {
         p8 old_body[WATERLINK_PAYLOAD];
@@ -53423,6 +53455,7 @@ b32 main(void)
         followed_outlives_deadline();
         last_arrives_once();
         superseded_in_flight();
+        full_frame_beside_owed_ack();
         network_generated();
         handshake();
         return test_report(null);

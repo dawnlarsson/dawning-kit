@@ -1150,6 +1150,27 @@ static bool link_room(struct link_session address_to s)
         return at != WATERLINK_NONE && s->link->slot[at].next != WATERLINK_NONE;
 }
 
+/*
+        How many frames may be posted now, keeping one slot back so an ending
+        always has somewhere to go: a read is sized to this, so a busy stream
+        costs one system call for a run of frames and not one a frame.
+*/
+#define LINK_READ_FRAMES 48
+#define LINK_CHUNK (WATERLINK_FRAME_MAX - 1)
+
+static positive link_room_frames(struct link_session address_to s)
+{
+        positive count = 0;
+
+        for (p32 at = s->link->free;
+             at != WATERLINK_NONE && count <= LINK_READ_FRAMES;
+             at = s->link->slot[at].next)
+                count++;
+        return count ? count - 1 : 0;
+}
+
+static p8 link_read_buffer[LINK_READ_FRAMES * LINK_CHUNK];
+
 // The machine's end ---------------------------------------------------------
 
 static fn link_state_write(p64 now);
@@ -1706,7 +1727,6 @@ static fn link_log_read(struct link_session address_to s)
 // The command's streams, moved: input to it, output from it, and its end.
 static fn link_session_streams(struct link_session address_to s, p64 now)
 {
-        p8 buffer[WATERLINK_FRAME_MAX];
         bipolar input = s->terminal >= 0 ? s->terminal : s->input;
 
         //      Input, as far as the command will take it.
@@ -1773,8 +1793,10 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
                 while (address_to handle >= 0 && !address_to done &&
                        link_room(s))
                 {
-                        bipolar got = system_read_once(address_to handle, buffer,
-                                                       sizeof buffer - 1);
+                        positive frames = link_room_frames(s);
+                        bipolar got = system_read_once(address_to handle,
+                                                       link_read_buffer,
+                                                       frames * LINK_CHUNK);
 
                         if (got == -EAGAIN || got == -4)
                                 break;
@@ -1792,10 +1814,16 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
                                 }
                                 break;
                         }
-                        (void)link_post(s, turn ? LINK_KEY_ERROR
-                                                : LINK_KEY_OUTPUT,
-                                        WATERLINK_FRAME_DURABLE, LINK_DATA,
-                                        buffer, (positive)got);
+                        for (positive at = 0; at < (positive)got;
+                             at += LINK_CHUNK)
+                                (void)link_post(s, turn ? LINK_KEY_ERROR
+                                                        : LINK_KEY_OUTPUT,
+                                                WATERLINK_FRAME_DURABLE,
+                                                LINK_DATA,
+                                                link_read_buffer + at,
+                                                (positive)got - at < LINK_CHUNK
+                                                        ? (positive)got - at
+                                                        : LINK_CHUNK);
                 }
         }
 
@@ -2964,24 +2992,29 @@ static b32 link_client_run(string_address name, p8 kind,
                                    (SYSTEM_POLL_READ | SYSTEM_POLL_HANGUP |
                                     SYSTEM_POLL_ERROR)))
                 {
-                        p8 buffer[WATERLINK_FRAME_MAX];
-                        positive room = sizeof buffer - 1;
+                        positive room = link_room_frames(s) * LINK_CHUNK;
                         bipolar got;
 
                         if (link_client.credit - link_client.sent < room)
                                 room = (positive)(link_client.credit -
                                                   link_client.sent);
-                        got = system_read_once(link_client.input, buffer, room);
+                        got = system_read_once(link_client.input,
+                                               link_read_buffer, room);
                         if (got > 0)
                         {
                                 //      A keystroke leaves alone and at once.
-                                (void)link_post(s, LINK_KEY_INPUT,
+                                for (positive at = 0; at < (positive)got;
+                                     at += LINK_CHUNK)
+                                        (void)link_post(
+                                                s, LINK_KEY_INPUT,
                                                 WATERLINK_FRAME_DURABLE |
                                                         (kind == LINK_KIND_SHELL
                                                                  ? WATERLINK_FRAME_URGENT
                                                                  : 0),
-                                                LINK_DATA, buffer,
-                                                (positive)got);
+                                                LINK_DATA, link_read_buffer + at,
+                                                (positive)got - at < LINK_CHUNK
+                                                        ? (positive)got - at
+                                                        : LINK_CHUNK);
                                 link_client.sent += (positive)got;
                                 link_session_flush(s, now);
                         }
@@ -3043,6 +3076,22 @@ static b32 link_client_run(string_address name, p8 kind,
                                 answer = 1;
                 }
                 system_close(link_client.output);
+        }
+        //      What the link did, for whoever is measuring it.
+        if (file_environment((string_address) "WATERLINK_STATS"))
+        {
+                struct waterlink_link address_to l = s->link;
+
+                string_format(log_error,
+                              "link: sent %p again %p lost %p timeouts %p "
+                              "delivered %p held %p spilled %p rtt %p us "
+                              "window %p\n",
+                              (positive)l->sent, (positive)l->retransmitted,
+                              (positive)l->lost, (positive)l->timeouts,
+                              (positive)l->delivered, (positive)l->kept,
+                              (positive)l->spilled, (positive)l->smoothed,
+                              (positive)l->window);
+                log_flush();
         }
         if (rekey_after < (p64)WATERLINK_REKEY_SECONDS * 1000000)
         {
