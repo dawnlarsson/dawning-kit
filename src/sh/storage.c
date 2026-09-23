@@ -1796,8 +1796,25 @@ static bool storage_blkid_visit(
                         if (!value || !(eligible & tag->show))
                                 continue;
 
+                        /* A label is whatever the stick says, and -o value
+                           put it on the terminal whole while every other
+                           format here spells it: one tool with two answers
+                           for the same field.  Safe spells the bytes a
+                           terminal acts on and leaves UTF-8 and the
+                           backslash alone, so $(blkid -o value -s UUID)
+                           still reads what it always read; reference
+                           writes it as util-linux does. */
                         if (context->mode == STORAGE_OUTPUT_VALUE)
+                        {
+#if MOONWATER_STRICT >= STRICT_SAFE
+                                writer_hex_escaped(context->output, value,
+                                                   string_length(value),
+                                                   HEX_CONTROL | HEX_TAB);
+                                context->output("\n", 1);
+#else
                                 string_format(context->output, "%s\n", value);
+#endif
+                        }
                         else
                                 storage_output_field(context->output, tag->name,
                                                      value, exported);

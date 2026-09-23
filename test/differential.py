@@ -16010,6 +16010,11 @@ FIXTURES["ul_images"] = {
     "nosig.img": bytes(65536),
     "short.img": bytes(511),
     "hostile.img": b"\xff" * 8,
+    #   A label is whatever the device says: an OSC title, a colour and a
+    #   line break, which -o value spells at STRICT_SAFE and util-linux
+    #   writes raw (ledger), beside a UTF-8 label that must come out whole.
+    "control-label.img": ul_ext4_image(label=b"a\x1b]0;t\x07\x1b[31m\nb"),
+    "utf8-label.img": ul_ext4_image(label="m\u00e5ne".encode()),
     "ntfs-magic.img": ul_magic_image(512, (0, b"\xeb"), (3, b"NTFS    "), (510, b"\x55\xaa")),
     "btrfs-magic.img": ul_magic_image(69632, (65600, b"_BHRfS_M")),
     "xfs-magic.img": ul_magic_image(4096, (0, b"XFSB")),
@@ -16429,7 +16434,10 @@ UTIL_LINUX_UTILITIES = (
             stdin=("empty",), fixture="ul_images", max_flags=4,
             extra=(("ext4.img", "-s", "UUID", "-o", "value"), ("--match-tag=UUID", "--output=value", "ext4.img"),
                    ("-s", "TYPE", "-s", "UUID", "ext4.img"), ("-s", "NOT_A_TAG", "ext4.img"),
-                   ("-s", "TYPE", "-o", "value", "swap.img"), ("-s", "LABEL", "-o", "value", "ext4.img"))),
+                   ("-s", "TYPE", "-o", "value", "swap.img"), ("-s", "LABEL", "-o", "value", "ext4.img"),
+                   ("-s", "LABEL", "-o", "value", "control-label.img"), ("-o", "value", "control-label.img"),
+                   ("control-label.img",), ("-o", "export", "control-label.img"),
+                   ("-s", "LABEL", "-o", "value", "utf8-label.img"), ("utf8-label.img",))),
     Utility("findfs", operands=(("UUID=" + UL_EXT4_UUID,), ("LABEL=moondata",), ("UUID=" + UL_MISSING_UUID,),
                                 ("PARTUUID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",), ("PARTLABEL=moon data",),
                                 ("/dev/not-present",), ("",), ("BAD",), (), ("a", "b"), ("UUID=",), ("uuid=" + UL_EXT4_UUID,),
@@ -37337,6 +37345,7 @@ PINNED = r"""
 {"domain":"util_linux","kind":"deliberate","list":"ledger","option":"3-1","reason_id":"r286","utility":"bits"},
 {"domain":"util_linux","kind":"deliberate","list":"ledger","option":"abc","reason_id":"r286","utility":"bits"},
 {"domain":"util_linux","kind":"deliberate","list":"ledger","option":"none","reason_id":"r286","utility":"bits"},
+{"candidate":{"effects":"2bfe63c1e9f3cf88c13f8376f51572f23964243e405cef32c598b64d16a94b17","status":0,"stdout":"95a4e0960fe13bef03b9d61e1ae3a45c9bd21620e6b2eb722048dcd612e39c27"},"case":{"argv":["-s","LABEL","-o","value","control-label.img"],"domain":"util_linux","family":null,"fixture":"ul_images","input_kind":"command","mode":null,"stdin":"empty","tier":"pinned","utility":"blkid"},"domain":"util_linux","id":"b15a7ff087a1395a","kind":"deliberate","list":"ledger","reason":"blkid -o value spells the control bytes of a device-supplied LABEL or UUID as \\xNN at STRICT_SAFE, as its other formats already do, where util-linux writes them to the terminal raw; STRICT_REFERENCE writes them raw","reference":{"effects":"2bfe63c1e9f3cf88c13f8376f51572f23964243e405cef32c598b64d16a94b17","status":0,"stdout":"a0771bd4eb8b93495287e85f88bafdb732b26c9fcb75efd35b21781ded6e9880"},"utility":"blkid"},
 {"domain":"util_linux","kind":"deliberate","list":"ledger","option":"--list-one","reason_id":"r287","utility":"blkid"},
 {"domain":"util_linux","kind":"deliberate","list":"ledger","option":"--probe","reason_id":"r287","utility":"blkid"},
 {"domain":"util_linux","kind":"deliberate","list":"ledger","option":"-D","reason_id":"r287","utility":"blkid"},
