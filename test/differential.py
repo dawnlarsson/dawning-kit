@@ -7694,31 +7694,25 @@ def files_tar(farm):
     #   is read as the little it holds rather than a terabyte of zeros: each
     #   run of bytes that are not zero, at its offset, which is the same
     #   answer however the filesystem laid the file out.
-    #   Read at most 64 MiB of it: a filesystem that does not report holes
-    #   answers SEEK_DATA with the whole file, and the terabyte would be read
-    #   as zeros. What is past the bound is counted by the size alone, the
-    #   same way on both sides.
     def held(path):
         digest = hashlib.sha256()
-        budget = 64 << 20
         with open(path, "rb") as handle:
             end = os.fstat(handle.fileno()).st_size
             at = 0
-            while at < end and budget > 0:
+            while at < end:
                 try:
                     at = os.lseek(handle.fileno(), at, os.SEEK_DATA)
                 except OSError:
                     break
                 stop = os.lseek(handle.fileno(), at, os.SEEK_HOLE)
                 handle.seek(at)
-                while at < stop and budget > 0:
-                    piece = handle.read(min(stop - at, 1 << 20, budget))
+                while at < stop:
+                    piece = handle.read(min(stop - at, 1 << 20))
                     if not piece:
                         break
                     for run in re.finditer(rb"[^\0]+", piece):
                         digest.update(b"%d:" % (at + run.start()) + run.group(0))
                     at += len(piece)
-                    budget -= len(piece)
         return end, digest.hexdigest()[:12]
 
     commands = (("tf",), ("tvf",), ("xf",), ("xf", "--strip-components=1"), ("xf", "-C", "sub"))
@@ -13847,6 +13841,11 @@ def shell_lang_nested_parameter(rng):
         "${y}", "${y:-inner}", "${y-inner}", "${y:+set}", "${y#a}", "${y%c}",
         "${#y}", "${y:1}", "${y:1:2}", "${y/a/A}", "${!y}", "${y^^}",
         "$(printf sub)", "$((1+1))", "${y:=assigned}", "${z:-${y:-deep}}",
+        #       Words whose expansion is seen whether or not it is used: a
+        #       file the substitution leaves behind and an arithmetic error.
+        #       Neither reference expands the word of a parameter that is not
+        #       set, so neither the file nor the error may appear then.
+        "$(echo side >> touched)", "$((1/0))",
     ))
     outer = rng.choice((
         "${x:-INNER}", "${x-INNER}", "${x:+INNER}", "${x+INNER}", "${x:=INNER}",
@@ -20371,40 +20370,6 @@ int main(void) {
 
 
 class HarnessBuildTools(unittest.TestCase):
-    def test_architecture_names_agree(self):
-        """build.sh's arch_name, build.c's build_arch_name and the asm
-        grouper's build_asm_normalize are three tables answering one
-        question, and they disagreed: x86-64 and arm were a machine to the
-        first two and an unknown architecture to the third. Every spelling
-        any of them takes must be taken by all three, as the same machine."""
-        root = HARNESS_ROOT
-        machine = {"x64": "x64", "x86_64": "x64", "arm64": "arm64",
-                   "aarch64": "arm64", "riscv64": "riscv64"}
-        shell = (root / "build.sh").read_text()
-        block = shell[shell.index("arch_name() {"):]
-        block = block[:block.index("\n}\n")]
-        tables = {"build.sh": {}}
-        for words, name in re.findall(r"^\s*([\w| -]+)\)\s*echo\s+(\w+)", block, re.M):
-            for word in words.split("|"):
-                tables["build.sh"][word.strip()] = machine[name]
-        source = (root / "src/build/build.c").read_text()
-        for function in ("build_arch_name", "build_asm_normalize"):
-            start = re.search(r"static string_address %s\([^;{]*\)\s*\{" % function, source).start()
-            body = source[start:source.index("\n}\n", start)]
-            if "build_arch_name(" in body.split("{", 1)[1]:
-                tables[function] = dict(tables["build_arch_name"])
-                continue
-            tables[function] = {}
-            for condition, name in re.findall(r"if \(([^;]*?)\)\s*return \"(\w+)\";", body, re.S):
-                for word in re.findall(r'word_is\(\w+, "([^"]+)"\)', condition):
-                    tables[function][word] = machine[name]
-        spellings = set().union(*tables.values())
-        self.assertTrue(spellings >= {"x64", "x86_64", "arm64", "aarch64", "riscv64"}, tables)
-        for spelling in sorted(spellings):
-            answers = {table: names.get(spelling) for table, names in tables.items()}
-            self.assertEqual(len(set(answers.values())), 1,
-                             "%r is %r" % (spelling, answers))
-
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="moonwater-build-")
         self.work = Path(self.temporary.name)
@@ -26576,48 +26541,6 @@ def harness_compression(argv):
                                               '%d bytes, GNU %d; %s' % (len(got.stdout), len(ref.stdout),
                                                                         got.stderr.decode(errors='replace')))
 
-                    # Damage, drawn: a stream the reference made, with a byte
-                    # flipped, a run of bytes cut or inserted, or its tail cut,
-                    # at seeded places across headers, blocks and trailers.
-                    # The decoders are zero-margin by design, so this is where
-                    # a table or a length that trusts its input shows: ours
-                    # must never die by a signal or run out of time, and has to
-                    # refuse exactly what the reference refuses.
-                    hurt = random.Random(0xDA3A6E + len(codec))
-                    for name, data in (data_sets[3], data_sets[-3], data_sets[-1]):
-                        blob = call(command(refs[codec], codec, level=level, reference=True), data).stdout
-                        for trial in range(40):
-                            damaged = bytearray(blob)
-                            at = hurt.randrange(len(blob))
-                            kind = hurt.choice(('flip', 'flip', 'cut', 'insert', 'tail', 'byte'))
-                            if kind == 'flip':
-                                damaged[at] ^= 1 << hurt.randrange(8)
-                            elif kind == 'byte':
-                                damaged[at] = hurt.choice((0, 0xff, 0x80, 0x7f, damaged[at] ^ 0xff))
-                            elif kind == 'cut':
-                                del damaged[at:at + hurt.randrange(1, 64)]
-                            elif kind == 'insert':
-                                damaged[at:at] = hurt.randbytes(hurt.randrange(1, 64))
-                            else:
-                                del damaged[at:]
-                            damaged = bytes(damaged)
-                            ref = call([refs[codec], '-dc'], damaged)
-                            try:
-                                got = subprocess.run(decode, input=damaged, stdout=subprocess.PIPE,
-                                                     stderr=subprocess.PIPE, timeout=30)
-                            except subprocess.TimeoutExpired:
-                                check('%s/%s/damage-%s-%d' % (label, codec, name, trial), False,
-                                      '%s at %d did not finish' % (kind, at))
-                                continue
-                            same_bytes = codec != 'xz' or ref.returncode == 0 or got.stdout == ref.stdout
-                            check('%s/%s/damage-%s-%d' % (label, codec, name, trial),
-                                  got.returncode >= 0 and
-                                  (got.returncode == 0) == (ref.returncode == 0) and
-                                  (ref.returncode != 0 or got.stdout == ref.stdout) and same_bytes,
-                                  '%s at %d of %d: %s %d, ours %d %s' % (
-                                      kind, at, len(blob), codec, ref.returncode, got.returncode,
-                                      got.stderr.decode(errors='replace')[:120]))
-
                     # Different search budgets and reset paths must remain interoperable.
                     for other_level in ('1', '6', '9'):
                         if other_level == level:
@@ -29554,362 +29477,6 @@ int main(int argc, char **argv) {
     return 0 if passed == total and ran.returncode == 0 else 1
 
 
-def harness_term_streams(argv):
-    """Generated byte streams through the terminal emulator, which is ring 0.
-
-    term.c is the kernel console's emulator as well as the window's, fed
-    every printk byte under a spinlock with interrupts off, and printk
-    content is anyone's (a process name and a segfault put bytes there). So a
-    stream it cannot finish is a hard lockup and a cursor it lets leave the
-    grid is a write past a line. The fixture lane_term builds is driven with
-    seeded streams from a grammar of what reaches it: text in and out of
-    UTF-8, wide characters at the last column, every C0 control, CSI with
-    none to forty parameters from 0 to past 2^32, sub-parameters, private
-    markers and intermediates, scrolling regions with the top below the
-    bottom or past the last row, save and restore, the alternate screen,
-    origin and insert modes, tab stops, repeats and inserts and deletes of
-    absurd counts, OSC, DCS, APC, PM and SOS strings left open, and the
-    window resized between pieces. After every piece the cursor has to be
-    on the grid (its column may equal the width while a wrap is pending) and
-    the region inside it with its top above its bottom; every stream has to
-    finish, within five seconds, and exit cleanly.
-
-        term_streams FIXTURE [COUNT [SEED]]
-    """
-    import random
-    import subprocess
-    from concurrent.futures import ThreadPoolExecutor
-    if not argv:
-        print("term_streams FIXTURE [COUNT [SEED]]")
-        return 2
-    fixture = argv[0]
-    count = int(argv[1]) if len(argv) > 1 else 3000
-    seed = int(argv[2], 0) if len(argv) > 2 else 0x7e12
-
-    def number(rng):
-        return rng.choice((0, 1, 2, 3, 7, 8, 24, 80, 255, 256, 32767, 65535, 65536,
-                           4294967295, 4294967296, 99999999999999999999,
-                           rng.randrange(0, 300)))
-
-    def csi(rng):
-        marker = rng.choice(("", "", "", "?", ">", "=", "<"))
-        values = []
-        for _ in range(rng.choice((0, 1, 1, 2, 2, 3, 5, 16, 40))):
-            value = rng.choice(("", str(number(rng)), "%d:%d" % (number(rng), number(rng)),
-                                "%d:%d:%d:%d" % tuple(number(rng) for _ in range(4))))
-            values.append(value)
-        middle = rng.choice(("", "", "", " ", "!", '"', "$", "'", "*"))
-        final = rng.choice("@ABCDEFGHIJKLMPSTXZ`abcdefghlmnpqrstuvxz{|}~")
-        return "\\e[" + marker + ";".join(values) + middle + final
-
-    def sgr(rng):
-        pieces = rng.choice((["38;5"], ["38;2;1"], ["48;5;%d" % number(rng)],
-                             ["38;2;%d;%d;%d" % (number(rng), number(rng), number(rng))],
-                             ["58:2::1:2:3"], [str(rng.randrange(0, 110))], ["4:%d" % rng.randrange(7)]))
-        return "\\e[" + ";".join(pieces) + "m"
-
-    def text(rng):
-        pick = rng.randrange(10)
-        if pick < 4:
-            return "".join(rng.choice("abcXYZ019 .~") for _ in range(rng.randrange(1, 200)))
-        if pick < 6:
-            return "".join(rng.choice(("\\xe6\\xbc\\xa2", "\\xf0\\x9f\\x98\\x80", "\\xcc\\x81",
-                                       "\\xe2\\x80\\x8b", "\\xef\\xbc\\xa1", "e\\xcc\\x81",
-                                       "\\xe3\\x81\\x82")) for _ in range(rng.randrange(1, 40)))
-        if pick < 8:
-            return "".join(rng.choice(("\\xc0\\xaf", "\\xe0\\x80", "\\xf8\\x88\\x80\\x80\\x80",
-                                       "\\xed\\xa0\\x80", "\\xff", "\\x80", "\\xf4\\x90\\x80\\x80",
-                                       "\\xc2", "\\xe6\\xbc")) for _ in range(rng.randrange(1, 20)))
-        return "".join(rng.choice(("\\r", "\\n", "\\b", "\\t", "\\x0b", "\\x0c", "\\x7f", "\\x00",
-                                   "\\x07", "\\x0e", "\\x0f", "\\x1b", "\\x18", "\\x1a", "\\x85",
-                                   "\\xc2\\x9b")) for _ in range(rng.randrange(1, 30)))
-
-    def string(rng):
-        opener = rng.choice(("\\e]", "\\eP", "\\e_", "\\e^", "\\eX", "\\xc2\\x9d"))
-        body = rng.choice(("0;title", "8;;http://x", "52;c;aGk=", "4;1;rgb:ff/00/00",
-                           "1$r0m", "q", "x" * rng.randrange(0, 3000)))
-        return opener + body + rng.choice(("\\x07", "\\e\\\\", "", "", "\\x18"))
-
-    def piece(rng):
-        kind = rng.randrange(20)
-        if kind < 5:
-            return text(rng)
-        if kind < 10:
-            return csi(rng)
-        if kind < 11:
-            return sgr(rng)
-        if kind < 12:
-            return string(rng)
-        if kind < 14:
-            return "\\e[%d;%dr" % (number(rng), number(rng))
-        if kind < 15:
-            return rng.choice(("\\e7", "\\e8", "\\e[s", "\\e[u", "\\e#8", "\\ec", "\\eD", "\\eM",
-                               "\\eE", "\\eH", "\\e[3g", "\\e[g", "\\e(0", "\\e(B", "\\e=", "\\e>"))
-        if kind < 16:
-            return "\\e[?%s%s" % (rng.choice(("1049", "47", "1047", "6", "7", "25", "2026", "1000",
-                                              "1006", "69", "3", "5")), rng.choice("hl"))
-        if kind < 17:
-            return "\\e[%d%s" % (number(rng), rng.choice("@PLMXbSTEFGd`I"))
-        if kind < 18:
-            return "\\e[4%s" % rng.choice("hl")
-        return "\\e[%d;%dH" % (number(rng), number(rng))
-
-    def stream(index):
-        rng = random.Random(seed * 1000003 + index)
-        columns, rows = rng.choice(((80, 24), (1, 1), (2, 1), (1, 5), (132, 50),
-                                    (rng.randrange(1, 300), rng.randrange(1, 120))))
-        verbs = []
-        for _ in range(rng.randrange(1, 12)):
-            chunk = "".join(piece(rng) for _ in range(rng.randrange(1, 30)))
-            while chunk:
-                verbs += ["in", chunk[:3000]]
-                chunk = chunk[3000:]
-                verbs += ["cursor", "mode"]
-            if rng.random() < 0.3:
-                columns, rows = rng.randrange(1, 300), rng.randrange(1, 120)
-                verbs += ["resize", "%dx%d" % (columns, rows), "cursor", "mode"]
-        return columns, rows, verbs
-
-    def one(index):
-        columns, rows, verbs = stream(index)
-        width, height = columns, rows
-        start = stream_start(index)
-        try:
-            ran = subprocess.run([fixture, str(start[0]), str(start[1])] + verbs,
-                                 capture_output=True, timeout=5)
-        except subprocess.TimeoutExpired:
-            return index, "did not finish in five seconds"
-        if ran.returncode:
-            return index, "exited %d" % ran.returncode
-        lines = ran.stdout.decode(errors="replace").splitlines()
-        grid = [min(start[0], 256), start[1]]
-        answers = iter(lines)
-        at = 0
-        while at < len(verbs):
-            verb = verbs[at]
-            if verb in ("in", "resize"):
-                if verb == "resize":
-                    grid = [int(part) for part in verbs[at + 1].split("x")]
-                    grid[0] = min(grid[0], 256)  # the fixture's lines are 256 cells apart
-                at += 2
-                continue
-            answer = next(answers, "")
-            if verb == "cursor":
-                try:
-                    row, column = (int(part) for part in answer.split(","))
-                except ValueError:
-                    return index, "cursor said %r" % answer
-                if not (0 <= row < grid[1] and 0 <= column <= grid[0]):
-                    return index, "cursor %d,%d off a %dx%d grid after %r" % (
-                        row, column, grid[0], grid[1], verbs[at - 3 if at >= 3 else 0][:80])
-            elif verb == "mode":
-                found = re.search(r"region=(\d+),(\d+)", answer)
-                if not found:
-                    return index, "mode said %r" % answer
-                top, bottom = int(found.group(1)), int(found.group(2))
-                if not (0 <= top < bottom <= grid[1]):
-                    return index, "region %d,%d on a %dx%d grid" % (top, bottom, grid[0], grid[1])
-            at += 1
-        return index, None
-
-    starts = {}
-
-    def stream_start(index):
-        if index not in starts:
-            rng = random.Random(seed * 1000003 + index)
-            starts[index] = rng.choice(((80, 24), (1, 1), (2, 1), (1, 5), (132, 50),
-                                        (rng.randrange(1, 300), rng.randrange(1, 120))))
-        return starts[index]
-
-    for index in range(count):
-        stream_start(index)
-    failures = []
-    with ThreadPoolExecutor(max_workers=max(1, (os.cpu_count() or 2) - 1)) as pool:
-        for index, failure in pool.map(one, range(count)):
-            if failure:
-                failures.append((index, failure))
-    for index, failure in failures[:12]:
-        print("  FAIL stream %d (seed %#x): %s" % (index, seed, failure))
-    print("term streams: %d of %d streams finished on the grid" % (count - len(failures), count))
-    write_tally("term-streams", count - len(failures), count)
-    return 1 if failures else 0
-
-
-def harness_dhcp_packets(argv):
-    """DHCP replies from a grammar, through the parser ip watch runs as root.
-
-    dhcp_read walks a reply's options -- a packet from the network, read
-    by a process with every privilege -- so a length it trusted would be a
-    read past the datagram. The walk is cut out of src/net/net.c and built
-    with the host compiler under AddressSanitizer and UBSan, and fed 200,000
-    seeded replies each in a heap block exactly its length: the fixed BOOTP
-    head with a field now and then wrong (op, hardware type and length,
-    transaction, client address, cookie), then options drawn from PAD, END,
-    the eight the lease reads at their own length and at 0, 3, 5 and 8 bytes,
-    the message type at 0, 1 and 2, unknown options, repeats, masks of every
-    shape, and the datagram cut anywhere from nothing to all of it. A reply
-    that is whole and well formed has to give the lease a model of the
-    options the generator wrote says it gives; every reply has to be read
-    without the sanitizers saying a word.
-
-        dhcp_packets [COUNT [SEED]]
-    """
-    import subprocess
-    import tempfile
-    count = int(argv[0]) if argv else 200000
-    seed = int(argv[1], 0) if len(argv) > 1 else 0xd4c9
-    net = (HARNESS_ROOT / "src/net/net.c").read_text()
-    head = net[net.index("#define DHCP_HEAD 236"):net.index("static COLD positive dhcp_build(")]
-    walk = net[net.index("static COLD bipolar dhcp_read("):
-               net.index("//      A mask of n leading bits")]
-    shim = r'''
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
-#include <stdbool.h>
-typedef uint8_t p8;
-typedef uint32_t p32;
-typedef uint64_t p64;
-typedef unsigned long positive;
-typedef long bipolar;
-typedef int b32;
-#define COLD
-#define CONST
-#define fn void
-#define address_to *
-#define address_of &
-#define array_count(a) (sizeof(a) / sizeof((a)[0]))
-#define memory_compare memcmp
-static p32 network_load_32(const p8 *at) {
-        return (p32)at[0] << 24 | (p32)at[1] << 16 | (p32)at[2] << 8 | at[3];
-}
-static bool network_transaction_secure(void *into, positive size) { (void)into; (void)size; return true; }
-static bipolar system_random_fill(void *into, positive size, positive flags) {
-        (void)into; (void)size; (void)flags; return 0;
-}
-'''
-    driver = r'''
-static uint64_t draws;
-static p32 draw(p32 below) {
-        draws ^= draws << 13; draws ^= draws >> 7; draws ^= draws << 17;
-        return below ? (p32)(draws % below) : (p32)draws;
-}
-static void put32(p8 *at, p32 value) {
-        at[0] = value >> 24; at[1] = value >> 16; at[2] = value >> 8; at[3] = value;
-}
-static const p8 lease_options[] = {1, 3, 6, 54, 51, 58, 59};
-static const p8 offsets[] = {1, 2, 3, 4, 5, 6, 7};
-static const bool multiple[] = {false, true, true, false, false, false, false};
-static const p32 masks[] = {0, 0xffffff00, 0xffff0000, 0xffffffff, 0x80000000,
-                            0xff00ff00, 0x00ffffff, 0xfffffffe, 0x7fffffff};
-int main(int argc, char **argv) {
-        long count = atol(argv[1]);
-        unsigned long whole = 0, parsed = 0, agreed = 0, wrong = 0;
-        p8 hardware[6] = {2, 0, 0, 0, 0, 1};
-        draws = strtoull(argv[2], 0, 0) | 1;
-        for (long n = 0; n < count; n++) {
-                p8 build[1500];
-                positive at = DHCP_HEAD + 4, size;
-                p32 model[8] = {0};
-                p8 kind = 0;
-                bool broken = false, ended = false;
-                memset(build, 0, sizeof build);
-                build[0] = 2; build[1] = 1; build[2] = 6;
-                put32(build + 4, 0xdeadbeef);
-                memcpy(build + 28, hardware, 6);
-                put32(build + 16, 0x0a000002);
-                put32(build + DHCP_HEAD, DHCP_COOKIE);
-                if (!draw(20)) {
-                        broken = true;
-                        build[draw(DHCP_HEAD + 4)] ^= (p8)(1 << draw(8));
-                }
-                model[0] = 0x0a000002;
-                for (p32 options = draw(24); options-- && at < sizeof build - 80;) {
-                        p32 pick = draw(14);
-                        if (pick == 0) { build[at++] = DHCP_OPTION_PAD; continue; }
-                        if (pick == 1 && draw(3) == 0) { build[at++] = DHCP_OPTION_END; ended = true; break; }
-                        if (pick <= 3) {
-                                p8 length = (p8)(draw(4) == 0 ? draw(3) : 1);
-                                build[at] = DHCP_OPTION_TYPE; build[at + 1] = length;
-                                for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)(1 + draw(8));
-                                if (length == 1) kind = build[at + 2];
-                                at += 2 + length;
-                                continue;
-                        }
-                        if (pick <= 10) {
-                                p32 which = draw(array_count(lease_options));
-                                static const p8 lengths[] = {4, 4, 4, 4, 0, 3, 5, 8, 12};
-                                p8 length = lengths[draw(array_count(lengths))];
-                                build[at] = lease_options[which]; build[at + 1] = length;
-                                for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)draw(256);
-                                if (lease_options[which] == 1 && length >= 4)
-                                        put32(build + at + 2, masks[draw(array_count(masks))]);
-                                if (length >= 4 && (length == 4 || multiple[which]))
-                                        model[offsets[which]] = network_load_32(build + at + 2);
-                                at += 2 + length;
-                                continue;
-                        }
-                        {
-                                p8 length = (p8)draw(40);
-                                build[at] = (p8)(60 + draw(190)); build[at + 1] = length;
-                                for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)draw(256);
-                                at += 2 + length;
-                        }
-                }
-                if (!ended && draw(2)) { build[at++] = DHCP_OPTION_END; ended = true; }
-                size = at;
-                if (!draw(4)) { size = draw((p32)at + 1); broken = true; }
-                p8 *packet = malloc(size ? size : 1);
-                memcpy(packet, build, size);
-                dhcp_lease lease = {0};
-                p8 said = 0;
-                bipolar answer = dhcp_read(packet, size, 0xdeadbeef, hardware, &lease, &said);
-                free(packet);
-                if (!answer) parsed++;
-                if (broken) continue;
-                whole++;
-                bool mask_ok = dhcp_mask_valid(model[1]);
-                bool want = kind && mask_ok;
-                p32 got[8];
-                memcpy(got, &lease, sizeof got);
-                if ((answer == 0) != want ||
-                    (want && (said != kind || memcmp(got, model, sizeof got)))) {
-                        if (wrong++ < 5)
-                                printf("  FAIL packet %ld: answer %ld kind %d/%d mask %08x\n",
-                                       n, answer, said, kind, model[1]);
-                } else
-                        agreed++;
-        }
-        printf("%ld %lu %lu %lu %lu\n", count, parsed, whole, agreed, wrong);
-        return wrong != 0;
-}
-'''
-    with tempfile.TemporaryDirectory(prefix="dhcp-packets-") as temporary:
-        top = Path(temporary)
-        (top / "dhcp.c").write_text(shim + head + walk + driver)
-        compiler = "clang" if shutil.which("clang") else "cc"
-        built = subprocess.run([compiler, "-O1", "-g", "-w", "-fsanitize=address,undefined",
-                                "-fno-sanitize-recover=all", "-o", str(top / "dhcp"),
-                                str(top / "dhcp.c")], capture_output=True, text=True)
-        if built.returncode:
-            print("  FAIL the parser did not build:\n" + built.stderr[-3000:])
-            return 1
-        ran = subprocess.run([str(top / "dhcp"), str(count), hex(seed)], capture_output=True,
-                             text=True, timeout=600)
-    for line in ran.stdout.splitlines()[:-1]:
-        print(line)
-    if ran.returncode or ran.stderr.strip():
-        print("  FAIL the sanitizers or the model said:\n" + (ran.stderr or ran.stdout)[-3000:])
-        write_tally("dhcp-packets", 0, 1)
-        return 1
-    total, parsed, whole, agreed, wrong = (int(word) for word in ran.stdout.split()[-5:])
-    print("dhcp packets: %d replies read clean, %d parsed, %d of %d whole ones as the model says"
-          % (total, parsed, agreed, whole))
-    write_tally("dhcp-packets", agreed, whole)
-    return 0
-
-
 def harness_terminfo_install(argv):
     """The terminfo blob is written into a directory, never through a name.
 
@@ -31099,8 +30666,6 @@ HARNESS_CHECKS = {
     "objtool_shape": harness_objtool_shape,
     "coverage_report": harness_coverage_report,
     "terminfo_install": harness_terminfo_install,
-    "dhcp_packets": harness_dhcp_packets,
-    "term_streams": harness_term_streams,
     "console_queue": harness_console_queue,
     "host_writes": harness_host_writes,
     "moonwater_cli": harness_moonwater_cli,

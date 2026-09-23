@@ -6797,6 +6797,40 @@ static COLD fn expand_dash_at_trim(string_address pattern, bool prefix,
 static fn expand_modifier(expand_reference reference, p8 operation, bool doubled,
                            string_address word, bool quoted, b32 parameter_mode)
 {
+        /*
+                The word after the operator is expanded only when it can
+                matter. Neither reference expands it for a parameter that is
+                not set, and bash does not for an empty one either when the
+                word is a pattern to remove; this expanded it every time, so
+                ${x#$(cmd)} ran cmd and ${x%$((1/0))} stopped the shell with x
+                unset, where both references write nothing and go on. What is
+                pushed instead is the parameter itself, which is empty and
+                still answers to set -u. $@ and $* are lists and keep their
+                own path.
+        */
+        {
+                string_address name = reference.name;
+                bool list = string_get(name + 1) == end &&
+                            (string_is(name, '@') || string_is(name, '*'));
+                bool present = !(parameter_mode & EXPAND_PARAMETER_MISSING);
+                positive bytes = 0;
+                p8 scratch[32];
+
+                //      ${x@a} names the attributes of a declared name that
+                //      has no value, so a transform is never skipped.
+                list = list || operation == '@';
+                if (!list && present)
+                        expand_value_of(reference, scratch, address_of present,
+                                        address_of bytes);
+                if (!list &&
+                    (!present || (shell_bash_compat && !bytes &&
+                                  (operation == '#' || operation == '%'))))
+                {
+                        expand_push_parameter_as(reference, quoted, parameter_mode);
+                        return;
+                }
+        }
+
         if (operation == '#' || operation == '%')
         {
                 string_address name = reference.name;
