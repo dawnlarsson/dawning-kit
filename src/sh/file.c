@@ -11522,6 +11522,79 @@ static string_address find_below_root()
         can be /dev/tty.
 */
 static bool find_terminal;
+static bool find_terminal_utf8;
+static bool text_locale_utf8();
+
+/*
+        One character of a name as a terminal shows it: its length, and
+        whether it is printable. In the C locale that is a printable ASCII
+        byte; where LC_CTYPE is UTF-8, as it is by default here, a valid
+        sequence that is not a C1 control prints too, as GNU's isprint
+        says. A C1 control is one character and so one '?'; a byte that
+        starts no valid sequence is one '?' on its own.
+*/
+static positive file_terminal_step(const p8 address_to at, positive left,
+                                   bool utf8, bool address_to printable)
+{
+        p8 lead = at[0];
+        positive length, code, least;
+
+        address_to printable = lead >= ' ' && lead < 0x7f;
+        if (lead < 0x80 || !utf8)
+                return 1;
+        address_to printable = false;
+        if (lead >= 0xc2 && lead <= 0xdf)
+                length = 2, code = lead & 0x1f, least = 0x80;
+        else if (lead >= 0xe0 && lead <= 0xef)
+                length = 3, code = lead & 0x0f, least = 0x800;
+        else if (lead >= 0xf0 && lead <= 0xf4)
+                length = 4, code = lead & 0x07, least = 0x10000;
+        else
+                return 1;
+        // A sequence the name ends inside is one character short of whole,
+        // and one '?' as GNU spells it, however many of its bytes are there.
+        if (length > left)
+        {
+                positive i = 1;
+
+                while (i < left && (at[i] & 0xc0) == 0x80)
+                        i++;
+                return i == left ? left : 1;
+        }
+        for (positive i = 1; i < length; i++)
+        {
+                if ((at[i] & 0xc0) != 0x80)
+                        return 1;
+                code = code << 6 | (at[i] & 0x3f);
+        }
+        if (code < least || code > 0x10ffff ||
+            (code >= 0xd800 && code <= 0xdfff))
+                return 1;
+        address_to printable = code >= 0xa0;
+        return length;
+}
+
+// Every character of bytes a terminal would not show, as one '?', in place.
+static positive file_terminal_spell(p8 address_to bytes, positive length,
+                                    bool utf8)
+{
+        positive kept = 0;
+
+        for (positive at = 0; at < length;)
+        {
+                bool printable;
+                positive step = file_terminal_step(bytes + at, length - at,
+                                                   utf8, address_of printable);
+
+                if (printable)
+                        for (positive i = 0; i < step; i++)
+                                bytes[kept++] = bytes[at + i];
+                else
+                        bytes[kept++] = '?';
+                at += step;
+        }
+        return kept;
+}
 
 static bool find_names_hidden(bipolar handle)
 {
@@ -11536,10 +11609,19 @@ static fn find_name_write(bipolar handle, string_address name)
         positive plain = 0;
         bool hidden = find_names_hidden(handle);
 
-        for (positive at = 0; hidden && at < length; at++)
+        for (positive at = 0; hidden && at < length;)
         {
-                if (!ls_byte_unprintable((p8)name[at]))
+                bool printable;
+                positive step = file_terminal_step((const p8 address_to)name + at,
+                                                   length - at,
+                                                   find_terminal_utf8,
+                                                   address_of printable);
+
+                if (printable)
+                {
+                        at += step;
                         continue;
+                }
                 // A writer takes a length of 0 as "to the end".
                 if (at > plain)
                 {
@@ -11553,7 +11635,8 @@ static fn find_name_write(bipolar handle, string_address name)
                         system_write_all((positive)handle, "?", 1);
                 else
                         log("?", 1);
-                plain = at + 1;
+                at += step;
+                plain = at;
         }
         if (length > plain)
         {
@@ -11874,9 +11957,8 @@ static fn find_printf_walk(string_address format, bipolar handle)
 
                 if (string_first_of((string_address)"pfhHPl", letter) &&
                     find_names_hidden(handle))
-                        for (positive i = 0; i < length; i++)
-                                if (ls_byte_unprintable(find_field[i]))
-                                        find_field[i] = '?';
+                        length = file_terminal_spell(find_field, length,
+                                                     find_terminal_utf8);
 
                 if (precision != positive_max && precision < length)
                         length = precision;
@@ -12540,10 +12622,16 @@ static bool find_tree_print(parallel_output address_to output, positive address_
         memory_copy(at, path, length);
         at[length] = terminator;
         // -print on a terminal, as find_name_write has it; -print0 is raw.
+        // The spelling is never longer, and this is the last reservation.
         if (terminator && find_terminal)
-                for (positive i = 0; i < length; i++)
-                        if (ls_byte_unprintable(at[i]))
-                                at[i] = '?';
+        {
+                positive shown = file_terminal_spell(at, length,
+                                                     find_terminal_utf8);
+
+                at[shown] = terminator;
+                output->used -= length - shown;
+                length = shown;
+        }
 
         memory_copy(address_of record, output->bytes + address_to open_at, sizeof(record));
         record.bytes += (p32)(length + 1);
@@ -13120,6 +13208,7 @@ static b32 file_find()
         find_root = -1;
         find_bad = false;
         find_terminal = stream_is_terminal(1);
+        find_terminal_utf8 = text_locale_utf8();
         find_has_action = false;
         find_batch_have = 0;
         find_at = 0;

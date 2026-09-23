@@ -2642,23 +2642,42 @@ static positive storage_findmnt_value(writer output, string_address value,
 
         positive shown = length;
         positive plain = 0;
+        // Where LC_CTYPE is UTF-8 a printable character past ASCII is shown
+        // whole, as libsmartcols shows it; a C1 control or a byte that
+        // starts no character is spelled, a byte at a time.
+        bool utf8 = text_locale_utf8();
 
-        for (positive at = 0; at < length; at++)
+        for (positive at = 0; at < length;)
         {
                 p8 byte = (p8)value[at];
+                positive step = 1;
+                bool printable = false;
 
-                if (!(escape_categories[byte] & STORAGE_FINDMNT_SPELLED) &&
-                    !(byte == '\\' && at + 1 < length && value[at + 1] == 'x'))
+                if (byte >= 0x80 && utf8)
+                        step = file_terminal_step((const p8 address_to)value + at,
+                                                  length - at, true,
+                                                  address_of printable);
+                else
+                        printable =
+                            !(escape_categories[byte] & STORAGE_FINDMNT_SPELLED) &&
+                            !(byte == '\\' && at + 1 < length &&
+                              value[at + 1] == 'x');
+                if (printable)
+                {
+                        at += step;
                         continue;
-                shown += 3;
-                if (!output)
-                        continue;
-                // A writer takes a length of 0 as "to the end".
-                if (at > plain)
-                        output(value + plain, at - plain);
-                writer_hex_escaped(output, value + at, 1,
-                                   STORAGE_FINDMNT_SPELLED | HEX_SLASH);
-                plain = at + 1;
+                }
+                shown += 3 * step;
+                if (output)
+                {
+                        // A writer takes a length of 0 as "to the end".
+                        if (at > plain)
+                                output(value + plain, at - plain);
+                        writer_hex_escaped(output, value + at, step,
+                                           STORAGE_FINDMNT_SPELLED | HEX_SLASH);
+                }
+                at += step;
+                plain = at;
         }
         if (output && length > plain)
                 output(value + plain, length - plain);

@@ -7945,15 +7945,16 @@ def files_find_terminal(farm):
         return 0, 1, ["find terminal needs GNU find and the candidate's"]
 
     pieces = [b"\x1b[31m", b"\x1b]0;t\x07", b"\x07", b"\x7f", b"\x01", b"\x1b",
-              "\u00e5".encode(), b"\xc2\x9b", b"a", b"-", b"x"]
+              "\u00e5".encode(), b"\xc2\x9b", b"a", b"-", b"x", "\u754c".encode(),
+              b"\xff", b"\xe2\x82"]
     rng = random.Random(0x66696e64)
 
-    def through_pty(command, cwd):
+    def through_pty(command, cwd, locale):
         pid, master = pty.fork()
         if pid == 0:
             try:
                 _os.chdir(cwd)
-                _os.execve(command[0], command, {"LC_ALL": "C", "PATH": "/usr/bin:/bin"})
+                _os.execve(command[0], command, {"LC_ALL": locale, "PATH": "/usr/bin:/bin"})
             finally:
                 _os._exit(127)
         out = b""
@@ -7987,17 +7988,21 @@ def files_find_terminal(farm):
         (tree / _os.fsdecode(b"d\x1b]0;x\x07") / "in").write_bytes(b"y")
         forms = (("-print",), ("-printf", "%p|%f|%h|%P|%l\\033[0m\\n"),
                  ("-fprint", "/dev/tty"), ("-print0",), ("-name", "*a*", "-print"))
-        for form in forms:
-            for tty in (True, False):
+        #   The C locale, and the UTF-8 one the image runs in, where a
+        #   printable character past ASCII is shown whole and a C1 control
+        #   or a stray byte is one '?'.
+        for form, tty, locale in ((f, t, l) for f in forms for t in (True, False)
+                                  for l in ("C", "C.UTF-8")):
+            if True:
                 cases += 1
                 answers = []
                 for program in (reference, str(target)):
                     command = [program, "t", *form]
                     if tty:
-                        answers.append(through_pty(command, work))
+                        answers.append(through_pty(command, work, locale))
                     else:
                         ran = subprocess.run(command, cwd=work, capture_output=True,
-                                             env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+                                             env={"LC_ALL": locale, "PATH": "/usr/bin:/bin"},
                                              stdin=subprocess.DEVNULL, timeout=10)
                         answers.append((ran.returncode, ran.stdout))
                 # The walk's order is the directory's; the names are the
@@ -8007,9 +8012,10 @@ def files_find_terminal(farm):
                 if want == got and answers[0][0] == answers[1][0]:
                     passed += 1
                 elif len(notes) < 6:
-                    notes.append("find %s %s: want %r got %r"
+                    notes.append("find %s %s in %s: want %r got %r"
                                  % (" ".join(form), "on a tty" if tty else "into a pipe",
-                                    want[:4], got[:4]))
+                                    locale, sorted(set(want) - set(got))[:4],
+                                    sorted(set(got) - set(want))[:4]))
     return passed, cases, notes
 
 
@@ -30440,7 +30446,7 @@ def harness_mount_names(argv):
         print("mount names: NOT RUN -- no reference df, findmnt, mount or unshare")
         return 2
     pieces = [b"\x1b[31m", b"\x1b]0;t\x07", b"\x07", b"\x7f", b"\x01", b"\x1b", b"\\", b"\\x41",
-              "å".encode(), b"\xc2\x9b", b"~", b"plain", b"-", b"."]
+              "å".encode(), b"\xc2\x9b", b"~", b"plain", b"-", b".", "界".encode(), b"\xff"]
     rng = random.Random(0x6d6e74)
     names = []
     for seed in range(seeds):
@@ -30458,6 +30464,7 @@ def harness_mount_names(argv):
                 (b"ref", references["df"], references["findmnt"], references["mount"]),
                 (b"ours", str(farm / "df"), str(farm / "findmnt"), str(farm / "mount"))):
             for label, command in ((b"df", bin_df.encode() + b" -a"),
+                                   (b"findmnt-utf8", b"LC_ALL=C.UTF-8 " + bin_findmnt.encode()),
                                    (b"findmnt", bin_findmnt.encode()),
                                    (b"findmnt-l", bin_findmnt.encode() + b" -l -o TARGET,SOURCE"),
                                    (b"findmnt-r", bin_findmnt.encode() + b" -r -o TARGET,SOURCE"),
@@ -30490,18 +30497,21 @@ def harness_mount_names(argv):
         return b"\n".join(out)
 
     checks = passed = 0
-    for label in (b"df", b"findmnt", b"findmnt-l", b"findmnt-r", b"findmnt-P", b"mount"):
+    for label in (b"df", b"findmnt", b"findmnt-utf8", b"findmnt-l", b"findmnt-r", b"findmnt-P",
+                  b"mount"):
         want = listings.get((b"ref", label), b"")
         got = listings.get((b"ours", label), b"")
         if label == b"mount":
             want = spell_source(want)
         want_lines = squeezed(want).split(b"\n")
         got_lines = squeezed(got).split(b"\n")
-        if label == b"findmnt":
+        if label in (b"findmnt", b"findmnt-utf8"):
             # The tree's branch glyphs depend on each mount's place among
             # the others; the names are what is under test.
-            want_lines = [re.sub(rb"^[ |`-]*", b"", line) for line in want_lines]
-            got_lines = [re.sub(rb"^[ |`-]*", b"", line) for line in got_lines]
+            #   In UTF-8 util-linux draws them from the box-drawing block.
+            glyphs = rb"^(?:[ |`-]|\xe2\x94[\x80-\xbf])*"
+            want_lines = [re.sub(glyphs, b"", line) for line in want_lines]
+            got_lines = [re.sub(glyphs, b"", line) for line in got_lines]
         for index, line in enumerate(want_lines):
             checks += 1
             other = got_lines[index] if index < len(got_lines) else b""
