@@ -287,6 +287,7 @@ typedef struct
         positive announced;
         positive asked;
         p64 last_answer;
+        p64 interfaces_looked;
         struct link_pairing pairing[LINK_PAIRING];
         struct link_attempt attempt[LINK_PAIRING * 2];
         positive attempt_next;
@@ -800,6 +801,33 @@ static p64 link_nearby_tick(p64 now)
         link_nearby_reload(now);
         if (link_nearby.socket < 0 || !link_nearby.groups.count)
                 return wake;
+
+        //      Interfaces come and go, and an address comes late -- a lease
+        //      that arrives after the listener started is the ordinary case
+        //      on a machine that boots straight into it. Every five seconds
+        //      the memberships are asked for again, and an address that is
+        //      new starts the quick announcements over.
+        if (now - link_nearby.interfaces_looked >= 5000000)
+        {
+                p32 before[LINK_INTERFACES];
+                positive had = link_nearby.interfaces;
+                bool changed;
+
+                memory_copy(before, link_nearby.interface_address,
+                            sizeof before);
+                link_nearby.interfaces_looked = now;
+                link_nearby_interfaces();
+                changed = had != link_nearby.interfaces ||
+                          memory_compare(before, link_nearby.interface_address,
+                                         had * sizeof(p32));
+                if (changed)
+                {
+                        link_nearby.announced = 0;
+                        link_nearby.asked = 0;
+                        link_nearby.next_announce = now;
+                        link_nearby.next_ask = now;
+                }
+        }
 
         if (now - link_nearby.rotated >= LINK_ROTATE_EVERY)
         {

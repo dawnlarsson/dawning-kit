@@ -55,6 +55,12 @@
 #     # moonwater priority internet wired
 #     # moonwater timezone Europe/Stockholm
 #     # moonwater keyboard se
+#     # Pair by itself with every machine on the local network in the
+#     # group: run `moonwater link join office SECRET allow shell run` once,
+#     # as root, before install -- the secret then lives only in /root, and
+#     # this line, which any user can read through /dev/spark, names the
+#     # group and not the secret.
+#     # moonwater link join office
 #     ;;
 #   esac
 # }

@@ -11626,6 +11626,8 @@ moonwater link pair host LINK_HOST_KEY > /dev/null 2>&1
 moonwater link allow host run log > /dev/null 2>&1
 moonwater link on > /tmp/linkon 2>&1
 printf 'link-on-%s\n' $(( $(grep -c 'link on,' /tmp/linkon) * 7 ))
+moonwater link join lab LINK_LAN_SECRET allow run > /tmp/linkjoin 2>&1
+printf 'link-joined-%s\n' $(( $(grep -c 'in lab; members may run' /tmp/linkjoin) * 7 ))
 printf 'link-key-%s\n' "$(cat /tmp/linkkey)"
 printf 'no\n' | moonwater install nvme0n1 > /tmp/refused 2>&1
 printf 'unconfirmed-%s\n' $(( $? + 40 ))
@@ -11640,7 +11642,9 @@ printf 'mounts-%s\n' $(( $(grep -c -e ' /root ' -e ' /home ' -e ' /bowls ' /proc
 poweroff
 COMMANDS
 
-sed "s|LINK_HOST_KEY|$link_host_key|" "$work/live.commands" > "$work/live.keyed" &&
+link_lan_secret=lan-secret-$$-$(date +%s)
+sed -e "s|LINK_HOST_KEY|$link_host_key|" -e "s|LINK_LAN_SECRET|$link_lan_secret|" \
+        "$work/live.commands" > "$work/live.keyed" &&
         mv "$work/live.keyed" "$work/live.commands"
 
 # shellcheck disable=SC2086
@@ -11663,10 +11667,16 @@ disk_checks live
 cat > "$work/disk.commands" <<'COMMANDS'
 this line is eaten by the console
 printf 'verdict-%s\n' "$(rev < /run/moonwater/verdict)"
+for i in /sys/class/net/*; do [ "$(cat $i/address)" = 52:54:00:66:00:01 ] && lan=${i##*/}; done
+ip link set $lan up
+ip addr add 10.66.0.1/24 dev $lan
 i=0; until moonwater link 2>/dev/null | grep -q 'link on,' || [ $i -ge 30 ]; do sleep 1; i=$((i + 1)); done
 printf 'link-kept-%s\n' $(( $(moonwater link 2>/dev/null | grep -c 'link on,') * 7 ))
 i=0; until [ -e /root/link-asked ] || [ $i -ge 45 ]; do sleep 1; i=$((i + 1)); done
 printf 'link-asked-%s\n' "$(rev < /root/link-asked)"
+i=0; until [ -e /root/lan-asked ] || [ $i -ge 120 ]; do sleep 1; i=$((i + 1)); done
+printf 'lan-asked-%s\n' "$(rev < /root/lan-asked)"
+printf 'lan-group-%s\n' $(( $(moonwater link | grep -c 'paired in lab') * 7 ))
 printf 'kept-%s\n' "$(rev < /bowls/probe/file)"
 printf 'root-%s\n' "$(rev < /root/probe)"
 printf 'second\n' > /root/second
@@ -11721,9 +11731,57 @@ if [ -n "$link_host" ]; then
         link_asker=$!
 fi
 
+#       The headless box's neighbour: a second machine, live from the same
+#       image, on the same virtual LAN -- QEMU's multicast socket segment,
+#       which carries mDNS between the two and has no DHCP server, so each
+#       is given its LAN address by one typed line. It joins the group with
+#       the secret the live session used, waits for the two to pair by
+#       themselves, and runs a command on the disk boot, which touches
+#       nothing but that one line.
+lan_port=$((30000 + $$ % 20000))
+lan="-netdev socket,id=lan,mcast=230.0.0.1:$lan_port"
+cat > "$work/neighbour.commands" <<COMMANDS
+this line is eaten by the console
+until [ -e /run/moonwater/verdict ]; do sleep 1; done
+for i in /sys/class/net/*; do [ "\$(cat \$i/address)" = 52:54:00:66:00:02 ] && lan=\${i##*/}; done
+ip link set \$lan up
+ip addr add 10.66.0.2/24 dev \$lan
+moonwater link join lab $link_lan_secret allow run > /tmp/join 2>&1
+i=0; until moonwater link | grep -q 'paired in lab' || [ \$i -ge 90 ]; do sleep 1; i=\$((i + 1)); done
+name=\$(moonwater link | sed -n 's/^  \([^ ]*\) .*paired in lab.*/\1/p' | head -1)
+moonwater link run "\$name" 'echo asked > /root/lan-asked; echo from-the-headless-box' < /dev/null > /tmp/lanrun 2>&1
+printf 'lan-run-%s\\n' "\$(rev < /tmp/lanrun)"
+poweroff
+COMMANDS
+(
+        rm -f "$work/neighbour.in"
+        mkfifo "$work/neighbour.in" || exit 1
+        # shellcheck disable=SC2086
+        timeout $((300 * install_slow)) "$install_emulator" -m 1G -smp 2 $install_board $install_machine \
+                -kernel "$image" -no-reboot -display none -serial stdio \
+                -append "console=$install_console drm_client_lib.active=" \
+                $lan -device virtio-net-pci,netdev=lan,mac=52:54:00:66:00:02 \
+                < "$work/neighbour.in" > "$work/neighbour" 2>&1 &
+        neighbour_qemu=$!
+        exec 8> "$work/neighbour.in"
+        waited=0
+        until grep -q -F ' $ ' "$work/neighbour" 2>/dev/null; do
+                kill -0 "$neighbour_qemu" 2>/dev/null || break
+                [ "$waited" -lt $((180 * install_slow)) ] || break
+                sleep 1
+                waited=$((waited + 1))
+        done
+        cat "$work/neighbour.commands" >&8
+        exec 8>&-
+        wait "$neighbour_qemu" 2>/dev/null || true
+) &
+neighbour=$!
+
 install_boot disk -netdev "user,id=net0,hostfwd=udp:127.0.0.1:$link_port-:22348" \
-        -device virtio-net-pci,netdev=net0
+        -device virtio-net-pci,netdev=net0 \
+        $lan -device virtio-net-pci,netdev=lan,mac=52:54:00:66:00:01
 [ -z "$link_asker" ] || kill "$link_asker" 2> /dev/null
+wait "$neighbour" 2>/dev/null
 says disk 'the disk alone is found'      'verdict-1n0emvn ksid'
 says disk 'the bowl probe was kept'      'kept-tpek'
 says disk 'root was kept'                'root-emoh'
@@ -11738,6 +11796,10 @@ says disk 'SET is refused at the script' 'refused-7'
 says disk 'init stays the stored list without moonwater_init' 'init-kept-7'
 says live 'link on starts the listener'  'link-on-7'
 says disk 'the link switch came through the install and the reboot' 'link-kept-7'
+says live 'join takes the group and its grant' 'link-joined-7'
+says neighbour 'a machine on the LAN paired with the headless box and ran a command there' 'lan-run-xob-sseldaeh-eht-morf'
+says disk 'the headless box was asked, having been told nothing on site but its address' 'lan-asked-deksa'
+says disk 'and knows its neighbour as paired in lab' 'lan-group-7'
 if [ -n "$link_host" ]; then
         says disk 'a paired machine ran a command there' 'link-asked-deksa'
         if [ "$(cat "$work/link-run" 2> /dev/null)" = from-the-disk ]; then
