@@ -52101,6 +52101,10 @@ static fn saturation(void)
 
         check("the queue filled to its ceiling", taken == WATERLINK_SLOTS);
         check("and refused everything past it", one.refused == 8);
+
+        for (positive at = 0; at < WATERLINK_KEYS; at++)
+                taken -= one.sending[at].taken;
+        check("and a refused post on a new key leaves no key behind", !taken);
 }
 
 /*

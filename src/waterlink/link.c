@@ -597,7 +597,12 @@ bool waterlink_post(struct waterlink_link address_to link, p64 key, p16 channel,
                 return false;
         }
 
-        key_at = waterlink_key_make(link->sending, key, 1);
+        //      A new key is made only for a post a slot can carry: one made
+        //      and then refused would stay in the table with nothing to
+        //      retire it, and enough of them fill it for good.
+        key_at = waterlink_key_find(link->sending, key);
+        if (key_at == WATERLINK_NONE && link->free != WATERLINK_NONE)
+                key_at = waterlink_key_make(link->sending, key, 1);
         if (key_at == WATERLINK_NONE)
         {
                 link->refused++;
