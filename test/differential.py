@@ -17527,6 +17527,43 @@ def ul_run(argv, env=None, stdin=b"", timeout=10):
     return done.returncode, done.stdout, done.stderr
 
 
+def ul_check_uclamp_name(farm):
+    """uclampset -p names the process by its comm, which the process chose.
+
+    prctl(PR_SET_NAME) takes any fifteen bytes, and util-linux writes the
+    name whole, so an unprivileged process put an OSC title or a screen
+    clear on the terminal of whoever asked about it. At STRICT_SAFE this
+    build spells those bytes \\xNN; the reference's line with them spelled
+    is the answer, and a process with a plain name must come out the same.
+    """
+    import shutil
+    reference = shutil.which("uclampset")
+    tool = Path(farm) / "uclampset"
+    if not reference or not tool.exists():
+        return 0, 1, ["uclampset on both sides is needed"]
+    names = (b"plain", b"a\x1b]0;t\x07b", b"\x1b[2J\x1b[H", b"x\ty\nz", b"bel\x07")
+    passed, notes = 0, []
+    for name in names:
+        child = subprocess.Popen(
+            [sys.executable, "-c",
+             "import ctypes,sys,time; ctypes.CDLL(None).prctl(15, %r, 0, 0, 0); "
+             "sys.stdout.write('ok\\n'); sys.stdout.flush(); time.sleep(20)" % name],
+            stdout=subprocess.PIPE)
+        try:
+            child.stdout.readline()
+            want = subprocess.run([reference, "-p", str(child.pid)], capture_output=True, timeout=10)
+            got = subprocess.run([str(tool), "-p", str(child.pid)], capture_output=True, timeout=10)
+        finally:
+            child.kill()
+            child.wait()
+        spelled = re.sub(rb"[\x00-\x1f\x7f]", lambda m: b"\\x%02x" % m.group(0)[0], want.stdout[:-1])
+        if (got.returncode, got.stdout) == (want.returncode, spelled + want.stdout[-1:]):
+            passed += 1
+        elif len(notes) < 4:
+            notes.append("uclampset -p for %r: reference %r ours %r" % (name, want.stdout, got.stdout))
+    return passed, len(names), notes
+
+
 def ul_check_rfkill(farm):
     """Ours reads a bounded sysfs snapshot and writes the exact rfkill ABI
     records; the box has no rfkill devices, so the oracle is these bytes."""
@@ -17818,7 +17855,8 @@ def ul_check_lscpu_summary(farm):
     return 1, 1, []
 
 
-UTIL_LINUX_CHECKS = (ul_check_denominator, ul_check_rfkill, ul_check_lscpu_summary)
+UTIL_LINUX_CHECKS = (ul_check_denominator, ul_check_rfkill, ul_check_lscpu_summary,
+                     ul_check_uclamp_name)
 
 # ---- harness: standalone checks (from harness.py) ----
 

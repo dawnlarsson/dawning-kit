@@ -15790,17 +15790,28 @@ static fn ul_uclamp_name(b32 pid, p8 address_to name)
                 memory_copy_apart_end(name, "unknown", 7);
                 return;
         }
-        p8 address_to newline = (p8 address_to)memory_first_of(name, '\n',
-                                                               (positive)got);
-        if (newline)
-                address_to newline = end;
+        // The kernel's newline ends it; one the process put in its name is
+        // part of the name, as util-linux reads it.
+        if (name[got - 1] == '\n')
+                name[got - 1] = end;
 }
 
 static fn ul_uclamp_report(b32 pid, ul_sched_attr address_to attr)
 {
         p8 name[FILE_NAME_MAX];
         ul_uclamp_name(pid, name);
-        string_format(log, "%s (%b) util_clamp: min: %p max: %p\n", name,
+        /* A process names itself -- prctl(PR_SET_NAME) takes any bytes --
+           and util-linux writes the name whole, so any user's process put
+           escapes on the terminal of root asking about it. Safe spells what
+           a terminal acts on, as rfkill's plain listing does; reference
+           writes it whole. */
+#if MOONWATER_STRICT >= STRICT_SAFE
+        writer_hex_escaped(log, name, string_length(name),
+                           HEX_CONTROL | HEX_TAB);
+#else
+        log(name, 0);
+#endif
+        string_format(log, " (%b) util_clamp: min: %p max: %p\n",
                       (bipolar)pid, (positive)attr->util_min,
                       (positive)attr->util_max);
 }
