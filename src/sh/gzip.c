@@ -2008,8 +2008,12 @@ static b32 gzip_stream(bipolar in, bipolar out, bool decode, p8 level)
                 ok = gzip_encode_setup(level) && gzip_stream_encode();
         if (!ok)
         {
+                //      The reason is spelled for tar, codec first; the command
+                //      has named itself already.
                 if (gzip_why)
-                        string_format(log_error, "gzip: %s\n", gzip_why);
+                        string_format(log_error, "gzip: %s\n",
+                                      gzip_why + (!string_compare_max(gzip_why, "gzip ", 5)
+                                                          ? 5 : 0));
                 gzip_status = 1;
                 return 1;
         }

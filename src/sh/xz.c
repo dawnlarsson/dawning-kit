@@ -4092,8 +4092,11 @@ static b32 xz_stream_cli(bipolar in, bipolar out, bool decode, p8 level)
         }
         if (!ok)
         {
+                //      The reason is spelled for tar, codec first; the command
+                //      has named itself already.
                 if (xz_why)
-                        string_format(log_error, "xz: %s\n", xz_why);
+                        string_format(log_error, "xz: %s\n",
+                                      xz_why + (!string_compare_max(xz_why, "xz ", 3) ? 3 : 0));
                 xz_status = 1;
                 return 1;
         }

@@ -4943,6 +4943,13 @@ static p8 zstd_cli_long;
 
 static fn zstd_refuse(string_address message)
 {
+        //      A reason is spelled for tar, which puts it after its own name
+        //      and so needs the codec's in front; this command has already
+        //      said whose it is.
+        if (!string_compare_max(message, "zstd: ", 6))
+                message += 6;
+        else if (!string_compare_max(message, "zstd ", 5))
+                message += 5;
         string_format(log_error, "zstd: %s\n", message);
         zstd_status = 1;
 }

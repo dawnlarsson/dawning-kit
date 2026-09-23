@@ -27282,8 +27282,13 @@ def harness_compression(argv):
                                       '%s at %d did not finish' % (kind, at))
                                 continue
                             same_bytes = codec != 'xz' or ref.returncode == 0 or got.stdout == ref.stdout
+                            # A refusal names the program once: the reasons are
+                            # spelled for tar, codec first, and the command must
+                            # not put its own name in front of that again.
+                            named_once = not got.stderr.startswith(
+                                ('%s: %s' % (codec, codec)).encode())
                             check('%s/%s/damage-%s-%d' % (label, codec, name, trial),
-                                  got.returncode >= 0 and
+                                  got.returncode >= 0 and named_once and
                                   (got.returncode == 0) == (ref.returncode == 0) and
                                   (ref.returncode != 0 or got.stdout == ref.stdout) and same_bytes,
                                   '%s at %d of %d: %s %d, ours %d %s' % (
