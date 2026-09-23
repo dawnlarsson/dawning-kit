@@ -52300,9 +52300,17 @@ static fn sealed_generated(void)
 {
         positive cases = 0, agreed = 0, opened = 0, refused = 0, wiped = 0;
         p64 seed = 0x243f6a8885a308d3ull;
+        p8 vaes = cpu_has_vaes;
 
+        //      A whole datagram has a body of its own where the machine has
+        //      the wide instructions, so it gets thirty two draws a round,
+        //      and the second pass takes them away to hold the other path to
+        //      the same answers.
+        for (positive pass = 0; pass < 2; pass++)
         for (positive round = 0; round < 3; round++)
                 for (positive box = 16; box <= WATERLINK_PAYLOAD; box += 16)
+                for (positive draw = 0;
+                     draw < (box == WATERLINK_PAYLOAD ? 32u : 1u); draw++)
                 {
                         p8 raw[16];
                         p8 datagram[WATERLINK_DATAGRAM];
@@ -52322,6 +52330,7 @@ static fn sealed_generated(void)
                                 seed ^= seed << 17;
                                 raw[i] = (p8)seed;
                         }
+                        cpu_has_vaes = pass ? 0 : vaes;
                         crypto_aesgcm_prepare(address_of sealing_generated, raw);
                         head.kind = WATERLINK_KIND_CARRY;
                         head.receiver = (unsigned int)(seed >> 32);
@@ -52382,6 +52391,7 @@ static fn sealed_generated(void)
                                 opened++;
                 }
 
+        cpu_has_vaes = vaes;
         check("every box length seals to net.c's AES-GCM", agreed == cases);
         check("and opens to the text that went in", opened == cases);
         check("and a flipped bit anywhere refuses it", refused == cases);
