@@ -8513,6 +8513,7 @@ static string_address host_wipe_keep[] = {
     "link.key",
     "link.peers",
     "link.port",
+    "link.groups",
     null,
 };
 

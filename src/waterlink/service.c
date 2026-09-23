@@ -2206,6 +2206,8 @@ static fn link_state_write(p64 now)
                                  LINK_STATE_PATH, 0);
 }
 
+#include "nearby.c"
+
 // The listener ------------------------------------------------------------------
 
 static bipolar link_socket_open(p16 port, bool any)
@@ -2300,7 +2302,7 @@ static fn link_signals_take(bipolar handle, b32 address_to last)
 */
 static b32 link_serve(void)
 {
-        system_poll_descriptor watch[2 + LINK_SESSIONS * 5];
+        system_poll_descriptor watch[3 + LINK_SESSIONS * 5];
         bipolar lock;
         bipolar signals;
         b32 stop = 0;
@@ -2321,6 +2323,7 @@ static b32 link_serve(void)
         link_self.socket = link_socket_open(port, true);
         if (link_self.socket < 0)
                 return host_fail("the link's port", link_self.socket);
+        link_nearby.socket = -1;
         link_self.server = true;
         //      Segment runs unless told otherwise, which is how the cost of
         //      sending one datagram at a time is measured.
@@ -2386,6 +2389,12 @@ static b32 link_serve(void)
                 }
 
                 link_state_write(now);
+                {
+                        p64 due = link_nearby_tick(now);
+
+                        if (due < wake)
+                                wake = due;
+                }
 
                 watch[count].descriptor = (b32)link_self.socket;
                 watch[count].events = SYSTEM_POLL_READ;
@@ -2393,6 +2402,12 @@ static b32 link_serve(void)
                 if (signals >= 0)
                 {
                         watch[count].descriptor = (b32)signals;
+                        watch[count].events = SYSTEM_POLL_READ;
+                        count++;
+                }
+                if (link_nearby.socket >= 0)
+                {
+                        watch[count].descriptor = (b32)link_nearby.socket;
                         watch[count].events = SYSTEM_POLL_READ;
                         count++;
                 }
@@ -2472,8 +2487,15 @@ static b32 link_serve(void)
                                 (void)link_carried(datagram, (positive)got,
                                                    address, from_port, now,
                                                    link_server_hear);
+                        else if (head.kind >= WATERLINK_KIND_PAIR_1 &&
+                                 head.kind <= WATERLINK_KIND_PAIR_3)
+                                link_pair_datagram(datagram, (positive)got,
+                                                   address, from_port, now);
                 }
+                link_nearby_receive(now);
         }
+
+        link_nearby_stop();
 
         //      Off: every session is told, and every command hung up on.
         for (positive at = 0; at < LINK_SESSIONS; at++)

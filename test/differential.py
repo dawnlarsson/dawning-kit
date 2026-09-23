@@ -31741,7 +31741,9 @@ def harness_moonwater_cli(argv):
                 "link", "link help", "link key", "link bogus", "link pair", "link pair x",
                 "link pair x y z w", "link forget nobody", "link allow nobody run",
                 "link deny", "link run", "link run nobody", "link shell", "link shell nobody",
-                "link serve extra", "link off"]
+                "link serve extra", "link join", "link join .bad",
+                "link join ok allow", "link join ok allow nonsense", "link leave nobody",
+                "link leave nobody forget", "link leave a b c", "link off"]
         # State the mode rules act on: neither file, then a zone with no mode.
         script = ("rm -f /root/timezone /root/timezone.mode\n" + say("timezone") +
                   "printf 'Europe/London\\n' > /root/timezone\n" + say("timezone") +
@@ -31884,7 +31886,7 @@ while True:
         script += say("keyboard xx") + "echo \"@@kept $(cat /root/keyboard)\"\n"
         script += say("ntp off") + "echo \"@@ntp $(cat /root/ntp)\"\n"
         script += say("ntp on") + "echo \"@@ntp $(cat /root/ntp)\"\n"
-        script += say("link key") + say("link off")
+        script += say("link key") + say("link off") + "printf g > /root/link.groups\n"
         script += ("mkdir -p /home/u/deep && echo x > /home/u/deep/f && echo y > /root/junk && "
                    "mkdir -p /root/dir && echo z > /bowls/one/kept\n" + say("wipe") +
                    "echo \"@@after $(ls -A /home | wc -l) $(ls /root | tr '\\n' ,) "
@@ -31907,7 +31909,8 @@ while True:
                 parts = line.split()
                 kept = set(filter(None, parts[2].split(",")))
                 check(parts[1] == "0" and "junk" not in kept and "dir" not in kept and
-                             {"keyboard", "ntp", "timezone", "link", "link.key"} <= kept and
+                             {"keyboard", "ntp", "timezone", "link", "link.key",
+                              "link.groups"} <= kept and
                              parts[3] == "z",
                              "wipe empties /home and /root and keeps the settings, the link's "
                              "key and switch, and the bowls",
@@ -32813,11 +32816,24 @@ def harness_waterlink_link(argv):
         for name in ("moonwater", "sh"):
             (top / "bin" / name).symlink_to("shell")
         (top / "inner.py").write_text(WATERLINK_LINK_INNER)
-        ran = subprocess.run(["unshare", "-Urmn", "--fork", sys.executable, str(top / "inner.py"),
-                              str(top)], stdin=subprocess.DEVNULL, capture_output=True,
-                             timeout=900, env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-                                               "LC_ALL": "C", "TERM": "xterm"})
-        text = ran.stdout.decode(errors="replace")
+        #       Into a file and not a pipe: a scene that hangs still says
+        #       how far it got.
+        said = top / "said"
+        with open(said, "wb") as sink:
+            scene = subprocess.Popen(["unshare", "-Urmn", "--fork", sys.executable,
+                                      str(top / "inner.py"), str(top)],
+                                     stdin=subprocess.DEVNULL, stdout=sink, stderr=sink,
+                                     env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                                          "LC_ALL": "C", "TERM": "xterm"})
+            try:
+                scene.wait(timeout=900)
+            except subprocess.TimeoutExpired:
+                scene.kill()
+                scene.wait()
+        text = said.read_bytes().decode(errors="replace")
+        ran = types.SimpleNamespace(returncode=scene.returncode, stderr=text[-600:].encode())
+        if scene.returncode:
+            print("\n".join("    " + line for line in text.splitlines()[-25:]))
         checks = Checks()
         asked = 0
         for line in text.splitlines():
@@ -32826,7 +32842,7 @@ def harness_waterlink_link(argv):
                 checks(line.startswith("ok "), line.split(" ", 1)[1])
             elif line.startswith("  "):
                 print(line)
-        checks(ran.returncode == 0 and asked >= 40,
+        checks(ran.returncode == 0 and asked >= 60,
                "the scenes all ran (%d asked, status %d)%s" %
                (asked, ran.returncode, "" if ran.returncode == 0 else
                 " -- " + ran.stderr.decode(errors="replace")[-600:]))
@@ -32848,23 +32864,38 @@ for side in "abc":
     for d in ("root", "run"):
         os.makedirs("%s/%s/%s" % (top, side, d), exist_ok=True)
 
+#       One segment: a bridge in this namespace, which is a's, and b and c
+#       each in a namespace of their own behind a veth on it.
 subprocess.run(["ip", "link", "set", "lo", "up"], check=True)
-far = subprocess.Popen(["unshare", "-n", "sleep", "100000"])
-time.sleep(0.3)
+subprocess.run(["ip", "link", "add", "name", "br0", "type", "bridge"], check=True)
+subprocess.run(["ip", "addr", "add", "10.77.0.1/24", "dev", "br0"], check=True)
+subprocess.run(["ip", "link", "set", "br0", "up"], check=True)
+spaces = {}
+for side, address in (("b", "10.77.0.2"), ("c", "10.77.0.3")):
+    holder = subprocess.Popen(["unshare", "-n", "sleep", "100000"])
+    time.sleep(0.3)
+    spaces[side] = holder
+    outer, inner_name = "w%s0" % side, "w%s" % side
+    subprocess.run(["ip", "link", "add", "name", outer, "type", "veth", "peer", "name", inner_name,
+                    "netns", str(holder.pid)], check=True)
+    subprocess.run(["ip", "link", "set", outer, "master", "br0"], check=True)
+    subprocess.run(["ip", "link", "set", outer, "up"], check=True)
+    for command in (["ip", "addr", "add", address + "/24", "dev", inner_name],
+                    ["ip", "link", "set", inner_name, "up"], ["ip", "link", "set", "lo", "up"]):
+        subprocess.run(["nsenter", "--net=/proc/%d/ns/net" % holder.pid] + command, check=True)
+far = spaces["b"]
 netns = "/proc/%d/ns/net" % far.pid
-subprocess.run(["ip", "link", "add", "name", "wa", "type", "veth", "peer", "name", "wb",
-                "netns", str(far.pid)], check=True)
-subprocess.run(["ip", "addr", "add", "10.77.0.1/24", "dev", "wa"], check=True)
-subprocess.run(["ip", "link", "set", "wa", "up"], check=True)
-for command in (["ip", "addr", "add", "10.77.0.2/24", "dev", "wb"], ["ip", "link", "set", "wb", "up"],
-                ["ip", "link", "set", "lo", "up"]):
-    subprocess.run(["nsenter", "--net=" + netns] + command, check=True)
 
 def argv_on(side, command):
-    inner = ("mount --bind {t}/{s}/root /root && mount --bind {t}/{s}/run /run && "
+    #       sethostname, since this /proc is the outer namespace's and
+    #       refuses the write.
+    inner = ("python3 -c 'import socket; socket.sethostname(\"box-{s}\")' && "
+             "mount --bind {t}/{s}/root /root && mount --bind {t}/{s}/run /run && "
              "mkdir -p /run/moonwater && cd /root && exec {c}").format(t=top, s=side, c=command)
-    word = ["unshare", "-m", "sh", "-c", inner]
-    return (["nsenter", "--net=" + netns] + word) if side == "b" else word
+    word = ["unshare", "-mu", "sh", "-c", inner]
+    if side in spaces:
+        return ["nsenter", "--net=/proc/%d/ns/net" % spaces[side].pid] + word
+    return word
 
 def on(side, command, stdin=None, timeout=60, extra=None):
     e = dict(env)
@@ -33030,13 +33061,13 @@ text = out.decode(errors="replace")
 say("a  " in text and "may verbs run shell" in text and "heard" in text,
     "status names the peer, its grants, and where it was heard")
 
-for dev, where in (("wa", None), ("wb", netns)):
+for dev, where in (("wb0", None), ("wb", netns)):
     command = ["tc", "qdisc", "add", "dev", dev, "root", "netem", "delay", "4ms", "2ms",
                "loss", "3%", "duplicate", "2%", "reorder", "20%", "50%"]
     subprocess.run((["nsenter", "--net=" + where] if where else []) + command, check=True)
 runs("lossy: ")
 shell("lossy: ")
-for dev, where in (("wa", None), ("wb", netns)):
+for dev, where in (("wb0", None), ("wb", netns)):
     subprocess.run((["nsenter", "--net=" + where] if where else []) +
                    ["tc", "qdisc", "del", "dev", dev, "root"], check=True)
 
@@ -33065,7 +33096,80 @@ say(status == 255, "nothing answers after link off")
 status, out, err = on("b", moon + " link")
 say(b"link off" in out, "status says off")
 
-far.kill()
+# Groups: a and b join the same one and pair by themselves; c joins it with
+# the wrong secret and is never paired, and learns nothing.
+import socket, struct as structure
+listen = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+listen.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+listen.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+listen.bind(("0.0.0.0", 5353))
+listen.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                  structure.pack("4s4si", socket.inet_aton("224.0.0.251"), b"\0" * 4,
+                                 socket.if_nametoindex("br0")))
+listen.setblocking(False)
+
+for side in "ab":
+    for name in ("a", "b", "bwrong"):
+        on(side, moon + " link forget " + name, timeout=30)
+secret = "lab-secret-for-the-lane-1"
+status, out, err = on("a", "%s link join lab %s allow run" % (moon, secret))
+say(status == 0 and b"in lab; members may run" in out and b"link on" in out,
+    "join names the grants and switches the link on (%r)" % (err[-200:],))
+status, out, err = on("b", "%s link join lab %s allow run shell" % (moon, secret))
+status, out, err = on("c", "%s link join lab not-the-%s allow run" % (moon, secret))
+say(os.stat(top + "/a/root/link.groups").st_mode & 0o777 == 0o600,
+    "the group file is root's alone")
+say(secret.encode() not in open(top + "/a/root/link.groups", "rb").read(),
+    "and does not hold the secret")
+
+names = {}
+began = time.time()
+while time.time() - began < 25 and len(names) < 2:
+    time.sleep(1)
+    for side, other in (("a", "b"), ("b", "a")):
+        status, out, err = on(side, moon + " link")
+        for line in out.decode(errors="replace").splitlines():
+            if line.startswith("  box-" + other) and "paired in lab" in line:
+                names[side] = line.split()[0]
+say(len(names) == 2, "a and b paired with each other by themselves (%r, %.1fs)" %
+    (names, time.time() - began))
+if len(names) == 2:
+    status, out, err = on("a", "%s link run %s 'echo auto-$((20+22))'" % (moon, names["a"]))
+    say(status == 0 and out == b"auto-42\n", "and a runs a command on b with no pairing by hand")
+    status, out, err = on("b", "%s link shell %s" % (moon, names["b"]), stdin=b"")
+    say(status == 255 and b"shell is not granted" in err,
+        "b may not open a shell on a, whose join line granted only run")
+    status, out, err = on("b", moon + " link")
+    say(b"may run shell, paired in lab" in out,
+        "b gives a what its own join line granted, and says how it was paired")
+
+status, out, err = on("c", moon + " link")
+say(b"paired in lab" not in out, "the machine with the wrong secret paired with nobody")
+known = open(top + "/a/root/link.peers", "rb").read() + open(top + "/b/root/link.peers", "rb").read()
+status, key_c, err = on("c", moon + " link key")
+import base64
+say(base64.b64decode(key_c.strip()) not in known, "and neither member stored its key")
+
+heard = b""
+end = time.time() + 3
+while time.time() < end:
+    try:
+        heard += listen.recv(4096)
+    except BlockingIOError:
+        time.sleep(0.05)
+say(b"_waterlink" in heard, "the network carries waterlink announcements")
+say(all(word not in heard for word in (b"lab", b"box-a", b"box-b", b"box-c", secret.encode())),
+    "and not the group, the machine names or the secret")
+
+status, out, err = on("a", moon + " link leave lab forget")
+say(status == 0 and b"forgot the 1 machines" in out, "leave with forget drops what the group paired")
+status, out, err = on("a", moon + " link")
+say(b"paired in lab" not in out and b"in lab:" not in out, "and a is in no group")
+for side in "abc":
+    on(side, moon + " link off")
+
+for holder in spaces.values():
+    holder.kill()
 """
 
 

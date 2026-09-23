@@ -104,6 +104,42 @@
         rather than cut, because a smaller queue is a smaller window and the
         window is the throughput on any path longer than a room.
 
+        GROUPS: MACHINES THAT PAIR BY THEMSELVES
+
+        Pairing by key is one person with two machines in front of them. A
+        headless box installed somewhere nobody will stand is the other case,
+        and for it a machine joins a group -- a namespace and a secret --
+        and pairs by itself with every member it finds on the same local
+        network (discover.c finds them, pair.c pairs them). The rules:
+
+        The secret is the grant. Whoever holds it gets, on every member, what
+        that member's join line granted, and the verbs when it granted
+        nothing. Taking one machine out of a group is changing the secret on
+        all the others, and forgetting the one that left; there is no list of
+        members to strike a name from, only the secret.
+
+        Nothing announced names the group, the machine or its key. What is on
+        the network is that a waterlink machine is here, under labels that
+        change every boot and every hour. Discovery never leaves the local
+        link: mDNS on 224.0.0.251, believed only at TTL 255, which no router
+        forwards. There is no rendezvous and no NAT traversal.
+
+        A weak secret can be guessed offline by anyone who hears one
+        announcement, so every key comes from the secret through
+        WATERLINK_GROUP_ROUNDS of PBKDF2, a protocol constant, and a secret
+        the machine makes itself has 160 random bits. The secret itself is
+        not kept: /root/link.groups, root's alone, holds what was derived
+        from it.
+
+        A member met for the first time is paired by Noise XXpsk0 under a key
+        from the group, which a machine without the secret cannot get past the
+        first message of, and does not learn a static key from. From then on
+        it is an ordinary peer -- IK, by the key it was given -- carrying the
+        mark of the group that paired it, and auto-pairing never replaces or
+        widens a record that is already there, by hand or by another group.
+
+        A machine in no group announces nothing and answers no one.
+
         HOW MUCH MAY BE IN FLIGHT
 
         A sender must not put more in flight than the path carries, and must
@@ -325,8 +361,9 @@ _Static_assert(WATERLINK_DATAGRAM == 16 + WATERLINK_PAYLOAD + WATERLINK_TAG_BYTE
 struct waterlink_peer {
         unsigned char key[WATERLINK_KEY_BYTES];
         char name[WATERLINK_NAME_MAX];
-        unsigned int may;      // WATERLINK_MAY_*
-        unsigned int reserved; // must be 0
+        unsigned int may;   // WATERLINK_MAY_*
+        unsigned int group; // 0 paired by hand, or the mark of the group
+                            // that paired it (discover.c)
         unsigned char address[16]; // last seen, v6 or v4 mapped
         unsigned short port;
         unsigned short address_flags;

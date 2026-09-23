@@ -60,6 +60,8 @@ moonwater link                         on or off, this machine's key, peers, wha
 moonwater link on|off                  listen on udp 22348, kept across boots [off]
 moonwater link key                     this machine's public key, made on first use
 moonwater link pair NAME KEY [HOST[:PORT]]  know a machine by its key, and where it is
+moonwater link join NAMESPACE [SECRET] [allow GRANT...]  pair by itself with every machine on this network that joined it
+moonwater link leave NAMESPACE [forget]  stop, and maybe forget the machines the group paired
 moonwater link forget NAME             stop knowing it
 moonwater link allow|deny NAME GRANT...  run shell files log screen channels verbs
 moonwater link shell NAME              a terminal on NAME
@@ -84,6 +86,20 @@ a direct address works, there is no NAT traversal. The key (`/root/link.key`,
 port (`/root/link.port`) live beside the wifi networks, so install carries them
 and wipe keeps them. The machine process starts the listener at boot when the
 switch is on and restarts it if it dies.
+
+For a machine nobody will stand in front of, join a group instead of pairing:
+`moonwater link join office` makes a 160-bit secret and prints the line to run
+on the other machines, and every machine on the same local network that joined
+`office` with that secret pairs with it by itself, under the grants its own join
+line gave (`allow shell run`, or only the verbs). Run it once on the live stick
+before `moonwater install` and the installed machine is in the group from its
+first boot; a machine script line `moonwater link join office` inside
+`moonwater_init` names only the namespace. The secret is never kept, only what
+600,000 rounds of PBKDF2 make of it, in `/root/link.groups`; status warns when
+the machine script carries a secret, since any user can read that script through
+`/dev/spark`. Machines find each other over mDNS as `_waterlink._udp` (visible
+to `dns-sd -B` and avahi-browse), announcing nothing but random labels and
+blinded tags, on the local link only.
 
 Commands given to `moonwater` run as root through the shell, exactly as if typed
 into a terminal. bind init runs in the background and keeps each command's output
