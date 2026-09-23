@@ -30946,10 +30946,14 @@ def harness_dhcp_packets(argv):
     transaction, client address, cookie), then options drawn from PAD, END,
     the eight the lease reads at their own length and at 0, 3, 5 and 8 bytes,
     the message type at 0, 1 and 2, unknown options, repeats, masks of every
-    shape, and the datagram cut anywhere from nothing to all of it. A reply
-    that is whole and well formed has to give the lease a model of the
-    options the generator wrote says it gives; every reply has to be read
-    without the sanitizers saying a word.
+    shape, and the datagram cut anywhere from nothing to all of it. Values
+    are cut into pieces now and then, each piece its own option, and option
+    52 now and then says the file and sname fields carry options too, which
+    they sometimes do whether it says so or not. A reply that is whole and
+    well formed has to give the lease a model of the options the generator
+    wrote says it gives -- every piece of a code joined in wire order,
+    options then file then sname, as RFC 2131 and 3396 read it -- and every
+    reply has to be read without the sanitizers saying a word.
 
         dhcp_packets [COUNT [SEED]]
     """
@@ -30959,7 +30963,7 @@ def harness_dhcp_packets(argv):
     seed = int(argv[1], 0) if len(argv) > 1 else 0xd4c9
     net = (HARNESS_ROOT / "src/net/net.c").read_text()
     head = net[net.index("#define DHCP_HEAD 236"):net.index("static COLD positive dhcp_build(")]
-    walk = net[net.index("static COLD bipolar dhcp_read("):
+    walk = net[net.index("/*\n        A reply read for what it says."):
                net.index("//      A mask of n leading bits")]
     shim = r'''
 #include <stdio.h>
@@ -30980,6 +30984,8 @@ typedef int b32;
 #define address_of &
 #define array_count(a) (sizeof(a) / sizeof((a)[0]))
 #define memory_compare memcmp
+#define memory_zero(at, size) memset(at, 0, size)
+#define null 0
 static p32 network_load_32(const p8 *at) {
         return (p32)at[0] << 24 | (p32)at[1] << 16 | (p32)at[2] << 8 | at[3];
 }
@@ -31002,61 +31008,124 @@ static const p8 offsets[] = {1, 2, 3, 4, 5, 6, 7};
 static const bool multiple[] = {false, true, true, false, false, false, false};
 static const p32 masks[] = {0, 0xffffff00, 0xffff0000, 0xffffffff, 0x80000000,
                             0xff00ff00, 0x00ffffff, 0xfffffffe, 0x7fffffff};
+
+/* What a reply says, as RFC 3396 reads it: every piece of an option, in the
+   options field, then file, then sname when option 52 names them, is one
+   option whose value is the pieces joined. Per region, per code, in order. */
+typedef struct { p8 bytes[3][256][64]; unsigned length[3][256]; } pieces;
+static pieces said_pieces;
+static bool typed;
+
+static void piece(int region, p8 code, const p8 *value, p8 length) {
+        for (p8 i = 0; i < length; i++)
+                if (said_pieces.length[region][code] + i < 64)
+                        said_pieces.bytes[region][code][said_pieces.length[region][code] + i] = value[i];
+        said_pieces.length[region][code] += length;
+}
+
+/* Options into one region from `at` up to `room`: pad, end, the message
+   type, the lease's own options whole or cut into pieces, unknown codes,
+   and in the options field sometimes option 52. Answers where it stopped. */
+static positive fill(p8 *build, positive at, positive room, int region, p8 *overload,
+                     bool *ended) {
+        for (p32 options = draw(region ? 6 : 24); options-- && at + 16 < room;) {
+                p32 pick = draw(15);
+                if (pick == 0) { build[at++] = DHCP_OPTION_PAD; continue; }
+                if (pick == 1 && draw(3) == 0) { build[at++] = DHCP_OPTION_END; *ended = true; return at; }
+                if (pick <= 3) {
+                        /* A second message type joins the first into two
+                           bytes, which is no type: rare, as from a server. */
+                        if (typed && draw(10)) continue;
+                        p8 length = (p8)(draw(4) == 0 ? draw(3) : 1);
+                        build[at] = DHCP_OPTION_TYPE; build[at + 1] = length;
+                        for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)(1 + draw(8));
+                        piece(region, DHCP_OPTION_TYPE, build + at + 2, length);
+                        typed = true;
+                        at += 2 + length;
+                        continue;
+                }
+                if (pick == 4 && region == 0 && !*overload) {
+                        /* Option 52: one byte naming file, sname or both; now
+                           and then another length, which names nothing. */
+                        p8 length = draw(5) ? 1 : (p8)draw(3);
+                        build[at] = 52; build[at + 1] = length;
+                        for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)(1 + draw(3));
+                        if (length == 1) *overload = build[at + 2];
+                        else *overload = 4;
+                        at += 2 + length;
+                        continue;
+                }
+                if (pick <= 11) {
+                        p32 which = draw(array_count(lease_options));
+                        static const p8 lengths[] = {4, 4, 4, 4, 0, 3, 5, 8, 12};
+                        p8 length = lengths[draw(array_count(lengths))];
+                        p8 value[16];
+                        for (p8 i = 0; i < length; i++) value[i] = (p8)draw(256);
+                        if (lease_options[which] == 1 && length >= 4)
+                                put32(value, masks[draw(array_count(masks))]);
+                        /* Cut into pieces, each its own option, one after the
+                           other here -- or the rest left for a later region. */
+                        p8 done = 0;
+                        do {
+                                p8 part = length - done;
+                                if (part > 1 && draw(3) == 0) part = (p8)(1 + draw(part - 1));
+                                if (at + 2 + part + 1 >= room) break;
+                                build[at] = lease_options[which]; build[at + 1] = part;
+                                memcpy(build + at + 2, value + done, part);
+                                piece(region, lease_options[which], value + done, part);
+                                at += 2 + part;
+                                done += part;
+                        } while (done < length);
+                        continue;
+                }
+                {
+                        p8 length = (p8)draw(region ? 12 : 40);
+                        if (at + 2 + length >= room) continue;
+                        build[at] = (p8)(60 + draw(190)); build[at + 1] = length;
+                        for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)draw(256);
+                        at += 2 + length;
+                }
+        }
+        return at;
+}
+
 int main(int argc, char **argv) {
         long count = atol(argv[1]);
-        unsigned long whole = 0, parsed = 0, agreed = 0, wrong = 0;
+        unsigned long whole = 0, parsed = 0, agreed = 0, wrong = 0, overloaded = 0, joined = 0;
         p8 hardware[6] = {2, 0, 0, 0, 0, 1};
         draws = strtoull(argv[2], 0, 0) | 1;
         for (long n = 0; n < count; n++) {
                 p8 build[1500];
                 positive at = DHCP_HEAD + 4, size;
                 p32 model[8] = {0};
-                p8 kind = 0;
-                bool broken = false, ended = false;
+                p8 kind = 0, overload = 0;
+                bool broken = false, ended = false, spare_ended = false;
                 memset(build, 0, sizeof build);
+                memset(&said_pieces, 0, sizeof said_pieces);
+                typed = false;
                 build[0] = 2; build[1] = 1; build[2] = 6;
                 put32(build + 4, 0xdeadbeef);
                 memcpy(build + 28, hardware, 6);
                 put32(build + 16, 0x0a000002);
                 put32(build + DHCP_HEAD, DHCP_COOKIE);
+                model[0] = 0x0a000002;
+                at = fill(build, at, sizeof build - 80, 0, &overload, &ended);
+                if (!ended && draw(2)) { build[at++] = DHCP_OPTION_END; ended = true; }
+                /* file and sname hold options whether or not 52 says they
+                   do; only when it does may they be read as options. */
+                if (draw(2)) {
+                        positive end_file = fill(build, 108, 236, 1, &overload, &spare_ended);
+                        if (!spare_ended && end_file < 236 && draw(2)) build[end_file] = DHCP_OPTION_END;
+                        spare_ended = false;
+                        positive end_sname = fill(build, 44, 108, 2, &overload, &spare_ended);
+                        if (!spare_ended && end_sname < 108 && draw(2)) build[end_sname] = DHCP_OPTION_END;
+                }
+                /* An option whose length runs past its field, now and then. */
+                if (overload & 1 && !draw(40)) { build[234] = 3; build[235] = 9; broken = true; }
                 if (!draw(20)) {
                         broken = true;
                         build[draw(DHCP_HEAD + 4)] ^= (p8)(1 << draw(8));
                 }
-                model[0] = 0x0a000002;
-                for (p32 options = draw(24); options-- && at < sizeof build - 80;) {
-                        p32 pick = draw(14);
-                        if (pick == 0) { build[at++] = DHCP_OPTION_PAD; continue; }
-                        if (pick == 1 && draw(3) == 0) { build[at++] = DHCP_OPTION_END; ended = true; break; }
-                        if (pick <= 3) {
-                                p8 length = (p8)(draw(4) == 0 ? draw(3) : 1);
-                                build[at] = DHCP_OPTION_TYPE; build[at + 1] = length;
-                                for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)(1 + draw(8));
-                                if (length == 1) kind = build[at + 2];
-                                at += 2 + length;
-                                continue;
-                        }
-                        if (pick <= 10) {
-                                p32 which = draw(array_count(lease_options));
-                                static const p8 lengths[] = {4, 4, 4, 4, 0, 3, 5, 8, 12};
-                                p8 length = lengths[draw(array_count(lengths))];
-                                build[at] = lease_options[which]; build[at + 1] = length;
-                                for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)draw(256);
-                                if (lease_options[which] == 1 && length >= 4)
-                                        put32(build + at + 2, masks[draw(array_count(masks))]);
-                                if (length >= 4 && (length == 4 || multiple[which]))
-                                        model[offsets[which]] = network_load_32(build + at + 2);
-                                at += 2 + length;
-                                continue;
-                        }
-                        {
-                                p8 length = (p8)draw(40);
-                                build[at] = (p8)(60 + draw(190)); build[at + 1] = length;
-                                for (p8 i = 0; i < length; i++) build[at + 2 + i] = (p8)draw(256);
-                                at += 2 + length;
-                        }
-                }
-                if (!ended && draw(2)) { build[at++] = DHCP_OPTION_END; ended = true; }
                 size = at;
                 if (!draw(4)) { size = draw((p32)at + 1); broken = true; }
                 p8 *packet = malloc(size ? size : 1);
@@ -31068,6 +31137,30 @@ int main(int argc, char **argv) {
                 if (!answer) parsed++;
                 if (broken) continue;
                 whole++;
+                /* The pieces joined in wire order: options, file, sname. */
+                bool read_region[3] = {true, (overload & 1) && overload < 4,
+                                       (overload & 2) && overload < 4};
+                if (read_region[1] || read_region[2]) overloaded++;
+                unsigned total[256] = {0};
+                p8 first[256][4];
+                memset(first, 0, sizeof first);
+                for (int region = 0; region < 3; region++) {
+                        if (!read_region[region]) continue;
+                        for (int code = 0; code < 256; code++) {
+                                unsigned have = said_pieces.length[region][code];
+                                for (unsigned i = 0; i < have && i < 64; i++)
+                                        if (total[code] + i < 4)
+                                                first[code][total[code] + i] = said_pieces.bytes[region][code][i];
+                                if (have && total[code]) joined++;
+                                total[code] += have;
+                        }
+                }
+                if (total[DHCP_OPTION_TYPE] == 1) kind = first[DHCP_OPTION_TYPE][0];
+                for (p32 which = 0; which < array_count(lease_options); which++) {
+                        p8 code = lease_options[which];
+                        if (total[code] >= 4 && (total[code] == 4 || multiple[which]))
+                                model[offsets[which]] = network_load_32(first[code]);
+                }
                 bool mask_ok = dhcp_mask_valid(model[1]);
                 bool want = kind && mask_ok;
                 p32 got[8];
@@ -31075,11 +31168,12 @@ int main(int argc, char **argv) {
                 if ((answer == 0) != want ||
                     (want && (said != kind || memcmp(got, model, sizeof got)))) {
                         if (wrong++ < 5)
-                                printf("  FAIL packet %ld: answer %ld kind %d/%d mask %08x\n",
-                                       n, answer, said, kind, model[1]);
+                                printf("  FAIL packet %ld: answer %ld kind %d/%d mask %08x overload %d\n",
+                                       n, answer, said, kind, model[1], overload);
                 } else
                         agreed++;
         }
+        fprintf(stdout, "  overloaded %lu, joined pieces %lu\n", overloaded, joined);
         printf("%ld %lu %lu %lu %lu\n", count, parsed, whole, agreed, wrong);
         return wrong != 0;
 }

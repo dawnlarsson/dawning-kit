@@ -8710,13 +8710,80 @@ static COLD positive dhcp_build(p8 address_to into, positive room, p8 kind,
         in whatever order, and the length byte is the only thing that says
         where the next one starts. A length that would run off the end is a
         corrupt packet and ends the walk rather than reading past it.
+
+        A server short of room may carry options in the header's file and
+        sname fields too, saying so with option 52 (RFC 2131): 1 for file, 2
+        for sname, 3 for both, walked in that order after the options field.
+        And any option may come in more than one piece, which is one option
+        whose value is the pieces joined in the order they were found (RFC
+        3396) -- a lease time split two and two, a router list longer than
+        one piece. So each option this reads is gathered across every piece
+        first and judged once, whole: a value is taken when the joined length
+        is the option's own, or at least one address for a list, and the
+        message type when it is one byte.
 */
+#define DHCP_OPTION_OVERLOAD 52
+#define DHCP_FILE 108
+#define DHCP_SNAME 44
+
+typedef struct
+{
+        p8 first[4];
+        positive length;
+} dhcp_gathered;
+
+/* One region's options into the gathered pieces: -1 when a length runs past
+   it. Option 52 counts only in the options field, where it is set. */
+static COLD bipolar dhcp_walk(p8 address_to region, positive size,
+                              dhcp_gathered address_to gathered,
+                              p8 address_to overload)
+{
+        positive at = 0;
+
+        while (at < size)
+        {
+                p8 option = region[at];
+                p8 length;
+
+                if (option == DHCP_OPTION_END)
+                        break;
+
+                if (option == DHCP_OPTION_PAD)
+                {
+                        at++;
+                        continue;
+                }
+
+                if (at + 1 >= size)
+                        return -1;
+
+                length = region[at + 1];
+
+                if (at + 2 + length > size)
+                        return -1;
+
+                if (overload && option == DHCP_OPTION_OVERLOAD && length == 1)
+                        address_to overload = region[at + 2];
+
+                for (positive taken = 0; taken < length &&
+                                         gathered[option].length + taken < 4; taken++)
+                        gathered[option].first[gathered[option].length + taken] =
+                                region[at + 2 + taken];
+                gathered[option].length += length;
+
+                at += 2 + length;
+        }
+
+        return 0;
+}
+
 static COLD bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
                          p8 address_to hardware, dhcp_lease address_to lease,
                          p8 address_to kind)
 {
+        dhcp_gathered gathered[256];
         dhcp_lease parsed = {0};
-        positive at = DHCP_HEAD + 4;
+        p8 overload = 0;
         p8 parsed_kind = 0;
 
         if (size < DHCP_HEAD + 4)
@@ -8744,37 +8811,27 @@ static COLD bipolar dhcp_read(p8 address_to packet, positive size, p32 transacti
 
         parsed.address = network_load_32(packet + 16);  // yiaddr
 
-        while (at < size)
+        memory_zero(gathered, sizeof(gathered));
+
+        if (dhcp_walk(packet + DHCP_HEAD + 4, size - DHCP_HEAD - 4, gathered,
+                      address_of overload) < 0 ||
+            ((overload & 1) &&
+             dhcp_walk(packet + DHCP_FILE, DHCP_HEAD - DHCP_FILE, gathered, null) < 0) ||
+            ((overload & 2) &&
+             dhcp_walk(packet + DHCP_SNAME, DHCP_FILE - DHCP_SNAME, gathered, null) < 0))
+                return -1;
+
+        if (gathered[DHCP_OPTION_TYPE].length == 1)
+                parsed_kind = gathered[DHCP_OPTION_TYPE].first[0];
+
+        for (positive i = 1; i < array_count(dhcp_fields); i++)
         {
-                p8 option = packet[at];
-                p8 length;
+                dhcp_gathered address_to one = gathered + dhcp_fields[i].option;
 
-                if (option == DHCP_OPTION_END)
-                        break;
-
-                if (option == DHCP_OPTION_PAD)
-                {
-                        at++;
-                        continue;
-                }
-
-                if (at + 1 >= size)
-                        return -1;
-
-                length = packet[at + 1];
-
-                if (at + 2 + length > size)
-                        return -1;
-
-                if (option == DHCP_OPTION_TYPE && length == 1)
-                        parsed_kind = packet[at + 2];
-                for (positive i = 1; i < array_count(dhcp_fields); i++)
-                        if (option == dhcp_fields[i].option && length >= 4 &&
-                            (length == 4 || dhcp_fields[i].multiple))
-                                *(p32 *)((p8 *)&parsed + dhcp_fields[i].offset) =
-                                    network_load_32(packet + at + 2);
-
-                at += 2 + length;
+                if (one->length >= 4 &&
+                    (one->length == 4 || dhcp_fields[i].multiple))
+                        *(p32 *)((p8 *)&parsed + dhcp_fields[i].offset) =
+                                network_load_32(one->first);
         }
 
         if (!parsed_kind || !dhcp_mask_valid(parsed.mask))

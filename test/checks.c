@@ -51171,21 +51171,27 @@ static fn leasing(void)
                 for (positive i = 0; i < array_count(options); i++)
                 for (positive size = 0; size < 256; size++)
                 {
+                        /* A second piece of an option the offer already
+                           carried joins it (RFC 3396): an address list keeps
+                           its first address, and a single value given twice
+                           is one value of the wrong length, which is none --
+                           unless the piece is empty and the join is still
+                           four bytes. */
                         p8 option = options[i];
                         p32 value = i == 0 ? 0xffff0000 : 0x12345678;
-                        bool take = size == 4 || (size > 4 && (i == 1 || i == 2));
+                        bool lost = size != 0 && i != 1 && i != 2 && i != 7;
                         dhcp_lease expected = {0x0a00020f,
-                            take && i == 0 ? value : 0xffffff00,
-                            take && i == 1 ? value : 0x0a000202,
-                            take && i == 2 ? value : 0x0a000203,
-                            take && i == 3 ? value : 0x0a000202,
-                            take && i == 4 ? value : 86400,
-                            take && i == 5 ? value : 43200,
-                            take && i == 6 ? value : 75600};
+                            lost && i == 0 ? 0 : 0xffffff00,
+                            0x0a000202,
+                            0x0a000203,
+                            lost && i == 3 ? 0 : 0x0a000202,
+                            lost && i == 4 ? 0 : 86400,
+                            lost && i == 5 ? 0 : 43200,
+                            lost && i == 6 ? 0 : 75600};
                         packet[at - 1] = option; packet[at] = size;
                         network_store_32(packet + at + 1, value);
                         packet[at + 1 + size] = DHCP_OPTION_END;
-                        check("DHCP option lengths and last valid duplicate",
+                        check("DHCP option lengths and a repeated option joined",
                               !dhcp_read(packet, at + 2 + size, 0xdeadbeef, hardware,
                                          &lease, &kind) &&
                               !memory_compare(&lease, &expected, sizeof lease));
