@@ -9056,12 +9056,15 @@ static b32 host_answer(bool update, string_address disk)
         else if (census.count == 1)
                 install = census.found;
 
+        //      A disk that was named is answered about first: with two
+        //      installs elsewhere, asking after a third said "more than one
+        //      disk has Moonwater; name one" with its name run on the end.
         if (!install)
-                return host_refuse(census.count > 1 ? "more than one disk has "
-                                                      "Moonwater; name one%s\n"
-                                   : disk        ? "%s has no Moonwater install\n"
-                                                 : "no disk here has Moonwater "
-                                                   "installed%s\n",
+                return host_refuse(disk                ? "%s has no Moonwater install\n"
+                                   : census.count > 1 ? "more than one disk has "
+                                                        "Moonwater; name one%s\n"
+                                                      : "no disk here has Moonwater "
+                                                        "installed%s\n",
                                    disk ? disk : (string_address)"");
 
         return host_take(install, update);

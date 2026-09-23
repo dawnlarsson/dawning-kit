@@ -11750,6 +11750,41 @@ else
 fi
 disk_checks disk
 
+#
+#       Two disks, both carrying Moonwater from another build: the second a
+#       copy of the first under new GPT identifiers, as a disk cloned with
+#       dd and told apart is. Boot asks about one of them, status lists
+#       both, and a disk named that has no install is said to have none --
+#       it used to be told there was more than one, with its name run on.
+#       Nothing here is answered, so both disks leave as they came.
+#
+if command -v sfdisk > /dev/null 2>&1; then
+        cp "$work/disk.img" "$work/disk2.img"
+        sfdisk --disk-id "$work/disk2.img" "$(cat /proc/sys/kernel/random/uuid)" > /dev/null 2>&1
+        sfdisk --part-uuid "$work/disk2.img" 1 "$(cat /proc/sys/kernel/random/uuid)" > /dev/null 2>&1
+        sfdisk --part-uuid "$work/disk2.img" 2 "$(cat /proc/sys/kernel/random/uuid)" > /dev/null 2>&1
+
+        cat > "$work/two.commands" <<'COMMANDS'
+this line is eaten by the console
+printf 'two-verdict-%s\n' "$(cut -c1-4 /run/moonwater/verdict | rev)"
+moonwater status > /tmp/status 2>&1
+printf 'two-listed-%s\n' $(( $(grep -c -e 'installed on nvme0n1' -e 'installed on nvme1n1' /tmp/status) * 3 ))
+moonwater use nvme9n1 > /tmp/use9 2>&1
+printf 'two-refused-%s\n' $(( $? + 40 ))
+printf 'two-said-%s\n' $(( $(grep -c 'nvme9n1 has no Moonwater install' /tmp/use9) * 7 ))
+poweroff
+COMMANDS
+
+        # shellcheck disable=SC2086
+        install_boot two $stick -drive if=none,id=disk2,format=raw,file="$work/disk2.img" \
+                -device nvme,serial=moonwater2,drive=disk2
+        says two 'two installs of another build are asked about' 'two-verdict- ksa'
+        says two 'status lists both'             'two-listed-6'
+        says two 'a disk with none is refused'   'two-refused-41'
+        says two 'and said to have none'         'two-said-7'
+        rm -f "$work/disk2.img"
+fi
+
 cat > "$work/update.commands" <<'COMMANDS'
 this line is eaten by the console
 printf 'verdict-%s\n' "$(rev < /run/moonwater/verdict)"
