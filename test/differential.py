@@ -14656,7 +14656,6 @@ _TEXT_FAILURE_NAMES = (
 _TEXT_FAILURE_KNOWN = {
     ("tsort", "directory"), ("tsort", "stdin-directory"), ("tac", "directory"),
     ("tac", "stdin-directory"), ("fmt", "stdin-directory"), ("rev", "stdin-directory"),
-    ("wc", "directory"),
 }
 
 

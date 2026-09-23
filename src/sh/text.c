@@ -4382,10 +4382,19 @@ static fn wc_row(positive lines, positive words, positive chars, positive bytes,
                 leading = false;
         }
 
+        //      A name holding a newline would end the row in the middle and
+        //      start a row nobody counted, so GNU writes that one name the
+        //      shell-escape way -- 'new'$'\n''line' -- and every other name
+        //      as it is, tab and escape included.
         if (name)
         {
+                positive length = string_length(name);
+
                 text_put_character(' ');
-                text_put_string(name);
+                if (memory_first_of(name, '\n', length))
+                        ls_quote_shell(text_put, name, length, false, true);
+                else
+                        text_put(name, length);
         }
 
         text_put_character('\n');
