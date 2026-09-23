@@ -846,13 +846,30 @@ static bipolar gzip_inflate_blocks(gzip_inflater address_to z)
         }
 }
 
-static bool gzip_inflate_skip_string(gzip_inflater address_to z)
+/*      A header byte, and the header's CRC-32 carried over it: FHCRC puts
+        the low sixteen bits of that sum after the header, and a header that
+        does not match it is damaged, as gzip -d says -- read and thrown
+        away, it let a damaged name, comment or extra field through. */
+static bipolar gzip_head_byte(gzip_inflater address_to z, p32 address_to sum)
+{
+        bipolar byte = gzip_inflate_byte(z);
+
+        if (byte >= 0)
+        {
+                p8 held = (p8)byte;
+
+                address_to sum = hash_crc32(address_to sum, address_of held, 1);
+        }
+        return byte;
+}
+
+static bool gzip_inflate_skip_string(gzip_inflater address_to z, p32 address_to sum)
 {
         bipolar byte;
 
         do
         {
-                byte = gzip_inflate_byte(z);
+                byte = gzip_head_byte(z, sum);
                 if (byte < 0)
                         return gzip_inflate_fail(z, "gzip truncated header string");
         } while (byte);
@@ -884,12 +901,13 @@ static bipolar gzip_inflate_member(gzip_inflater address_to z)
         {
                 bipolar method;
                 bipolar flags;
+                p32 sum = 0xffffffffu;
 
-                if (gzip_inflate_byte(z) != GZIP_MAGIC0 ||
-                    gzip_inflate_byte(z) != GZIP_MAGIC1)
+                if (gzip_head_byte(z, address_of sum) != GZIP_MAGIC0 ||
+                    gzip_head_byte(z, address_of sum) != GZIP_MAGIC1)
                         return gzip_inflate_fail(z, "gzip bad magic"), -1;
-                method = gzip_inflate_byte(z);
-                flags = gzip_inflate_byte(z);
+                method = gzip_head_byte(z, address_of sum);
+                flags = gzip_head_byte(z, address_of sum);
                 if (method != GZIP_METHOD)
                         return gzip_inflate_fail(z, "gzip method is not deflate"), -1;
                 if (flags < 0)
@@ -897,28 +915,37 @@ static bipolar gzip_inflate_member(gzip_inflater address_to z)
                 if ((p8)flags & 0xe0)
                         return gzip_inflate_fail(z, "gzip reserved header flags"), -1;
                 for (positive at = 0; at < 6; at++)
-                        if (gzip_inflate_byte(z) < 0)
+                        if (gzip_head_byte(z, address_of sum) < 0)
                                 return gzip_inflate_fail(z, "gzip truncated header"), -1;
                 if ((p8)flags & GZIP_FEXTRA)
                 {
-                        bipolar xlen = gzip_inflate_byte(z);
-                        bipolar xlen_hi = gzip_inflate_byte(z);
+                        bipolar xlen = gzip_head_byte(z, address_of sum);
+                        bipolar xlen_hi = gzip_head_byte(z, address_of sum);
                         bipolar extra;
 
                         if (xlen < 0 || xlen_hi < 0)
                                 return gzip_inflate_fail(z, "gzip truncated extra"), -1;
                         extra = xlen + (xlen_hi << 8);
                         while (extra--)
-                                if (gzip_inflate_byte(z) < 0)
+                                if (gzip_head_byte(z, address_of sum) < 0)
                                         return gzip_inflate_fail(z, "gzip truncated extra"), -1;
                 }
-                if (((p8)flags & GZIP_FNAME) && !gzip_inflate_skip_string(z))
+                if (((p8)flags & GZIP_FNAME) &&
+                    !gzip_inflate_skip_string(z, address_of sum))
                         return -1;
-                if (((p8)flags & GZIP_FCOMMENT) && !gzip_inflate_skip_string(z))
+                if (((p8)flags & GZIP_FCOMMENT) &&
+                    !gzip_inflate_skip_string(z, address_of sum))
                         return -1;
                 if ((p8)flags & GZIP_FHCRC)
-                        if (gzip_inflate_byte(z) < 0 || gzip_inflate_byte(z) < 0)
+                {
+                        bipolar low = gzip_inflate_byte(z);
+                        bipolar high = gzip_inflate_byte(z);
+
+                        if (low < 0 || high < 0)
                                 return gzip_inflate_fail(z, "gzip truncated header crc"), -1;
+                        if ((p32)(low | high << 8) != ((sum ^ 0xffffffffu) & 0xffff))
+                                return gzip_inflate_fail(z, "gzip header crc mismatch"), -1;
+                }
                 z->member_start = z->flushed + z->fill;
                 z->crc = 0xffffffffu;
                 z->crc_at = z->fill;

@@ -26428,6 +26428,49 @@ def harness_compression(argv):
                     pb = call(command(refs[codec], codec, level=level, reference=True), b).stdout
                     joined = call(decode, pa + pb)
                     check(label + '/' + codec + '/concatenation', joined.returncode == 0 and joined.stdout == a + b)
+                    if codec == 'gzip':
+                        # Every header RFC 1952 allows, around one deflate
+                        # stream: the five flags in all 32 combinations, an
+                        # extra field and name and comment of drawn lengths
+                        # and bytes, and FHCRC right, wrong or cut off. The
+                        # header's CRC16 was read and thrown away, so a
+                        # damaged header passed; gzip refuses it. Alone and
+                        # as the second member, against gzip -dc: the same
+                        # status and, where both answer, the same bytes.
+                        import struct
+                        import zlib
+                        body = data_sets[-2][1][:9000]
+                        packer = zlib.compressobj(6, zlib.DEFLATED, -15)
+                        stream = packer.compress(body) + packer.flush()
+                        trailer = struct.pack('<II', zlib.crc32(body), len(body) & 0xffffffff)
+                        first = call(command(refs['gzip'], 'gzip', level='6', reference=True), b'lead\n').stdout
+                        drawn = random.Random(0x1952)
+                        for flags in range(32):
+                            for crc_state in (('right', 'wrong', 'cut') if flags & 2 else ('none',)):
+                                header = bytes([0x1f, 0x8b, 8, flags]) + struct.pack('<I', drawn.randrange(1 << 31)) + \
+                                    bytes([drawn.choice((0, 2, 4)), drawn.randrange(256)])
+                                if flags & 4:
+                                    extra = drawn.randbytes(drawn.choice((0, 1, 6, 300)))
+                                    header += struct.pack('<H', len(extra)) + extra
+                                if flags & 8:
+                                    header += bytes(drawn.randrange(1, 256) for _ in range(drawn.choice((0, 1, 40)))) + b'\0'
+                                if flags & 16:
+                                    header += bytes(drawn.randrange(1, 256) for _ in range(drawn.choice((0, 3, 200)))) + b'\0'
+                                if crc_state == 'cut':
+                                    member = header + b'\x00'
+                                else:
+                                    if flags & 2:
+                                        sum16 = zlib.crc32(header) & 0xffff
+                                        header += struct.pack('<H', sum16 ^ (0x0100 if crc_state == 'wrong' else 0))
+                                    member = header + stream + trailer
+                                for place, blob in (('alone', member), ('second', first + member)):
+                                    ref = call([refs['gzip'], '-dc'], blob)
+                                    got = call(decode, blob)
+                                    check('%s/gzip/header-%02x-%s-%s' % (label, flags, crc_state, place),
+                                          (got.returncode == 0) == (ref.returncode == 0) and
+                                          (ref.returncode != 0 or got.stdout == ref.stdout),
+                                          'gzip %d, ours %d %s' % (ref.returncode, got.returncode,
+                                                                   got.stderr.decode(errors='replace')))
                     if codec == 'xz':
                         # Blocks written with both sizes take the parallel
                         # decoder: every check type, -T1 on the same bytes, a
