@@ -6717,6 +6717,14 @@ static fn writer_shell_quoted_name(writer output, string_address value)
         ls_quote_shell(output, value, string_length(value), true, true);
 }
 
+/* The same quoting only where a shell would need it, which is coreutils'
+   quotef: plain names bare, 'sp ace' and 'new'$'\n''line' quoted. It is
+   what a coreutils filter puts in front of a reason: "cat: 'sp ace': ...". */
+static fn writer_shell_name(writer output, string_address value)
+{
+        ls_quote_shell(output, value, string_length(value), false, true);
+}
+
 // The C styles: a quoted string a C compiler would read back, the same
 // without its quotes and with spaces escaped, and the locale style that in
 // the C locale is the C string in single quotes.
@@ -23541,7 +23549,7 @@ static shuf_record address_to shuf_file_records(string_address name,
 
         if (handle < 0)
         {
-                string_format(log_error, "shuf: %w: %s\n", writer_terminal_name, name,
+                string_format(log_error, "shuf: %w: %s\n", writer_shell_name, name,
                               file_reason(handle));
                 return null;
         }
@@ -23553,7 +23561,8 @@ static shuf_record address_to shuf_file_records(string_address name,
             address_of read_failed);
         bool directory = false;
 
-        if (!input && read_failed && handle != 0)
+        //      Standard input can be a directory too, and says so the same way.
+        if (!input && read_failed)
         {
                 file_facts facts;
 
@@ -23878,15 +23887,18 @@ static b32 file_shuf()
         string_address range_text = file_option_value(address_of taking, 'i');
 
         if (echo && range_text)
-                return string_report(log_error, 1, "shuf: cannot combine -e and -i options\n");
+                return string_report(log_error, 1, "shuf: cannot combine -e and -i options\n"
+                                     "Try 'shuf --help' for more information.\n");
         if (range_text && file_operand_count)
         {
-                return string_report(log_error, 1, "shuf: extra operand '%w'\n", writer_terminal_quoted_name,
+                return string_report(log_error, 1, "shuf: extra operand '%w'\nTry 'shuf --help' for more information.\n",
+                                     writer_terminal_quoted_name,
                               file_operand_at(0));
         }
         if (!echo && !range_text && file_operand_count > 1)
         {
-                return string_report(log_error, 1, "shuf: extra operand '%w'\n", writer_terminal_quoted_name,
+                return string_report(log_error, 1, "shuf: extra operand '%w'\nTry 'shuf --help' for more information.\n",
+                                     writer_terminal_quoted_name,
                               file_operand_at(1));
         }
 
@@ -23911,7 +23923,7 @@ static b32 file_shuf()
                 if (handle < 0)
                 {
                         string_format(log_error, "shuf: %w: %s\n",
-                                      writer_terminal_name, output_name,
+                                      writer_shell_name, output_name,
                                       file_reason(handle));
                         return 1;
                 }
@@ -24000,7 +24012,7 @@ static b32 file_shuf()
 
                 if (!output.opened)
                 {
-                        string_format(log_error, "shuf: %w: %s\n", writer_terminal_name,
+                        string_format(log_error, "shuf: %w: %s\n", writer_shell_name,
                                       output_name, file_reason(output.handle));
                         utility_arena.used = 0;
                         return 1;

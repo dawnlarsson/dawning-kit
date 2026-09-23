@@ -28,8 +28,8 @@ static b32 tools_extra_operand(string_address program, string_address word)
 {
         text_flush();
         string_format(writer_stderr,
-                      "%s: extra operand '%s'\nTry '%s --help' for more information.\n",
-                      program, word, program);
+                      "%s: extra operand '%w'\nTry '%s --help' for more information.\n",
+                      program, writer_terminal_quoted_name, word, program);
         return text_done(1);
 }
 
@@ -4201,7 +4201,10 @@ static b32 tools_tsort()
                 while (input == TSORT_ERROR_INTERRUPTED);
 
                 if (input < 0)
-                        return text_done(string_diagnostic(&text_diagnostic, 1, path, file_reason(input)));
+                {
+                        text_file_failed(path, input, false);
+                        return text_done(1);
+                }
 
                 close_input = true;
         }
@@ -9571,10 +9574,14 @@ static bool dump_input_is_directory(string_address name)
                 return false;
 
         text_flush();
-        string_format(writer_stderr, "%s: %s: Is a directory\n",
+        //      od is coreutils and puts the name through quotef; hexdump
+        //      writes it as it is.
+        string_format(writer_stderr, "%s: %w: Is a directory\n",
                       dump_arguments.od ? (string_address)"od"
                                         : (string_address)"hexdump",
-                      name ? name : (string_address)"standard input");
+                      dump_arguments.od ? writer_shell_name : writer_terminal_name,
+                      name && !string_equals(name, "-") ? name
+                                                        : (string_address)"standard input");
         if (dump_arguments.od)
                 text_status = 1;
         return true;

@@ -14624,7 +14624,111 @@ def text_grep_encoding(farm):
     return passed, len(_TEXT_GREP_ENCODING_CASES), notes
 
 
-TEXT_CHECKS = (text_grep_encoding,)
+#       What each filter says about an input it could not open or could
+#       not read, byte for byte. Every other text case compares a diagnostic
+#       as present or absent, so a filter that named a directory "Read error"
+#       where GNU names the reason, or wrote a newline in a file name straight
+#       to the terminal where coreutils quotes it, agreed with the reference
+#       everywhere. The tools here are the ones the text lane walks, each
+#       with the words it needs in front of a file operand.
+_TEXT_FAILURE_TOOLS = (
+    ("cat",), ("wc",), ("cut", "-c1"), ("nl",), ("od",), ("uniq",), ("paste",), ("fold",),
+    ("expand",), ("unexpand",), ("base64",), ("base32",), ("pr",), ("ptx",), ("sum",),
+    ("head",), ("tail",), ("fmt",), ("tac",), ("sort",), ("sed", "p"), ("rev",),
+    ("grep", "x"), ("tsort",), ("cksum",), ("md5sum",), ("shuf",), ("tee",),
+    ("head", "-c1"), ("tail", "-c1"), ("wc", "-l"), ("sort", "-m"), ("uniq", "-c"),
+)
+
+#       Names that differ only in what a quoting has to do with them: a
+#       plain one, a blank, each quote, a newline, a tab, an escape, a
+#       backslash, a byte outside ASCII, a dollar, and a newline at either
+#       end, which is where a shell-escaped name loses its outer quote.
+_TEXT_FAILURE_NAMES = (
+    b"missing", b"sp ace", b"new\nline", b"q'x", b'd"q', b"tab\tx", b"e\x1bx", b"b\\s",
+    b"h\xc3\xa9", b"a$b", b"\nlead", b"trail\n", b"q'\nx",
+)
+
+#       Where the answer is still this tool's own, and why: tsort's reader
+#       keeps no reason for a failed read, GNU tac seeks a directory and
+#       reports the EINVAL, comm and join stop at the first input that fails
+#       where these go on to the second, fmt names standard input by leaving
+#       it out, and rev takes - as a file name.
+_TEXT_FAILURE_KNOWN = {
+    ("tsort", "directory"), ("tsort", "stdin-directory"), ("tac", "directory"),
+    ("tac", "stdin-directory"), ("fmt", "stdin-directory"), ("rev", "stdin-directory"),
+    ("cksum", "stdin-directory"), ("wc", "directory"),
+}
+
+
+def text_failure_cases():
+    cases = []
+    for tool in _TEXT_FAILURE_TOOLS:
+        for name in _TEXT_FAILURE_NAMES:
+            cases.append((tool, "missing", (name,), None))
+            cases.append((tool, "missing-after", (b"a.txt", name), None))
+        for name in (b"dir", b"d ir", b"new\ndir", b"q'dir"):
+            cases.append((tool, "directory", (name,), None))
+        cases.append((tool, "stdin-directory", (b"-",), b"dir"))
+        cases.append((tool, "stdin-directory", (), b"dir"))
+    return [case for case in cases if (case[0][0], case[1]) not in _TEXT_FAILURE_KNOWN]
+
+
+def text_file_failures(farm):
+    """Every text tool on a missing name, a directory and a standard input
+    that is a directory, over names that need each kind of quoting, against
+    GNU with the diagnostic compared exactly."""
+    import shutil
+    import subprocess
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+
+    cases = text_failure_cases()
+    names = sorted({case[0][0] for case in cases})
+    reference = {tool: shutil.which(tool, path=os.defpath) for tool in names}
+    candidate = {tool: Path(farm) / tool for tool in names}
+    if not all(reference.values()) or not all(p.exists() for p in candidate.values()):
+        return 0, 1, ["text failure checks need " + ", ".join(names) + " on both sides"]
+
+    def run(case, side):
+        tool, _, operands, stdin = case
+        with tempfile.TemporaryDirectory(prefix="text-failures-") as directory:
+            Path(directory, "a.txt").write_bytes(b"alpha\nbeta\n")
+            for name in (b"dir", b"d ir", b"new\ndir", b"q'dir"):
+                os.mkdir(os.path.join(os.fsencode(directory), name))
+            source = os.open(os.path.join(directory, stdin.decode()), os.O_RDONLY) if stdin \
+                else subprocess.DEVNULL
+            try:
+                binary = str(side[tool[0]])
+                result = subprocess.run([tool[0].encode(), *(a.encode() for a in tool[1:]), *operands],
+                                        executable=binary, cwd=directory,
+                                        env={"PATH": os.defpath, "LC_ALL": "C", "TZ": "UTC0"},
+                                        stdin=source, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, timeout=10)
+            finally:
+                if stdin:
+                    os.close(source)
+            #       tee copies standard input into its operands and ptx and
+            #       sort -m hold nothing back, so the directory's path cannot
+            #       reach either stream; only the program's own spelling of
+            #       its path is taken out of the diagnostic.
+            return result.returncode, result.stdout, _stderr_exact(result.stderr)
+
+    def compare(case):
+        return case, run(case, reference), run(case, candidate)
+
+    passed, notes = 0, []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for case, want, got in pool.map(compare, cases):
+            if want == got:
+                passed += 1
+            elif len(notes) < 40:
+                tool, kind, operands, stdin = case
+                shown = " ".join([*tool, *(repr(o)[1:] for o in operands)])
+                notes.append(f"{shown} ({kind}): GNU {want!r} ours {got!r}")
+    return passed, len(cases), notes
+
+
+TEXT_CHECKS = (text_grep_encoding, text_file_failures)
 
 _TEXT_GREP_OPERANDS = (
     (), ("a.txt",), ("a.txt", "b.txt"), ("-",), ("missing",), ("dir",), ("tree",),

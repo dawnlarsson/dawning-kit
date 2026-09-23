@@ -330,6 +330,30 @@ static b32 text_argmatch(string_address option, string_address value,
 
 static fn sed_write_diagnostic(bipolar reason, positive buffer);
 
+/*
+        A usage error in coreutils' shape: what is wrong, the word it is
+        wrong about in quote()'s quotes, a line of explanation where the
+        program has one, and the pointer at --help that usage() writes last.
+        The shape used to be this file's own -- "c: extra operand" with no
+        pointer -- where comm, join, uniq, tr, base64 and expr all write
+        "extra operand 'c'" and then "Try 'comm --help' ...".
+*/
+static b32 text_operand_trouble(string_address what, string_address word,
+                                string_address note)
+{
+        text_flush();
+        if (word)
+                string_format(writer_stderr, "%s: %s '%w'\n", text_name, what,
+                              writer_terminal_quoted_name, word);
+        else
+                string_format(writer_stderr, "%s: %s\n", text_name, what);
+        if (note)
+                string_format(writer_stderr, "%s\n", note);
+        string_format(writer_stderr, "Try '%s --help' for more information.\n",
+                      text_name);
+        return 1;
+}
+
 // The tools this file stands for that say "write error" and the reason
 // whichever stdio call it was, checked against GNU one by one.
 static bool text_write_error_worded()
@@ -546,6 +570,102 @@ static fn text_reader_reset(text_reader address_to reader,
         reader->name = shown;
 }
 
+/*
+        An input that would not open or would not read, in the words of the
+        program this is standing in for. The coreutils filters put the name
+        through quotef in front of the reason -- cat: 'sp ace': Is a
+        directory -- and a few say more around it; sed and rev are not
+        coreutils and write the name as it is. What a reader could not read
+        is said with the reason the system gave, not a fixed "Read error":
+        a directory named where a file was wanted is the common case, and it
+        is "Is a directory" in every one of them.
+
+        The rows are measured against coreutils 9.11, sed 4.9 and util-linux
+        2.41 on missing names, directories and names holding a blank, a
+        quote and a control byte. A program not listed keeps the plain
+        name: reason, which is what grep writes.
+*/
+enum { TEXT_SAY_PLAIN, TEXT_SAY_QUOTEF, TEXT_SAY_QUOTEAF, TEXT_SAY_NONE };
+
+typedef struct {
+        const char address_to program;
+        const char address_to open_before;    // before the name, on open
+        const char address_to open_after;     // between the name and ": "
+        const char address_to read_before;
+        const char address_to read_after;
+        p8 open_quote, read_quote;
+        const char address_to standard;       // what standard input is called
+        bool dash_too;                        // ... when it was named - as well
+} text_failure_words;
+
+static const text_failure_words text_failure_table[] = {
+    {"head", "cannot open ", " for reading", "error reading ", "", TEXT_SAY_QUOTEAF, TEXT_SAY_QUOTEAF, "standard input", true},
+    {"tail", "cannot open ", " for reading", "error reading ", "", TEXT_SAY_QUOTEAF, TEXT_SAY_QUOTEAF, "standard input", true},
+    {"fmt", "cannot open ", " for reading", "error reading ", "", TEXT_SAY_QUOTEAF, TEXT_SAY_QUOTEAF},
+    {"tac", "failed to open ", " for reading", "", ": read error", TEXT_SAY_QUOTEAF, TEXT_SAY_QUOTEF, "standard input", true},
+    {"uniq", "", "", "error reading ", "", TEXT_SAY_QUOTEF, TEXT_SAY_QUOTEAF},
+    {"sort", "cannot read: ", "", "read failed: ", "", TEXT_SAY_QUOTEF, TEXT_SAY_QUOTEF},
+    {"tsort", "", "", "", ": read error", TEXT_SAY_QUOTEF, TEXT_SAY_QUOTEF},
+    {"base64", "", "", "read error", "", TEXT_SAY_QUOTEF, TEXT_SAY_NONE},
+    {"base32", "", "", "read error", "", TEXT_SAY_QUOTEF, TEXT_SAY_NONE},
+    {"basenc", "", "", "read error", "", TEXT_SAY_QUOTEF, TEXT_SAY_NONE},
+    {"join", "", "", "read error", "", TEXT_SAY_QUOTEF, TEXT_SAY_NONE},
+    {"sed", "can't read ", "", "read error on ", "", TEXT_SAY_PLAIN, TEXT_SAY_PLAIN, "stdin", true},
+    {"rev", "cannot open ", "", "fgetwc() failed", "", TEXT_SAY_PLAIN, TEXT_SAY_NONE},
+    {"pr", 0, 0, 0, 0, 0, 0, "standard input", true},
+    {"wc", 0, 0, 0, 0, 0, 0, "standard input", false},
+    {"tee", "", "", "read error", "", TEXT_SAY_QUOTEF, TEXT_SAY_NONE},
+    {"cat"}, {"cut"}, {"nl"}, {"od"}, {"paste"}, {"fold"},
+    {"expand"}, {"unexpand"}, {"ptx"}, {"sum"}, {"comm"},
+    {"numfmt"}, {"shuf"}, {"split"}, {"csplit"}, {"tr"},
+};
+
+static fn text_file_failed(string_address shown, bipolar reason, bool reading)
+{
+        const text_failure_words address_to words = 0;
+
+        for (positive i = 0; i < sizeof(text_failure_table) / sizeof(text_failure_table[0]); i++)
+                if (string_equals(text_name, (string_address)text_failure_table[i].program))
+                {
+                        words = text_failure_table + i;
+                        break;
+                }
+        if (!words)
+        {
+                if (string_equals(text_name, "grep") && (!shown || string_equals(shown, "-")))
+                        shown = (string_address) "(standard input)";
+                string_diagnostic(&text_diagnostic, 0, shown, file_reason(reason));
+                return;
+        }
+
+        //      Standard input is - to most of them and has a name of its
+        //      own to a few.
+        if (!shown || (words->dash_too && string_equals(shown, "-")))
+                shown = (string_address)(words->standard ? words->standard : "-");
+
+        string_address before = (string_address)(reading ? words->read_before : words->open_before);
+        string_address after = (string_address)(reading ? words->read_after : words->open_after);
+        p8 quote = reading ? words->read_quote : words->open_quote;
+
+        if (!words->open_before)
+        {
+                before = after = (string_address) "";
+                quote = TEXT_SAY_QUOTEF;
+        }
+        text_flush();
+        if (quote == TEXT_SAY_NONE)
+                string_format(writer_stderr, "%s: %s: %s\n", text_name, before,
+                              file_reason(reason));
+        else if (quote == TEXT_SAY_PLAIN)
+                string_format(writer_stderr, "%s: %s%s%s: %s\n", text_name, before,
+                              shown, after, file_reason(reason));
+        else
+                string_format(writer_stderr, "%s: %s%w%s: %s\n", text_name, before,
+                              quote == TEXT_SAY_QUOTEAF ? writer_shell_quoted_name
+                                                        : writer_shell_name,
+                              shown, after, file_reason(reason));
+}
+
 static bool text_reader_attach(text_reader address_to reader,
                                bipolar handle, string_address shown)
 {
@@ -557,8 +677,7 @@ static bool text_reader_attach(text_reader address_to reader,
                    name the system gives it; assuming the absent one made a
                    denied file and a symlink loop read alike. */
                 if (!text_quiet_open)
-                        string_diagnostic(&text_diagnostic, 0, shown,
-                                          file_reason(handle));
+                        text_file_failed(shown, handle, false);
                 reader->failed = true;
                 return false;
         }
@@ -637,7 +756,7 @@ static bool text_reader_fill_amount(text_reader address_to reader,
                 if (got < 0)
                 {
                         if (!text_quiet_read)
-                                string_diagnostic(&text_diagnostic, 0, reader->name, "Read error");
+                                text_file_failed(reader->name, got, true);
                         reader->failed = true;
                 }
 
@@ -1891,7 +2010,7 @@ static b32 text_encoding(string_address name, positive format)
         positive operands = (positive)text_argument_count - taking.first;
 
         if (operands > 1)
-                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument((b32)taking.first + 1), "extra operand"));
+                return text_done(text_operand_trouble("extra operand", program_argument((b32)taking.first + 1), null));
 
         string_address path = operands
             ? program_argument((b32)taking.first)
@@ -2169,9 +2288,10 @@ static b32 text_comm()
                 return text_done(1);
 
         if (text_files_count < 2)
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "missing operand"));
+                return text_done(text_operand_trouble(text_files_count ? "missing operand after" : "missing operand",
+                                                      text_files_count ? text_file_name(0) : null, null));
         if (text_files_count > 2)
-                return text_done(string_diagnostic(&text_diagnostic, 1, text_file_name(2), "extra operand"));
+                return text_done(text_operand_trouble("extra operand", text_file_name(2), null));
 
         string_address left_name = text_file_name(0);
         string_address right_name = text_file_name(1);
@@ -3312,9 +3432,10 @@ static b32 text_join()
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "invalid option value"));
 
         if (text_files_count < 2)
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "missing operand"));
+                return text_done(text_operand_trouble(text_files_count ? "missing operand after" : "missing operand",
+                                                      text_files_count ? text_file_name(0) : null, null));
         if (text_files_count > 2)
-                return text_done(string_diagnostic(&text_diagnostic, 1, text_file_name(2), "extra operand"));
+                return text_done(text_operand_trouble("extra operand", text_file_name(2), null));
 
         string_address left_name = text_file_name(0);
         string_address right_name = text_file_name(1);
@@ -5809,7 +5930,7 @@ static positive text_read_into(p8 address_to into, positive want)
 
         if (read < 0)
         {
-                string_diagnostic(&text_diagnostic, 0, text_input.name, "Read error");
+                text_file_failed(text_input.name, read, true);
                 text_input.failed = true;
                 text_status = 1;
         }
@@ -6398,7 +6519,7 @@ static b32 text_tee()
 
                 if (target < 0)
                 {
-                        string_diagnostic(&text_diagnostic, 0, name, file_reason(target));
+                        text_file_failed(name, target, false);
                         text_status = 1;
 
                         // An exit mode ends tee where the open failed:
@@ -14569,8 +14690,28 @@ static b32 text_tr()
         string_address second = at < text_argument_count ? program_argument(at++) : null;
         string_address extra = at < text_argument_count ? program_argument(at++) : null;
 
-        if (!first)
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "missing operand"));
+        /*
+                GNU's own arithmetic: two sets to translate or to delete and
+                squeeze at once, one to delete, one or two to squeeze. The
+                word blamed for too few is the last one given and for too
+                many the first not wanted, and each shape says why.
+        */
+        positive given = (positive)text_argument_count - taking.first;
+        positive fewest = 1 + (remove == squeeze);
+        positive most = 1 + (remove <= squeeze);
+
+        if (!given)
+                return text_done(text_operand_trouble("missing operand", null, null));
+        if (given < fewest)
+                return text_done(text_operand_trouble(
+                    "missing operand after", program_argument((b32)text_argument_count - 1),
+                    squeeze ? "Two strings must be given when both deleting and squeezing repeats."
+                            : "Two strings must be given when translating."));
+        if (given > most)
+                return text_done(text_operand_trouble(
+                    "extra operand", program_argument((b32)taking.first + (b32)most),
+                    given == 2 ? "Only one string may be given when deleting without squeezing repeats."
+                               : null));
 
         /*
                 How many sets each shape of tr wants, which it has to say out
@@ -14578,11 +14719,7 @@ static b32 text_tr()
                 to translate; one to delete or to squeeze; two to delete and
                 squeeze at once, because the second is what gets squeezed.
         */
-        if (extra || (remove && !squeeze && second))
-                return text_done(string_diagnostic(&text_diagnostic, 1, extra ? extra : second, "extra operand"));
-
-        if ((!second && !remove && !squeeze) || (remove && squeeze && !second))
-                return text_done(string_diagnostic(&text_diagnostic, 1, first, "missing operand after"));
+        (void)extra;
 
         text_set_facts facts_one;
         text_set_facts facts_two = {0};
@@ -14976,7 +15113,7 @@ static b32 text_uniq()
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "--group is mutually exclusive with -c/-d/-D/-u"));
 
         if (text_files_count > 2)
-                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument(text_files[2]), "extra operand"));
+                return text_done(text_operand_trouble("extra operand", program_argument(text_files[2]), null));
 
         if (!text_open(text_file_name(0)))
                 return text_done(1);
@@ -17889,7 +18026,11 @@ static bool grep_one(grep_run address_to run, string_address name)
                         return true;
 
                 if (!quietly)
-                        string_diagnostic(&text_diagnostic, 0, name, "Is a directory");
+                        string_diagnostic(&text_diagnostic, 0,
+                                          !name || string_equals(name, "-")
+                                              ? (string_address) "(standard input)"
+                                              : name,
+                                          "Is a directory");
 
                 run->trouble = 2;
         }
@@ -25091,8 +25232,7 @@ static bool sort_source_next(sort_source address_to source)
                                         source->error = got;
                                 else if (got < 0)
                                 {
-                                        string_diagnostic(&text_diagnostic, 0,
-                                                          source->name, "Read error");
+                                        text_file_failed(source->name, got, true);
                                         text_status = text_status ? text_status : 1;
                                 }
 
@@ -25132,8 +25272,7 @@ static bool sort_source_open(sort_source address_to source, sort_entry address_t
 
                         if (handle < 0)
                         {
-                                string_diagnostic(&text_diagnostic, 0, entry->name,
-                                                  file_reason(handle));
+                                text_file_failed(entry->name, handle, false);
                                 text_status = text_status ? text_status : 1;
                                 return false;
                         }
@@ -26272,7 +26411,7 @@ static bool sort_gather(positive handle, string_address name)
                 {
                         if (got < 0)
                         {
-                                string_diagnostic(&text_diagnostic, 0, name, "Read error");
+                                text_file_failed(name, got, true);
                                 text_status = text_status ? text_status : 1;
                         }
 
@@ -27156,7 +27295,12 @@ static b32 text_sort()
         }
 
         if (checking && text_files_count > 1)
-                return text_done(string_diagnostic(&text_diagnostic, 2, text_file_name(1), "extra operand not allowed with -c"));
+        {
+                text_flush();
+                string_format(writer_stderr, "%s: extra operand '%w' not allowed with -c\n",
+                              text_name, writer_terminal_quoted_name, text_file_name(1));
+                return text_done(2);
+        }
 
         sort_ordering defaults = {
             .reverse = (flags & FILE_FLAG('r')) != 0,
@@ -28194,7 +28338,10 @@ static b32 text_expr()
                 expr_at++;
 
         if (expr_at >= expr_count)
-                return text_done(string_diagnostic(&text_diagnostic, 2, null, "missing operand"));
+        {
+                text_operand_trouble("missing operand", null, null);
+                return text_done(2);
+        }
 
         result = expr_any();
 
