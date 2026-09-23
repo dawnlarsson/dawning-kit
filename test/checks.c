@@ -54496,6 +54496,24 @@ static fn huffman_exact_end(void)
               zstd_huffman_4x(back, sizeof(src), streams, size, huff.cell,
                               huff.max_bits) == 0 &&
                   !memory_compare(back, src, sizeof(src)));
+        /* Under six bytes out, four segments of (need + 3) / 4 start past
+           the end: the fast loop's room test on stream four wrapped and
+           passed and the slow path's last length underflowed, so the
+           routine wrote past dest. zstd.c refuses such a block first; the
+           routine refuses it too, and writes nothing. */
+        for (positive need = 1; need < 6; need++)
+        {
+                p8 small[96];
+                bool untouched = true;
+
+                memory_fill(small, 0xa5, sizeof(small));
+                check("four streams into fewer than six bytes are refused",
+                      zstd_huffman_4x(small, need, streams, size, huff.cell,
+                                      huff.max_bits) < 0);
+                for (positive i = 0; i < sizeof(small); i++)
+                        untouched &= small[i] == 0xa5;
+                check("and nothing is written for them", untouched);
+        }
         for (positive k = 0; k < 4; k++)
         {
                 positive start = 6;

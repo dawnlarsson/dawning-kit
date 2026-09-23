@@ -16345,6 +16345,15 @@ __asm__(
     ".Lzstd_huff4_x64_" tag "z:\n"
     ASM_FUNC(zstd_huffman_4x)
     "test %rsi, %rsi\n   jz .Lzstd_huff4_x64_ok0\n"
+    //
+    //      Four segments of (need + 3) / 4 need at least six bytes to hold
+    //      them: under that the later streams start past the end, the fast
+    //      loop's room test on stream four wraps and passes, and the slow
+    //      path's last length underflows -- a write past dest. zstd.c
+    //      refuses a four-stream block under six today; this refuses it
+    //      whoever calls, as zstd does ("Corrupted").
+    //
+    "cmp $6, %rsi\n   jb .Lzstd_huff4_x64_bad0\n"
     "cmp $10, %rcx\n   jb .Lzstd_huff4_x64_bad0\n"
     "cmp $11, %r9\n   jne .Lzstd_huff4_x64_slow0\n"
     "movzwl (%rdx), %eax\n   cmp $8, %eax\n   jb .Lzstd_huff4_x64_slow0\n"
@@ -28773,6 +28782,7 @@ __asm__(
 
     ASM_FUNC(zstd_huffman_4x)
     "cbz x1, .Lzstd_huff4_arm64_ok0\n"
+    "cmp x1, #6\n   b.lo .Lzstd_huff4_arm64_bad0  // see x86_64: under six, no four segments\n"
     "cmp x3, #10\n   b.lo .Lzstd_huff4_arm64_bad0\n"
     "stp x29, x30, [sp, #-352]!\n   mov x29, sp\n"
     "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
@@ -42829,6 +42839,7 @@ __asm__(
 
     ASM_FUNC(zstd_huffman_4x)
     "beqz a1, .Lzstd_huff4_rv_ok0\n"
+    "li t0, 6\n   bltu a1, t0, .Lzstd_huff4_rv_bad0  # see x86_64: under six, no four segments\n"
     "li t0, 10\n   bltu a3, t0, .Lzstd_huff4_rv_bad0\n"
     "addi sp, sp, -112\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n   sd s1, 16(sp)\n"
     "sd s2, 24(sp)\n   sd s3, 32(sp)\n   sd s4, 40(sp)\n   sd s5, 48(sp)\n"
