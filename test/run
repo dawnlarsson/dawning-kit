@@ -76,7 +76,7 @@ describe()
         fold)     echo "the constant-size fold we put in the kernel string header" ;;
         allocator) echo "malloc, free, calloc and realloc against glibc's" ;;
         reserve) echo "movable mappings, growth failures, relocation and sparse-page residency" ;;
-        waterlink) echo "the waterlink core as a pure transform: supersession, durable ordering, deadlines, stale arrivals and the replay window" ;;
+        waterlink) echo "the waterlink core as a pure transform: supersession, reliable per-key delivery and congestion over a generated lossy network, the seal, and the replay window" ;;
         utf8) echo "bounded UTF-8 character traversal, malformed bytes and guard pages on three machines" ;;
         hex) echo "bounded hexadecimal encoding, alignment and guard pages on three machines" ;;
         codec) echo "bounded radix codecs, malformed symbols and exact spans on three machines" ;;

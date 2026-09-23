@@ -42,10 +42,76 @@
         AND THE ONE THAT IS EASY TO GET WRONG
 
         Losing a superseded frame is correct; losing the last frame for a key
-        is wrong forever. A sender keeps, per key, what the far side last
-        acknowledged and what it has now, and retransmits the current value --
-        never the old frame it already replaced. That is fixed size per key,
+        is wrong forever, and losing a durable frame is wrong at once. So
+        every frame is held by its sender until the far side acknowledges it,
+        and the acknowledgement is per key and cumulative: "this key is
+        delivered through sequence n, and of the ones after it I hold these,
+        waiting for n + 1". A
+        replaceable frame that is superseded while it waits is not sent
+        again; its slot carries the current value instead, under a new
+        sequence, so what is retransmitted is always the current value and
+        never the old frame it already replaced. That is fixed size per slot,
         which is why the datapath allocates nothing.
+
+        Per key and not per datagram, because the key is already the unit of
+        order: one number per key says everything a receiver has, where a
+        datagram's acknowledgement would still have to be turned back into
+        which frames of which keys it carried. It is how QUIC acknowledges
+        streams, without QUIC's packet ranges under it.
+
+        THE RULE THAT MAKES RETRANSMISSION CORRECT
+
+        A frame names the frame on its key it follows.
+
+        follows is the sequence of the last frame on the key that must be
+        delivered before this one: the last durable frame, or a replaceable
+        frame that a durable one was posted behind -- which the supersession
+        rule already says may not be dropped. A receiver delivers a frame
+        once what it follows has been delivered, holds it back until then,
+        and drops anything at or behind what the key has delivered. So a
+        durable frame arrives exactly once and in order however the network
+        reorders, loses or repeats datagrams, and a replaceable frame can
+        still be skipped, because nothing follows it. The hold-back is a
+        fixed pool; a frame that finds it full is dropped unacknowledged and
+        comes again.
+
+        A key's sequence counts from one and never wraps: a key carries at
+        most 2^32 - 2 frames, and a sender that needs more uses a new key.
+
+        LAST ends a key for good. The receiver remembers that it ended, so a
+        copy of the last frame the sender repeats because the acknowledgement
+        was lost is not taken for something new -- which is also why a key
+        that has ended is never posted to again.
+
+        WHAT A PEER CAN SPEND
+
+        Every table here belongs to one link, and a link is one session with
+        one peer: the queue, the hold-back, the key tables, the replay window.
+        A peer that opens every key it can and never ends one fills its own
+        session's table and stops its own traffic, and nobody else's. That is
+        the trust boundary, stated rather than bounded per channel: an
+        authenticated peer may waste the session it holds, not the machine.
+        What keeps a peer from holding many sessions is the handshake's
+        limit, not this file.
+
+        A link is about 430 KB, taken once when the session is made and never
+        grown: 300 KB of it the send slots, which are the window, 75 KB the
+        hold-back, which is what exactly-once costs, and 40 KB the two key
+        tables. That was 300 KB before the hold-back existed, and it is kept
+        rather than cut, because a smaller queue is a smaller window and the
+        window is the throughput on any path longer than a room.
+
+        HOW MUCH MAY BE IN FLIGHT
+
+        A sender must not put more in flight than the path carries, and must
+        not send its window as one burst: it keeps an estimate of the round
+        trip, counts a frame lost when frames sent after it have arrived or a
+        timer runs out, gives the path less when frames are lost and more when
+        they are not, and paces what it sends across the round trip. Which
+        algorithm does that is the sender's own and never crosses the wire;
+        link.c says which it uses. Acknowledgements and urgent frames are not
+        held by it: the first are what open the window, and the second are a
+        few bytes somebody is waiting to see.
 
         EVERY SETTING IS PER SEND
 
@@ -70,14 +136,18 @@
         sender's to split: reassembly is a queue, and a queue is a place to
         store an attacker's bytes.
 
-        Every datagram is padded to this, which buys two things and the second
-        one is worth more. A packed frame's length leaks nothing to an
+        Every datagram that carries a frame is padded to this, which buys two
+        things and the second one is worth more. A packed frame's length leaks nothing to an
         observer. And segment offload will only cut a buffer into datagrams
         that are all the same size -- so the fixed size is what lets one send
         hand the kernel forty datagrams for the price of one. Measured on a
         9950X: 2516 cycles a datagram sent one at a time, 2355 batched through
         sendmmsg, 461 as uniform segments. Batching the syscall is worth six
-        percent; batching the segments is worth five times. */
+        percent; batching the segments is worth five times.
+
+        One that carries only acknowledgements is cut to whole blocks
+        instead: it never rides in a segment run, and padded it made the
+        return path as heavy as the forward one. */
 #define WATERLINK_DATAGRAM 1200
 #define WATERLINK_PAYLOAD (WATERLINK_DATAGRAM - 16 - 16)
 
@@ -104,25 +174,40 @@ _Static_assert(sizeof(struct waterlink_datagram) == 16,
         deadline is milliseconds from the sender's own clock reading, not a
         timestamp: the ends never agree on what time it is, only on how long a
         thing is worth waiting for. inflated is what the payload unpacks to,
-        declared so the receiver can refuse it before unpacking anything. */
+        declared so the receiver can refuse it before unpacking anything.
+        follows is the rule above; zero for a key's first frame, or for a
+        frame nothing on its key has to come before.
+
+        Packed, because frames sit back to back in the box at any offset and
+        are only ever copied in and out whole. */
 struct waterlink_frame {
         unsigned long key;     // opaque to the link; the sender's meaning
-        unsigned int sequence; // per key, increasing
+        unsigned int sequence; // per key, from one, increasing
+        unsigned int follows;  // the sequence this frame is delivered after
         unsigned short channel;
         unsigned short length;   // packed bytes following this header
         unsigned short deadline; // milliseconds, 0 for none
         unsigned short flags;    // WATERLINK_FRAME_*
         unsigned short inflated; // 0 when not packed
         unsigned short reserved; // must be 0
-};
+} __attribute__((packed));
 
-_Static_assert(sizeof(struct waterlink_frame) == 24,
-               "waterlink frame header must be exactly 24 bytes");
+#define WATERLINK_HEADER 28
+
+_Static_assert(sizeof(struct waterlink_frame) == WATERLINK_HEADER,
+               "waterlink frame header must be exactly 28 bytes");
 
 // A frame with neither of these is refused rather than guessed at.
 #define WATERLINK_FRAME_REPLACEABLE 0x0001u
 #define WATERLINK_FRAME_DURABLE 0x0002u
-#define WATERLINK_FRAME_LAST 0x0004u // the receiver may forget the key after it
+#define WATERLINK_FRAME_LAST 0x0004u // the key ends with this frame
+
+/*      The link's own frame, and the only one with neither class: records
+        of twenty four bytes -- key, delivered through, highest seen, and a
+        mask of which of the sixty four sequences after the first missing one
+        are held -- with every other header field zero. A caller cannot post
+        one. */
+#define WATERLINK_FRAME_ACK 0x0200u
 
 /*      Urgency, and only the tiebreak: deadline says when a frame is worth
         sending, this says which one goes first when two are both about to

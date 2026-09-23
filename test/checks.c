@@ -51731,7 +51731,7 @@ static fn hear(address_any context, struct waterlink_frame address_to head,
 
 //      One datagram out of the sender and straight into the receiver, which
 //      is the whole link minus the two things this file does not do.
-static positive carry(p32 now, bool address_to alone)
+static positive carry(p64 now, bool address_to alone)
 {
         p8 body[WATERLINK_PAYLOAD];
         positive used = waterlink_fill(address_of one, body, now, alone);
@@ -51744,7 +51744,7 @@ static positive carry(p32 now, bool address_to alone)
         return used;
 }
 
-static fn post_one(p64 key, p16 flags, p16 deadline, p8 mark, p32 now)
+static fn post_one(p64 key, p16 flags, p16 deadline, p8 mark, p64 now)
 {
         p8 payload[4];
 
@@ -51849,9 +51849,9 @@ static fn durable_is_a_wall(void)
         check("in the order they were posted",
               heard_first[0] == 'a' && heard_first[1] == 'S' &&
                       heard_first[2] == 'b');
-        check("with sequences that increase",
-              heard_sequence[0] == 0 && heard_sequence[1] == 1 &&
-                      heard_sequence[2] == 2);
+        check("with sequences that increase from one",
+              heard_sequence[0] == 1 && heard_sequence[1] == 2 &&
+                      heard_sequence[2] == 3);
 }
 
 static fn deadlines(void)
@@ -51862,10 +51862,10 @@ static fn deadlines(void)
 
         //      A replaceable frame that has run out of time is worthless. A
         //      durable one is late, which still beats never.
-        post_one(7, WATERLINK_FRAME_REPLACEABLE, 16, 'a', 100);
-        post_one(8, WATERLINK_FRAME_DURABLE, 16, 'S', 100);
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 16, 'a', 100000);
+        post_one(8, WATERLINK_FRAME_DURABLE, 16, 'S', 100000);
 
-        carry(400, address_of alone);
+        carry(400000, address_of alone);
         check("the late replaceable frame was dropped", one.expired == 1);
         check("the late durable frame was not", heard == 1);
         check("and it is the durable one", heard_first[0] == 'S');
@@ -51893,8 +51893,13 @@ static fn urgency(void)
         check("the bulk frame rode along behind it", heard == 2);
         check("and it is the bulk one", heard_first[1] == 'B');
 
+        //      What comes back is the acknowledgement of both, which frees
+        //      them, and then there is nothing.
+        check("the acknowledgements go out", carry(0, address_of alone) > 0);
+        check("and deliver nothing to the application", heard == 0);
         check("nothing is left to send", carry(0, address_of alone) == 0);
         check("and an empty fill claims no urgency", !alone);
+        check("the acknowledged link is idle", waterlink_idle(address_of one));
 }
 
 static fn stale_arrivals(void)
@@ -51927,6 +51932,44 @@ static fn stale_arrivals(void)
         check("and it was counted stale", one.stale == 1);
 }
 
+/*
+        Two keystrokes on one key, in two datagrams the network swaps. Both
+        are durable, so both must arrive and in the order they were typed:
+        the later one waits for the earlier rather than being taken as the
+        newer state and the earlier then dropped as stale -- which is right
+        for a replaceable frame and loses a keystroke for a durable one.
+*/
+static fn durable_reordered(void)
+{
+        p8 early[WATERLINK_PAYLOAD];
+        p8 late[WATERLINK_PAYLOAD];
+        positive early_used;
+        positive late_used;
+        positive before_early;
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'a', 0);
+        early_used = waterlink_fill(address_of one, early, 0, address_of alone);
+        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'b', 0);
+        late_used = waterlink_fill(address_of one, late, 0, address_of alone);
+
+        heard = 0;
+        check("the later datagram is well formed",
+              waterlink_deliver(address_of one, late, late_used, hear, null));
+        before_early = heard;
+        check("the earlier datagram is well formed",
+              waterlink_deliver(address_of one, early, early_used, hear,
+                                null));
+
+        check("the later keystroke waits for the earlier one",
+              before_early == 0);
+        check("both keystrokes arrive though the network swapped them",
+              heard == 2);
+        check("in the order they were typed",
+              heard == 2 && heard_first[0] == 'a' && heard_first[1] == 'b');
+}
+
 static fn malformed_bodies(void)
 {
         p8 body[WATERLINK_PAYLOAD];
@@ -51946,12 +51989,13 @@ static fn malformed_bodies(void)
               !waterlink_deliver(address_of one, body, 12, null, null));
 
         //      A length that reaches past what arrived is the shape every
-        //      parser gets wrong once. It sits at offset 14 of the frame
-        //      header -- key 8, sequence 4, channel 2 -- and 1000 is a length
-        //      this link would otherwise carry, so what refuses it is the
-        //      bound against the body and not the sanity check above it.
-        body[14] = 0xe8;
-        body[15] = 0x03;
+        //      parser gets wrong once. It sits at offset 18 of the frame
+        //      header -- key 8, sequence 4, follows 4, channel 2 -- and 1000
+        //      is a length this link would otherwise carry, so what refuses
+        //      it is the bound against the body and not the sanity check
+        //      above it.
+        body[18] = 0xe8;
+        body[19] = 0x03;
         check("a length past the end of the body is refused",
               !waterlink_deliver(address_of one, body, used, null, null));
 }
@@ -52168,6 +52212,68 @@ static fn sealed(void)
         }
 }
 
+/*
+        A datagram of acknowledgements alone is sealed at whole blocks, and is
+        still net.c's AES-GCM over the same header and the shorter box.
+*/
+static fn sealed_short(void)
+{
+        static const positive sizes[] = {1, 16, 17, 76, 100, 400,
+                                         WATERLINK_PAYLOAD};
+        positive agreed = 0;
+        positive opened = 0;
+        positive refused = 0;
+
+        for (positive at = 0; at < sizeof sizes / sizeof sizes[0]; at++)
+        {
+                p8 datagram[WATERLINK_DATAGRAM];
+                p8 reference[WATERLINK_PAYLOAD];
+                p8 tag[16];
+                p8 iv[12];
+                struct waterlink_datagram head;
+                positive box = (sizes[at] + 15) & ~(positive)15;
+                positive length;
+
+                head.kind = WATERLINK_KIND_CARRY;
+                head.receiver = 7;
+                head.counter = 1000 + at;
+                memory_copy(datagram, address_of head, 16);
+                for (positive i = 0; i < WATERLINK_PAYLOAD; i++)
+                        datagram[16 + i] = (p8)(i * 13 + at);
+                memory_zero(reference, sizeof reference);
+                memory_copy(reference, datagram + 16, sizes[at]);
+
+                length = waterlink_seal_short(address_of sealing, datagram,
+                                              sizes[at]);
+
+                memory_zero(iv, 4);
+                for (positive i = 0; i < 8; i++)
+                        iv[4 + i] = (p8)(head.counter >> (8 * i));
+                crypto_aesgcm_seal(address_of sealing, iv, datagram, 16,
+                                   reference, box, tag);
+
+                if (length == 32 + box &&
+                    !memory_compare(datagram + 16, reference, box) &&
+                    !memory_compare(datagram + 16 + box, tag, 16))
+                        agreed++;
+
+                if (!waterlink_open_length(address_of sealing, datagram,
+                                           length - 16))
+                        refused++;
+                length = waterlink_seal_short(address_of sealing, datagram,
+                                              sizes[at]);
+                if (waterlink_open_length(address_of sealing, datagram,
+                                          length))
+                        opened++;
+        }
+
+        check("a short datagram is net.c's AES-GCM over the shorter box",
+              agreed == sizeof sizes / sizeof sizes[0]);
+        check("and opens at its own length", opened == agreed);
+        check("and not at a length it was not sealed at",
+              refused == sizeof sizes / sizeof sizes[0]);
+}
+
 //      The whole path with no network: post, fill, seal, open, replay,
 //      deliver. This is the datapath the shim will drive, minus the socket.
 static fn whole_path(void)
@@ -52291,9 +52397,750 @@ static fn replay_generated(void)
         check("and asked enough to mean it", asked == 48 * 3000);
 }
 
+/*
+        The three shapes the generated network below reaches only by luck,
+        made on purpose.
+
+        A replaceable frame with a durable one posted behind it is followed,
+        so its deadline stops meaning anything: the durable frame names it,
+        and the far side would wait for it forever. A key's last frame arrives
+        once however often it is sent. A replaceable frame superseded while
+        it was in flight goes out as the new value, and a late copy of the old
+        one is not applied over it.
+*/
+static fn followed_outlives_deadline(void)
+{
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 1, 'r', 0);
+        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'D', 0);
+
+        carry(50000, address_of alone);
+        check("a followed replaceable frame outlives its deadline",
+              heard == 2 && heard_first[0] == 'r' && heard_first[1] == 'D');
+        check("and nothing was expired", one.expired == 0);
+}
+
+static fn last_arrives_once(void)
+{
+        p8 body[WATERLINK_PAYLOAD];
+        positive used;
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+        post_one(40, WATERLINK_FRAME_DURABLE, 0, 'x', 0);
+        post_one(40, WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_LAST, 0, 'z', 0);
+        check("nothing may follow a key's last frame",
+              !waterlink_post(address_of one, 40, 0, WATERLINK_FRAME_DURABLE,
+                              0, 0, body, 1, 0));
+
+        used = waterlink_fill(address_of one, body, 0, address_of alone);
+        heard = 0;
+        waterlink_deliver_at(address_of one, body, used, 0, hear, null);
+        check("the key's frames arrive", heard == 2);
+
+        //      The acknowledgement is lost, so the probe timer sends the
+        //      oldest frame again, and the far side has to say once more that
+        //      it has both.
+        (void)waterlink_fill(address_of one, body, 0, address_of alone);
+        used = waterlink_fill(address_of one, body, 10000000,
+                              address_of alone);
+        check("an unacknowledged last frame is sent again", used > 0 &&
+                                                            one.lost >= 1);
+        heard = 0;
+        waterlink_deliver_at(address_of one, body, used, 10000000, hear, null);
+        check("and is not delivered twice", heard == 0);
+
+        //      This time the acknowledgement arrives, and the key is gone.
+        for (p64 now = 10000001; now < 10000010; now++)
+        {
+                used = waterlink_fill(address_of one, body, now,
+                                      address_of alone);
+                if (used)
+                        waterlink_deliver_at(address_of one, body, used, now,
+                                             hear, null);
+        }
+        check("and nothing on the key is delivered again", heard == 0);
+        check("an acknowledged last frame retires its key",
+              waterlink_key_find(one.sending, 40) == WATERLINK_NONE &&
+                      waterlink_idle(address_of one));
+}
+
+static fn superseded_in_flight(void)
+{
+        p8 old_body[WATERLINK_PAYLOAD];
+        p8 body[WATERLINK_PAYLOAD];
+        positive old_used;
+        positive used;
+        bool alone = false;
+
+        waterlink_link_reset(address_of one);
+        post_one(9, WATERLINK_FRAME_REPLACEABLE, 0, '1', 0);
+        old_used = waterlink_fill(address_of one, old_body, 0,
+                                  address_of alone);
+        post_one(9, WATERLINK_FRAME_REPLACEABLE, 0, '2', 0);
+        check("a frame in flight is superseded, not queued behind",
+              one.superseded == 1 && one.posted == 1);
+        used = waterlink_fill(address_of one, body, 0, address_of alone);
+
+        heard = 0;
+        waterlink_deliver_at(address_of one, body, used, 0, hear, null);
+        waterlink_deliver_at(address_of one, old_body, old_used, 0, hear,
+                             null);
+        check("the new value arrives and the old one after it is dropped",
+              heard == 1 && heard_first[0] == '2');
+}
+
+/*
+        The link over a generated network, both ways at once.
+
+        Each seed builds a path -- a bottleneck with a rate and a queue that
+        drops when full, a propagation delay, jitter that reorders, random
+        loss and duplication -- and a workload on both ends: durable streams,
+        urgent keystrokes, bulk runs, replaceable state with deadlines, keys
+        that mix the two classes, and keys that end. The receiving
+        application is the oracle: on every key, what it is handed must move
+        forward, skip no durable frame and no replaceable frame a durable one
+        was posted behind, and carry exactly the bytes posted; when the
+        workload is done and the network drained, every key must have
+        arrived through its last post. Half the seeds put the datagram replay
+        window in front of the link and half hand it the network's copies
+        raw, so the link's own answer to a repeated frame is tested too.
+
+        Seeds of the last kind carry bulk only over a clean bottleneck, and
+        answer for the path: what arrived against what the bottleneck could
+        carry, and how much the queue dropped.
+*/
+#define SIM_KEYS 12
+#define SIM_POSTS 512
+#define SIM_IN_FLIGHT 1024
+#define SIM_HEAP (2 * SIM_IN_FLIGHT)
+
+typedef struct {
+        p64 arrive;
+        p64 counter;
+        positive used;
+        p8 to;
+        p8 body[WATERLINK_PAYLOAD];
+} sim_datagram;
+
+static sim_datagram sim_pool[SIM_IN_FLIGHT];
+static p32 sim_free_list[SIM_IN_FLIGHT];
+static positive sim_free_count;
+static p32 sim_heap[SIM_IN_FLIGHT];
+static positive sim_heap_count;
+
+static struct waterlink_link sim_link[2];
+static struct waterlink_replay sim_window[2];
+
+typedef struct {
+        p64 key;       // the link's key, never reused
+        p16 flags;     // the class chooses per post for a mixed key
+        p16 deadline;
+        p8 mix;        // durable or replaceable, chosen per post
+        p8 ends;       // the key's last post is flagged LAST
+        p8 size;       // 0 small, 1 medium, 2 bulk
+        positive posts;       // how many this key will get
+        positive posted;      // how many it has had
+        p8 durable[SIM_POSTS];
+        bipolar delivered;    // the index last handed over, -1 for none
+        positive handed;
+} sim_key;
+
+typedef struct {
+        sim_key key[SIM_KEYS];
+        positive keys;
+        p64 next_post;
+        positive remaining;
+        p64 counter;
+        //      The path out of this end.
+        p64 spacing;  // microseconds a datagram holds the bottleneck
+        p64 free_at;
+        positive queue;
+        p64 delay;
+        p64 jitter;
+        positive loss;   // per 10,000
+        positive repeat; // per 10,000
+        //      What happened.
+        positive sent;
+        positive dropped;
+        positive lost;
+        p64 bytes;
+        p64 first_post;
+        p64 last_arrival;
+        bool wrong;
+        bool bulk;
+} sim_end;
+
+static sim_end sim_ends[2];
+static positive sim_wrong;
+static p64 sim_rng;
+
+static p64 sim_next(void)
+{
+        sim_rng ^= sim_rng << 13;
+        sim_rng ^= sim_rng >> 7;
+        sim_rng ^= sim_rng << 17;
+        return sim_rng;
+}
+
+static positive sim_below(positive bound)
+{
+        return bound ? (positive)(sim_next() % bound) : 0;
+}
+
+static fn sim_heap_push(p32 at)
+{
+        positive i = sim_heap_count++;
+
+        sim_heap[i] = at;
+        while (i && sim_pool[sim_heap[(i - 1) / 2]].arrive >
+                            sim_pool[sim_heap[i]].arrive)
+        {
+                p32 swap = sim_heap[i];
+
+                sim_heap[i] = sim_heap[(i - 1) / 2];
+                sim_heap[(i - 1) / 2] = swap;
+                i = (i - 1) / 2;
+        }
+}
+
+static p32 sim_heap_pop(void)
+{
+        p32 top = sim_heap[0];
+        positive i = 0;
+
+        sim_heap[0] = sim_heap[--sim_heap_count];
+        for (;;)
+        {
+                positive l = 2 * i + 1;
+                positive r = l + 1;
+                positive m = i;
+                p32 swap;
+
+                if (l < sim_heap_count &&
+                    sim_pool[sim_heap[l]].arrive < sim_pool[sim_heap[m]].arrive)
+                        m = l;
+                if (r < sim_heap_count &&
+                    sim_pool[sim_heap[r]].arrive < sim_pool[sim_heap[m]].arrive)
+                        m = r;
+                if (m == i)
+                        break;
+                swap = sim_heap[i];
+                sim_heap[i] = sim_heap[m];
+                sim_heap[m] = swap;
+                i = m;
+        }
+        return top;
+}
+
+//      One datagram onto the path from end `from`: the bottleneck, then the
+//      wire's loss, jitter and duplication.
+static fn sim_send(positive from, p8 address_to body, positive used, p64 now,
+                   bool short_ack)
+{
+        sim_end address_to edge = sim_ends + from;
+        p64 depart;
+        p64 cost = edge->spacing;
+        positive copies;
+
+        //      A datagram of acknowledgements only is cut to whole blocks, and
+        //      holds the bottleneck for its share of a full one.
+        if (short_ack)
+        {
+                cost = edge->spacing * (32 + ((used + 15) & ~(positive)15)) /
+                       WATERLINK_DATAGRAM;
+                if (!cost)
+                        cost = 1;
+        }
+
+        edge->sent++;
+        if (edge->free_at > now &&
+            (edge->free_at - now) / edge->spacing >= edge->queue)
+        {
+                edge->dropped++;
+                return;
+        }
+
+        depart = (edge->free_at > now ? edge->free_at : now) + cost;
+        edge->free_at = depart;
+
+        if (sim_below(10000) < edge->loss)
+        {
+                edge->lost++;
+                return;
+        }
+
+        copies = sim_below(10000) < edge->repeat ? 2 : 1;
+        edge->counter++;
+
+        while (copies--)
+        {
+                sim_datagram address_to d;
+                p32 at;
+
+                if (!sim_free_count)
+                {
+                        edge->lost++;
+                        return;
+                }
+
+                at = sim_free_list[--sim_free_count];
+                d = sim_pool + at;
+                d->arrive = depart + edge->delay +
+                            (edge->jitter ? sim_next() % edge->jitter : 0);
+                d->counter = edge->counter;
+                d->used = used;
+                d->to = (p8)(1 - from);
+                memory_copy(d->body, body, used);
+                sim_heap_push(at);
+        }
+}
+
+//      A frame's payload says which key and which post it is, and the rest
+//      is a pattern of both, so a wrong byte anywhere is seen.
+static p16 sim_length(sim_key address_to key, positive index)
+{
+        positive base = key->size == 2 ? 900 : key->size == 1 ? 120 : 6;
+
+        return (p16)(base + (index * 7 + (positive)key->key) % 97);
+}
+
+static fn sim_fill(p8 address_to into, positive k, positive index, p16 length)
+{
+        into[0] = (p8)k;
+        into[1] = (p8)index;
+        into[2] = (p8)(index >> 8);
+        for (positive i = 3; i < length; i++)
+                into[i] = (p8)(k * 31 + index * 7 + i);
+}
+
+static fn sim_wrong_at(sim_end address_to edge)
+{
+        if (!edge->wrong)
+                sim_wrong++;
+        edge->wrong = true;
+}
+
+static fn sim_hear(address_any context, struct waterlink_frame address_to head,
+                   p8 address_to payload)
+{
+        sim_end address_to edge = sim_ends + (positive)context;
+        positive k;
+        positive index;
+        sim_key address_to key;
+        p8 want[WATERLINK_FRAME_MAX];
+
+        if (head->length < 3)
+        {
+                sim_wrong_at(edge);
+                return;
+        }
+
+        k = payload[0];
+        index = payload[1] | (positive)payload[2] << 8;
+        if (k >= edge->keys || index >= edge->key[k].posted)
+        {
+                sim_wrong_at(edge);
+                return;
+        }
+
+        key = edge->key + k;
+
+        //      Forward only, and nothing skipped that could not be.
+        if ((bipolar)index <= key->delivered)
+        {
+                sim_wrong_at(edge);
+                return;
+        }
+
+        for (positive skipped = (positive)(key->delivered + 1);
+             skipped < index; skipped++)
+                if (key->durable[skipped] ||
+                    (skipped + 1 < key->posted && key->durable[skipped + 1]))
+                        sim_wrong_at(edge);
+
+        if (head->length != sim_length(key, index) ||
+            head->key != key->key)
+                sim_wrong_at(edge);
+        else
+        {
+                sim_fill(want, k, index, head->length);
+                if (memory_compare(want, payload, head->length))
+                        sim_wrong_at(edge);
+        }
+
+        key->delivered = (bipolar)index;
+        key->handed++;
+        edge->bytes += head->length;
+}
+
+static p64 sim_key_serial;
+
+static fn sim_workload(sim_end address_to edge, bool bulk_only)
+{
+        memory_zero(edge, sizeof(address_to edge));
+        edge->bulk = bulk_only;
+        edge->keys = bulk_only ? 2 + sim_below(3) : 4 + sim_below(SIM_KEYS - 3);
+
+        for (positive k = 0; k < edge->keys; k++)
+        {
+                sim_key address_to key = edge->key + k;
+                positive shape = bulk_only ? 0 : sim_below(6);
+
+                key->key = ++sim_key_serial * 0x10001ull + k;
+                key->delivered = -1;
+                key->posts = bulk_only ? 200 + sim_below(300)
+                                       : 5 + sim_below(80);
+
+                switch (shape)
+                {
+                case 0: // a durable run, bulk or not
+                        key->flags = WATERLINK_FRAME_DURABLE |
+                                     (bulk_only || sim_below(2)
+                                              ? WATERLINK_FRAME_BULK
+                                              : 0);
+                        key->size = bulk_only ? 2 : (p8)sim_below(3);
+                        break;
+                case 1: // keystrokes
+                        key->flags = WATERLINK_FRAME_DURABLE |
+                                     WATERLINK_FRAME_URGENT;
+                        break;
+                case 2: // state with a deadline, all but the last post
+                        key->flags = WATERLINK_FRAME_REPLACEABLE;
+                        key->deadline = (p16)(1 + sim_below(40));
+                        key->size = (p8)sim_below(2);
+                        break;
+                case 3: // state with none
+                        key->flags = WATERLINK_FRAME_REPLACEABLE;
+                        key->size = (p8)sim_below(3);
+                        break;
+                case 4: // both classes on one key
+                        key->mix = 1;
+                        key->size = (p8)sim_below(2);
+                        break;
+                default: // a key that ends
+                        key->flags = WATERLINK_FRAME_DURABLE;
+                        key->ends = 1;
+                        key->posts = 1 + sim_below(6);
+                        break;
+                }
+
+                edge->remaining += key->posts;
+        }
+}
+
+//      The next post from this end, if there is one due: a key chosen at
+//      random among those with posts left. A refusal keeps it for later.
+static fn sim_post(sim_end address_to edge, positive side, p64 now)
+{
+        while (edge->remaining && edge->next_post <= now)
+        {
+                positive k = sim_below(edge->keys);
+                sim_key address_to key;
+                p8 payload[WATERLINK_FRAME_MAX];
+                p16 flags;
+                p16 deadline;
+                p16 length;
+                positive index;
+                bool last_post;
+
+                for (positive tries = 0;
+                     edge->key[k].posted >= edge->key[k].posts &&
+                     tries < SIM_KEYS;
+                     tries++)
+                        k = (k + 1) % edge->keys;
+
+                key = edge->key + k;
+                if (key->posted >= key->posts)
+                        return;
+
+                index = key->posted;
+                last_post = index + 1 == key->posts;
+                flags = key->flags;
+                if (key->mix)
+                        flags = sim_below(3) ? WATERLINK_FRAME_REPLACEABLE
+                                             : WATERLINK_FRAME_DURABLE;
+                deadline = last_post ? 0 : key->deadline;
+                if (key->ends && last_post)
+                        flags |= WATERLINK_FRAME_LAST;
+
+                length = sim_length(key, index);
+                sim_fill(payload, k, index, length);
+
+                if (!waterlink_post(sim_link + side, key->key,
+                                    WATERLINK_CHANNEL_OPEN, flags, deadline,
+                                    0, payload, length, now))
+                {
+                        //      The queue is full: the application waits for
+                        //      an acknowledgement to free a slot.
+                        edge->next_post = ~0ull;
+                        return;
+                }
+
+                if (!edge->first_post)
+                        edge->first_post = now ? now : 1;
+                key->durable[index] = (flags & WATERLINK_FRAME_DURABLE) != 0;
+                key->posted++;
+                edge->remaining--;
+                edge->next_post = edge->bulk ? now : now + sim_below(1500);
+        }
+}
+
+static p8 sim_scratch[WATERLINK_PAYLOAD];
+
+
+static fn sim_drain_sends(positive side, p64 now)
+{
+        for (positive guard = 0; guard < 4096; guard++)
+        {
+                bool alone = false;
+                positive used = waterlink_fill(sim_link + side, sim_scratch,
+                                               now, address_of alone);
+
+                if (!used)
+                        return;
+                sim_send(side, sim_scratch, used, now,
+                         !sim_link[side].carried);
+        }
+}
+
+typedef struct {
+        positive seeds;
+        positive schedules_bulk;
+        p64 posts;
+        p64 delivered;
+        p64 lost;
+        p64 retransmitted;
+        p64 spilled;
+        p64 kept;
+        p64 expired;
+        p64 superseded;
+        p64 timeouts;
+        p64 unfinished;
+        //      The clean-bottleneck seeds, summed.
+        p64 path_bytes;
+        p64 path_capacity;
+        p64 path_sent;
+        p64 path_dropped;
+} sim_tally;
+
+static sim_tally sim_total;
+
+static fn sim_seed(positive seed)
+{
+        bool bulk_path = seed % 5 == 0;
+        bool filtered = seed % 2 == 0;
+        p64 now = 0;
+        p64 limit;
+
+        sim_rng = 0x9e3779b97f4a7c15ull * (seed + 1) ^ 0x2545f4914f6cdd1dull;
+        for (positive i = 0; i < 8; i++)
+                (void)sim_next();
+
+        waterlink_link_reset(sim_link + 0);
+        waterlink_link_reset(sim_link + 1);
+        memory_zero(sim_window, sizeof sim_window);
+        sim_heap_count = 0;
+        sim_free_count = SIM_IN_FLIGHT;
+        for (positive i = 0; i < SIM_IN_FLIGHT; i++)
+                sim_free_list[i] = (p32)(SIM_IN_FLIGHT - 1 - i);
+
+        for (positive side = 0; side < 2; side++)
+        {
+                sim_end address_to edge = sim_ends + side;
+
+                //      Bulk seeds send one way over a clean bottleneck.
+                sim_workload(edge, bulk_path && side == 0);
+                if (bulk_path && side == 1)
+                        edge->remaining = 0;
+
+                edge->spacing = 8 + sim_below(120);
+                edge->queue = 8 + sim_below(96);
+                edge->delay = bulk_path ? 100 + sim_below(1500)
+                                       : 200 + sim_below(20000);
+                edge->jitter = bulk_path ? 0 : sim_below(8000);
+                edge->loss = bulk_path ? 0 : sim_below(4) ? sim_below(1500) : 0;
+                edge->repeat = bulk_path ? 0 : sim_below(800);
+                edge->next_post = sim_below(1000);
+        }
+
+        limit = 600000000ull; // ten minutes of simulated time
+        for (positive events = 0; now < limit && events < 4000000; events++)
+        {
+                p64 next = ~0ull;
+
+                while (sim_heap_count && sim_pool[sim_heap[0]].arrive <= now)
+                {
+                        p32 at = sim_heap_pop();
+                        sim_datagram address_to d = sim_pool + at;
+                        positive to = d->to;
+
+                        sim_free_list[sim_free_count++] = at;
+                        if (filtered &&
+                            !waterlink_replay_new(sim_window + to, d->counter))
+                                continue;
+                        //      The oracle is the end that posted.
+                        if (!waterlink_deliver_at(sim_link + to, d->body,
+                                                  d->used, now, sim_hear,
+                                                  (address_any)(1 - to)))
+                                sim_wrong_at(sim_ends + 1 - to);
+                        sim_ends[1 - to].last_arrival = now;
+                        //      An acknowledgement may have freed slots.
+                        if (sim_ends[to].next_post == ~0ull)
+                                sim_ends[to].next_post = now;
+                }
+
+                for (positive side = 0; side < 2; side++)
+                        sim_post(sim_ends + side, side, now);
+
+                for (positive side = 0; side < 2; side++)
+                {
+                        sim_drain_sends(side, now);
+                        //      So may a loss the fill found expired.
+                        if (sim_ends[side].next_post == ~0ull &&
+                            sim_link[side].free != WATERLINK_NONE)
+                                sim_ends[side].next_post = now + 1;
+                }
+
+                for (positive side = 0; side < 2; side++)
+                {
+                        p64 wake = waterlink_wake(sim_link + side, now);
+
+                        if (wake <= now)
+                                wake = now + 1;
+                        if (wake < next)
+                                next = wake;
+                        if (sim_ends[side].remaining &&
+                            sim_ends[side].next_post < next)
+                                next = sim_ends[side].next_post > now
+                                               ? sim_ends[side].next_post
+                                               : now + 1;
+                }
+
+                if (sim_heap_count && sim_pool[sim_heap[0]].arrive < next)
+                        next = sim_pool[sim_heap[0]].arrive;
+
+                if (next == ~0ull)
+                        break;
+                now = next > now ? next : now + 1;
+        }
+
+        for (positive side = 0; side < 2; side++)
+        {
+                sim_end address_to edge = sim_ends + side;
+                struct waterlink_link address_to link = sim_link + side;
+                bool finished = !edge->remaining &&
+                                waterlink_idle(sim_link + 0) &&
+                                waterlink_idle(sim_link + 1);
+
+                for (positive k = 0; k < edge->keys; k++)
+                        if (edge->key[k].delivered + 1 !=
+                            (bipolar)edge->key[k].posted)
+                                finished = false;
+
+                if (!finished)
+                {
+                        sim_total.unfinished++;
+                        sim_wrong_at(edge);
+                }
+
+                sim_total.posts += link->posted + link->superseded;
+                sim_total.lost += link->lost;
+                sim_total.retransmitted += link->retransmitted;
+                sim_total.spilled += sim_link[1 - side].spilled;
+                sim_total.kept += sim_link[1 - side].kept;
+                sim_total.expired += link->expired;
+                sim_total.superseded += link->superseded;
+                sim_total.timeouts += link->timeouts;
+                for (positive k = 0; k < edge->keys; k++)
+                        sim_total.delivered += edge->key[k].handed;
+        }
+
+        if (bulk_path)
+        {
+                sim_end address_to edge = sim_ends + 0;
+                p64 span = edge->last_arrival - edge->first_post;
+
+                sim_total.schedules_bulk++;
+                sim_total.path_bytes += edge->bytes;
+                //      What the bottleneck carries, or what the link's own
+                //      ceilings let be in flight over the round trip if
+                //      that is less -- the check is of the window, not of
+                //      the slot count.
+                {
+                        p64 trip = 2 * edge->delay + 2 * edge->spacing;
+                        p64 flying = edge->keys * WATERLINK_KEY_WINDOW;
+                        p64 by_rate = span / edge->spacing;
+                        p64 by_window;
+
+                        if (flying > WATERLINK_SLOTS)
+                                flying = WATERLINK_SLOTS;
+                        by_window = span * flying / trip;
+                        sim_total.path_capacity +=
+                                (by_rate < by_window ? by_rate : by_window) *
+                                WATERLINK_FRAME_MAX;
+                }
+                sim_total.path_sent += edge->sent;
+                sim_total.path_dropped += edge->dropped;
+        }
+
+        sim_total.seeds++;
+}
+
+static fn network_generated(void)
+{
+        positive seeds = 2000;
+
+        memory_zero(address_of sim_total, sizeof sim_total);
+        sim_wrong = 0;
+
+        for (positive seed = 0; seed < seeds; seed++)
+                sim_seed(seed);
+
+        string_format(log, "  waterlink network: %p schedules (%p bulk), "
+                           "%p frames posted, %p delivered, %p lost, %p sent "
+                           "again, %p held back, %p spilled, %p expired, "
+                           "%p timeouts\n",
+                      sim_total.seeds, sim_total.schedules_bulk,
+                      (positive)sim_total.posts, (positive)sim_total.delivered,
+                      (positive)sim_total.lost,
+                      (positive)sim_total.retransmitted,
+                      (positive)sim_total.kept, (positive)sim_total.spilled,
+                      (positive)sim_total.expired,
+                      (positive)sim_total.timeouts);
+        string_format(log, "  waterlink link: %p bytes a session\n",
+                      (positive)sizeof(struct waterlink_link));
+        string_format(log, "  waterlink path: %p of %p bytes the bottleneck "
+                           "could carry, %p of %p datagrams dropped at it\n",
+                      (positive)sim_total.path_bytes,
+                      (positive)sim_total.path_capacity,
+                      (positive)sim_total.path_dropped,
+                      (positive)sim_total.path_sent);
+
+        check("every schedule delivered every key exactly as the rules say",
+              sim_wrong == 0);
+        check("and finished", sim_total.unfinished == 0);
+        check("the network lost frames and the link sent them again",
+              sim_total.lost > 0 && sim_total.retransmitted > 0);
+        check("frames were held back for the frame they follow",
+              sim_total.kept > 0);
+        check("and the hold-back overflowed, and that was recovered",
+              sim_total.spilled > 0);
+        check("replaceable frames were superseded and expired",
+              sim_total.superseded > 0 && sim_total.expired > 0);
+        check("the timer fired", sim_total.timeouts > 0);
+        check("a bulk path is kept at least half full",
+              sim_total.path_bytes * 2 >= sim_total.path_capacity);
+        check("and its queue drops fewer than one datagram in ten",
+              sim_total.path_dropped * 10 <= sim_total.path_sent);
+}
+
 b32 main(void)
 {
         sealed();
+        sealed_short();
         whole_path();
         refusals();
         supersession();
@@ -52301,10 +53148,15 @@ b32 main(void)
         deadlines();
         urgency();
         stale_arrivals();
+        durable_reordered();
         malformed_bodies();
         replay();
         saturation();
         replay_generated();
+        followed_outlives_deadline();
+        last_arrives_once();
+        superseded_in_flight();
+        network_generated();
         return test_report(null);
 }
 #endif /* CHECK_waterlink */
