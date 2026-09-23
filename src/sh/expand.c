@@ -9226,6 +9226,52 @@ static positive expand_split(shell_words address_to out)
         return out->count;
 }
 
+/*
+        A substitution in a brace is held whole by the scanners that find its
+        close and its commas, as bash holds it: lex_skip_held steps over
+        quotes, $( ), ${ } and backquotes, and a process substitution is the
+        same kind of program. Counted, the { , } inside $(echo {a,b}) closed
+        or split the brace around it.
+*/
+static bool expand_brace_skip(string_address address_to at)
+{
+        string_address step = address_to at;
+
+        if (lex_skip_held(at))
+                return true;
+        if ((string_is(step, '<') || string_is(step, '>')) &&
+            string_is(step + 1, '('))
+        {
+                string_address stop = lex_nesting(step + 1);
+
+                if (stop && stop > step + 1)
+                {
+                        address_to at = stop;
+                        return true;
+                }
+        }
+        return false;
+}
+
+// The } that closes the brace whose body starts at at, or nothing.
+static PURE string_address expand_brace_close(string_address at)
+{
+        positive depth = 1;
+
+        while (string_get(at))
+        {
+                if (expand_brace_skip(address_of at))
+                        continue;
+                if (string_is(at, '{'))
+                        depth++;
+                else if (string_is(at, '}') && !--depth)
+                        return at;
+                at++;
+        }
+
+        return null;
+}
+
 static PURE string_address expand_brace_comma(string_address at,
                                          string_address close)
 {
@@ -9235,7 +9281,7 @@ static PURE string_address expand_brace_comma(string_address at,
         {
                 p8 value = string_get(at);
 
-                if (lex_skip_held(address_of at))
+                if (expand_brace_skip(address_of at))
                         continue;
 
                 if (value == '{')
@@ -9547,8 +9593,33 @@ static positive shell_expand_braces(string_address word,
                         continue;
                 }
 
+                /*
+                        A command, arithmetic or process substitution is a
+                        program of its own, and bash expands a brace inside
+                        it there, once, when it runs. Taken here, $(cmd
+                        {a,b}) became two words, two substitutions and cmd
+                        run twice with every side effect it has, `...` and
+                        <(...) the same, a brace range inside one a fork per
+                        member, and $((1+{1,2})) answered where bash refuses.
+                */
+                if (string_is(open, '`') ||
+                    ((string_is(open, '$') || string_is(open, '<') ||
+                      string_is(open, '>')) &&
+                     string_is(open + 1, '(')))
+                {
+                        string_address inner = string_is(open, '`') ? open
+                                                                     : open + 1;
+                        string_address stop = lex_nesting(inner);
+
+                        if (stop && stop > inner)
+                        {
+                                open = stop;
+                                continue;
+                        }
+                }
+
                 if (string_not(open, '{') ||
-                    !(close = expand_brace_end(open + 1)))
+                    !(close = expand_brace_close(open + 1)))
                 {
                         open++;
                         continue;

@@ -10618,6 +10618,42 @@ def shell_expand_pattern_composition(rng):
         '[[ $x == $p ]]; printf "test:%s\\n" "$?"')
 
 
+def shell_expand_brace_substitution(rng):
+    """Braces beside and inside command, arithmetic and process substitutions.
+
+    A substitution is a program of its own and bash expands a brace inside
+    it once, when it runs; this shell took the brace first, so
+    $(cmd {a,b}) was two substitutions and cmd ran twice with every side
+    effect it had, and a range inside one forked once a member. Seeded
+    words put braces outside, inside and on both sides of $( ), `...`,
+    <( ) and $(( )), each substitution recording that it ran; the words,
+    the count of runs and the status are bash's.
+    """
+    def inner():
+        return rng.choice(("{a,b}", "{1..3}", "x", "{p,q}{r,s}", "'{a,b}'", "\\{a,b}"))
+
+    def substitution():
+        body = "echo " + inner() + " >/dev/null; echo run >> ran; echo " + rng.choice(("s", inner()))
+        return rng.choice(("$(" + body + ")", "`" + body + "`",
+                           "$(cat <(" + body + "))", "$((" + rng.choice(("1", "2+3", "4*2")) + "))"))
+
+    parts = []
+    for _ in range(rng.randrange(1, 4)):
+        shape = rng.randrange(4)
+        if shape == 0:
+            parts.append("{" + substitution() + "," + rng.choice(("y", substitution())) + "}")
+        elif shape == 1:
+            parts.append(substitution())
+        elif shape == 2:
+            parts.append(rng.choice(("{a,b}", "{1..2}", "z")))
+        else:
+            parts.append('"' + substitution() + '"')
+    word = "".join(parts)
+    return "brace-substitution", ("bash",), shell_program(
+        ": > ran", "printf '<%s>' " + word + "; echo \" status=$?\"",
+        "echo \"runs=$(wc -l < ran)\"")
+
+
 def shell_expand_pattern_replacement_composed(rng):
     """${x/pat/r} with a composed pattern, over values long and short.
 
@@ -14389,6 +14425,7 @@ SHELL_FAMILIES = (
     shell_expand_indirect_special,
     shell_expand_substring,
     shell_expand_pattern_replacement_composed,
+    shell_expand_brace_substitution,
     shell_expand_sequence_slice,
     shell_expand_array_transform,
     shell_expand_array_sequence_transition,
