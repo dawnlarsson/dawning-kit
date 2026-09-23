@@ -6674,7 +6674,16 @@ FILES_UTILITIES = (
                   (("-L", "dir"), ("-L", "."), ("-L", "dir/sub/back"), ("-aL", "dup"), ("-D", "dirlink"), ("-H", "dirlink"),
                     ("-Lx", "."), ("-a", "--time", "."), ("-sh", "."), ("-sb", "."), ("-c", "dir", "dup"), ("-s", "-a", "dir"),
                     ("-d", "1", "-s", "dir"), ("-b", "-m", "a.txt"), ("-m", "-b", "a.txt"), ("-k", "-m", "a.txt"),
-                   ("--inodes", "-a", "."), ("--apparent-size", "-a", "dir"), ("-l", "dup"), ("--files0-from=-",))),
+                   ("--inodes", "-a", "."), ("--apparent-size", "-a", "dir"), ("-l", "dup"), ("--files0-from=-",))
+                  #   Patterns read from a file, a line each: every file in
+                  #   the fixture that holds lines, holds none, holds no
+                  #   newline at its end, or cannot be read, over each root
+                  #   and each way of showing what is left.
+                  + tuple(shape + (spelling + source if spelling.endswith("=") else spelling, *(() if spelling.endswith("=") else (source,)), *root)
+                          for source in ("paths", "words", "empty", "nonl", "a.txt", "dir", "missing", "unreadable", "-")
+                          for spelling, shape, root in (("-X", (), (".",)), ("--exclude-from=", ("-a",), ("dir",)),
+                                                        ("-X", ("-s",), ("dup", "dir")),
+                                                        ("-X", ("-c", "--exclude=b.txt"), (".",))))),
     Utility("df", options=(Option("-a"), Option("-h"), Option("-H"), Option("-i"), Option("-k"), Option("-l"), Option("-m"),
                            Option("-P"), Option("-T"), Option("-v"), Option("--all"), Option("--human-readable"), Option("--si"),
                            Option("--inodes"), Option("--local"), Option("--portability"), Option("--print-type"),
@@ -33116,7 +33125,7 @@ REASONS = {
  "r96": "-m's comma layout measures a name before it is quoted, so a name needing quotes is placed a column early.",
  "r97": "the compiled database is deliberately shorter than GNU 9.11 and a colon inside a key or a value is refused rather than escaped, because the shared LS_COLORS grammar has no escape for it.",
  "r98": "--inodes, --files0-from, -D, -B, -X and -t are columns and selectors this one has not got, -L walks a link that points back up to the frame ceiling where the reference names the loop, and a name holding a tab, an escape or a newline is written here with the byte spelled out where the reference writes it raw.",
- "r99": "inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for."
+ "r99": "inode counts, a file of names, a block size, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for."
 }
 
 # ---- pinned rows begin (written by --record; never by hand) ----
@@ -35695,7 +35704,6 @@ PINNED = r"""
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-ø"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_nul_words","tier":"singles","utility":"du"},"domain":"files","id":"9b155b7bb5fc0af7","kind":"bug","list":"ledger","reason_id":"r325","reference":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"utility":"du"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"8b7da0a955236866626672589ed1c3a9bdd46406ff34b32df28410246b937b84"},"case":{"argv":["-a","--time","."],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_nul_words","utility":"du"},"domain":"files","id":"df49c6870b0a909d","kind":"bug","list":"ledger","reason_id":"r98","reason_unverified":"the answer moved after a change elsewhere; this reason was not re-checked against it","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"--dereference-args","reason_id":"r99","utility":"du"},
-{"domain":"files","kind":"bug","list":"ledger","option":"--exclude-from","reason_id":"r99","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"--files0-from","reason_id":"r99","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"--inodes","reason_id":"r99","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"--no-dereference","reason_id":"r99","utility":"du"},
@@ -35706,7 +35714,6 @@ PINNED = r"""
 {"domain":"files","kind":"bug","list":"ledger","option":"-D","reason_id":"r99","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"-H","reason_id":"r99","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"-P","reason_id":"r99","utility":"du"},
-{"domain":"files","kind":"bug","list":"ledger","option":"-X","reason_id":"r99","utility":"du"},
 {"domain":"files","kind":"bug","list":"ledger","option":"-t","reason_id":"r99","utility":"du"},
 {"candidate":{"effects":"b5be582053b9cdb8bc8850776ad468fafecc497d4ae2a90d107606787d5d7bad","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":[".","-delete","-name","a.txt"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_yes","utility":"find"},"domain":"files","id":"018dc654d6d3e122","kind":"bug","list":"ledger","reason_id":"r102","utility":"find"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"3ba81c80b8b23ead1ff322d46b1f7d70b5503096a5df33c1cd7013639adf1692"},"case":{"argv":["two words","-not","-perm","/u=x","-and","-perm","/0"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_yes","utility":"find"},"domain":"files","id":"01a4296fc9908ec4","kind":"bug","list":"ledger","reason_id":"r102","utility":"find"},

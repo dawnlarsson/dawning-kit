@@ -14854,20 +14854,89 @@ static bool du_block_size_seen(string_address value)
                              value ? value : (string_address) "");
 }
 
+static bool du_exclude_add(string_address pattern)
+{
+        if (!shell_array_room(du_excludes, du_exclude_room, du_exclude_have + 1))
+                return string_report(log_error, false, "du: out of memory while reading exclude patterns\n");
+
+        du_excludes[du_exclude_have++] = pattern;
+        return true;
+}
+
+/*
+        -X FILE and --exclude-from=FILE: a pattern a line, as gnulib's
+        add_exclude_file reads them. White space at the end of a line goes,
+        a line left empty is no pattern, white space in front stays; - is
+        standard input. A file that cannot be read ends du before it has
+        measured anything, with the name, the reason and the usage hint.
+*/
+static bool du_exclude_file(string_address path)
+{
+        bool standard = string_equals(path, "-");
+        bipolar handle = standard ? 0 : system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
+        positive length = 0;
+        bool read_failed = false;
+        p8 address_to text = null;
+        bipolar reason = handle;
+
+        if (handle >= 0)
+        {
+                text = utility_arena_read_all((positive)handle, 4096, address_of length,
+                                              address_of read_failed);
+                if (!text && read_failed)
+                {
+                        p8 probe;
+
+                        reason = system_read_retry((positive)handle, address_of probe, 1);
+                        if (reason >= 0)
+                                reason = -ERROR_INPUT_OUTPUT;
+                }
+                if (!standard)
+                        system_close(handle);
+        }
+        if (!text)
+        {
+                if (reason >= 0)
+                        return false;
+                string_format(log_error, "du: %w: %s\nTry 'du --help' for more information.\n",
+                              writer_shell_name, path, file_reason(reason));
+                return false;
+        }
+
+        positive start = 0;
+
+        for (positive at = 0; at <= length; at++)
+        {
+                if (at < length && text[at] != '\n')
+                        continue;
+
+                positive stop = at;
+
+                while (stop > start && byte_is_space(text[stop - 1]))
+                        stop--;
+                if (stop > start)
+                {
+                        text[stop] = end;
+                        if (!du_exclude_add((string_address)text + start))
+                                return false;
+                }
+                start = at + 1;
+        }
+        return true;
+}
+
 static bool du_exclude_seen(p8 letter, string_address value)
 {
         if (letter == 'B')
                 return du_block_size_seen(value);
 
+        if (letter == 'X' && value)
+                return du_exclude_file(value);
+
         if (letter != 'e' || !value)
                 return true;
 
-        if (!shell_array_room(du_excludes, du_exclude_room, du_exclude_have + 1))
-                return string_report(log_error, false, "du: out of memory while reading exclude patterns\n");
-
-        du_excludes[du_exclude_have++] = value;
-
-        return true;
+        return du_exclude_add(value);
 }
 
 static const argument_option du_options[] = {
@@ -14878,6 +14947,7 @@ static const argument_option du_options[] = {
     {"count-links", 'l'},
     {"dereference", 'L'},
     {"exclude", 'e', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"exclude-from", 'X', ARGUMENT_REQUIRED},
     {"human-readable", 'h', 0, 1},
     {"max-depth", 'd', ARGUMENT_REQUIRED},
     {"one-file-system", 'x'},
