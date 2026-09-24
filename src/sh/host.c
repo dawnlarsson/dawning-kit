@@ -6965,8 +6965,9 @@ static b32 host_radio(string_address address_to arguments, positive count)
 
         Choices live on /root so an image update keeps them. The machine
         starts NTP itself: restore forks the first query before init, and the
-        wait loop keeps walking servers until the clock is set. Five samples
-        keep the lowest delay unless /root/ntp.filter says off. The kernel
+        wait loop keeps walking servers until the clock is set. Sampling takes
+        five samples and keeps the lowest delay unless /root/ntp.sampling
+        says off. The kernel
         adds that offset with adjtimex; a kiss-o-death drops the server.
 
         The forked query is not asked after with kill. A pid that has
@@ -8126,7 +8127,7 @@ static COLD bipolar sntp_query(string_address name, bool filter, bool tight,
 #define LOCALE_ZONE_NETWORK_PATH HOST_STATE "/timezone.network"
 #define LOCALE_NTP_PATH "/root/ntp"
 #define LOCALE_NTP_SERVER_PATH "/root/ntp.server"
-#define LOCALE_NTP_FILTER_PATH "/root/ntp.filter"
+#define LOCALE_NTP_SAMPLING_PATH "/root/ntp.sampling"
 #define LOCALE_KEYBOARD_PATH "/root/keyboard"
 #define LOCALE_NTP_DEFAULT_SERVER "pool.ntp.org"
 #define LOCALE_NTP_RETRY_LEAST 1
@@ -8284,9 +8285,9 @@ static bool locale_ntp_wanted(void)
         return locale_switch_on(LOCALE_NTP_PATH);
 }
 
-static bool locale_ntp_filter_wanted(void)
+static bool locale_ntp_sampling_wanted(void)
 {
-        return locale_switch_on(LOCALE_NTP_FILTER_PATH);
+        return locale_switch_on(LOCALE_NTP_SAMPLING_PATH);
 }
 
 static bool locale_clock_synced(void)
@@ -9520,7 +9521,7 @@ static bipolar locale_ntp_apply(void)
         p8 server[80];
         bipolar failed = SNTP_NO_SERVER;
         positive at;
-        bool filter = locale_ntp_filter_wanted();
+        bool filter = locale_ntp_sampling_wanted();
         bool tight = locale_clock_synced();
         bool rated = false;
 
@@ -9558,29 +9559,29 @@ static b32 locale_ntp_status(void)
         if (!server[0])
                 string_copy_bounded(server, LOCALE_NTP_DEFAULT_SERVER,
                                     sizeof(server));
-        string_format(log, host_label "ntp %s, %s, filter %s, %s\n",
+        string_format(log, host_label "ntp %s, %s, sampling %s, %s\n",
                       wanted ? "on" : "off", server,
-                      locale_ntp_filter_wanted() ? "on" : "off",
+                      locale_ntp_sampling_wanted() ? "on" : "off",
                       synced ? "synchronised" : "waiting");
         log_flush();
         return 0;
 }
 
-static b32 locale_ntp_filter_status(void)
+static b32 locale_ntp_sampling_status(void)
 {
-        string_format(log, host_label "ntp filter %s\n",
-                      locale_ntp_filter_wanted() ? "on" : "off");
+        string_format(log, host_label "ntp sampling %s\n",
+                      locale_ntp_sampling_wanted() ? "on" : "off");
         log_flush();
         return 0;
 }
 
-static COLD b32 locale_ntp_filter_set(string_address word)
+static COLD b32 locale_ntp_sampling_set(string_address word)
 {
         if (!string_equals(word, "on") && !string_equals(word, "off"))
                 return host_usage();
-        if (radio_write_word(LOCALE_NTP_FILTER_PATH, word) < 0)
+        if (radio_write_word(LOCALE_NTP_SAMPLING_PATH, word) < 0)
                 return host_fail("ntp", -1);
-        string_format(log, host_label "ntp filter %s\n", word);
+        string_format(log, host_label "ntp sampling %s\n", word);
         log_flush();
         return 0;
 }
@@ -9804,15 +9805,15 @@ static b32 host_locale(string_address address_to arguments, positive count)
         {
                 if (count == 2)
                         return locale_ntp_status();
-                if (string_equals(word, "filter"))
+                if (string_equals(word, "sampling"))
                 {
                         if (count == 3)
-                                return locale_ntp_filter_status();
+                                return locale_ntp_sampling_status();
                         if (count != 4)
                                 return host_usage();
                         if (!bowl_is_root())
                                 return host_refuse("%s needs root\n", "moonwater");
-                        return locale_ntp_filter_set(arguments[3]);
+                        return locale_ntp_sampling_set(arguments[3]);
                 }
                 if (count != 3)
                         return host_usage();
@@ -9852,7 +9853,7 @@ static string_address host_wipe_keep[] = {
     "timezone.mode",
     "ntp",
     "ntp.server",
-    "ntp.filter",
+    "ntp.sampling",
     "keyboard",
     "link",
     "link.key",
@@ -10237,8 +10238,8 @@ static fn host_usage_write(writer out)
                       "                              " TERM_DIM "request per network joined" TERM_RESET "\n"
                       TERM_BOLD "  ntp [on|off]" TERM_RESET
                       "                " TERM_DIM "set the clock from the network [on]" TERM_RESET "\n"
-                      TERM_BOLD "  ntp filter [on|off]" TERM_RESET
-                      "         " TERM_DIM "keep the lowest-delay sample of five [on]" TERM_RESET "\n"
+                      TERM_BOLD "  ntp sampling [on|off]" TERM_RESET
+                      "       " TERM_DIM "keep the lowest-delay sample of five [on]" TERM_RESET "\n"
                       TERM_BOLD "  link [on|off|help]" TERM_RESET
                       "         " TERM_DIM "shell and run on paired machines, by key" TERM_RESET "\n"
                       TERM_BOLD "  keyboard [LAYOUT|list]" TERM_RESET
@@ -10373,10 +10374,10 @@ static b32 host_status(void)
                 locale_zone_title(zone, shown, sizeof(shown));
                 locale_zone_how(how, sizeof(how));
                 string_format(log, "  timezone %s %s\n", shown, how);
-                string_format(log, "  ntp %s, filter %s\n",
+                string_format(log, "  ntp %s, sampling %s\n",
                               locale_ntp_wanted() ? (string_address) "on"
                                                   : (string_address) "off",
-                              locale_ntp_filter_wanted()
+                              locale_ntp_sampling_wanted()
                                   ? (string_address) "on"
                                   : (string_address) "off");
                 string_format(log, "  keyboard %s\n",

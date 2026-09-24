@@ -32359,8 +32359,8 @@ def harness_moonwater_cli(argv):
         walk = ["", "status", "status extra", "-h", "--help", "-h extra", "bogus",
                 "timezone", "timezone list extra", "timezone Mars/Olympus", "timezone +99",
                 'timezone ""', "timezone a b", "time", "time sync", "time bogus",
-                "time sync extra", "ntp", "ntp on", "ntp off", "ntp filter", "ntp filter on",
-                "ntp filter off", "ntp filter maybe", "ntp filter on extra", "ntp a b",
+                "time sync extra", "ntp", "ntp on", "ntp off", "ntp sampling", "ntp sampling on",
+                "ntp sampling off", "ntp sampling maybe", "ntp sampling on extra", "ntp a b",
                 "keyboard", "keyboard xx", "keyboard a b", "canvas", "canvas on", "canvas off",
                 "canvas bogus", "bind", "bind init", "bind exit", "bind bogus", "wifi",
                 "wifi off", "wifi on", "wifi add", "bluetooth", "bluetooth off",
@@ -32476,7 +32476,7 @@ while True:
         (sandbox / "tmp/ntpd.py").write_text(server)
         answers_ntp = []
         script = ("ip link set lo up\npython3 /tmp/ntpd.py &\nntp_server=$!\nsleep 1\n"
-                  "echo 127.0.0.1 > /root/ntp.server\necho off > /root/ntp.filter\n")
+                  "echo 127.0.0.1 > /root/ntp.server\necho off > /root/ntp.sampling\n")
         fields = {"vn": (0, 1, 3, 4, 5, 7), "mode": (3, 4, 5), "stratum": (0, 1, 15, 16),
                   "li": (0, 1, 3), "refid": ("RATE", "DENY", "GPS\0"), "length": (47, 48, 60),
                   "transmit": (True, False), "echo": (True, False)}

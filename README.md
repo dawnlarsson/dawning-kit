@@ -46,7 +46,7 @@ moonwater priority internet [wired|wifi]  which link wins when both are up [wire
 moonwater time [sync]                  local time, UTC and NTP state; sync asks now
 moonwater timezone [auto|ZONE|list]    IANA name, country code, +1 or POSIX TZ string [auto]
 moonwater ntp [on|off]                 set the clock from the network [on]
-moonwater ntp filter [on|off]          keep the lowest-delay sample of five [on]
+moonwater ntp sampling [on|off]        five samples, the fastest round trip wins [on]
 
 moonwater link                         on or off, this machine's key, peers, what is open
 moonwater link on|off                  listen on udp 22348, kept across boots [off]
@@ -90,8 +90,9 @@ pinned commit and checked against pinned SHA-256s; no blob is in this
 repository.
 
 **Time.** NTP runs from boot until turned off, walking several public servers
-until the kernel reports the clock synchronised. Each query keeps the lowest-
-delay of five samples (RFC 5905's clock filter). The timezone is auto until set
+until the kernel reports the clock synchronised. NTP sampling takes five
+samples a query and keeps the one with the fastest round trip, RFC 5905's clock
+filter, so a queueing spike never sets the clock. The timezone is auto until set
 by hand: on each new network the machine makes one HTTPS request to Cloudflare
 and takes the zone it reports, at most once every three minutes. There is no
 zoneinfo directory: each of tzdata's 420 zones maps to the POSIX rule in its
