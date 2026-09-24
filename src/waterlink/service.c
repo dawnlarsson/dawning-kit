@@ -112,11 +112,11 @@ typedef struct
 
 static const link_grant link_grants[] = {
     {"verbs", WATERLINK_MAY_VERBS, 0, 0},
-    {"run", WATERLINK_MAY_RUN, 'R', 0},
-    {"shell", WATERLINK_MAY_SHELL, 'S', 0},
+    {"run", WATERLINK_MAY_RUN, LINK_ASK_RUN, 0},
+    {"shell", WATERLINK_MAY_SHELL, LINK_ASK_SHELL, 0},
     {"screen", WATERLINK_MAY_SCREEN, 0, 0},
-    {"files", WATERLINK_MAY_FILES, 'P', 'G'},
-    {"log", WATERLINK_MAY_LOG, 'L', 0},
+    {"files", WATERLINK_MAY_FILES, LINK_ASK_PUSH, LINK_ASK_PULL},
+    {"log", WATERLINK_MAY_LOG, LINK_ASK_LOG, 0},
     {"channels", WATERLINK_MAY_CHANNELS, 0, 0},
 };
 
@@ -777,6 +777,8 @@ typedef struct
 
 static const string_address link_kind_names[] = {"open", "shell", "run",
                                                   "push", "pull", "log"};
+static const p8 link_kind_asks[] = {0, LINK_ASK_SHELL, LINK_ASK_RUN,
+                                    LINK_ASK_PUSH, LINK_ASK_PULL, LINK_ASK_LOG};
 
 typedef struct
 {
@@ -1154,6 +1156,38 @@ static positive link_room_frames(struct link_session address_to s)
 
 static p8 link_read_buffer[LINK_READ_FRAMES * LINK_CHUNK];
 
+// What was read into the buffer, as frames on one key.
+static fn link_post_read(struct link_session address_to s, p64 key, p16 flags,
+                         positive length)
+{
+        for (positive at = 0; at < length; at += LINK_CHUNK)
+                (void)link_post(s, key, flags, LINK_DATA, link_read_buffer + at,
+                                length - at < LINK_CHUNK ? length - at
+                                                         : LINK_CHUNK);
+}
+
+/*
+        A terminal's size on the wire: rows then columns, each little endian.
+        Packing answers whether the size is known; 24 by 80 when it is not.
+*/
+static bool link_size_pack(p8 address_to packed)
+{
+        winsize size = {24, 80, 0, 0};
+        bool known = system_control(0, TIOCGWINSZ, address_of size) >= 0;
+
+        packed[0] = (p8)size.rows;
+        packed[1] = (p8)(size.rows >> 8);
+        packed[2] = (p8)size.columns;
+        packed[3] = (p8)(size.columns >> 8);
+        return known;
+}
+
+static winsize link_size_unpack(p8 address_to packed)
+{
+        return (winsize){(p16)(packed[0] | packed[1] << 8),
+                         (p16)(packed[2] | packed[3] << 8), 0, 0};
+}
+
 // The machine's end ---------------------------------------------------------
 
 static fn link_state_write(p64 now);
@@ -1256,10 +1290,7 @@ static bool link_start_shell(struct link_session address_to s,
         bipolar child;
 
         if (length >= 4)
-        {
-                size.rows = (p16)(request[0] | request[1] << 8);
-                size.columns = (p16)(request[2] | request[3] << 8);
-        }
+                size = link_size_unpack(request);
         link_term_word(request + 4, length > 4 ? length - 4 : 0, term);
 
         if (process_pty_open(address_of master, address_of slave, true) < 0)
@@ -1608,9 +1639,7 @@ static fn link_server_hear(address_any context,
         case LINK_KEY_SIZE:
                 if (length >= 5 && s->terminal >= 0)
                 {
-                        winsize size = {(p16)(payload[1] | payload[2] << 8),
-                                        (p16)(payload[3] | payload[4] << 8), 0,
-                                        0};
+                        winsize size = link_size_unpack(payload + 1);
 
                         system_control(s->terminal, TIOCSWINSZ,
                                        address_of size);
@@ -1802,16 +1831,9 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
                                 }
                                 break;
                         }
-                        for (positive at = 0; at < (positive)got;
-                             at += LINK_CHUNK)
-                                (void)link_post(s, turn ? LINK_KEY_ERROR
-                                                        : LINK_KEY_OUTPUT,
-                                                WATERLINK_FRAME_DURABLE,
-                                                LINK_DATA,
-                                                link_read_buffer + at,
-                                                (positive)got - at < LINK_CHUNK
-                                                        ? (positive)got - at
-                                                        : LINK_CHUNK);
+                        link_post_read(s, turn ? LINK_KEY_ERROR
+                                               : LINK_KEY_OUTPUT,
+                                       WATERLINK_FRAME_DURABLE, (positive)got);
                 }
         }
 
@@ -2222,6 +2244,20 @@ static fn link_signals_take(bipolar handle, b32 address_to last)
         }
 }
 
+/*
+        One descriptor to wait on, when it is open and wants something: a
+        descriptor watched for nothing still wakes the wait on a hangup.
+*/
+static fn link_watch(system_poll_descriptor address_to watch,
+                     positive address_to count, bipolar handle, p16 events)
+{
+        if (handle < 0 || !events)
+                return;
+        watch[address_to count].descriptor = (b32)handle;
+        watch[address_to count].events = events;
+        (address_to count)++;
+}
+
 // Until something is ready or wake comes, whichever is first.
 static fn link_wait(system_poll_descriptor address_to watch, positive count,
                     p64 wake)
@@ -2335,22 +2371,11 @@ static b32 link_serve(void)
                                 wake = due;
                 }
 
-                watch[count].descriptor = (b32)link_self.socket;
-                watch[count].events = SYSTEM_POLL_READ;
-                count++;
-                if (signals >= 0)
-                {
-                        watch[count].descriptor = (b32)signals;
-                        watch[count].events = SYSTEM_POLL_READ;
-                        count++;
-                }
-                if (link_nearby.socket >= 0)
-                {
-                        watch[count].descriptor = (b32)link_nearby.socket;
-                        watch[count].events = SYSTEM_POLL_READ;
-                        count++;
-                }
-
+                link_watch(watch, address_of count, link_self.socket,
+                           SYSTEM_POLL_READ);
+                link_watch(watch, address_of count, signals, SYSTEM_POLL_READ);
+                link_watch(watch, address_of count, link_nearby.socket,
+                           SYSTEM_POLL_READ);
                 for (positive at = 0; at < LINK_SESSIONS; at++)
                 {
                         struct link_session address_to s = link_self.session + at;
@@ -2359,42 +2384,21 @@ static b32 link_serve(void)
                         if (!s->used || s->kind == LINK_KIND_NONE)
                                 continue;
                         room = link_room(s);
-
-                        if (s->terminal >= 0 && (room || s->pending_length))
-                        {
-                                watch[count].descriptor = (b32)s->terminal;
-                                watch[count].events =
-                                        (room && !s->output_read
-                                                 ? SYSTEM_POLL_READ
-                                                 : 0) |
-                                        (s->pending_length ? SYSTEM_POLL_WRITE
+                        link_watch(watch, address_of count, s->terminal,
+                                   (room && !s->output_read ? SYSTEM_POLL_READ
+                                                            : 0) |
+                                           (s->pending_length ? SYSTEM_POLL_WRITE
+                                                              : 0));
+                        link_watch(watch, address_of count, s->output,
+                                   room && !s->output_read ? SYSTEM_POLL_READ
                                                            : 0);
-                                count++;
-                        }
-                        if (s->output >= 0 && room && !s->output_read)
-                        {
-                                watch[count].descriptor = (b32)s->output;
-                                watch[count].events = SYSTEM_POLL_READ;
-                                count++;
-                        }
-                        if (s->error >= 0 && room && !s->error_read)
-                        {
-                                watch[count].descriptor = (b32)s->error;
-                                watch[count].events = SYSTEM_POLL_READ;
-                                count++;
-                        }
-                        if (s->input >= 0 && s->pending_length)
-                        {
-                                watch[count].descriptor = (b32)s->input;
-                                watch[count].events = SYSTEM_POLL_WRITE;
-                                count++;
-                        }
-                        if (s->pidfd >= 0 && !s->exited)
-                        {
-                                watch[count].descriptor = (b32)s->pidfd;
-                                watch[count].events = SYSTEM_POLL_READ;
-                                count++;
-                        }
+                        link_watch(watch, address_of count, s->error,
+                                   room && !s->error_read ? SYSTEM_POLL_READ
+                                                          : 0);
+                        link_watch(watch, address_of count, s->input,
+                                   s->pending_length ? SYSTEM_POLL_WRITE : 0);
+                        link_watch(watch, address_of count, s->pidfd,
+                                   s->exited ? 0 : SYSTEM_POLL_READ);
                 }
 
                 link_wait(watch, count, wake);
@@ -2651,7 +2655,6 @@ static b32 link_client_run(string_address name, p8 kind,
         positive request_length = 0;
         p32 ours;
         p32 reours = 0;
-        p64 started;
         p64 rekey_after = link_rekey_after();
         p64 rekey_sent = 0;
         bool keyed = false;
@@ -2675,11 +2678,7 @@ static b32 link_client_run(string_address name, p8 kind,
 
         //      The request, before anything is sent: a command that cannot be
         //      asked for is refused here.
-        request[request_length++] = kind == LINK_KIND_SHELL ? LINK_ASK_SHELL
-                                    : kind == LINK_KIND_PUSH ? LINK_ASK_PUSH
-                                    : kind == LINK_KIND_PULL ? LINK_ASK_PULL
-                                    : kind == LINK_KIND_LOG  ? LINK_ASK_LOG
-                                                             : LINK_ASK_RUN;
+        request[request_length++] = link_kind_asks[kind];
         if (kind == LINK_KIND_PUSH || kind == LINK_KIND_PULL)
         {
                 //      words: the source, then where it goes.
@@ -2713,14 +2712,10 @@ static b32 link_client_run(string_address name, p8 kind,
                 ;
         else if (kind == LINK_KIND_SHELL)
         {
-                winsize size = {24, 80, 0, 0};
                 string_address term = file_environment((string_address) "TERM");
 
-                system_control(0, TIOCGWINSZ, address_of size);
-                request[request_length++] = (p8)size.rows;
-                request[request_length++] = (p8)(size.rows >> 8);
-                request[request_length++] = (p8)size.columns;
-                request[request_length++] = (p8)(size.columns >> 8);
+                (void)link_size_pack(request + request_length);
+                request_length += 4;
                 if (term && string_length(term) < 32)
                 {
                         memory_copy(request + request_length, term,
@@ -2838,7 +2833,6 @@ static b32 link_client_run(string_address name, p8 kind,
         signals = link_signals_open();
         if (kind == LINK_KIND_SHELL)
                 (void)link_client_raw();
-        started = link_now();
 
         for (;;)
         {
@@ -2854,21 +2848,14 @@ static b32 link_client_run(string_address name, p8 kind,
                 //      A window's new size replaces the one not yet sent.
                 if (stopped == 28)
                 {
-                        winsize size;
                         p8 packed[4];
 
                         stopped = 0;
-                        if (system_control(0, TIOCGWINSZ, address_of size) >= 0)
-                        {
-                                packed[0] = (p8)size.rows;
-                                packed[1] = (p8)(size.rows >> 8);
-                                packed[2] = (p8)size.columns;
-                                packed[3] = (p8)(size.columns >> 8);
+                        if (link_size_pack(packed))
                                 (void)link_post(s, LINK_KEY_SIZE,
                                                 WATERLINK_FRAME_REPLACEABLE |
                                                         WATERLINK_FRAME_URGENT,
                                                 'W', packed, 4);
-                        }
                 }
                 else if (stopped == 2 && kind == LINK_KIND_RUN)
                 {
@@ -2952,24 +2939,16 @@ static b32 link_client_run(string_address name, p8 kind,
                 if (wake > now + 1000000)
                         wake = now + 1000000;
 
-                watch[watching].descriptor = (b32)link_self.socket;
-                watch[watching].events = SYSTEM_POLL_READ;
-                watching++;
-                if (signals >= 0)
-                {
-                        watch[watching].descriptor = (b32)signals;
-                        watch[watching].events = SYSTEM_POLL_READ;
-                        watching++;
-                }
+                link_watch(watch, address_of watching, link_self.socket,
+                           SYSTEM_POLL_READ);
+                link_watch(watch, address_of watching, signals,
+                           SYSTEM_POLL_READ);
                 read_input = !link_client.input_done && link_room(s) &&
                              link_client.answered &&
                              link_client.sent < link_client.credit;
                 if (read_input)
-                {
-                        watch[watching].descriptor = (b32)link_client.input;
-                        watch[watching].events = SYSTEM_POLL_READ;
-                        watching++;
-                }
+                        link_watch(watch, address_of watching,
+                                   link_client.input, SYSTEM_POLL_READ);
 
                 link_wait(watch, watching, wake);
                 now = link_now();
@@ -2989,18 +2968,12 @@ static b32 link_client_run(string_address name, p8 kind,
                         if (got > 0)
                         {
                                 //      A keystroke leaves alone and at once.
-                                for (positive at = 0; at < (positive)got;
-                                     at += LINK_CHUNK)
-                                        (void)link_post(
-                                                s, LINK_KEY_INPUT,
-                                                WATERLINK_FRAME_DURABLE |
-                                                        (kind == LINK_KIND_SHELL
-                                                                 ? WATERLINK_FRAME_URGENT
-                                                                 : 0),
-                                                LINK_DATA, link_read_buffer + at,
-                                                (positive)got - at < LINK_CHUNK
-                                                        ? (positive)got - at
-                                                        : LINK_CHUNK);
+                                link_post_read(s, LINK_KEY_INPUT,
+                                               WATERLINK_FRAME_DURABLE |
+                                                       (kind == LINK_KIND_SHELL
+                                                                ? WATERLINK_FRAME_URGENT
+                                                                : 0),
+                                               (positive)got);
                                 link_client.sent += (positive)got;
                                 link_session_flush(s, now);
                         }
@@ -3040,7 +3013,6 @@ static b32 link_client_run(string_address name, p8 kind,
                 }
         }
 
-        (void)started;
         link_client_restore();
 
         //      A pulled file is only there under its name once it is whole.
