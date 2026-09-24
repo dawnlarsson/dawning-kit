@@ -383,7 +383,8 @@ static fn link_nearby_open(void)
 {
         b32 one = 1;
         b32 ttl = 255;
-        socket_address_internet self;
+        socket_address_internet self = {
+            .family = AF_INET, .port = network_order_16(WATERLINK_MDNS_PORT)};
 
         link_nearby.socket = socket_new(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC |
                                                         SOCK_NONBLOCK,
@@ -399,9 +400,6 @@ static fn link_nearby_open(void)
         (void)socket_option_set((b32)link_nearby.socket, 0, 12, // RECVTTL
                                 address_of one, sizeof one);
 
-        memory_zero(address_of self, sizeof self);
-        self.family = AF_INET;
-        self.port = network_order_16(WATERLINK_MDNS_PORT);
         if (socket_bind((b32)link_nearby.socket, address_of self,
                         sizeof self) < 0)
         {
@@ -455,12 +453,10 @@ static fn link_nearby_send(p8 address_to packet, positive length,
                            positive interface_at)
 {
         link_mreqn out = {0, 0, link_nearby.interface[interface_at]};
-        socket_address_internet to;
+        socket_address_internet to = {
+            .family = AF_INET, .port = network_order_16(WATERLINK_MDNS_PORT),
+            .host = network_order_32(WATERLINK_MDNS_GROUP)};
 
-        memory_zero(address_of to, sizeof to);
-        to.family = AF_INET;
-        to.port = network_order_16(WATERLINK_MDNS_PORT);
-        to.host = network_order_32(WATERLINK_MDNS_GROUP);
         (void)socket_option_set((b32)link_nearby.socket, 0, 32, // MULTICAST_IF
                                 address_of out, sizeof out);
         (void)socket_send((b32)link_nearby.socket, packet, length,
@@ -604,12 +600,11 @@ static fn link_nearby_heard(p8 address_to packet, positive length,
                                         : 0,
                                 10, found.id, found.question,
                                 found.question_length);
-                        socket_address_internet to;
+                        socket_address_internet to = {
+                            .family = AF_INET,
+                            .port = network_order_16(source_port),
+                            .host = network_order_32(network_load_32(address + 12))};
 
-                        memory_zero(address_of to, sizeof to);
-                        to.family = AF_INET;
-                        to.port = network_order_16(source_port);
-                        to.host = network_order_32(network_load_32(address + 12));
                         if (reply_length)
                                 (void)socket_send((b32)link_nearby.socket, reply,
                                                   reply_length, MSG_NOSIGNAL,
@@ -826,7 +821,6 @@ static fn link_pair_datagram(p8 address_to datagram, positive length,
                         struct waterlink_noise candidate = pairing->noise;
 
                         if (!waterlink_pair_heard_third(address_of candidate,
-                                                        address_of link_self.me,
                                                         datagram, key, name))
                         {
                                 crypto_forget(address_of candidate,

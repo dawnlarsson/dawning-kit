@@ -32,9 +32,6 @@
 
 #include "waterlink.c"
 
-#define WATERLINK_BLOCKS (WATERLINK_DATAGRAM / 16)
-#define WATERLINK_BOXED (1 + WATERLINK_PAYLOAD / 16) // header and box
-
 /*
         The two bodies, one per machine, each around one call to
         aes128_ctr_blocks and one to ghash_blocks.

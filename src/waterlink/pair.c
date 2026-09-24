@@ -90,12 +90,38 @@ static fn waterlink_pair_e(struct waterlink_noise address_to noise,
         waterlink_mix_key(noise, public, 32);
 }
 
-static fn waterlink_pair_head(p8 address_to datagram, p32 kind, p32 receiver)
+/*
+        The part of messages two and three that is the same: our static
+        sealed, the DH of our static with the other side's ephemeral, and
+        our name sealed. And its reading, which ends at the peer's key.
+*/
+static bool waterlink_pair_identity(struct waterlink_noise address_to noise,
+                                    struct waterlink_identity address_to me,
+                                    p8 address_to name, p8 address_to at)
 {
-        struct waterlink_datagram head = {kind, receiver, 0};
+        memory_copy(at, me->public, 32);
+        waterlink_seal_hash(noise, at, 32);
+        at += 48;
+        if (!waterlink_mix_dh(noise, me->secret, noise->remote_ephemeral))
+                return false;
+        memory_copy(at, name, WATERLINK_PAIR_NAME);
+        waterlink_seal_hash(noise, at, WATERLINK_PAIR_NAME);
+        return true;
+}
 
-        memory_zero(datagram, WATERLINK_DATAGRAM);
-        memory_copy(datagram, address_of head, 16);
+static bool waterlink_pair_heard_identity(struct waterlink_noise address_to noise,
+                                          p8 address_to at,
+                                          p8 address_to their_public,
+                                          p8 address_to their_name)
+{
+        if (!waterlink_open_hash(noise, at, 32, noise->remote_static))
+                return false;
+        at += 48;
+        if (!waterlink_mix_dh(noise, noise->ephemeral, noise->remote_static) ||
+            !waterlink_open_hash(noise, at, WATERLINK_PAIR_NAME, their_name))
+                return false;
+        memory_copy(their_public, noise->remote_static, 32);
+        return true;
 }
 
 // Message one, from the machine that saw the other's announcement.
@@ -105,13 +131,10 @@ fn waterlink_pair_first(struct waterlink_noise address_to noise,
 {
         p8 address_to at = datagram + 16;
 
-        waterlink_pair_head(datagram, WATERLINK_KIND_PAIR_1, our_index);
+        waterlink_head(datagram, WATERLINK_KIND_PAIR_1, our_index);
         waterlink_pair_start(noise, psk);
 
-        memory_copy(noise->ephemeral, ephemeral, 32);
-        crypto_x25519(noise->ephemeral_public, noise->ephemeral,
-                      waterlink_base);
-        memory_copy(at, noise->ephemeral_public, 32);
+        waterlink_ephemeral(noise, ephemeral, at);
         waterlink_pair_e(noise, at);
         waterlink_seal_hash(noise, at + 32, 0);
 }
@@ -140,33 +163,14 @@ bool waterlink_pair_second(struct waterlink_noise address_to noise,
 {
         p8 address_to at = datagram + 16;
 
-        waterlink_pair_head(datagram, WATERLINK_KIND_PAIR_2, their_index);
+        waterlink_head(datagram, WATERLINK_KIND_PAIR_2, their_index);
 
-        // <- e
-        memory_copy(noise->ephemeral, ephemeral, 32);
-        crypto_x25519(noise->ephemeral_public, noise->ephemeral,
-                      waterlink_base);
-        memory_copy(at, noise->ephemeral_public, 32);
+        // <- e, ee, then s, es (the initiator's ephemeral with our static)
+        waterlink_ephemeral(noise, ephemeral, at);
         waterlink_pair_e(noise, at);
-        at += 32;
-
-        // ee
-        if (!waterlink_mix_dh(noise, noise->ephemeral,
-                              noise->remote_ephemeral))
-                return false;
-
-        // s
-        memory_copy(at, me->public, 32);
-        waterlink_seal_hash(noise, at, 32);
-        at += 48;
-
-        // es: the initiator's ephemeral with our static
-        if (!waterlink_mix_dh(noise, me->secret, noise->remote_ephemeral))
-                return false;
-
-        memory_copy(at, name, WATERLINK_PAIR_NAME);
-        waterlink_seal_hash(noise, at, WATERLINK_PAIR_NAME);
-        return true;
+        return waterlink_mix_dh(noise, noise->ephemeral,
+                                noise->remote_ephemeral) &&
+               waterlink_pair_identity(noise, me, name, at + 32);
 }
 
 bool waterlink_pair_heard_second(struct waterlink_noise address_to noise,
@@ -178,70 +182,29 @@ bool waterlink_pair_heard_second(struct waterlink_noise address_to noise,
 
         memory_copy(noise->remote_ephemeral, at, 32);
         waterlink_pair_e(noise, at);
-        at += 32;
-
-        if (!waterlink_mix_dh(noise, noise->ephemeral,
-                              noise->remote_ephemeral))
-                return false;
-
-        if (!waterlink_open_hash(noise, at, 32, noise->remote_static))
-                return false;
-        at += 48;
-
-        if (!waterlink_mix_dh(noise, noise->ephemeral, noise->remote_static))
-                return false;
-
-        if (!waterlink_open_hash(noise, at, WATERLINK_PAIR_NAME, their_name))
-                return false;
-
-        memory_copy(their_public, noise->remote_static, 32);
-        return true;
+        return waterlink_mix_dh(noise, noise->ephemeral,
+                                noise->remote_ephemeral) &&
+               waterlink_pair_heard_identity(noise, at + 32, their_public,
+                                             their_name);
 }
 
+// -> s, se: our static with the responder's ephemeral
 bool waterlink_pair_third(struct waterlink_noise address_to noise,
                           struct waterlink_identity address_to me,
                           p8 address_to name, p32 their_index,
                           p8 address_to datagram)
 {
-        p8 address_to at = datagram + 16;
-
-        waterlink_pair_head(datagram, WATERLINK_KIND_PAIR_3, their_index);
-
-        // s
-        memory_copy(at, me->public, 32);
-        waterlink_seal_hash(noise, at, 32);
-        at += 48;
-
-        // se: our static with the responder's ephemeral
-        if (!waterlink_mix_dh(noise, me->secret, noise->remote_ephemeral))
-                return false;
-
-        memory_copy(at, name, WATERLINK_PAIR_NAME);
-        waterlink_seal_hash(noise, at, WATERLINK_PAIR_NAME);
-        return true;
+        waterlink_head(datagram, WATERLINK_KIND_PAIR_3, their_index);
+        return waterlink_pair_identity(noise, me, name, datagram + 16);
 }
 
 bool waterlink_pair_heard_third(struct waterlink_noise address_to noise,
-                                struct waterlink_identity address_to me,
                                 p8 address_to datagram,
                                 p8 address_to their_public,
                                 p8 address_to their_name)
 {
-        p8 address_to at = datagram + 16;
-
-        if (!waterlink_open_hash(noise, at, 32, noise->remote_static))
-                return false;
-        at += 48;
-
-        if (!waterlink_mix_dh(noise, noise->ephemeral, noise->remote_static))
-                return false;
-
-        if (!waterlink_open_hash(noise, at, WATERLINK_PAIR_NAME, their_name))
-                return false;
-
-        memory_copy(their_public, noise->remote_static, 32);
-        (void)me;
-        return true;
+        return waterlink_pair_heard_identity(noise, datagram + 16,
+                                             their_public, their_name);
 }
 
 /*

@@ -246,6 +246,25 @@ bool waterlink_gate_passes(struct waterlink_identity address_to me,
         return crypto_same(mac, datagram + 16 + body - 16, 16);
 }
 
+// A datagram's head, with the rest of it zeroed to its full size.
+static fn waterlink_head(p8 address_to datagram, p32 kind, p32 receiver)
+{
+        struct waterlink_datagram head = {kind, receiver, 0};
+
+        memory_zero(datagram, WATERLINK_DATAGRAM);
+        memory_copy(datagram, address_of head, 16);
+}
+
+// The "e" token's half that both patterns share: ours, and its public out.
+static fn waterlink_ephemeral(struct waterlink_noise address_to noise,
+                              p8 address_to ephemeral, p8 address_to at)
+{
+        memory_copy(noise->ephemeral, ephemeral, 32);
+        crypto_x25519(noise->ephemeral_public, noise->ephemeral,
+                      waterlink_base);
+        memory_copy(at, noise->ephemeral_public, 32);
+}
+
 /*
         Write the first message. ephemeral is 32 random bytes the caller
         drew; hello is WATERLINK_HELLO_BYTES of stamp, conversation and index.
@@ -257,21 +276,15 @@ bool waterlink_initiate(struct waterlink_noise address_to noise,
                         p8 address_to ephemeral, p8 address_to hello,
                         p8 address_to datagram)
 {
-        struct waterlink_datagram head = {WATERLINK_KIND_INITIATE, 0, 0};
         p8 address_to at = datagram + 16;
         p8 gate[32];
 
-        memory_zero(datagram, WATERLINK_DATAGRAM);
-        memory_copy(datagram, address_of head, 16);
-
+        waterlink_head(datagram, WATERLINK_KIND_INITIATE, 0);
         waterlink_noise_start(noise, responder_public);
         memory_copy(noise->remote_static, responder_public, 32);
 
         // -> e
-        memory_copy(noise->ephemeral, ephemeral, 32);
-        crypto_x25519(noise->ephemeral_public, noise->ephemeral,
-                      waterlink_base);
-        memory_copy(at, noise->ephemeral_public, 32);
+        waterlink_ephemeral(noise, ephemeral, at);
         waterlink_mix_hash(noise, at, 32);
         at += 32;
 
@@ -345,19 +358,13 @@ bool waterlink_respond(struct waterlink_noise address_to noise,
                        p8 address_to ephemeral, p32 their_index, p32 our_index,
                        p8 address_to datagram)
 {
-        struct waterlink_datagram head = {WATERLINK_KIND_RESPOND, their_index,
-                                          0};
         p8 address_to at = datagram + 16;
         p8 gate[32];
 
-        memory_zero(datagram, WATERLINK_DATAGRAM);
-        memory_copy(datagram, address_of head, 16);
+        waterlink_head(datagram, WATERLINK_KIND_RESPOND, their_index);
 
         // <- e
-        memory_copy(noise->ephemeral, ephemeral, 32);
-        crypto_x25519(noise->ephemeral_public, noise->ephemeral,
-                      waterlink_base);
-        memory_copy(at, noise->ephemeral_public, 32);
+        waterlink_ephemeral(noise, ephemeral, at);
         waterlink_mix_hash(noise, at, 32);
         at += 32;
 

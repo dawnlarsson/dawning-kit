@@ -53714,8 +53714,8 @@ static fn group_pairing(void)
         waterlink_pair_third(address_of starting, address_of a, a_name, 99,
                              third);
         check("and the responder the initiator's",
-              waterlink_pair_heard_third(address_of answering, address_of b,
-                                         third, key, name) &&
+              waterlink_pair_heard_third(address_of answering, third, key,
+                                         name) &&
                       !memory_compare(key, a.public, 32) &&
                       !memory_compare(name, a_name, WATERLINK_PAIR_NAME));
 
@@ -54033,8 +54033,8 @@ static b32 pair_vectors(positive count)
                 if (!waterlink_pair_heard_second(address_of a, second, key, name))
                         return 1;
                 waterlink_pair_third(address_of a, address_of i, ni, 1, third);
-                if (!waterlink_pair_heard_third(address_of b, address_of r,
-                                                third, key, name))
+                if (!waterlink_pair_heard_third(address_of b, third, key,
+                                                name))
                         return 1;
 
                 hex_out(si, 32);

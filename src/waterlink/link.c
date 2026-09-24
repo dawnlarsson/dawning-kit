@@ -207,7 +207,6 @@ struct waterlink_link {
         whole window at once. The retransmission timer is the usual smoothed
         round trip plus four deviations, doubled on each expiry.
 */
-#define WATERLINK_DATAGRAM_BYTES WATERLINK_DATAGRAM
 #define WATERLINK_WINDOW_FIRST (10 * WATERLINK_DATAGRAM)
 #define WATERLINK_WINDOW_LEAST (2 * WATERLINK_DATAGRAM)
 #define WATERLINK_WINDOW_MOST ((p64)WATERLINK_SLOTS * WATERLINK_DATAGRAM)
@@ -1715,8 +1714,6 @@ bool waterlink_deliver(struct waterlink_link address_to link,
         mask where it is not. Skip that and a session that runs long enough
         starts refusing its own traffic as a replay, once per window, forever.
 */
-#define WATERLINK_REPLAY_WORDS (WATERLINK_REPLAY_WINDOW / 64)
-
 _Static_assert((WATERLINK_REPLAY_WINDOW & (WATERLINK_REPLAY_WINDOW - 1)) == 0,
                "the replay window is a ring and its width must be a power of two");
 

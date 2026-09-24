@@ -653,9 +653,8 @@ static fn link_place_text(p8 address_to address, p16 port, p8 address_to text)
 static fn link_socket_address(socket_address_internet6 address_to into,
                               p8 address_to address, p16 port)
 {
-        memory_zero(into, sizeof(address_to into));
-        into->family = AF_INET6;
-        into->port = network_order_16(port);
+        *into = (socket_address_internet6){
+            .family = AF_INET6, .port = network_order_16(port)};
         memory_copy(into->host, address, 16);
 }
 
@@ -995,21 +994,19 @@ static fn link_keys_install(struct link_keys address_to keys,
 // Sending ------------------------------------------------------------------
 
 /*
-        Where a datagram goes, in the socket's own family: an IPv4 address is
-        mapped on a dual-stack socket and plain on an IPv4 one.
+        Where a datagram goes, or where the socket binds, in the socket's own
+        family: an IPv4 address is mapped on a dual-stack socket and plain on
+        an IPv4 one.
 */
 static positive link_destination(socket_address_internet6 address_to into,
                                  p8 address_to address, p16 port)
 {
         if (link_self.v4)
         {
-                socket_address_internet address_to v4 =
-                        (socket_address_internet address_to)into;
-
-                memory_zero(into, sizeof(address_to into));
-                v4->family = AF_INET;
-                v4->port = network_order_16(port);
-                v4->host = network_order_32(network_load_32(address + 12));
+                *(socket_address_internet address_to)into =
+                        (socket_address_internet){
+                            .family = AF_INET, .port = network_order_16(port),
+                            .host = network_order_32(network_load_32(address + 12))};
                 return sizeof(socket_address_internet);
         }
         link_socket_address(into, address, port);
@@ -2225,60 +2222,34 @@ static fn link_state_write(p64 now)
 
 static bipolar link_socket_open(p16 port, bool any)
 {
-        bipolar handle = socket_new(AF_INET6,
-                                    SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK,
-                                    0);
+        p8 anywhere[16] = {0};
         b32 zero = 0;
         b32 big = 4 << 20;
         socket_address_internet6 self;
+        bipolar handle = socket_new(AF_INET6,
+                                    SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK,
+                                    0);
 
-        link_self.v4 = false;
-        if (handle < 0)
-        {
-                socket_address_internet plain;
-
+        link_self.v4 = handle < 0;
+        if (link_self.v4)
                 handle = socket_new(AF_INET,
                                     SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK,
                                     0);
-                if (handle < 0)
-                        return handle;
-                link_self.v4 = true;
-                (void)socket_option_set((b32)handle, SOL_SOCKET, SO_RCVBUF,
-                                        address_of big, sizeof big);
-                (void)socket_option_set((b32)handle, SOL_SOCKET, SO_SNDBUF,
-                                        address_of big, sizeof big);
-                if (!any)
-                        return handle;
-                memory_zero(address_of plain, sizeof plain);
-                plain.family = AF_INET;
-                plain.port = network_order_16(port);
-                if (socket_bind((b32)handle, address_of plain, sizeof plain) < 0)
-                {
-                        socket_close((b32)handle);
-                        return -EADDRINUSE;
-                }
+        if (handle < 0)
                 return handle;
-        }
-
-        (void)socket_option_set((b32)handle, 41, 26, address_of zero,
-                                sizeof zero); // IPV6_V6ONLY off
+        if (!link_self.v4)
+                (void)socket_option_set((b32)handle, 41, 26, address_of zero,
+                                        sizeof zero); // IPV6_V6ONLY off
         (void)socket_option_set((b32)handle, SOL_SOCKET, SO_RCVBUF,
                                 address_of big, sizeof big);
         (void)socket_option_set((b32)handle, SOL_SOCKET, SO_SNDBUF,
                                 address_of big, sizeof big);
-
-        if (any)
+        if (any && socket_bind((b32)handle, address_of self,
+                               link_destination(address_of self, anywhere,
+                                                port)) < 0)
         {
-                memory_zero(address_of self, sizeof self);
-                self.family = AF_INET6;
-                self.port = network_order_16(port);
-                if (socket_bind((b32)handle, address_of self, sizeof self) < 0)
-                {
-                        bipolar failed = -EADDRINUSE;
-
-                        socket_close((b32)handle);
-                        return failed;
-                }
+                socket_close((b32)handle);
+                return -EADDRINUSE;
         }
         return handle;
 }
@@ -2865,15 +2836,13 @@ static b32 link_client_run(string_address name, p8 kind,
                 until = link_now() + LINK_ATTEMPT;
                 while (!keyed && link_now() < until)
                 {
-                        timespec limit = {0, 50000000};
                         system_poll_descriptor wait = {(b32)link_self.socket,
                                                        SYSTEM_POLL_READ, 0};
                         p8 address[16];
                         p16 port;
                         bipolar got;
 
-                        (void)system_poll_wait(address_of wait, 1,
-                                               address_of limit, null);
+                        link_wait(address_of wait, 1, until);
                         while ((got = link_receive(datagram, address,
                                                    address_of port)) > 0)
                                 if (link_client_answer(s, address_of noise,
