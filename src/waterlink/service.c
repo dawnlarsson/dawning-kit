@@ -2069,40 +2069,38 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
                         s = look;
         }
 
-        /* Draw everything the answer needs before reserving a session: an
-           entropy outage must not let initiations fill the session table. */
+        /* Make the whole answer before reserving a session: an entropy
+           outage or a refused DH must not leave initiations holding slots
+           of the session table that are never keyed. */
         ours = link_index_new();
-        if (!ours || system_random_fill(ephemeral, 32, 0) < 0)
-        {
-                crypto_forget(ephemeral, sizeof ephemeral);
-                crypto_forget(address_of noise, sizeof noise);
-                return;
-        }
-
-        if (!s)
-        {
-                if (of_peer >= LINK_SESSIONS_A_PEER)
-                        return;
-                for (positive at = 0; at < LINK_SESSIONS && !s; at++)
-                        if (!link_self.session[at].used)
-                                s = link_self.session + at;
-                if (!s || !link_session_open(s))
-                        return;
-                memory_copy(s->peer, who, 32);
-                memory_copy(s->name, peer->name, WATERLINK_NAME_MAX);
-                s->may = peer->may;
-                s->conversation = conversation;
-        }
-
-        if (!waterlink_respond(address_of noise, ephemeral, theirs, ours,
+        if (!ours || system_random_fill(ephemeral, 32, 0) < 0 ||
+            !waterlink_respond(address_of noise, ephemeral, theirs, ours,
                                answer))
         {
                 crypto_forget(ephemeral, sizeof ephemeral);
                 crypto_forget(address_of noise, sizeof noise);
                 return;
         }
-        waterlink_split(address_of noise, false, send, receive);
         crypto_forget(ephemeral, sizeof ephemeral);
+
+        if (!s)
+        {
+                if (of_peer < LINK_SESSIONS_A_PEER)
+                        for (positive at = 0; at < LINK_SESSIONS && !s; at++)
+                                if (!link_self.session[at].used)
+                                        s = link_self.session + at;
+                if (!s || !link_session_open(s))
+                {
+                        crypto_forget(address_of noise, sizeof noise);
+                        return;
+                }
+                memory_copy(s->peer, who, 32);
+                memory_copy(s->name, peer->name, WATERLINK_NAME_MAX);
+                s->may = peer->may;
+                s->conversation = conversation;
+        }
+
+        waterlink_split(address_of noise, false, send, receive);
 
         //      A session keyed again sends under the old keys until the
         //      initiator has shown it holds the new ones.
