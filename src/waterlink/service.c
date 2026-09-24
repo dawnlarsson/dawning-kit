@@ -159,8 +159,9 @@ static fn link_key_text(p8 address_to key, p8 address_to text)
 {
         p8 last[3] = {key[30], key[31], 0};
 
-        memory_encode_power2(text, key, 10, link_alphabet, 6);
-        memory_encode_power2(text + 40, last, 1, link_alphabet, 6);
+        memory_encode_power2(text, key, 10, (string_address)link_alphabet, 6);
+        memory_encode_power2(text + 40, last, 1, (string_address)link_alphabet,
+                             6);
         text[43] = '=';
         text[44] = 0;
 }
@@ -410,14 +411,6 @@ static struct waterlink_peer address_to link_peer_keyed(link_peers address_to pe
                 if (crypto_same(peers->peer[at].key, key, 32))
                         return peers->peer + at;
         return null;
-}
-
-static bool link_wanted(void)
-{
-        p8 word[16];
-
-        host_read_text(LINK_SWITCH_PATH, word, sizeof word);
-        return string_equals((string_address)word, "on");
 }
 
 static p16 link_port(void)
@@ -926,14 +919,32 @@ static bool link_part_owned(bipolar handle, p8 address_to path)
                file_same_identity(address_of opened, address_of named);
 }
 
+/*
+        A staging file is removed, or renamed over its name, only while the
+        name is still the inode the transfer holds open. A name replaced
+        underneath it belongs to somebody else.
+*/
+static fn link_part_discard(bipolar handle, p8 address_to part)
+{
+        if (link_part_owned(handle, part))
+                system_remove_at(AT_FDCWD, part, 0);
+}
+
+static bool link_part_publish(bipolar handle, p8 address_to part,
+                              p8 address_to whole)
+{
+        if (!link_part_owned(handle, part))
+                return false;
+        if (system_rename_at(AT_FDCWD, part, AT_FDCWD, whole, 0) >= 0)
+                return true;
+        link_part_discard(handle, part);
+        return false;
+}
+
 static fn link_session_close(struct link_session address_to s)
 {
-        /* Remove only the staging inode this session still has open. A name
-           replaced underneath an interrupted transfer belongs to somebody
-           else, just as it does at publication. */
-        if (s->kind == LINK_KIND_PUSH && s->push_part[0] &&
-            link_part_owned(s->input, s->push_part))
-                system_remove_at(AT_FDCWD, s->push_part, 0);
+        if (s->kind == LINK_KIND_PUSH && s->push_part[0])
+                link_part_discard(s->input, s->push_part);
         if (s->pidfd >= 0)
         {
                 (void)system_call_4(syscall(pidfd_send_signal),
@@ -1680,29 +1691,13 @@ static fn link_server_hear(address_any context,
 
 static fn link_push_done(struct link_session address_to s, p64 now)
 {
-        //      The part file becomes the name only whole.
+        //      The part file becomes the name only whole. Either way it is
+        //      no longer this session's to remove at close.
         if (!s->failed)
         {
-                p8 whole[LINK_REQUEST_MAX + 16];
-                positive length = string_length((string_address)s->push_name);
-
-                memory_copy(whole, s->push_name, length + 1);
-                if (!link_part_owned(s->input, s->push_part))
-                {
-                        s->failed = true;
-                        /* The name no longer belongs to this transfer. */
-                        s->push_part[0] = 0;
-                }
-                else if (system_rename_at(AT_FDCWD, s->push_part, AT_FDCWD,
-                                          whole, 0) < 0)
-                {
-                        s->failed = true;
-                        if (link_part_owned(s->input, s->push_part))
-                                system_remove_at(AT_FDCWD, s->push_part, 0);
-                        s->push_part[0] = 0;
-                }
-                else
-                        s->push_part[0] = 0;
+                s->failed = !link_part_publish(s->input, s->push_part,
+                                               s->push_name);
+                s->push_part[0] = 0;
         }
         s->exited = true;
         s->exited_at = now;
@@ -2314,6 +2309,20 @@ static fn link_signals_take(bipolar handle, b32 address_to last)
         }
 }
 
+// Until something is ready or wake comes, whichever is first.
+static fn link_wait(system_poll_descriptor address_to watch, positive count,
+                    p64 wake)
+{
+        p64 now = link_now();
+        timespec limit;
+
+        if (wake < now)
+                wake = now;
+        limit.tv_sec = (wake - now) / 1000000;
+        limit.tv_nsec = (wake - now) % 1000000 * 1000;
+        (void)system_poll_wait(watch, count, address_of limit, null);
+}
+
 /*
         `moonwater link serve`: the listener in the foreground. `link on` and
         the machine process start exactly this, detached.
@@ -2355,7 +2364,6 @@ static b32 link_serve(void)
                 p64 now = link_now();
                 p64 wake = now + 1000000;
                 positive count = 0;
-                timespec limit;
 
                 if (signals >= 0)
                         link_signals_take(signals, address_of stop);
@@ -2476,12 +2484,7 @@ static b32 link_serve(void)
                         }
                 }
 
-                now = link_now();
-                if (wake < now)
-                        wake = now;
-                limit.tv_sec = (wake - now) / 1000000;
-                limit.tv_nsec = (wake - now) % 1000000 * 1000;
-                (void)system_poll_wait(watch, count, address_of limit, null);
+                link_wait(watch, count, wake);
 
                 now = link_now();
                 for (positive turn = 0; turn < 256; turn++)
@@ -2932,7 +2935,6 @@ static b32 link_client_run(string_address name, p8 kind,
                 positive watching = 0;
                 p64 now = link_now();
                 p64 wake;
-                timespec limit;
                 bool read_input;
 
                 if (signals >= 0)
@@ -3058,12 +3060,7 @@ static b32 link_client_run(string_address name, p8 kind,
                         watching++;
                 }
 
-                now = link_now();
-                if (wake < now)
-                        wake = now;
-                limit.tv_sec = (wake - now) / 1000000;
-                limit.tv_nsec = (wake - now) % 1000000 * 1000;
-                (void)system_poll_wait(watch, watching, address_of limit, null);
+                link_wait(watch, watching, wake);
                 now = link_now();
 
                 if (read_input && (watch[watching - 1].returned &
@@ -3138,27 +3135,14 @@ static b32 link_client_run(string_address name, p8 kind,
         //      A pulled file is only there under its name once it is whole.
         if (kind == LINK_KIND_PULL && link_client.output >= 0)
         {
-                file_facts opened;
-                file_facts named;
-                bool owned = file_look(link_client.output, (string_address)"",
-                                       AT_EMPTY_PATH, address_of opened) &&
-                             file_look(AT_FDCWD,
-                                       (string_address)link_client.output_part,
-                                       AT_SYMLINK_NOFOLLOW, address_of named) &&
-                             file_same_identity(address_of opened,
-                                                address_of named);
-
-                if (!answer && !link_client.output_failed &&
-                    owned &&
-                    system_call_1(syscall(fsync), (positive)link_client.output) >= 0 &&
-                    system_rename_at(AT_FDCWD, link_client.output_part,
-                                     AT_FDCWD, words[1], 0) >= 0)
-                        ;
-                else
+                if (answer || link_client.output_failed ||
+                    system_call_1(syscall(fsync), (positive)link_client.output) < 0 ||
+                    !link_part_publish(link_client.output,
+                                       link_client.output_part,
+                                       (p8 address_to)words[1]))
                 {
-                        if (owned)
-                                system_remove_at(AT_FDCWD,
-                                                 link_client.output_part, 0);
+                        link_part_discard(link_client.output,
+                                          link_client.output_part);
                         if (!answer)
                                 answer = 1;
                 }

@@ -638,7 +638,7 @@ static b32 link_join(string_address address_to words, positive count)
                         return host_fail("randomness", -EIO);
                 }
                 //      160 bits as 32 characters of base32.
-                memory_encode_power2(made, random, 4, link_base32, 5);
+                memory_encode_power2(made, random, 4, (string_address)link_base32, 5);
                 made[32] = 0;
                 crypto_forget(random, sizeof random);
                 secret = (string_address)made;
