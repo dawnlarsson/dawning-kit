@@ -786,54 +786,42 @@ static fn link_pair_datagram(p8 address_to datagram, positive length,
                     pairing->port != port)
                         return;
 
-                if (head.kind == WATERLINK_KIND_PAIR_2 && pairing->initiator)
+                //      Checked on a copy: a message that fails leaves the
+                //      pairing as it was, for the real one to arrive.
                 {
                         struct waterlink_noise candidate = pairing->noise;
                         p8 third[WATERLINK_DATAGRAM];
                         p32 theirs;
+                        bool heard = false;
 
                         memory_copy(address_of theirs, datagram + 8, 4);
-                        if (!waterlink_pair_heard_second(address_of candidate,
-                                                         datagram, key, name) ||
-                            !waterlink_pair_third(address_of candidate,
-                                                  address_of link_self.me,
-                                                  link_nearby.name, theirs,
-                                                  third))
-                        {
-                                crypto_forget(address_of candidate,
-                                              sizeof candidate);
-                                return;
-                        }
+                        if (head.kind == WATERLINK_KIND_PAIR_2 &&
+                            pairing->initiator)
+                                heard = waterlink_pair_heard_second(
+                                                address_of candidate, datagram,
+                                                key, name) &&
+                                        waterlink_pair_third(
+                                                address_of candidate,
+                                                address_of link_self.me,
+                                                link_nearby.name, theirs, third);
+                        else if (head.kind == WATERLINK_KIND_PAIR_3 &&
+                                 !pairing->initiator)
+                                heard = waterlink_pair_heard_third(
+                                        address_of candidate, datagram, key,
+                                        name);
                         crypto_forget(address_of candidate, sizeof candidate);
-                        (void)link_send_to(third, WATERLINK_DATAGRAM,
-                                           pairing->address, pairing->port);
+                        if (!heard)
+                                return;
+                        if (pairing->initiator)
+                                (void)link_send_to(third, WATERLINK_DATAGRAM,
+                                                   pairing->address,
+                                                   pairing->port);
                         (void)link_pair_keep(link_nearby.groups.record +
                                                      pairing->group,
                                              link_nearby.keys + pairing->group,
                                              key, name, pairing->address,
                                              pairing->port);
                 }
-                else if (head.kind == WATERLINK_KIND_PAIR_3 && !pairing->initiator)
-                {
-                        struct waterlink_noise candidate = pairing->noise;
-
-                        if (!waterlink_pair_heard_third(address_of candidate,
-                                                        datagram, key, name))
-                        {
-                                crypto_forget(address_of candidate,
-                                              sizeof candidate);
-                                return;
-                        }
-                        crypto_forget(address_of candidate, sizeof candidate);
-                        (void)link_pair_keep(link_nearby.groups.record +
-                                                     pairing->group,
-                                             link_nearby.keys + pairing->group,
-                                             key, name, pairing->address,
-                                             pairing->port);
-                }
-                else
-                        return;
-
                 crypto_forget(pairing, sizeof(address_to pairing));
                 return;
         }
