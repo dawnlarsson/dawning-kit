@@ -30,6 +30,21 @@
 #
 set -u
 
+#       A run started in the background of a non-interactive shell -- the
+#       usual `nohup sh test/run &` -- begins with SIGINT and SIGQUIT
+#       ignored, and POSIX has every shell below keep them so. The signal
+#       checks then read what they are there to catch: a job that Ctrl+C
+#       cannot stop. So the run starts over with both at their defaults.
+if [ -z "${TEST_SIGNALS_RESET:-}" ] && [ -r "/proc/$$/status" ] &&
+        env --default-signal=INT true 2>/dev/null; then
+        ignored=$(awk '$1 == "SigIgn:" { print $2 }' "/proc/$$/status")
+        if [ -n "$ignored" ] && [ $((0x$ignored & 6)) -ne 0 ]; then
+                TEST_SIGNALS_RESET=1
+                export TEST_SIGNALS_RESET
+                exec env --default-signal=INT,QUIT sh "$0" "$@"
+        fi
+fi
+
 # shellcheck disable=SC1007
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck disable=SC1007
