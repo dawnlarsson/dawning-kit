@@ -54516,6 +54516,11 @@ static fn room(void)
         struct bowl_distro huge = {.label = "Huge"};
         bowl_room here;
 
+        //      Made here as landing() makes it: a /tmp just emptied by a
+        //      reboot has no root to measure, and a root that cannot be
+        //      measured is let through.
+        system_make_directory_at(AT_FDCWD, BOWL_ROOT_DIRECTORY, 0755);
+
         for (positive at = 0; at < array_count(figures); at++)
                 check("Bowl reads a meminfo figure as bytes",
                       bowl_meminfo_bytes(figures[at].text, figures[at].name) ==
