@@ -53798,6 +53798,54 @@ static fn mdns_parse(void)
                       !memory_compare(found.instance[1].tag, groups[1].tag, 16) &&
                       !memory_compare(found.instance[1].who, groups[1].who, 16));
 
+        //      Letter case: the service's name and the fields' hex read the
+        //      same in capitals; a digit that is not hex, at either nibble,
+        //      costs that instance its fields and nothing else.
+        {
+                positive names = 0, fields = 0, first = 0, last = 0;
+
+                memory_copy(broken, packet, length);
+                for (positive at = 0; at + WATERLINK_SERVICE_BYTES <= length; at++)
+                        if (!memory_compare(broken + at, waterlink_service_name,
+                                            WATERLINK_SERVICE_BYTES))
+                        {
+                                names++;
+                                for (positive i = at; i < at + WATERLINK_SERVICE_BYTES; i++)
+                                        if (broken[i] >= 'a' && broken[i] <= 'z')
+                                                broken[i] -= 32;
+                        }
+                for (positive at = 0; at + 35 <= length; at++)
+                        if (broken[at] == 34 && broken[at + 2] == '=' &&
+                            (broken[at + 1] == 'n' || broken[at + 1] == 't' ||
+                             broken[at + 1] == 'w'))
+                        {
+                                if (!fields++)
+                                        first = at;
+                                last = at;
+                                for (positive i = at + 3; i < at + 35; i++)
+                                        if (broken[i] >= 'a' && broken[i] <= 'f')
+                                                broken[i] -= 32;
+                        }
+                check("the service's name and the fields' hex read the same in "
+                      "capitals",
+                      names && fields == 6 &&
+                              mdns_read_edge(broken, length, address_of found) &&
+                              found.count == 2 &&
+                              found.instance[0].has_fields &&
+                              found.instance[1].has_fields &&
+                              !memory_compare(found.instance[0].nonce,
+                                              groups[0].nonce, 16) &&
+                              !memory_compare(found.instance[1].who,
+                                              groups[1].who, 16));
+                broken[first + 3] = 'g';
+                broken[last + 34] = ':';
+                check("and a digit that is not hex drops that instance's fields",
+                      mdns_read_edge(broken, length, address_of found) &&
+                              found.count == 2 &&
+                              !found.instance[0].has_fields &&
+                              !found.instance[1].has_fields);
+        }
+
         length = waterlink_mdns_query(packet, sizeof packet);
         check("a question for the service is one",
               mdns_read_edge(packet, length, address_of found) && found.asked &&

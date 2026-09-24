@@ -210,10 +210,9 @@ static bool link_name_good(string_address name)
         for (positive at = 0; at < length; at++)
         {
                 p8 c = (p8)name[at];
-                bool letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                              (c >= '0' && c <= '9');
 
-                if (!letter && (!at || (c != '.' && c != '-' && c != '_')))
+                if (!byte_is_alnum(c) &&
+                    (!at || (c != '.' && c != '-' && c != '_')))
                         return false;
         }
         return true;
@@ -1205,9 +1204,8 @@ static fn link_term_word(p8 address_to from, positive length,
         {
                 p8 c = from[at];
 
-                good = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                       (c >= '0' && c <= '9') || c == '-' || c == '.' ||
-                       c == '+' || c == '_';
+                good = byte_is_alnum(c) || c == '-' || c == '.' || c == '+' ||
+                       c == '_';
         }
 
         if (!good)

@@ -368,21 +368,11 @@ static positive waterlink_dns_name(const p8 address_to packet, positive length,
         return ended;
 }
 
-static p8 waterlink_ascii_lower(p8 c)
-{
-        return c >= 'A' && c <= 'Z' ? (p8)(c + 32) : c;
-}
-
 // Whether a flattened name is the service's, letter case aside.
 static bool waterlink_is_service(const p8 address_to name, positive length)
 {
-        if (length != WATERLINK_SERVICE_BYTES)
-                return false;
-        for (positive at = 0; at < length; at++)
-                if (waterlink_ascii_lower(name[at]) !=
-                    waterlink_ascii_lower(waterlink_service_name[at]))
-                        return false;
-        return true;
+        return length == WATERLINK_SERVICE_BYTES &&
+               !memory_compare_ascii_case(name, waterlink_service_name, length);
 }
 
 // An instance of the service: one label and then the service's name.
@@ -404,20 +394,12 @@ static bool waterlink_unhex(const p8 address_to text, positive count,
 {
         for (positive at = 0; at < count; at++)
         {
-                p32 value = 0;
+                positive high = digit_known(text[2 * at], 16);
+                positive low = digit_known(text[2 * at + 1], 16);
 
-                for (positive half = 0; half < 2; half++)
-                {
-                        p8 c = waterlink_ascii_lower(text[2 * at + half]);
-                        p32 digit = c >= '0' && c <= '9'   ? c - '0'
-                                    : c >= 'a' && c <= 'f' ? c - 'a' + 10
-                                                           : 16;
-
-                        if (digit == 16)
-                                return false;
-                        value = value << 4 | digit;
-                }
-                out[at] = (p8)value;
+                if ((high | low) >= 16)
+                        return false;
+                out[at] = (p8)(high << 4 | low);
         }
         return true;
 }

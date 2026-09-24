@@ -144,11 +144,8 @@ fn link_machine_name(p8 address_to name)
                 for (positive at = 65; at < 130 && uts[at] && used < 20; at++)
                 {
                         p8 c = uts[at];
-                        bool plain = (c >= 'a' && c <= 'z') ||
-                                     (c >= 'A' && c <= 'Z') ||
-                                     (c >= '0' && c <= '9');
 
-                        if (plain || (used && (c == '-' || c == '_')))
+                        if (byte_is_alnum(c) || (used && (c == '-' || c == '_')))
                                 name[used++] = c;
                 }
         if (!used)
