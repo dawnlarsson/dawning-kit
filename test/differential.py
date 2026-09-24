@@ -94,6 +94,8 @@ DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "full",
 #       against the new one, not before.
 REFERENCE_VERSIONS = {
     "bash": ("bash --version", rb"version (\d+\.\d+\.\d+)", "5.3.15"),
+    # dash will not say its version; a pacman box can.
+    "dash": ("pacman -Q dash", rb"dash (\S+?)-\d+", "0.5.13.4"),
     "coreutils": ("ls --version", rb"coreutils\)? (\d+\.\d+)", "9.11"),
     "util-linux": ("hexdump --version", rb"util-linux (\d+\.\d+(?:\.\d+)?)", "2.42.2"),
     "gawk": ("gawk --version", rb"GNU Awk (\d+\.\d+\.\d+)", "5.4.1"),
@@ -105,6 +107,34 @@ REFERENCE_VERSIONS = {
     "findutils": ("find --version", rb"findutils\)? (\d+\.\d+\.\d+)", "4.11.0"),
     "procps-ng": ("ps --version", rb"procps-ng (\d+\.\d+\.\d+)", "4.0.7"),
 }
+
+
+def kill_session(leader):
+    """SIGKILL every process in the session a case was started in. A case
+    that turns job control on puts its jobs in process groups of their own,
+    so killing the leader's group leaves them behind: on 2026-09-24 twelve
+    Control-C cases whose loop never stopped were still spinning an hour
+    after the run that started them, orphaned to init, each holding a core.
+    Linux names a process's session in /proc/PID/stat; elsewhere this does
+    nothing and the group kill beside it is what there is."""
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", "rb") as handle:
+                fields = handle.read().rsplit(b")", 1)[1].split()
+        except OSError:
+            continue
+        # After the command: state, ppid, pgrp, session.
+        if len(fields) > 3 and int(fields[3]) == leader:
+            try:
+                os.kill(int(entry), signal.SIGKILL)
+            except OSError:
+                pass
 
 
 def reference_moved():
@@ -999,6 +1029,8 @@ class Runner:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+                if timed_out:
+                    kill_session(process.pid)
                 process.wait()
             out.seek(0)
             err.seek(0)
@@ -15068,14 +15100,22 @@ def shell_reference_walk(farm, cases):
         directory.mkdir()
         environment = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "HOME": str(directory),
                        "TMPDIR": str(directory), "TERM": "dumb"}
-        try:
-            ran = subprocess.run(argv + ["-c", script], cwd=directory, env=environment,
-                                 stdin=subprocess.DEVNULL, capture_output=True,
-                                 timeout=timeout, start_new_session=True)
-            out = ran.stdout if normalize is None else normalize("stdout", ran.stdout)
-            return ran.returncode, out
-        except subprocess.TimeoutExpired:
-            return "timeout", b""
+        #      subprocess.run kills only the child when the time is up, and
+        #      these scripts start interactive shells whose jobs live in
+        #      groups of their own: the whole session goes, every time.
+        with subprocess.Popen(argv + ["-c", script], cwd=directory, env=environment,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, start_new_session=True) as ran:
+            try:
+                stdout, _ = ran.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                kill_session(ran.pid)
+                ran.communicate()
+                return "timeout", b""
+            finally:
+                kill_session(ran.pid)
+        out = stdout if normalize is None else normalize("stdout", stdout)
+        return ran.returncode, out
 
     def compare(index):
         mode, label, script, timeout, normalize = cases[index]
