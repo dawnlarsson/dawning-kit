@@ -33516,6 +33516,9 @@ status, _, err = on("b", moon + " link pair 'bad name' " + keys["a"])
 say(status != 0, "a name with a space is refused")
 status, _, err = on("b", moon + " link pair x AAAA")
 say(status != 0, "a key that is not one is refused")
+status, _, err = on("b", moon + " link pair low " + "A" * 43 + "=")
+say(status != 0 and b"not a usable link key" in err,
+    "sec: a low-order public key is refused before it is stored")
 status, _, err = on("b", "%s link pair me %s" % (moon, keys["b"]))
 say(status != 0, "a machine will not pair its own key")
 

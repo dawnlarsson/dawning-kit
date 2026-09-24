@@ -959,11 +959,26 @@ static bool link_session_open(struct link_session address_to s)
         return true;
 }
 
+static bool link_part_owned(bipolar handle, p8 address_to path)
+{
+        file_facts opened;
+        file_facts named;
+
+        return handle >= 0 &&
+               file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                         address_of opened) &&
+               file_look(AT_FDCWD, (string_address)path,
+                         AT_SYMLINK_NOFOLLOW, address_of named) &&
+               file_same_identity(address_of opened, address_of named);
+}
+
 static fn link_session_close(struct link_session address_to s)
 {
-        /* An interrupted push does not publish or retain its private staging
-           inode. */
-        if (s->kind == LINK_KIND_PUSH && s->push_part[0])
+        /* Remove only the staging inode this session still has open. A name
+           replaced underneath an interrupted transfer belongs to somebody
+           else, just as it does at publication. */
+        if (s->kind == LINK_KIND_PUSH && s->push_part[0] &&
+            link_part_owned(s->input, s->push_part))
                 system_remove_at(AT_FDCWD, s->push_part, 0);
         if (s->pidfd >= 0)
         {
@@ -1734,20 +1749,11 @@ static fn link_push_done(struct link_session address_to s, p64 now)
         //      The part file becomes the name only whole.
         if (!s->failed)
         {
-                file_facts opened;
-                file_facts named;
                 p8 whole[LINK_REQUEST_MAX + 16];
                 positive length = string_length((string_address)s->push_name);
-                bool owned;
 
                 memory_copy(whole, s->push_name, length + 1);
-                owned = file_look(s->input, (string_address)"", AT_EMPTY_PATH,
-                                  address_of opened) &&
-                        file_look(AT_FDCWD, (string_address)s->push_part,
-                                  AT_SYMLINK_NOFOLLOW, address_of named) &&
-                        file_same_identity(address_of opened,
-                                           address_of named);
-                if (!owned)
+                if (!link_part_owned(s->input, s->push_part))
                 {
                         s->failed = true;
                         /* The name no longer belongs to this transfer. */
@@ -1755,7 +1761,12 @@ static fn link_push_done(struct link_session address_to s, p64 now)
                 }
                 else if (system_rename_at(AT_FDCWD, s->push_part, AT_FDCWD,
                                           whole, 0) < 0)
+                {
                         s->failed = true;
+                        if (link_part_owned(s->input, s->push_part))
+                                system_remove_at(AT_FDCWD, s->push_part, 0);
+                        s->push_part[0] = 0;
+                }
                 else
                         s->push_part[0] = 0;
         }

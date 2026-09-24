@@ -96,6 +96,8 @@ When a DH operation fails:
 
 A new `sec:` regression verifies that initiation refuses a low-order peer key while valid peer keys still complete the same handshake.
 
+Manually paired public keys are also checked before they enter the authorization database. A low-order key is refused at `moonwater link pair` rather than being stored as a peer that can never complete a safe handshake.
+
 ### Preserve the live Noise transcript when an answer is invalid
 
 Processing a responder message advances Noise handshake state. Applying an invalid response directly to the live initiator transcript could corrupt that transcript before the legitimate response arrived.
@@ -206,9 +208,9 @@ Each push session tracks its exact randomized staging pathname.
 If a push is interrupted:
 
 - the incomplete staging file is not published
-- the transfer's randomized staging name is removed during cleanup
+- the transfer's randomized staging name is removed during cleanup only when the still-open descriptor proves the pathname is the same inode
 - unrelated predictable `.link-part` files remain untouched
-- a pathname that fails ownership validation is not deleted as though it still belonged to the transfer
+- a pathname replaced during an interrupted transfer is not deleted as though it still belonged to the transfer
 
 ## Regression coverage
 
@@ -217,6 +219,7 @@ New `sec:` checks cover:
 - rotating source addresses being held to the global admission burst
 - the global admission bucket refilling normally
 - an initiator refusing a low-order peer key
+- `moonwater link pair` refusing a low-order public key before storing it
 - valid initiation and response construction still succeeding
 - a planted predictable `.link-part` file not being truncated
 - a planted predictable `.link-part` file not denying a push
@@ -267,10 +270,10 @@ The native x86_64 transport benchmark completed at:
 
 | Traffic shape | Total cost |
 | --- | ---: |
-| Bulk | 815 ticks/frame |
-| Keystroke | 778 ticks/frame |
+| Bulk | 813 ticks/frame |
+| Keystroke | 767 ticks/frame |
 
-The preceding run measured 810 and 771 ticks/frame respectively, placing the new results within normal run-to-run variation.
+Earlier runs measured 810–815 and 771–778 ticks/frame respectively, placing the latest results within normal run-to-run variation.
 
 ## Testing
 
@@ -293,8 +296,8 @@ The following checks were run:
   - the lane was incomplete only because ARM64 and RISC-V cross-compilers were unavailable
 - `sh test/run bench link`
   - native x86_64 completed
-  - bulk: 815 ticks/frame
-  - keystroke: 778 ticks/frame
+  - bulk: 813 ticks/frame
+  - keystroke: 767 ticks/frame
   - cross-architecture benchmark variants were unavailable because the cross-compilers are not installed
 
 The network-namespace Waterlink integration lane could not be executed in this environment because it lacks `ip` and the required unprivileged namespace, veth, and netem facilities.

@@ -419,6 +419,18 @@ static b32 link_pair_locked(string_address name, string_address text,
                                    "base64, as moonwater link key prints\n",
                                    text);
 
+        {
+                p8 scalar[32] = {1};
+                p8 shared[32];
+                bool valid = crypto_x25519(shared, scalar, peer.key);
+
+                crypto_forget(scalar, sizeof scalar);
+                crypto_forget(shared, sizeof shared);
+                if (!valid)
+                        return host_refuse("%s is not a usable link key\n",
+                                           text);
+        }
+
         if (link_identity(address_of me, false) >= 0 &&
             crypto_same(me.public, peer.key, 32))
                 return host_refuse("that is this machine's own key%s\n", "");
