@@ -84,16 +84,10 @@ fn link_groups_load(link_groups address_to groups)
 
 static bipolar link_groups_save(link_groups address_to groups)
 {
-        bipolar failed = host_write_file(LINK_GROUPS_NEXT,
-                                         (p8 address_to)groups->record,
-                                         groups->count *
-                                                 sizeof(struct link_group_record),
-                                         0600, true);
-
-        if (failed < 0)
-                return failed;
-        return system_rename_at(AT_FDCWD, LINK_GROUPS_NEXT, AT_FDCWD,
-                                LINK_GROUPS_PATH, 0);
+        return link_file_replace(LINK_GROUPS_NEXT, LINK_GROUPS_PATH,
+                                 groups->record,
+                                 groups->count * sizeof(struct link_group_record),
+                                 true);
 }
 
 fn link_group_check(string_address namespace, p8 address_to secret,
@@ -118,13 +112,8 @@ fn link_group_check(string_address namespace, p8 address_to secret,
 static bipolar link_peers_lock(void)
 {
         link_record_lock lock = {LINK_F_WRLCK, 0, 0, 0, 0, 0, 0};
-        bipolar handle;
+        bipolar handle = link_lock_file(LINK_PEERS_LOCK);
 
-        host_state_ready();
-        handle = system_open_at_mode(AT_FDCWD, LINK_PEERS_LOCK,
-                                     FILE_READ_WRITE | FILE_CREATE | O_NOFOLLOW |
-                                             O_CLOEXEC,
-                                     0600);
         if (handle < 0)
                 return handle;
         //      F_SETLKW: wait for the other writer.

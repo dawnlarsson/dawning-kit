@@ -453,93 +453,76 @@ bool waterlink_stamp_newer(p8 address_to stamp, p8 address_to last)
 #define WATERLINK_ADMIT_GLOBAL_BURST 64
 #define WATERLINK_ADMIT_GLOBAL_RATE 64
 
+// Tokens that refill at rate a second up to burst; a new bucket is full.
+struct waterlink_bucket {
+        p64 at; // microseconds, when last refilled; 0 for never used
+        p32 tokens;
+};
+
 struct waterlink_admission {
         p8 address[WATERLINK_ADMIT_SOURCES][16];
-        p64 at[WATERLINK_ADMIT_SOURCES]; // microseconds, when last refilled
-        p32 tokens[WATERLINK_ADMIT_SOURCES];
-        p64 global_at;
-        p32 global_tokens;
+        struct waterlink_bucket source[WATERLINK_ADMIT_SOURCES];
+        struct waterlink_bucket all;
         p64 refused;
 };
 
-static bool waterlink_admit_global(struct waterlink_admission address_to table,
-                                   p64 now)
+static bool waterlink_bucket_take(struct waterlink_bucket address_to bucket,
+                                  p32 burst, p32 rate, p64 now)
 {
-        if (!table->global_at)
+        if (!bucket->at)
         {
-                table->global_at = now ? now : 1;
-                table->global_tokens = WATERLINK_ADMIT_GLOBAL_BURST - 1;
-                return true;
+                bucket->at = now ? now : 1;
+                bucket->tokens = burst;
         }
-
+        else
         {
-                p64 earned = (now - table->global_at) *
-                             WATERLINK_ADMIT_GLOBAL_RATE / 1000000;
+                p64 earned = (now - bucket->at) * rate / 1000000;
 
                 if (earned)
                 {
-                        table->global_tokens +=
-                                earned > WATERLINK_ADMIT_GLOBAL_BURST
-                                        ? WATERLINK_ADMIT_GLOBAL_BURST
-                                        : (p32)earned;
-                        if (table->global_tokens > WATERLINK_ADMIT_GLOBAL_BURST)
-                                table->global_tokens =
-                                        WATERLINK_ADMIT_GLOBAL_BURST;
-                        table->global_at = now;
+                        bucket->tokens = earned >= burst - bucket->tokens
+                                                 ? burst
+                                                 : bucket->tokens + (p32)earned;
+                        bucket->at = now;
                 }
         }
-
-        if (!table->global_tokens)
-        {
-                table->refused++;
+        if (!bucket->tokens)
                 return false;
-        }
-        table->global_tokens--;
+        bucket->tokens--;
         return true;
 }
 
 bool waterlink_admit(struct waterlink_admission address_to table,
                      p8 address_to address, p64 now)
 {
+        positive at = 0;
         positive stalest = 0;
 
-        for (positive at = 0; at < WATERLINK_ADMIT_SOURCES; at++)
+        for (; at < WATERLINK_ADMIT_SOURCES; at++)
         {
-                if (table->at[at] &&
+                if (table->source[at].at &&
                     !memory_compare(table->address[at], address, 16))
-                {
-                        p64 earned = (now - table->at[at]) *
-                                     WATERLINK_ADMIT_RATE / 1000000;
-
-                        if (earned)
-                        {
-                                table->tokens[at] +=
-                                        earned > WATERLINK_ADMIT_BURST
-                                                ? WATERLINK_ADMIT_BURST
-                                                : (p32)earned;
-                                if (table->tokens[at] > WATERLINK_ADMIT_BURST)
-                                        table->tokens[at] =
-                                                WATERLINK_ADMIT_BURST;
-                                table->at[at] = now;
-                        }
-
-                        if (!table->tokens[at])
-                        {
-                                table->refused++;
-                                return false;
-                        }
-                        table->tokens[at]--;
-                        return waterlink_admit_global(table, now);
-                }
-
-                if (table->at[at] < table->at[stalest])
+                        break;
+                if (table->source[at].at < table->source[stalest].at)
                         stalest = at;
         }
+        if (at == WATERLINK_ADMIT_SOURCES)
+        {
+                at = stalest;
+                memory_copy(table->address[at], address, 16);
+                table->source[at].at = 0;
+        }
 
-        memory_copy(table->address[stalest], address, 16);
-        table->at[stalest] = now ? now : 1;
-        table->tokens[stalest] = WATERLINK_ADMIT_BURST - 1;
-        return waterlink_admit_global(table, now);
+        if (!waterlink_bucket_take(table->source + at, WATERLINK_ADMIT_BURST,
+                                   WATERLINK_ADMIT_RATE, now) ||
+            !waterlink_bucket_take(address_of table->all,
+                                   WATERLINK_ADMIT_GLOBAL_BURST,
+                                   WATERLINK_ADMIT_GLOBAL_RATE, now))
+        {
+                table->refused++;
+                return false;
+        }
+        return true;
 }
 
 /*

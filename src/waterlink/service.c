@@ -99,18 +99,35 @@
 #define LINK_EXIT_BUSY 3
 #define LINK_FAILED 255
 
+/*      A grant by name, and what a request needs of one: ask is the
+        request byte that needs this grant, 0 for a grant no request asks
+        for yet. */
 typedef struct
 {
         string_address name;
         p32 bit;
+        p8 ask;
+        p8 ask_too;
 } link_grant;
 
 static const link_grant link_grants[] = {
-    {"verbs", WATERLINK_MAY_VERBS},     {"run", WATERLINK_MAY_RUN},
-    {"shell", WATERLINK_MAY_SHELL},     {"screen", WATERLINK_MAY_SCREEN},
-    {"files", WATERLINK_MAY_FILES},     {"log", WATERLINK_MAY_LOG},
-    {"channels", WATERLINK_MAY_CHANNELS},
+    {"verbs", WATERLINK_MAY_VERBS, 0, 0},
+    {"run", WATERLINK_MAY_RUN, 'R', 0},
+    {"shell", WATERLINK_MAY_SHELL, 'S', 0},
+    {"screen", WATERLINK_MAY_SCREEN, 0, 0},
+    {"files", WATERLINK_MAY_FILES, 'P', 'G'},
+    {"log", WATERLINK_MAY_LOG, 'L', 0},
+    {"channels", WATERLINK_MAY_CHANNELS, 0, 0},
 };
+
+// The grant a word names, or 0.
+static p32 link_grant_bit(string_address word)
+{
+        for (positive at = 0; at < array_count(link_grants); at++)
+                if (string_equals(word, link_grants[at].name))
+                        return link_grants[at].bit;
+        return 0;
+}
 
 static p64 link_now(void)
 {
@@ -120,38 +137,12 @@ static p64 link_now(void)
 // All digits and nothing else, below a million; -1 otherwise.
 static bipolar link_decimal(string_address text)
 {
-        bipolar value = 0;
+        positive value;
 
-        if (!text || !text[0])
-                return -1;
-        for (positive at = 0; text[at]; at++)
-        {
-                if (text[at] < '0' || text[at] > '9' || at > 6)
-                        return -1;
-                value = value * 10 + (text[at] - '0');
-        }
-        return value;
-}
-
-static fn link_append(p8 address_to text, positive address_to used,
-                      positive room, string_address piece)
-{
-        positive length = string_length(piece);
-
-        if (address_to used + length + 1 > room)
-                return;
-        memory_copy(text + address_to used, piece, length);
-        address_to used += length;
-        text[address_to used] = 0;
-}
-
-static fn link_append_number(p8 address_to text, positive address_to used,
-                             positive room, p64 value)
-{
-        p8 digits[24];
-
-        digits[positive_into(digits, (positive)value)] = 0;
-        link_append(text, used, room, (string_address)digits);
+        return string_digits_checked_exact(text, 10, address_of value) &&
+                               value < 1000000
+                       ? (bipolar)value
+                       : -1;
 }
 
 // Store --------------------------------------------------------------
@@ -244,36 +235,10 @@ static bool link_name_good(string_address name)
         return true;
 }
 
-static bipolar link_read_exact(string_address path, p8 address_to into,
-                               positive room, positive address_to got)
-{
-        bipolar handle = system_open_at(AT_FDCWD, path,
-                                        FILE_READ | O_NOFOLLOW | O_CLOEXEC);
-        positive have = 0;
-
-        if (handle < 0)
-                return handle;
-
-        while (have < room)
-        {
-                bipolar read = system_read_once(handle, into + have,
-                                                room - have);
-
-                if (read == -4)
-                        continue;
-                if (read <= 0)
-                        break;
-                have += (positive)read;
-        }
-
-        system_close(handle);
-        address_to got = have;
-        return 0;
-}
-
-/* Authorization databases are not ordinary state text. Refuse a partial,
-   oversized, linked, non-root-owned or publicly writable set rather than
-   interpreting the valid-looking prefix of a replaced file. */
+/* Everything waterlink keeps is records only root may read: the key, the
+   peers, the groups and the listener's state. Refuse a partial, oversized,
+   linked, non-root-owned or publicly accessible file rather than
+   interpreting the valid-looking prefix of a replaced one. */
 static bipolar link_read_private_records(string_address path,
                                          p8 address_to into, positive room,
                                          positive record,
@@ -314,6 +279,18 @@ static bipolar link_read_private_records(string_address path,
         return 0;
 }
 
+// Written beside its name and renamed over it: whole or not at all.
+static bipolar link_file_replace(string_address next, string_address path,
+                                 address_any bytes, positive length, bool sync)
+{
+        bipolar failed = host_write_file(next, (p8 address_to)bytes, length,
+                                         0600, sync);
+
+        if (failed < 0)
+                return failed;
+        return system_rename_at(AT_FDCWD, next, AT_FDCWD, path, 0);
+}
+
 /*
         The machine's own key, made on first use.
 
@@ -324,11 +301,11 @@ static bipolar link_read_private_records(string_address path,
 */
 static bipolar link_secret(p8 address_to secret, bool make)
 {
-        file_facts facts;
-        bipolar handle = system_open_at(AT_FDCWD, LINK_KEY_PATH,
-                                        FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        positive got = 0;
+        bipolar read = link_read_private_records(LINK_KEY_PATH, secret, 32, 32,
+                                                 address_of got);
 
-        if (handle == -ENOENT && make)
+        if (read == -ENOENT && make)
         {
                 p8 fresh[32];
                 p8 name[64] = "/root/.link.key.";
@@ -349,29 +326,24 @@ static bipolar link_secret(p8 address_to secret, bool make)
                         name[used++] = (p8)link_alphabet[tail[at] & 15];
                 }
                 name[used] = 0;
+                crypto_forget(tail, sizeof tail);
 
                 made = system_open_at_mode(AT_FDCWD, name,
                                            FILE_WRITE | FILE_EXCLUSIVE |
                                                    O_NOFOLLOW | O_CLOEXEC,
                                            0600);
-                if (made < 0)
-                {
-                        crypto_forget(fresh, sizeof fresh);
-                        crypto_forget(tail, sizeof tail);
-                        return made;
-                }
-                if (system_write_all((positive)made, fresh, 32) != 32 ||
-                    system_call_1(syscall(fsync), (positive)made) < 0)
+                if (made >= 0 &&
+                    (system_write_all((positive)made, fresh, 32) != 32 ||
+                     system_call_1(syscall(fsync), (positive)made) < 0))
                 {
                         system_close(made);
                         system_remove_at(AT_FDCWD, name, 0);
-                        crypto_forget(fresh, sizeof fresh);
-                        crypto_forget(tail, sizeof tail);
-                        return -EIO;
+                        made = -EIO;
                 }
-                system_close(made);
                 crypto_forget(fresh, sizeof fresh);
-                crypto_forget(tail, sizeof tail);
+                if (made < 0)
+                        return made;
+                system_close(made);
 
                 //      linkat does not replace: whoever got there first wins,
                 //      and both read what won.
@@ -383,39 +355,14 @@ static bipolar link_secret(p8 address_to secret, bool make)
                 if (made < 0 && made != -ERROR_EXISTS)
                         return made;
 
-                handle = system_open_at(AT_FDCWD, LINK_KEY_PATH,
-                                        FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+                read = link_read_private_records(LINK_KEY_PATH, secret, 32, 32,
+                                                 address_of got);
         }
 
-        if (handle < 0)
-                return handle;
-
-        if (!file_look(handle, (string_address) "", AT_EMPTY_PATH,
-                       address_of facts) ||
-            (facts.mode & MODE_FORMAT) != MODE_FILE || facts.size != 32 ||
-            (facts.mode & 077) || facts.owner != 0)
-        {
-                system_close(handle);
-                return -EPERM;
-        }
-
-        {
-                positive have = 0;
-
-                while (have < 32)
-                {
-                        bipolar read = system_read_once(handle, secret + have,
-                                                        32 - have);
-
-                        if (read == -4)
-                                continue;
-                        if (read <= 0)
-                                break;
-                        have += (positive)read;
-                }
-                system_close(handle);
-                return have == 32 ? 0 : -EIO;
-        }
+        if (read < 0)
+                return read;
+        //      An empty file is no key: a key is exactly 32 bytes.
+        return got == 32 ? 0 : -EPERM;
 }
 
 static bipolar link_identity(struct waterlink_identity address_to me, bool make)
@@ -465,16 +412,9 @@ static fn link_peers_load(link_peers address_to peers)
 
 static bipolar link_peers_save(link_peers address_to peers)
 {
-        bipolar failed = host_write_file(LINK_PEERS_NEXT,
-                                         (p8 address_to)peers->peer,
-                                         peers->count *
-                                                 sizeof(struct waterlink_peer),
-                                         0600, true);
-
-        if (failed < 0)
-                return failed;
-        return system_rename_at(AT_FDCWD, LINK_PEERS_NEXT, AT_FDCWD,
-                                LINK_PEERS_PATH, 0);
+        return link_file_replace(LINK_PEERS_NEXT, LINK_PEERS_PATH, peers->peer,
+                                 peers->count * sizeof(struct waterlink_peer),
+                                 true);
 }
 
 static struct waterlink_peer address_to link_peer_named(link_peers address_to peers,
@@ -774,10 +714,11 @@ typedef struct
 #define LINK_F_WRLCK 1
 #define LINK_F_UNLCK 2
 
-static bipolar link_lock_open(void)
+// A lock file in /run/moonwater, root's own.
+static bipolar link_lock_file(string_address path)
 {
         host_state_ready();
-        return system_open_at_mode(AT_FDCWD, LINK_LOCK_PATH,
+        return system_open_at_mode(AT_FDCWD, path,
                                    FILE_READ_WRITE | FILE_CREATE | O_NOFOLLOW |
                                            O_CLOEXEC,
                                    0600);
@@ -786,7 +727,7 @@ static bipolar link_lock_open(void)
 static bipolar link_lock_owner(void)
 {
         link_record_lock lock = {LINK_F_WRLCK, 0, 0, 0, 0, 0, 0};
-        bipolar handle = link_lock_open();
+        bipolar handle = link_lock_file(LINK_LOCK_PATH);
         bipolar asked;
 
         if (handle < 0)
@@ -802,7 +743,7 @@ static bipolar link_lock_owner(void)
 static bipolar link_lock_take(void)
 {
         link_record_lock lock = {LINK_F_WRLCK, 0, 0, 0, 0, 0, 0};
-        bipolar handle = link_lock_open();
+        bipolar handle = link_lock_file(LINK_LOCK_PATH);
 
         if (handle < 0)
                 return handle;
@@ -891,6 +832,41 @@ struct link_session {
         p64 credited;
 };
 
+/*
+        What the listener knows that the files do not: which peers it has
+        heard, from where and when, and what is open. It lives in the
+        listener as this record and is written as it is, so `moonwater link`
+        reads the same bytes back rather than parsing text.
+*/
+typedef struct
+{
+        p8 key[32];
+        p8 address[16];
+        p16 port;
+        p64 seen; // seconds, this machine's clock
+} link_seen_entry;
+
+typedef struct
+{
+        p8 name[WATERLINK_NAME_MAX];
+        p8 kind;
+        p8 address[16];
+        p16 port;
+        p64 seconds; // open for
+        p64 rtt;     // microseconds, smoothed
+} link_open_entry;
+
+typedef struct
+{
+        link_seen_entry seen[LINK_PEERS_MAX];
+        link_open_entry open[LINK_SESSIONS];
+        p32 seen_count;
+        p32 open_count;
+} link_state;
+
+static const string_address link_kind_names[] = {"open", "shell", "run",
+                                                  "push", "pull", "log"};
+
 typedef struct
 {
         bipolar socket;
@@ -903,6 +879,7 @@ typedef struct
         p8 stamp_key[LINK_PEERS_MAX][32];
         p8 stamp[LINK_PEERS_MAX][WATERLINK_STAMP_BYTES];
         positive stamps;
+        link_state state;
         p64 state_written;
         bool state_dirty;
         //      A run of full datagrams for one place, sent as segments.
@@ -1583,40 +1560,22 @@ static fn link_request(struct link_session address_to s, p8 address_to payload,
                 may = peer->may;
         s->may = may;
 
-        if (payload[0] == LINK_ASK_SHELL && !(may & WATERLINK_MAY_SHELL))
-        {
-                string_copy((string_address)why, "shell is not granted to ");
-                string_copy((string_address)why + string_length((string_address)why),
-                            (string_address)s->name);
-                link_refuse(s, (string_address)why);
-                return;
-        }
-        if (payload[0] == LINK_ASK_RUN && !(may & WATERLINK_MAY_RUN))
-        {
-                string_copy((string_address)why, "run is not granted to ");
-                string_copy((string_address)why + string_length((string_address)why),
-                            (string_address)s->name);
-                link_refuse(s, (string_address)why);
-                return;
-        }
-
-        if ((payload[0] == LINK_ASK_PUSH || payload[0] == LINK_ASK_PULL) &&
-            !(may & WATERLINK_MAY_FILES))
-        {
-                string_copy((string_address)why, "files is not granted to ");
-                string_copy((string_address)why + string_length((string_address)why),
-                            (string_address)s->name);
-                link_refuse(s, (string_address)why);
-                return;
-        }
-        if (payload[0] == LINK_ASK_LOG && !(may & WATERLINK_MAY_LOG))
-        {
-                string_copy((string_address)why, "log is not granted to ");
-                string_copy((string_address)why + string_length((string_address)why),
-                            (string_address)s->name);
-                link_refuse(s, (string_address)why);
-                return;
-        }
+        for (positive at = 0; at < array_count(link_grants); at++)
+                if (link_grants[at].ask &&
+                    (payload[0] == link_grants[at].ask ||
+                     payload[0] == link_grants[at].ask_too) &&
+                    !(may & link_grants[at].bit))
+                {
+                        string_copy_bounded((string_address)why,
+                                            link_grants[at].name, sizeof why);
+                        string_append_bounded((string_address)why,
+                                              " is not granted to ", sizeof why);
+                        string_append_bounded((string_address)why,
+                                              (string_address)s->name,
+                                              sizeof why);
+                        link_refuse(s, (string_address)why);
+                        return;
+                }
 
         if (payload[0] == LINK_ASK_SHELL)
                 started = link_start_shell(s, payload + 1, length - 1);
@@ -2240,106 +2199,54 @@ static bipolar link_receive(p8 address_to datagram, p8 address_to address,
 
 // The state file, for `moonwater link` -----------------------------------------
 
-typedef struct
-{
-        p8 key[32];
-        p8 address[16];
-        p16 port;
-        p64 seen;
-} link_seen_entry;
-
-static link_seen_entry link_seen[LINK_PEERS_MAX];
-static positive link_seen_count;
-
 static fn link_note_seen(struct link_session address_to s, p64 wall)
 {
+        link_state address_to state = address_of link_self.state;
         positive at;
 
-        for (at = 0; at < link_seen_count; at++)
-                if (crypto_same(link_seen[at].key, s->peer, 32))
+        for (at = 0; at < state->seen_count; at++)
+                if (crypto_same(state->seen[at].key, s->peer, 32))
                         break;
-        if (at == link_seen_count)
+        if (at == state->seen_count)
         {
-                if (link_seen_count == LINK_PEERS_MAX)
+                if (state->seen_count == LINK_PEERS_MAX)
                         return;
-                link_seen_count++;
+                state->seen_count++;
         }
-        memory_copy(link_seen[at].key, s->peer, 32);
-        memory_copy(link_seen[at].address, s->address, 16);
-        link_seen[at].port = s->port;
-        link_seen[at].seen = wall;
+        memory_copy(state->seen[at].key, s->peer, 32);
+        memory_copy(state->seen[at].address, s->address, 16);
+        state->seen[at].port = s->port;
+        state->seen[at].seen = wall;
 }
 
-/*
-        What the listener knows that the files do not: which peers it has
-        heard, from where, and what is open. Written whole and renamed into
-        place, never more than once a second.
-*/
+//      Never more than once a fifth of a second, and only when it changed.
 static fn link_state_write(p64 now)
 {
-        p8 text[8192];
-        positive used = 0;
-        p64 wall = system_clock_ns(0) / 1000000000ull;
+        link_state address_to state = address_of link_self.state;
 
         if (!link_self.state_dirty || now - link_self.state_written < 200000)
                 return;
         link_self.state_dirty = false;
         link_self.state_written = now;
 
-        (void)wall;
-        text[0] = 0;
-        for (positive at = 0; at < link_seen_count; at++)
-        {
-                p8 place[64];
-                p8 key[48];
-
-                link_key_text(link_seen[at].key, key);
-                link_place_text(link_seen[at].address, link_seen[at].port,
-                                place);
-                link_append(text, address_of used, sizeof text, "seen ");
-                link_append(text, address_of used, sizeof text,
-                            (string_address)key);
-                link_append(text, address_of used, sizeof text, " ");
-                link_append_number(text, address_of used, sizeof text,
-                                   link_seen[at].seen);
-                link_append(text, address_of used, sizeof text, " ");
-                link_append(text, address_of used, sizeof text,
-                            (string_address)place);
-                link_append(text, address_of used, sizeof text, "\n");
-        }
-
+        state->open_count = 0;
         for (positive at = 0; at < LINK_SESSIONS; at++)
         {
                 struct link_session address_to s = link_self.session + at;
-                p8 place[64];
+                link_open_entry address_to open = state->open + state->open_count;
 
                 if (!s->used || !s->now.live)
                         continue;
-                link_place_text(s->address, s->port, place);
-                link_append(text, address_of used, sizeof text, "session ");
-                link_append(text, address_of used, sizeof text,
-                            (string_address)s->name);
-                link_append(text, address_of used, sizeof text,
-                            s->kind == LINK_KIND_SHELL  ? " shell "
-                            : s->kind == LINK_KIND_RUN  ? " run "
-                            : s->kind == LINK_KIND_PUSH ? " push "
-                            : s->kind == LINK_KIND_PULL ? " pull "
-                            : s->kind == LINK_KIND_LOG  ? " log "
-                                                        : " open ");
-                link_append_number(text, address_of used, sizeof text,
-                                   (now - s->opened) / 1000000);
-                link_append(text, address_of used, sizeof text, " ");
-                link_append_number(text, address_of used, sizeof text,
-                                   s->link->smoothed);
-                link_append(text, address_of used, sizeof text, " ");
-                link_append(text, address_of used, sizeof text,
-                            (string_address)place);
-                link_append(text, address_of used, sizeof text, "\n");
+                memory_copy(open->name, s->name, WATERLINK_NAME_MAX);
+                open->kind = s->kind;
+                memory_copy(open->address, s->address, 16);
+                open->port = s->port;
+                open->seconds = (now - s->opened) / 1000000;
+                open->rtt = s->link->smoothed;
+                state->open_count++;
         }
-
-        if (host_write_file(LINK_STATE_NEXT, text, used, 0600, false) >= 0)
-                system_rename_at(AT_FDCWD, LINK_STATE_NEXT, AT_FDCWD,
-                                 LINK_STATE_PATH, 0);
+        (void)link_file_replace(LINK_STATE_NEXT, LINK_STATE_PATH, state,
+                                sizeof(address_to state), false);
 }
 
 #include "nearby.c"

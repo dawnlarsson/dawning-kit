@@ -75,43 +75,31 @@ static b32 link_usage(void)
 
 static fn link_grants_text(p32 may, p8 address_to text, positive room)
 {
-        positive used = 0;
-
         text[0] = 0;
         for (positive at = 0; at < array_count(link_grants); at++)
                 if (may & link_grants[at].bit)
                 {
-                        if (used)
-                                link_append(text, address_of used, room, " ");
-                        link_append(text, address_of used, room,
-                                    link_grants[at].name);
+                        if (text[0])
+                                string_append_bounded(text, " ", room);
+                        string_append_bounded(text, link_grants[at].name, room);
                 }
-        if (!used)
-                link_append(text, address_of used, room, "nothing");
+        if (!text[0])
+                string_copy_bounded(text, "nothing", room);
 }
 
+// 32 bytes: "119s ago", "119m ago", or hours.
 static fn link_ago(p64 then, p8 address_to text)
 {
         p64 wall = system_clock_ns(0) / 1000000000ull;
         p64 gone = wall > then ? wall - then : 0;
-        positive used = 0;
 
-        text[0] = 0;
-        if (gone < 120)
-        {
-                link_append_number(text, address_of used, 32, gone);
-                link_append(text, address_of used, 32, "s ago");
-        }
-        else if (gone < 7200)
-        {
-                link_append_number(text, address_of used, 32, gone / 60);
-                link_append(text, address_of used, 32, "m ago");
-        }
-        else
-        {
-                link_append_number(text, address_of used, 32, gone / 3600);
-                link_append(text, address_of used, 32, "h ago");
-        }
+        text[positive_into(text, (positive)(gone < 120    ? gone
+                                            : gone < 7200 ? gone / 60
+                                                          : gone / 3600))] = 0;
+        string_append_bounded(text, gone < 120    ? "s ago"
+                                    : gone < 7200 ? "m ago"
+                                                  : "h ago",
+                              32);
 }
 
 /*
@@ -156,14 +144,17 @@ static b32 link_status(void)
         link_peers peers;
         link_groups groups;
         p32 marks[LINK_GROUPS_MAX] = {0};
-        p8 state[8192];
+        link_state state;
         positive state_length = 0;
         bipolar owner = link_lock_owner();
         p8 key[48];
 
-        link_read_exact(LINK_STATE_PATH, state, sizeof state - 1,
-                        address_of state_length);
-        state[state_length] = 0;
+        //      A listener that is off, or older than this, left no state.
+        if (link_read_private_records(LINK_STATE_PATH, (p8 address_to)address_of state,
+                                      sizeof state, sizeof state,
+                                      address_of state_length) < 0 ||
+            state_length != sizeof state)
+                memory_zero(address_of state, sizeof state);
 
         {
                 p8 word[16];
@@ -197,11 +188,11 @@ static b32 link_status(void)
         link_groups_load(address_of groups);
         {
                 p8 script[16384];
-                positive script_length = 0;
+                bipolar script_length = file_slurp_once_at(
+                        AT_FDCWD, "/root/main.moonwater.sh", script,
+                        sizeof script - 1);
 
-                link_read_exact("/root/main.moonwater.sh", script,
-                                sizeof script - 1, address_of script_length);
-                script[script_length] = 0;
+                script[script_length > 0 ? script_length : 0] = 0;
 
                 for (positive g = 0; g < groups.count; g++)
                 {
@@ -244,7 +235,7 @@ static b32 link_status(void)
                 p8 grants[96];
                 p8 place[64];
                 p8 short_key[12];
-                string_address seen = null;
+                link_seen_entry address_to seen = null;
 
                 link_key_text(peer->key, key);
                 memory_copy(short_key, key, 8);
@@ -276,39 +267,18 @@ static b32 link_status(void)
 
                 //      The listener's word on where it was last heard, over
                 //      the address it was paired with.
-                for (string_address line = (string_address)state; line && *line;)
-                {
-                        string_address next = string_first_of(line, '\n');
-
-                        if (host_starts(line, "seen ") &&
-                            !memory_compare(line + 5, key, 44))
-                                seen = line + 50;
-                        line = next ? next + 1 : null;
-                }
+                for (positive s_at = 0; s_at < state.seen_count &&
+                                        s_at < LINK_PEERS_MAX;
+                     s_at++)
+                        if (crypto_same(state.seen[s_at].key, peer->key, 32))
+                                seen = state.seen + s_at;
 
                 if (seen)
                 {
                         p8 when[32];
-                        bipolar seconds = 0;
-                        string_address at_place;
 
-                        while (*seen >= '0' && *seen <= '9')
-                                seconds = seconds * 10 + (*seen++ - '0');
-                        at_place = seen + 1;
-                        link_ago((p64)seconds, when);
-                        {
-                                string_address end_line =
-                                        string_first_of(at_place, '\n');
-                                positive length = end_line
-                                                          ? (positive)(end_line -
-                                                                       at_place)
-                                                          : string_length(at_place);
-
-                                if (length >= sizeof place)
-                                        length = sizeof place - 1;
-                                memory_copy(place, at_place, length);
-                                place[length] = 0;
-                        }
+                        link_ago(seen->seen, when);
+                        link_place_text(seen->address, seen->port, place);
                         string_format(log, "      heard %s from %s\n",
                                       (string_address)when,
                                       (string_address)place);
@@ -324,55 +294,27 @@ static b32 link_status(void)
                                            "this machine, not the other way\n");
         }
 
+        for (positive at = 0, shown = 0;
+             at < state.open_count && at < LINK_SESSIONS; at++)
         {
-                bool any = false;
+                link_open_entry address_to open = state.open + at;
+                p8 place[64];
 
-                for (string_address line = (string_address)state; line && *line;)
-                {
-                        string_address next = string_first_of(line, '\n');
-
-                        if (host_starts(line, "session "))
-                        {
-                                //      name kind seconds rtt place
-                                string_address field[5] = {null};
-                                positive fields = 0;
-                                string_address at = line + 8;
-
-                                if (next)
-                                        *(p8 address_to)next = 0;
-                                while (fields < 5 && at && *at)
-                                {
-                                        string_address space =
-                                                string_first_of(at, ' ');
-
-                                        field[fields++] = at;
-                                        if (space && fields < 5)
-                                                *(p8 address_to)space = 0;
-                                        at = space && fields < 5 ? space + 1
-                                                                 : null;
-                                }
-                                if (fields == 5)
-                                {
-                                        bipolar rtt = link_decimal(field[3]);
-
-                                        if (rtt < 0)
-                                                rtt = 0;
-
-                                        if (!any)
-                                                string_format(log, "  open\n");
-                                        any = true;
-                                        string_format(log,
-                                                      "    %s  %s  %ss  rtt "
-                                                      "%p.%p ms  from %s\n",
-                                                      field[0], field[1],
-                                                      field[2],
-                                                      (positive)(rtt / 1000),
-                                                      (positive)(rtt % 1000 / 100),
-                                                      field[4]);
-                                }
-                        }
-                        line = next ? next + 1 : null;
-                }
+                open->name[WATERLINK_NAME_MAX - 1] = 0;
+                if (!link_name_good((string_address)open->name))
+                        continue;
+                link_place_text(open->address, open->port, place);
+                if (!shown++)
+                        string_format(log, "  open\n");
+                string_format(log, "    %s  %s  %ps  rtt %p.%p ms  from %s\n",
+                              (string_address)open->name,
+                              link_kind_names[open->kind < array_count(link_kind_names)
+                                                      ? open->kind
+                                                      : 0],
+                              (positive)open->seconds,
+                              (positive)(open->rtt / 1000),
+                              (positive)(open->rtt % 1000 / 100),
+                              (string_address)place);
         }
 
         string_format(log, "\n");
@@ -507,11 +449,8 @@ static b32 link_grant_locked(string_address name, bool allow,
 
         for (positive at = 0; at < count; at++)
         {
-                p32 bit = 0;
+                p32 bit = link_grant_bit(words[at]);
 
-                for (positive look = 0; look < array_count(link_grants); look++)
-                        if (string_equals(words[at], link_grants[look].name))
-                                bit = link_grants[look].bit;
                 if (!bit)
                         return host_refuse("%s is not a grant: run shell files "
                                            "log screen channels verbs\n",
@@ -532,69 +471,42 @@ static b32 link_grant_locked(string_address name, bool allow,
         return 0;
 }
 
-//      The peers file has a second writer, the listener pairing members:
-//      each change the command makes happens under the same lock.
-static b32 link_pair(string_address name, string_address text,
-                     string_address place)
-{
-        bipolar lock = link_peers_lock();
-        b32 answer = link_pair_locked(name, text, place);
-
-        link_peers_unlock(lock);
-        return answer;
-}
-
-static b32 link_forget(string_address name)
-{
-        bipolar lock = link_peers_lock();
-        b32 answer = link_forget_locked(name);
-
-        link_peers_unlock(lock);
-        return answer;
-}
-
-static b32 link_grant_verb(string_address name, bool allow,
-                           string_address address_to words, positive count)
-{
-        bipolar lock = link_peers_lock();
-        b32 answer = link_grant_locked(name, allow, words, count);
-
-        link_peers_unlock(lock);
-        return answer;
-}
-
 /*
-        The listener, detached from whoever asked: a new session with nothing
-        open but /dev/null, and not this process's child, so a terminal closing
-        takes nothing with it. The machine process restarts it if it dies.
+        `moonwater link serve` in a session of its own, which is how both
+        `link on` and the machine process start the listener. From a command,
+        detached from whoever asked: nothing open but /dev/null, and not this
+        process's child, so a terminal closing takes nothing with it. The
+        machine process keeps its own child and restarts it if it dies.
 */
-static bipolar link_start_detached(void)
+static fn link_serve_start(bool detached)
 {
         bipolar child = system_fork();
 
-        if (child < 0)
-                return child;
         if (!child)
         {
                 string_address words[] = {"moonwater", "link", "serve", null};
-                bipolar null_handle;
 
                 (void)system_call(syscall(setsid));
-                if (system_fork())
-                        system_call_1(syscall(exit), 0);
-                null_handle = system_open_at(AT_FDCWD, "/dev/null",
-                                             FILE_READ_WRITE);
-                if (null_handle >= 0)
-                        for (b32 target = 0; target < 3; target++)
-                                system_descriptor_install(null_handle, target);
+                if (detached)
+                {
+                        bipolar null_handle;
+
+                        if (system_fork())
+                                system_call_1(syscall(exit), 0);
+                        null_handle = system_open_at(AT_FDCWD, "/dev/null",
+                                                     FILE_READ_WRITE);
+                        if (null_handle >= 0)
+                                for (b32 target = 0; target < 3; target++)
+                                        system_descriptor_install(null_handle,
+                                                                  target);
+                }
                 (void)system_call_3(syscall(close_range), 3, ~0u, 0);
                 (void)shell_exec_file((string_address) "/proc/self/exe", words,
                                       3, file_environment_all());
                 system_call_1(syscall(exit), 127);
         }
-
-        (void)system_call_4(syscall(wait4), (positive)child, 0, 0, 0);
-        return 0;
+        if (detached && child > 0)
+                (void)system_call_4(syscall(wait4), (positive)child, 0, 0, 0);
 }
 
 static bool link_wait_owner(bool present)
@@ -631,7 +543,7 @@ static b32 link_switch(bool on)
                 return host_refuse("%s cannot be read or made\n", LINK_KEY_PATH);
 
         if (link_lock_owner() <= 0)
-                (void)link_start_detached();
+                link_serve_start(true);
         if (!link_wait_owner(true))
                 return host_refuse("the listener did not start: is udp %s "
                                    "taken?\n",
@@ -653,11 +565,8 @@ static p32 link_grants_of(string_address address_to words, positive count,
         address_to good = true;
         for (positive at = 0; at < count; at++)
         {
-                p32 bit = 0;
+                p32 bit = link_grant_bit(words[at]);
 
-                for (positive look = 0; look < array_count(link_grants); look++)
-                        if (string_equals(words[at], link_grants[look].name))
-                                bit = link_grants[look].bit;
                 if (!bit)
                         address_to good = false;
                 may |= bit;
@@ -880,15 +789,28 @@ static b32 link_main(string_address address_to arguments, positive count)
                                               string_equals(arguments[4],
                                                             "forget"))))
                 return link_leave(arguments[3], count == 5);
-        if (string_equals(verb, "pair") && (count == 5 || count == 6))
-                return link_pair(arguments[3], arguments[4],
-                                 count == 6 ? arguments[5] : null);
-        if (string_equals(verb, "forget") && count == 4)
-                return link_forget(arguments[3]);
-        if ((string_equals(verb, "allow") || string_equals(verb, "deny")) &&
-            count >= 5)
-                return link_grant_verb(arguments[3], string_equals(verb, "allow"),
-                                  arguments + 4, count - 4);
+        //      The peers file has a second writer, the listener pairing
+        //      members: each change made here happens under the same lock.
+        if ((string_equals(verb, "pair") && (count == 5 || count == 6)) ||
+            (string_equals(verb, "forget") && count == 4) ||
+            ((string_equals(verb, "allow") || string_equals(verb, "deny")) &&
+             count >= 5))
+        {
+                bipolar lock = link_peers_lock();
+                b32 answer =
+                        string_equals(verb, "pair")
+                                ? link_pair_locked(arguments[3], arguments[4],
+                                                   count == 6 ? arguments[5]
+                                                              : null)
+                        : string_equals(verb, "forget")
+                                ? link_forget_locked(arguments[3])
+                                : link_grant_locked(arguments[3],
+                                                    string_equals(verb, "allow"),
+                                                    arguments + 4, count - 4);
+
+                link_peers_unlock(lock);
+                return answer;
+        }
         if (string_equals(verb, "shell") && count == 4)
                 return link_client_run(arguments[3], LINK_KIND_SHELL, null, 0);
         if (string_equals(verb, "run") && count >= 5)
@@ -948,22 +870,7 @@ static fn link_keep(void)
         link_keep_next = now + link_keep_wait;
         if (link_keep_wait < 60)
                 link_keep_wait *= 2;
-
-        {
-                bipolar child = system_fork();
-
-                if (!child)
-                {
-                        string_address words[] = {"moonwater", "link", "serve",
-                                                  null};
-
-                        (void)system_call(syscall(setsid));
-                        (void)system_call_3(syscall(close_range), 3, ~0u, 0);
-                        (void)shell_exec_file((string_address) "/proc/self/exe",
-                                              words, 3, file_environment_all());
-                        system_call_1(syscall(exit), 127);
-                }
-        }
+        link_serve_start(false);
 }
 
 #endif // WATERLINK_COMMAND_INCLUDED
