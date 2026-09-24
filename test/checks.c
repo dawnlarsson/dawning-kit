@@ -55137,6 +55137,83 @@ static fn places(void)
         check("and the ones that are not an address are refused", none);
 }
 
+/*
+        A machine with no IPv6 (the modern profile builds without it): the
+        link's socket falls back to IPv4 and binds there, a datagram to an
+        IPv4 peer goes out and comes back as that peer, and one to an IPv6
+        peer is refused. A filter in a child makes the kernel refuse
+        AF_INET6 sockets, as such a kernel does.
+*/
+static fn ipv4_only(void)
+{
+        bipolar child = system_fork();
+        positive status = 0;
+        b32 code;
+
+        if (!child)
+        {
+                floodlight_instruction filter[] = {
+                        {BPF_LOAD_WORD, 0, 0, SECCOMP_DATA_ARCH},
+                        {BPF_JUMP_EQUAL, 0, 5, FLOODLIGHT_AUDIT_ARCH},
+                        {BPF_LOAD_WORD, 0, 0, SECCOMP_DATA_NR},
+                        {BPF_JUMP_EQUAL, 0, 3, (p32)syscall(socket)},
+                        {BPF_LOAD_WORD, 0, 0, 16}, // the family
+                        {BPF_JUMP_EQUAL, 0, 1, AF_INET6},
+                        {BPF_RETURN, 0, 0, 0x00050000u | 97}, // EAFNOSUPPORT
+                        {BPF_RETURN, 0, 0, SECCOMP_RET_ALLOW},
+                };
+                floodlight_program program = {array_count(filter), filter};
+                socket_address_internet bound;
+                b32 size = sizeof bound;
+                p8 loopback[16], sixth[16] = {0}, from[16];
+                p8 datagram[WATERLINK_DATAGRAM + 16];
+                p16 port, from_port = 0;
+                system_poll_descriptor wait;
+                b32 wrong = 0;
+
+                if (system_call_5(syscall(prctl), PR_SET_NO_NEW_PRIVS, 1, 0, 0,
+                                  0) < 0 ||
+                    system_call_3(syscall(seccomp), SECCOMP_SET_MODE_FILTER, 0,
+                                  (positive)address_of program) < 0)
+                        exit(64);
+                link_self.socket = link_socket_open(0, true);
+                if (link_self.socket < 0 || !link_self.v4)
+                        exit(65);
+                if (socket_name((b32)link_self.socket, address_of bound,
+                                address_of size) < 0 ||
+                    bound.family != AF_INET || !bound.port)
+                        exit(66);
+                port = network_order_16(bound.port);
+                link_address_v4(loopback, 0x7f000001);
+                if (link_send_to((p8 address_to) "ping", 4, loopback, port) != 4)
+                        wrong |= 4;
+                wait = (system_poll_descriptor){(b32)link_self.socket,
+                                                SYSTEM_POLL_READ, 0};
+                link_wait(address_of wait, 1, link_now() + 2000000);
+                if (link_receive(datagram, from, address_of from_port) != 4 ||
+                    memory_compare(datagram, "ping", 4) ||
+                    memory_compare(from, loopback, 16) || from_port != port)
+                        wrong |= 8;
+                sixth[15] = 1;
+                if (link_send_to((p8 address_to) "ping", 4, sixth, port) != -97)
+                        wrong |= 16;
+                exit(wrong);
+        }
+        code = child >= 0 &&
+                               system_wait4_retry(child, address_of status, 0,
+                                                  null) >= 0
+                       ? wait_status_code(status)
+                       : 255;
+        check("with no IPv6 the link's socket falls back to IPv4 and binds "
+              "where it was asked",
+              code < 32);
+        check("and a datagram to an IPv4 peer goes out and comes back as "
+              "that peer",
+              code < 32 && !(code & 12));
+        check("and one to an IPv6 peer is refused, not sent",
+              code < 32 && !(code & 16));
+}
+
 static fn indexes_and_commands(void)
 {
         entropy_down = true;
@@ -55209,6 +55286,7 @@ b32 main(void)
         wpa_key();
         key_text();
         places();
+        ipv4_only();
         indexes_and_commands();
         return test_report(null);
 }
