@@ -4850,16 +4850,16 @@ lane_misc()
                 misc_failed=1
         fi
 
-        #       hexdump from /dev/zero into /dev/full. util-linux's hexdump
-        #       reads on after a refused write, for ever, so the misc grammar
-        #       has no reference for it; ours stops at the first refusal and
-        #       says what util-linux's says at exit of output that did not
-        #       wait for it there: write error, with no reason.
+        #       hexdump from /dev/zero into /dev/full, which never ends by
+        #       itself, so the misc grammar cannot hold it. Ours stops at the
+        #       first refusal and says what util-linux 2.42.4's says there:
+        #       write error and the reason, status 1. (2.42.2 read on for ever
+        #       and said no reason.)
         timeout 10 "$farm/hexdump" -v /dev/zero > /dev/full \
                 2> "$work/hexdump-full.err"
         hexdump_status=$?
         if [ "$hexdump_status" = 1 ] &&
-                [ "$(cat "$work/hexdump-full.err")" = "hexdump: write error" ]; then
+                [ "$(cat "$work/hexdump-full.err")" = "hexdump: write error: No space left on device" ]; then
                 tally hexdump-stops-at-refused-write 1 1
         else
                 tally hexdump-stops-at-refused-write 0 1

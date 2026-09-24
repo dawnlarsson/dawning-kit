@@ -5754,11 +5754,13 @@ static bool numfmt_option_seen(p8 letter, string_address value)
         tools text.c stands for.
 
         GNU's factor and numfmt say write error and the reason. util-linux's
-        hexdump learns of it from stdio: at its flush at exit when all it
-        wrote fit stdio's page, where a closed descriptor or a reader gone is
-        no error at all, and otherwise from the stream's error flag, which
-        keeps no reason (measured on /dev/full, a closed descriptor, one open
-        for reading, a file-size limit and a pipe whose reader has gone).
+        hexdump (2.42.4) says it with the reason too. A reader gone is never
+        an error to it, whatever it wrote, and a closed descriptor is none
+        when all it wrote fit stdio's page and was only found at the flush
+        at exit (measured on /dev/full, a closed descriptor, one open for
+        reading, a file-size limit and a pipe whose reader has gone, with
+        100 bytes and 300 kB of input). 2.42.2 said a bare "write error" past
+        the page and reported the pipe there as well.
 */
 static b32 tools_text_done(b32 code)
 {
@@ -5774,12 +5776,9 @@ static b32 tools_text_done(b32 code)
                 positive buffer = text_out_error_buffer ? text_out_error_buffer
                                                         : TEXT_STDIO_PAGE;
 
-                if (text_out_error_offered >= buffer)
-                        return string_diagnostic(&text_diagnostic, 1, null,
-                                                 "write error");
-
-                if (reason == -ERROR_BAD_DESCRIPTOR ||
-                    reason == -ERROR_BROKEN_PIPE)
+                if (reason == -ERROR_BROKEN_PIPE ||
+                    (reason == -ERROR_BAD_DESCRIPTOR &&
+                     text_out_error_offered < buffer))
                         return code;
         }
 
