@@ -33,7 +33,7 @@
         and `live` answer the same question from any shell.
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -7070,7 +7070,7 @@ static b32 host_radio(string_address address_to arguments, positive count)
         not "the asking has been seen to work".
 
         Dawn Larsson - Apache 2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */

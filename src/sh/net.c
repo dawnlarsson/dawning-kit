@@ -4,7 +4,7 @@
         ip -- links, addresses and routes
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */

@@ -4217,7 +4217,7 @@ static bool file_meta(file_taking address_to taking, string_address syntax,
         if (!(taking->flags & (FILE_FLAG('h') | FILE_FLAG('V'))))
                 return false;
         return string_report(output, true, taking->flags & FILE_FLAG('h')
-                                  ? "Usage: %s %s\n" : "%s from dawning-kit\n",
+                                  ? "Usage: %s %s\n" : "%s from moonwater\n",
                       taking->program, syntax);
 }
 
@@ -18482,7 +18482,7 @@ static b32 file_whereis()
 
         if (string_equals(program_argument(1), "--version"))
         {
-                string_format(log, "whereis from dawning-kit\n");
+                string_format(log, "whereis from moonwater\n");
                 log_flush();
                 return 0;
         }
@@ -18577,7 +18577,7 @@ static b32 file_whereis()
                                 glob = true;
                         else if (option == 'V')
                         {
-                                string_format(log, "whereis from dawning-kit\n");
+                                string_format(log, "whereis from moonwater\n");
                                 log_flush();
                                 return 0;
                         }
@@ -33913,7 +33913,7 @@ static b32 file_nologin()
                               "  -h, --help             display this help\n"
                               "  -V, --version          display version\n");
         else if (taking.flags & FILE_FLAG('V'))
-                string_format(log, "nologin from dawning-kit\n");
+                string_format(log, "nologin from moonwater\n");
         else
         {
                 bipolar handle = system_open_at(

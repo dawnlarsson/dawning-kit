@@ -32,7 +32,7 @@
         Included by service.c, which owns the sockets and the loop.
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 */
 
 #ifndef WATERLINK_NEARBY_INCLUDED

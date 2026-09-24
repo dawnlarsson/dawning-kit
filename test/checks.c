@@ -868,7 +868,7 @@ static void declare_cases(void)
         The cases for <signal.h>, and for the half of setjmp that was missing
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -1602,7 +1602,7 @@ static void sig_cases_all(void)
         The cases for the rest of <string.h>, and for setjmp
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -2479,7 +2479,7 @@ __asm__(
         printf's decimal floats, generated, written once and compiled twice
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -3408,7 +3408,7 @@ static void format_differential_main(const char *first, const char *count,
         scanf, generated, written once and compiled twice
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -3749,7 +3749,7 @@ static void scan_differential_main(const char *first_text,
         <math.h>, generated, against glibc's long double routines
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -3947,7 +3947,7 @@ static long body_length(const char *text)
         the rest of <stdio.h>, written once and compiled twice
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -4606,7 +4606,7 @@ static void trace_body(void)
         what a FILE does, written once and compiled twice
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -5562,7 +5562,7 @@ static void trace_body(void)
         which buffering policy is in force, seen from outside the process
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -5602,7 +5602,7 @@ static void trace_body(void)
         the three standard streams, a pipe, and a terminal
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -27596,7 +27596,7 @@ b32 main(void)
         The allocator, against the one on the machine
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -32913,7 +32913,7 @@ int main(void)
         agree with glibc's
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -33892,7 +33892,7 @@ b32 main(void)
         what a forked child must never write a second time
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -36023,7 +36023,7 @@ b32 main(void)
         strtod and strtof over generated text, on this tree's conversions
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -36073,7 +36073,7 @@ b32 main(void)
         the same generated text, over the machine's glibc
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -38649,7 +38649,7 @@ b32 main()
         fmod and remainder, against glibc's
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -39071,7 +39071,7 @@ b32 main(void)
         setenv, unsetenv, putenv, clearenv and getenv, against glibc's
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -39611,7 +39611,7 @@ b32 main(void)
         printf, pinned against the answers a real glibc gave
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -40298,7 +40298,7 @@ b32 main(void)
         printf's decimal floats, generated, over this tree's own
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -40340,7 +40340,7 @@ b32 main(void)
         the same generated floats, over the machine's glibc
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -40433,7 +40433,7 @@ int main(int argc, char **argv)
         scanf, what a comparison with glibc cannot state
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -40930,7 +40930,7 @@ b32 main(void)
         the FILE trace, over this tree's own streams
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -41270,7 +41270,7 @@ b32 main(void)
         the same FILE trace, over the machine's glibc
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -41313,7 +41313,7 @@ int main(int argc, char **argv)
         the standard stream trace, over this tree's own streams
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -41358,7 +41358,7 @@ b32 main(void)
         the same standard stream trace, over the machine's glibc
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -41396,7 +41396,7 @@ int main(void)
         the buffering observation, over this tree's own streams
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -41431,7 +41431,7 @@ b32 main(void)
         the same buffering observation, over the machine's glibc
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -41465,7 +41465,7 @@ int main(void)
         the trace of <stdio.h>'s remainder, over this tree's own
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -41581,7 +41581,7 @@ b32 main(void)
         the same trace of <stdio.h>'s remainder, over the machine's glibc
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -43183,7 +43183,7 @@ int main(void)
         and what the lock and the allocator cost with and without company
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */

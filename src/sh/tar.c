@@ -4156,7 +4156,7 @@ static bool tar_take(struct tar_options address_to options, p8 letter,
                 options->mode = 'h';
                 break;
         case TAR_VERSION:
-                string_format(log, "tar from dawning-kit\n");
+                string_format(log, "tar from moonwater\n");
                 log_flush();
                 options->mode = 'h';
                 break;

@@ -24,7 +24,7 @@
         the prepared key is net.c's crypto_aesgcm_key.
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 */
 
 #ifndef WATERLINK_SEAL_INCLUDED

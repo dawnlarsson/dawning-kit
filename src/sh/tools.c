@@ -2109,7 +2109,7 @@ static bool login_message_meta(file_taking address_to taking,
         if (taking->flags & FILE_FLAG('V'))
         {
                 text_put_string(taking->program);
-                text_put_string(" from dawning-kit\n");
+                text_put_string(" from moonwater\n");
                 address_to answer = text_done(0);
                 return true;
         }
@@ -15112,7 +15112,7 @@ static b32 util_linux_renice()
         }
         if (string_equals(first, "-V") || string_equals(first, "--version"))
         {
-                string_format(log, "renice from dawning-kit\n");
+                string_format(log, "renice from moonwater\n");
                 log_flush();
                 return 0;
         }
@@ -27609,7 +27609,7 @@ static b32 tools_fincore_main()
         }
         if (taking.flags & FILE_FLAG('V'))
         {
-                string_format(log, "fincore from dawning-kit\n");
+                string_format(log, "fincore from moonwater\n");
                 log_flush();
                 return 0;
         }

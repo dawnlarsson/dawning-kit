@@ -2029,7 +2029,7 @@ static b32 file_gzip(void)
         file_codec_cli codec = {
             .name = "gzip", .decode_name = "gunzip", .cat_name = "zcat",
             .usage = "Usage: gzip [-cdfkqt123456789] [FILE...]",
-            .version = "gzip from dawning-kit",
+            .version = "gzip from moonwater",
             .status = address_of gzip_status, .suffixes = gzip_suffixes,
             .suffix_count = array_count(gzip_suffixes),
             .decode_suffix_error = "unknown suffix; use -c",

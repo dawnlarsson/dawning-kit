@@ -25,7 +25,7 @@
         networks, so install carries them to the disk and wipe keeps them.
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 */
 
 #ifndef WATERLINK_COMMAND_INCLUDED

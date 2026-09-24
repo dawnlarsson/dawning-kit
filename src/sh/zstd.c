@@ -5175,7 +5175,7 @@ static b32 file_zstd(void)
             .usage =
                 "Usage: zstd [-cdfkqzC#] [-T#] [--ultra] [--fast[=#]] [--long[=#]]\n"
                 "            [--single-thread] [--no-check] [-o FILE] [--rm] [FILE...]",
-            .version = "zstd from dawning-kit",
+            .version = "zstd from moonwater",
             .status = address_of zstd_status, .suffixes = zstd_suffixes,
             .suffix_count = array_count(zstd_suffixes),
             .decode_suffix_error = "cannot guess output name; use -c or -o",

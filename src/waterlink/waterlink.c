@@ -6,7 +6,7 @@
         and the link does not know which is which.
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         WHY NOT SSH, AND WHY NOT TLS
 

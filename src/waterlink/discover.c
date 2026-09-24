@@ -38,7 +38,7 @@
         Like link.c this is a transform; the caller owns the socket.
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 */
 
 #ifndef WATERLINK_DISCOVER_INCLUDED

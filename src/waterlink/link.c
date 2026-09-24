@@ -17,7 +17,7 @@
         it never goes backwards. Deadlines on the wire stay milliseconds.
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 */
 
 #ifndef WATERLINK_LINK_INCLUDED

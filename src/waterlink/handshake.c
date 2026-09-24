@@ -41,7 +41,7 @@
         clock and the keys, and gets bytes.
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 */
 
 #ifndef WATERLINK_HANDSHAKE_INCLUDED

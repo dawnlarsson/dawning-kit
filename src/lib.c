@@ -4,7 +4,7 @@
         without any runtime requirements (no linking!)
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -58723,7 +58723,7 @@ __asm__(
         The prototypes for the standard names lib.c makes symbols of
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */

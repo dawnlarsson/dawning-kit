@@ -82,7 +82,7 @@
         build.
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */
@@ -10038,7 +10038,7 @@ pub bool parallel_tree(parallel_node_job enter, parallel_node_job leave,
         The compatibility families, in the order the umbrella included them
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-kit
+        github.com/dawnlarsson/moonwater
 
         www.dawning.dev
 */

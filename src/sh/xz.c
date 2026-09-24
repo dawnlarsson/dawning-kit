@@ -4083,7 +4083,7 @@ static b32 file_xz(void)
         file_codec_cli codec = {
             .name = "xz", .decode_name = "unxz", .cat_name = "xzcat",
             .usage = "Usage: xz [-cdfkqt0123456789] [-T N] [FILE...]",
-            .version = "xz from dawning-kit",
+            .version = "xz from moonwater",
             .status = address_of xz_status,
             .suffixes = xz_suffixes, .suffix_count = array_count(xz_suffixes),
             .decode_suffix_error = "unknown suffix; use -c",
