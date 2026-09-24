@@ -53390,8 +53390,18 @@ static fn handshake(void)
         random_seeded(e2, 32, 5);
         random_seeded(hello, sizeof hello, 6);
 
-        waterlink_initiate(address_of starting, address_of alice, bob.public,
-                           e1, hello, first);
+        {
+                p8 low_order[32] = {0};
+
+                check("sec: an initiator refuses a low-order peer key",
+                      !waterlink_initiate(address_of starting,
+                                          address_of alice, low_order, e1,
+                                          hello, first));
+        }
+
+        check("an initiation is made for a valid peer key",
+              waterlink_initiate(address_of starting, address_of alice,
+                                 bob.public, e1, hello, first));
         memory_copy(kept, first, sizeof kept);
         check("an initiation passes the responder's gate",
               waterlink_gate_passes(address_of bob, first, WATERLINK_DATAGRAM));
@@ -53403,8 +53413,9 @@ static fn handshake(void)
                       !memory_compare(who, alice.public, 32) &&
                       !memory_compare(heard_hello, hello, sizeof hello));
 
-        waterlink_respond(address_of answering, e2, 0x11223344, 0x55667788,
-                          second);
+        check("the responder makes an answer",
+              waterlink_respond(address_of answering, e2, 0x11223344,
+                                0x55667788, second));
         check("the answer passes the initiator's gate",
               waterlink_gate_passes(address_of alice, second,
                                     WATERLINK_DATAGRAM));

@@ -767,10 +767,16 @@ static fn link_pair_datagram(p8 address_to datagram, positive length,
                                               sizeof(address_to pairing));
                                 return;
                         }
-                        waterlink_pair_second(address_of pairing->noise,
-                                              address_of link_self.me, ephemeral,
-                                              link_nearby.name, pairing->theirs,
-                                              answer);
+                        if (!waterlink_pair_second(address_of pairing->noise,
+                                                   address_of link_self.me,
+                                                   ephemeral, link_nearby.name,
+                                                   pairing->theirs, answer))
+                        {
+                                crypto_forget(ephemeral, sizeof ephemeral);
+                                crypto_forget(pairing,
+                                              sizeof(address_to pairing));
+                                return;
+                        }
                         crypto_forget(ephemeral, sizeof ephemeral);
                         //      Our index rides in the counter field, the one
                         //      the initiator does not use.
@@ -801,9 +807,15 @@ static fn link_pair_datagram(p8 address_to datagram, positive length,
                         if (!waterlink_pair_heard_second(address_of pairing->noise,
                                                          datagram, key, name))
                                 return;
-                        waterlink_pair_third(address_of pairing->noise,
-                                             address_of link_self.me,
-                                             link_nearby.name, theirs, third);
+                        if (!waterlink_pair_third(address_of pairing->noise,
+                                                  address_of link_self.me,
+                                                  link_nearby.name, theirs,
+                                                  third))
+                        {
+                                crypto_forget(pairing,
+                                              sizeof(address_to pairing));
+                                return;
+                        }
                         (void)link_send_to(third, WATERLINK_DATAGRAM, address,
                                            port);
                         (void)link_pair_keep(link_nearby.groups.record +

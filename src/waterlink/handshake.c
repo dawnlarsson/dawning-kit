@@ -251,11 +251,11 @@ bool waterlink_gate_passes(struct waterlink_identity address_to me,
         drew; hello is WATERLINK_HELLO_BYTES of stamp, conversation and index.
         The datagram is written whole, padded to its full size.
 */
-fn waterlink_initiate(struct waterlink_noise address_to noise,
-                      struct waterlink_identity address_to me,
-                      p8 address_to responder_public,
-                      p8 address_to ephemeral, p8 address_to hello,
-                      p8 address_to datagram)
+bool waterlink_initiate(struct waterlink_noise address_to noise,
+                        struct waterlink_identity address_to me,
+                        p8 address_to responder_public,
+                        p8 address_to ephemeral, p8 address_to hello,
+                        p8 address_to datagram)
 {
         struct waterlink_datagram head = {WATERLINK_KIND_INITIATE, 0, 0};
         p8 address_to at = datagram + 16;
@@ -276,7 +276,8 @@ fn waterlink_initiate(struct waterlink_noise address_to noise,
         at += 32;
 
         // es
-        waterlink_mix_dh(noise, noise->ephemeral, responder_public);
+        if (!waterlink_mix_dh(noise, noise->ephemeral, responder_public))
+                return false;
 
         // s
         memory_copy(at, me->public, 32);
@@ -284,7 +285,8 @@ fn waterlink_initiate(struct waterlink_noise address_to noise,
         at += 48;
 
         // ss
-        waterlink_mix_dh(noise, me->secret, responder_public);
+        if (!waterlink_mix_dh(noise, me->secret, responder_public))
+                return false;
 
         // payload
         memory_copy(at, hello, WATERLINK_HELLO_BYTES);
@@ -293,6 +295,7 @@ fn waterlink_initiate(struct waterlink_noise address_to noise,
 
         waterlink_gate_of(responder_public, gate);
         waterlink_mac1(gate, datagram, (positive)(at - datagram), at);
+        return true;
 }
 
 /*
@@ -338,9 +341,9 @@ bool waterlink_accept(struct waterlink_noise address_to noise,
         Write the answer: the responder's ephemeral and its own index,
         addressed to the initiator's index.
 */
-fn waterlink_respond(struct waterlink_noise address_to noise,
-                     p8 address_to ephemeral, p32 their_index, p32 our_index,
-                     p8 address_to datagram)
+bool waterlink_respond(struct waterlink_noise address_to noise,
+                       p8 address_to ephemeral, p32 their_index, p32 our_index,
+                       p8 address_to datagram)
 {
         struct waterlink_datagram head = {WATERLINK_KIND_RESPOND, their_index,
                                           0};
@@ -359,8 +362,10 @@ fn waterlink_respond(struct waterlink_noise address_to noise,
         at += 32;
 
         // ee, se
-        waterlink_mix_dh(noise, noise->ephemeral, noise->remote_ephemeral);
-        waterlink_mix_dh(noise, noise->ephemeral, noise->remote_static);
+        if (!waterlink_mix_dh(noise, noise->ephemeral,
+                              noise->remote_ephemeral) ||
+            !waterlink_mix_dh(noise, noise->ephemeral, noise->remote_static))
+                return false;
 
         memory_copy(at, address_of our_index, 4);
         waterlink_seal_hash(noise, at, 4);
@@ -368,6 +373,7 @@ fn waterlink_respond(struct waterlink_noise address_to noise,
 
         waterlink_gate_of(noise->remote_static, gate);
         waterlink_mac1(gate, datagram, (positive)(at - datagram), at);
+        return true;
 }
 
 // Read the answer to our first message; the responder's index comes back.

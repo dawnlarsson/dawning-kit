@@ -2083,7 +2083,13 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
                 s->conversation = conversation;
         }
 
-        waterlink_respond(address_of noise, ephemeral, theirs, ours, answer);
+        if (!waterlink_respond(address_of noise, ephemeral, theirs, ours,
+                               answer))
+        {
+                crypto_forget(ephemeral, sizeof ephemeral);
+                crypto_forget(address_of noise, sizeof noise);
+                return;
+        }
         waterlink_split(address_of noise, false, send, receive);
         crypto_forget(ephemeral, sizeof ephemeral);
 
@@ -2765,8 +2771,13 @@ static bool link_client_handshake(struct link_session address_to s,
                 crypto_forget(noise, sizeof(address_to noise));
                 return false;
         }
-        waterlink_initiate(noise, address_of link_self.me, s->peer, ephemeral,
-                           hello, datagram);
+        if (!waterlink_initiate(noise, address_of link_self.me, s->peer,
+                                ephemeral, hello, datagram))
+        {
+                crypto_forget(ephemeral, sizeof ephemeral);
+                crypto_forget(noise, sizeof(address_to noise));
+                return false;
+        }
         crypto_forget(ephemeral, sizeof ephemeral);
         return link_send_to(datagram, WATERLINK_DATAGRAM, s->address,
                             s->port) >= 0;
