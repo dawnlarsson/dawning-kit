@@ -54965,6 +54965,29 @@ static fn wpa_key(void)
                       !memory_compare(pmk, this_is, 32));
 }
 
+//      A key's text and back, and text that is not quite a key.
+static fn key_text(void)
+{
+        bool round_trips = true;
+        p8 key[32], back[32], text[48];
+
+        for (positive seed = 0; seed < 64; seed++)
+        {
+                wls_seeded(key, 32, (p8)seed);
+                link_key_text(key, text);
+                if (!link_key_parse((string_address)text, back) ||
+                    memory_compare(key, back, 32))
+                        round_trips = false;
+        }
+        check("a key's text reads back as the key", round_trips);
+        text[42] = 'B';
+        check("text whose last character sets bits no key has is refused",
+              !link_key_parse((string_address)text, back));
+        text[42] = '*';
+        check("text with a character outside base64 is refused",
+              !link_key_parse((string_address)text, back));
+}
+
 static fn indexes_and_commands(void)
 {
         entropy_down = true;
@@ -55035,6 +55058,7 @@ b32 main(void)
         pairing_third(listener, port);
         labels();
         wpa_key();
+        key_text();
         indexes_and_commands();
         return test_report(null);
 }

@@ -150,64 +150,47 @@ static bipolar link_decimal(string_address text)
 static const char link_alphabet[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-// A key as WireGuard writes one: 44 characters of base64.
+/*
+        A key as WireGuard writes one: 44 characters of base64, ten whole
+        groups and a last one of two bytes, padded. lib.c's codec does the
+        groups; the tail is one more group of the two bytes and a zero.
+*/
 static fn link_key_text(p8 address_to key, p8 address_to text)
 {
-        positive out = 0;
+        p8 last[3] = {key[30], key[31], 0};
 
-        for (positive at = 0; at < 33; at += 3)
-        {
-                p32 group = (p32)key[at] << 16;
-
-                if (at + 1 < 32)
-                        group |= (p32)key[at + 1] << 8;
-                if (at + 2 < 32)
-                        group |= key[at + 2];
-
-                text[out++] = (p8)link_alphabet[(group >> 18) & 63];
-                text[out++] = (p8)link_alphabet[(group >> 12) & 63];
-                text[out++] = at + 1 < 32 ? (p8)link_alphabet[(group >> 6) & 63]
-                                          : '=';
-                text[out++] = at + 2 < 32 ? (p8)link_alphabet[group & 63] : '=';
-        }
+        memory_encode_power2(text, key, 10, link_alphabet, 6);
+        memory_encode_power2(text + 40, last, 1, link_alphabet, 6);
+        text[43] = '=';
         text[44] = 0;
 }
 
 static bool link_key_parse(string_address text, p8 address_to key)
 {
-        p8 word[48];
+        static p8 values[256];
+        p8 quad[4];
+        p8 last[3];
 
-        if (string_length(text) != 44 || text[43] != '=')
+        if (!values[0])
+        {
+                memory_fill(values, 255, sizeof values);
+                for (positive at = 0; at < 64; at++)
+                        values[(p8)link_alphabet[at]] = (p8)at;
+        }
+        if (string_length(text) != 44 || text[43] != '=' ||
+            memory_decode_power2(key, text, 10, values, 6) != 10)
                 return false;
 
-        for (positive at = 0; at < 43; at++)
-        {
-                positive value = 64;
-
-                for (positive look = 0; look < 64; look++)
-                        if (link_alphabet[look] == text[at])
-                                value = look;
-                if (value == 64)
-                        return false;
-                word[at] = (p8)value;
-        }
-
-        for (positive at = 0, out = 0; at < 44; at += 4)
-        {
-                p32 group = (p32)word[at] << 18 | (p32)word[at + 1] << 12 |
-                            (at + 2 < 43 ? (p32)word[at + 2] << 6 : 0) |
-                            (at + 3 < 43 ? word[at + 3] : 0);
-
-                key[out++] = (p8)(group >> 16);
-                if (out < 32)
-                        key[out++] = (p8)(group >> 8);
-                if (out < 32)
-                        key[out++] = (p8)group;
-        }
-
-        //      The last character carries two bits the key does not use;
-        //      a text with them set is some other text.
-        return !(word[42] & 3);
+        //      The last character carries two bits the key does not use; a
+        //      text with them set is some other text, and decodes them into
+        //      the third byte here.
+        memory_copy(quad, text + 40, 3);
+        quad[3] = 'A';
+        if (memory_decode_power2(last, quad, 1, values, 6) != 1 || last[2])
+                return false;
+        key[30] = last[0];
+        key[31] = last[1];
+        return true;
 }
 
 /*
@@ -317,16 +300,10 @@ static bipolar link_secret(p8 address_to secret, bool make)
                     system_random_fill(tail, 8, 0) < 0)
                 {
                         crypto_forget(fresh, sizeof fresh);
-                        crypto_forget(tail, sizeof tail);
                         return -EIO;
                 }
-                for (positive at = 0; at < 8; at++)
-                {
-                        name[used++] = (p8)link_alphabet[tail[at] >> 4 & 15];
-                        name[used++] = (p8)link_alphabet[tail[at] & 15];
-                }
-                name[used] = 0;
-                crypto_forget(tail, sizeof tail);
+                memory_into_hex(name + used, tail, 8);
+                name[used + 16] = 0;
 
                 made = system_open_at_mode(AT_FDCWD, name,
                                            FILE_WRITE | FILE_EXCLUSIVE |
@@ -1446,14 +1423,12 @@ static bipolar link_part_open(string_address target, positive length,
         memory_copy(part + length, ".link-part.", 11);
         for (positive attempt = 0; attempt < 8; attempt++)
         {
-                p64 random;
+                p8 random[8];
                 bipolar handle;
 
-                if (system_random_fill(address_of random, sizeof random, 0) < 0)
+                if (system_random_fill(random, sizeof random, 0) < 0)
                         return -EIO;
-                for (positive at = 0; at < 16; at++)
-                        part[length + 11 + at] =
-                                (p8)link_alphabet[(random >> (at * 4)) & 15];
+                memory_into_hex(part + length + 11, random, 8);
                 part[length + 27] = 0;
                 handle = system_open_at_mode(
                         AT_FDCWD, part,

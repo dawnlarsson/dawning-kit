@@ -637,14 +637,8 @@ static b32 link_join(string_address address_to words, positive count)
                         crypto_forget(address_of groups, sizeof groups);
                         return host_fail("randomness", -EIO);
                 }
-                for (positive bit = 0, out = 0; out < 32; out++, bit += 5)
-                {
-                        positive byte = bit / 8;
-                        p32 window = (p32)random[byte] << 8 |
-                                     (byte + 1 < 20 ? random[byte + 1] : 0);
-
-                        made[out] = (p8)link_base32[(window >> (11 - bit % 8)) & 31];
-                }
+                //      160 bits as 32 characters of base32.
+                memory_encode_power2(made, random, 4, link_base32, 5);
                 made[32] = 0;
                 crypto_forget(random, sizeof random);
                 secret = (string_address)made;

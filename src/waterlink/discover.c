@@ -194,15 +194,6 @@ static fn waterlink_dns_put32(waterlink_dns_writer address_to out, p32 value)
 
 static const char waterlink_hex[] = "0123456789abcdef";
 
-static fn waterlink_hex_label(p8 address_to label, p8 address_to bytes,
-                              positive count)
-{
-        for (positive at = 0; at < count; at++)
-        {
-                label[2 * at] = (p8)waterlink_hex[bytes[at] >> 4];
-                label[2 * at + 1] = (p8)waterlink_hex[bytes[at] & 15];
-        }
-}
 
 /*
         One machine's announcement, or with ttl 0 its goodbye: for each group
@@ -262,7 +253,7 @@ positive waterlink_mdns_announce(p8 address_to packet, positive room,
                 instance_at = out.used;
                 name[0] = 23;
                 memory_copy(name + 1, "wl-", 3);
-                waterlink_hex_label(name + 4, group->instance, 10);
+                memory_into_hex(name + 4, group->instance, 10);
                 waterlink_dns_put(address_of out, name, 24);
                 waterlink_dns_put16(address_of out, 0xc000 | (p32)service_at);
 
@@ -280,7 +271,7 @@ positive waterlink_mdns_announce(p8 address_to packet, positive room,
                         host_at = out.used;
                         name[0] = 15;
                         memory_copy(name + 1, "wl-", 3);
-                        waterlink_hex_label(name + 4, host_bytes, 6);
+                        memory_into_hex(name + 4, host_bytes, 6);
                         waterlink_dns_put(address_of out, name, 16);
                         waterlink_dns_put(address_of out,
                                           (p8 address_to) "\x05local", 7);
@@ -301,15 +292,15 @@ positive waterlink_mdns_announce(p8 address_to packet, positive room,
                 txt_used += 3;
                 txt[txt_used++] = 2 + 32;
                 memory_copy(txt + txt_used, "n=", 2);
-                waterlink_hex_label(txt + txt_used + 2, group->nonce, 16);
+                memory_into_hex(txt + txt_used + 2, group->nonce, 16);
                 txt_used += 34;
                 txt[txt_used++] = 2 + 32;
                 memory_copy(txt + txt_used, "t=", 2);
-                waterlink_hex_label(txt + txt_used + 2, group->tag, 16);
+                memory_into_hex(txt + txt_used + 2, group->tag, 16);
                 txt_used += 34;
                 txt[txt_used++] = 2 + 32;
                 memory_copy(txt + txt_used, "w=", 2);
-                waterlink_hex_label(txt + txt_used + 2, group->who, 16);
+                memory_into_hex(txt + txt_used + 2, group->who, 16);
                 txt_used += 34;
 
                 waterlink_dns_put16(address_of out, 0xc000 | (p32)instance_at);
