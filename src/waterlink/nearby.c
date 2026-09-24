@@ -299,53 +299,62 @@ typedef struct
         b32 index;
 } link_mreqn;
 
-typedef struct
-{
-        char name[16];
-        union {
-                b32 index;
-                socket_address_internet address;
-                p8 pad[24];
-        } value;
-} link_ifreq;
-
 /*
-        Every interface that takes the membership, with its IPv4 address for
-        the A record. A namespace in a test has no default route, so joining
-        on "any" would fail there; one by one, by index, works everywhere.
+        Every interface with an IPv4 address that takes the membership, and
+        that address for the A record: net.c's walk of the addresses, which
+        is the one the network setup already trusts. A namespace in a test
+        has no default route, so joining on "any" would fail there; one by
+        one, by index, works everywhere.
 */
+static bool link_nearby_address(netlink_header address_to header,
+                                address_any context)
+{
+        netlink_address address_to body;
+        positive size = 0;
+        p8 address_to host;
+        link_mreqn join = {network_order_32(WATERLINK_MDNS_GROUP), 0, 0};
+        bipolar joined;
+
+        (void)context;
+        if (header->type != RTM_NEWADDR ||
+            header->length < NETLINK_HEADER + sizeof(netlink_address) ||
+            link_nearby.interfaces == LINK_INTERFACES)
+                return true;
+        body = (netlink_address address_to)((p8 address_to)header +
+                                            NETLINK_HEADER);
+        host = netlink_find(header, sizeof(netlink_address), IFA_LOCAL,
+                             address_of size);
+        if (body->family != AF_INET || !host || size < 4)
+                return true;
+        for (positive at = 0; at < link_nearby.interfaces; at++)
+                if (link_nearby.interface[at] == (b32)body->index)
+                        return true;
+
+        //      One without multicast is passed over; joined already
+        //      (EADDRINUSE) is joined.
+        join.index = (b32)body->index;
+        joined = socket_option_set((b32)link_nearby.socket, 0,
+                                   35, // IP_ADD_MEMBERSHIP
+                                   address_of join, sizeof join);
+        if (joined < 0 && joined != -98)
+                return true;
+        link_nearby.interface[link_nearby.interfaces] = (b32)body->index;
+        link_nearby.interface_address[link_nearby.interfaces] =
+                network_load_32(host);
+        link_nearby.interfaces++;
+        return true;
+}
+
 static fn link_nearby_interfaces(void)
 {
+        bipolar handle = netlink_open_groups(0);
+
         link_nearby.interfaces = 0;
-        for (b32 index = 1; index < 64 && link_nearby.interfaces < LINK_INTERFACES;
-             index++)
-        {
-                link_mreqn join = {network_order_32(WATERLINK_MDNS_GROUP), 0,
-                                   index};
-                link_ifreq request;
-                p32 address = 0;
-
-                bipolar joined = socket_option_set((b32)link_nearby.socket, 0,
-                                                   35, // IP_ADD_MEMBERSHIP
-                                                   address_of join, sizeof join);
-
-                //      No such interface, or one without multicast; joined
-                //      already (EADDRINUSE) is joined.
-                if (joined < 0 && joined != -98)
-                        continue;
-
-                memory_zero(address_of request, sizeof request);
-                request.value.index = index;
-                if (system_control(link_nearby.socket, 0x8910, // SIOCGIFNAME
-                                   address_of request) >= 0 &&
-                    system_control(link_nearby.socket, 0x8915, // SIOCGIFADDR
-                                   address_of request) >= 0)
-                        address = network_order_32(request.value.address.host);
-
-                link_nearby.interface[link_nearby.interfaces] = index;
-                link_nearby.interface_address[link_nearby.interfaces] = address;
-                link_nearby.interfaces++;
-        }
+        if (handle < 0)
+                return;
+        (void)netlink_dump((b32)handle, RTM_GETADDR, sizeof(netlink_address),
+                           AF_INET, link_nearby_address, null);
+        system_close((b32)handle);
 }
 
 static fn link_nearby_close(void)

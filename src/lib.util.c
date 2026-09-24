@@ -207,6 +207,52 @@ static inline bool string_digits_checked_exact(string_address text,
         return true;
 }
 
+/* Variable-length integers, seven bits a byte, low first, the top bit saying
+   another follows: xz's multibyte integers and waterlink's frame numbers.
+   Reading takes one spelling only -- a last byte of zero after the first is
+   refused, and at most `most` bytes, a tenth byte carrying only bit 63 -- and
+   answers the bytes used, or 0 for anything else. */
+static inline positive memory_vli_size(p64 value)
+{
+        positive size = 1;
+
+        for (; value >= 0x80; value >>= 7)
+                size++;
+        return size;
+}
+
+static inline positive memory_vli_put(p8 address_to into, p64 value)
+{
+        positive used = 0;
+
+        for (; value >= 0x80; value >>= 7)
+                into[used++] = (p8)(value | 0x80);
+        into[used++] = (p8)value;
+        return used;
+}
+
+static inline positive memory_vli_get(const p8 address_to bytes,
+                                      positive length, positive most,
+                                      p64 address_to value)
+{
+        p64 got = 0;
+
+        for (positive at = 0; at < length && at < most && at < 10; at++)
+        {
+                if (at == 9 && bytes[at] > 1)
+                        return 0;
+                got |= (p64)(bytes[at] & 0x7f) << (7 * at);
+                if (!(bytes[at] & 0x80))
+                {
+                        if (at && !bytes[at])
+                                return 0;
+                        address_to value = got;
+                        return at + 1;
+                }
+        }
+        return 0;
+}
+
 /* GNU ld repairs an A53 ADRP/load pair split by a 4 KiB boundary with a whole
    veneer page.  Large functions which have actually hit that layout use one
    shared, architecture-scoped alignment spelling. */

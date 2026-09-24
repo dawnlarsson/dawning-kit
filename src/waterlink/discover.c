@@ -126,40 +126,47 @@ fn waterlink_group_keys_from(struct waterlink_group_keys address_to keys,
 
 // Writing ---------------------------------------------------------------
 
-typedef struct
+/*
+        The records are a fixed layout, at most a few hundred bytes with an
+        echoed question in front, so they are stored straight into the
+        packet: a head, a label of "wl-" and hex, a pointer back to a name
+        already written, a record's type, class, TTL and length.
+*/
+static p8 address_to waterlink_dns_head(p8 address_to at, p16 id, p16 flags,
+                                        p16 questions, p16 answers)
 {
-        p8 address_to at;
-        positive used;
-        positive room;
-        bool full;
-} waterlink_dns_writer;
-
-static fn waterlink_dns_put(waterlink_dns_writer address_to out,
-                            const p8 address_to bytes, positive length)
-{
-        if (out->used + length > out->room)
-        {
-                out->full = true;
-                return;
-        }
-        memory_copy(out->at + out->used, bytes, length);
-        out->used += length;
+        network_store_16(at, id);
+        network_store_16(at + 2, flags);
+        network_store_16(at + 4, questions);
+        network_store_16(at + 6, answers);
+        memory_zero(at + 8, 4);
+        return at + 12;
 }
 
-static fn waterlink_dns_put16(waterlink_dns_writer address_to out, p32 value)
+static p8 address_to waterlink_dns_label(p8 address_to at,
+                                         p8 address_to random, positive bytes)
 {
-        p8 two[2] = {(p8)(value >> 8), (p8)value};
-
-        waterlink_dns_put(out, two, 2);
+        at[0] = (p8)(3 + 2 * bytes);
+        memory_copy(at + 1, "wl-", 3);
+        return at + 4 + memory_into_hex(at + 4, random, bytes);
 }
 
-static fn waterlink_dns_put32(waterlink_dns_writer address_to out, p32 value)
+static p8 address_to waterlink_dns_pointer(p8 address_to at, p8 address_to packet,
+                                           p8 address_to name)
 {
-        waterlink_dns_put16(out, value >> 16);
-        waterlink_dns_put16(out, value);
+        network_store_16(at, (p16)(0xc000 | (name - packet)));
+        return at + 2;
 }
 
-
+static p8 address_to waterlink_dns_record(p8 address_to at, p16 type, p16 class,
+                                          p32 ttl, p16 length)
+{
+        network_store_16(at, type);
+        network_store_16(at + 2, class);
+        network_store_32(at + 4, ttl);
+        network_store_16(at + 8, length);
+        return at + 10;
+}
 
 /*
         This machine's announcement, or with ttl 0 its goodbye: PTR from the
@@ -167,7 +174,8 @@ static fn waterlink_dns_put32(waterlink_dns_writer address_to out, p32 value)
         (DNS-SD asks for one), and the host's A record when there is an
         address to give. The instance label is "wl-" and twenty hex digits,
         the host label "wl-" and twelve, both random and chosen by the caller.
-        Returns the length, or 0 when it did not fit.
+        A reply to a one-shot query carries its ID and its question. Returns
+        the length, or 0 when it would not fit.
 */
 positive waterlink_mdns_announce(p8 address_to packet, positive room,
                                  p8 address_to instance_bytes,
@@ -175,90 +183,65 @@ positive waterlink_mdns_announce(p8 address_to packet, positive room,
                                  p32 address, p32 ttl, p16 id,
                                  p8 address_to question, positive question_length)
 {
-        waterlink_dns_writer out = {packet, 0, room, false};
-        positive service_at;
-        positive instance_at;
-        positive host_at;
-        p8 name[24];
+        p8 address_to at;
+        p8 address_to service;
+        p8 address_to instance;
+        p8 address_to host;
 
-        //      A reply to a one-shot query carries its ID and its question.
-        waterlink_dns_put16(address_of out, id);
-        waterlink_dns_put16(address_of out, 0x8400);
-        waterlink_dns_put16(address_of out, question ? 1 : 0);
-        waterlink_dns_put16(address_of out, 3 + (address ? 1 : 0));
-        waterlink_dns_put16(address_of out, 0);
-        waterlink_dns_put16(address_of out, 0);
-        if (question)
-                waterlink_dns_put(address_of out, question, question_length);
+        if (room < 12 + question_length + 160)
+                return 0;
+        at = waterlink_dns_head(packet, id, 0x8400, question ? 1 : 0,
+                                3 + (address ? 1 : 0));
+        memory_copy(at, question, question_length);
+        at += question_length;
 
         //      PTR: the service, to the instance.
-        service_at = out.used;
-        waterlink_dns_put(address_of out, waterlink_service_name,
-                          WATERLINK_SERVICE_BYTES);
-        waterlink_dns_put16(address_of out, 12);
-        waterlink_dns_put16(address_of out, 1);
-        waterlink_dns_put32(address_of out, ttl ? 4500 : 0);
-        waterlink_dns_put16(address_of out, 1 + 23 + 2);
-        instance_at = out.used;
-        name[0] = 23;
-        memory_copy(name + 1, "wl-", 3);
-        memory_into_hex(name + 4, instance_bytes, 10);
-        waterlink_dns_put(address_of out, name, 24);
-        waterlink_dns_put16(address_of out, 0xc000 | (p32)service_at);
+        service = at;
+        memory_copy(at, waterlink_service_name, WATERLINK_SERVICE_BYTES);
+        at = waterlink_dns_record(at + WATERLINK_SERVICE_BYTES, 12, 1,
+                                  ttl ? 4500 : 0, 1 + 23 + 2);
+        instance = at;
+        at = waterlink_dns_label(at, instance_bytes, 10);
+        at = waterlink_dns_pointer(at, packet, service);
 
         //      SRV: the instance, to the host, on the port.
-        waterlink_dns_put16(address_of out, 0xc000 | (p32)instance_at);
-        waterlink_dns_put16(address_of out, 33);
-        waterlink_dns_put16(address_of out, 0x8001);
-        waterlink_dns_put32(address_of out, ttl);
-        waterlink_dns_put16(address_of out, 6 + 1 + 15 + 7);
-        waterlink_dns_put16(address_of out, 0);
-        waterlink_dns_put16(address_of out, 0);
-        waterlink_dns_put16(address_of out, port);
-        host_at = out.used;
-        name[0] = 15;
-        memory_copy(name + 1, "wl-", 3);
-        memory_into_hex(name + 4, host_bytes, 6);
-        waterlink_dns_put(address_of out, name, 16);
-        waterlink_dns_put(address_of out, (p8 address_to) "\x05local", 7);
+        at = waterlink_dns_pointer(at, packet, instance);
+        at = waterlink_dns_record(at, 33, 0x8001, ttl, 6 + 1 + 15 + 7);
+        network_store_32(at, 0);
+        network_store_16(at + 4, port);
+        host = at + 6;
+        at = waterlink_dns_label(host, host_bytes, 6);
+        memory_copy(at, "\x05local", 7);
+        at += 7;
 
         //      TXT: empty, one zero byte.
-        waterlink_dns_put16(address_of out, 0xc000 | (p32)instance_at);
-        waterlink_dns_put16(address_of out, 16);
-        waterlink_dns_put16(address_of out, 0x8001);
-        waterlink_dns_put32(address_of out, ttl ? 4500 : 0);
-        waterlink_dns_put16(address_of out, 1);
-        waterlink_dns_put(address_of out, (p8 address_to) "", 1);
+        at = waterlink_dns_pointer(at, packet, instance);
+        at = waterlink_dns_record(at, 16, 0x8001, ttl ? 4500 : 0, 1);
+        *at++ = 0;
 
         if (address)
         {
-                waterlink_dns_put16(address_of out, 0xc000 | (p32)host_at);
-                waterlink_dns_put16(address_of out, 1);
-                waterlink_dns_put16(address_of out, 0x8001);
-                waterlink_dns_put32(address_of out, ttl);
-                waterlink_dns_put16(address_of out, 4);
-                waterlink_dns_put32(address_of out, address);
+                at = waterlink_dns_pointer(at, packet, host);
+                at = waterlink_dns_record(at, 1, 0x8001, ttl, 4);
+                network_store_32(at, address);
+                at += 4;
         }
-
-        return out.full ? 0 : out.used;
+        return (positive)(at - packet);
 }
 
 // The question every browser and every member asks.
 positive waterlink_mdns_query(p8 address_to packet, positive room)
 {
-        waterlink_dns_writer out = {packet, 0, room, false};
+        p8 address_to at;
 
-        waterlink_dns_put16(address_of out, 0);
-        waterlink_dns_put16(address_of out, 0);
-        waterlink_dns_put16(address_of out, 1);
-        waterlink_dns_put16(address_of out, 0);
-        waterlink_dns_put16(address_of out, 0);
-        waterlink_dns_put16(address_of out, 0);
-        waterlink_dns_put(address_of out, waterlink_service_name,
-                          WATERLINK_SERVICE_BYTES);
-        waterlink_dns_put16(address_of out, 12);
-        waterlink_dns_put16(address_of out, 1);
-        return out.full ? 0 : out.used;
+        if (room < 12 + WATERLINK_SERVICE_BYTES + 4)
+                return 0;
+        at = waterlink_dns_head(packet, 0, 0, 1, 0);
+        memory_copy(at, waterlink_service_name, WATERLINK_SERVICE_BYTES);
+        at += WATERLINK_SERVICE_BYTES;
+        network_store_16(at, 12);
+        network_store_16(at + 2, 1);
+        return (positive)(at + 4 - packet);
 }
 
 // Reading ------------------------------------------------------------------

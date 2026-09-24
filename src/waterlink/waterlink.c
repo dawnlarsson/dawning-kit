@@ -304,9 +304,8 @@ _Static_assert(WATERLINK_DATAGRAM == 16 + WATERLINK_PAYLOAD + WATERLINK_TAG_BYTE
 /*      A peer, as this machine keeps it -- the far side never sees this
         record. An address is a cache and not an identity: a machine that
         moves keeps its key and loses its address, which is the ordinary case
-        on wifi and the reason a name binds to a key rather than a place. This
-        goes in the image's settings block beside the wireless networks, so it
-        survives an install the way those do. */
+        on wifi and the reason a name binds to a key rather than a place.
+        Kept in /root/link.peers, root's alone. */
 struct waterlink_peer {
         unsigned char key[WATERLINK_KEY_BYTES];
         char name[WATERLINK_NAME_MAX];

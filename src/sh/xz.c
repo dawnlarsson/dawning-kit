@@ -1318,16 +1318,6 @@ static bool xz_pull_close(address_any state)
         return ok;
 }
 
-static positive xz_vli_put(p8 address_to into, p64 value)
-{
-        positive n = 0;
-
-        for (; value >= 0x80; value >>= 7)
-                into[n++] = (p8)value | 0x80;
-        into[n++] = (p8)value;
-        return n;
-}
-
 static p8 xz_prop_from_dict(positive dict)
 {
         p8 prop;
@@ -3151,8 +3141,8 @@ static bool xz_block_encode(xz_encoder address_to e, p8 address_to input, p32 n)
         positive h = 2;
 
         header[1] = 0x40 | 0x80;
-        h += xz_vli_put(header + h, at);
-        h += xz_vli_put(header + h, n);
+        h += memory_vli_put(header + h, at);
+        h += memory_vli_put(header + h, n);
         header[h++] = 0x21;
         header[h++] = 1;
         header[h++] = xz_prop_from_dict(e->dict);
@@ -3263,8 +3253,8 @@ static bool xz_writer_record(p64 unpadded, p64 uncompressed)
                 xz_writer.index = grown;
                 xz_writer.index_room = room;
         }
-        xz_writer.index_n += xz_vli_put(xz_writer.index + xz_writer.index_n, unpadded);
-        xz_writer.index_n += xz_vli_put(xz_writer.index + xz_writer.index_n, uncompressed);
+        xz_writer.index_n += memory_vli_put(xz_writer.index + xz_writer.index_n, unpadded);
+        xz_writer.index_n += memory_vli_put(xz_writer.index + xz_writer.index_n, uncompressed);
         xz_writer.records++;
         return true;
 }
@@ -3426,7 +3416,7 @@ static bool xz_encode_end(void)
                 p32 crc;
 
                 head[0] = 0;
-                h += xz_vli_put(head + h, xz_writer.records);
+                h += memory_vli_put(head + h, xz_writer.records);
                 size = h + xz_writer.index_n;
                 crc = hash_crc32(0xffffffffu, head, h);
                 crc = hash_crc32(crc, xz_writer.index, xz_writer.index_n);
@@ -3661,24 +3651,6 @@ static bool xz_par_grow(p8 address_to address_to area, positive address_to room,
         return true;
 }
 
-static positive xz_par_vli(p8 address_to p, positive n, p64 address_to value)
-{
-        p64 v = 0;
-
-        for (positive i = 0; i < n && i < 9; i++)
-        {
-                v |= (p64)(p[i] & 0x7f) << (7 * i);
-                if (!(p[i] & 0x80))
-                {
-                        if (i && !p[i])
-                                return 0;
-                        address_to value = v;
-                        return i + 1;
-                }
-        }
-        return 0;
-}
-
 /* Parse a block header already in the batch at `at`. 1 with both sizes,
    0 when a size is missing (serial from here), -1 malformed. */
 static bipolar xz_par_header(xz_par address_to r, p8 address_to h, positive size,
@@ -3697,12 +3669,12 @@ static bipolar xz_par_header(xz_par address_to r, p8 address_to h, positive size
         if ((flags & 0xc0) != 0xc0)
                 return 0;
 
-        positive k = xz_par_vli(h + at, size - 4 - at, compressed);
+        positive k = memory_vli_get(h + at, size - 4 - at, 9, compressed);
 
         if (!k || !address_to compressed)
                 return xz_par_fail(r, "xz block header"), -1;
         at += k;
-        k = xz_par_vli(h + at, size - 4 - at, uncompressed);
+        k = memory_vli_get(h + at, size - 4 - at, 9, uncompressed);
         if (!k)
                 return xz_par_fail(r, "xz block header"), -1;
         return 1;
@@ -3713,8 +3685,8 @@ static bool xz_par_record(xz_par address_to r, p64 unpadded, p64 uncompressed)
         if (!xz_par_grow(address_of r->records, address_of r->records_room,
                          r->records_used, r->records_used + 20))
                 return xz_par_fail(r, "xz cannot map the index");
-        r->records_used += xz_vli_put(r->records + r->records_used, unpadded);
-        r->records_used += xz_vli_put(r->records + r->records_used, uncompressed);
+        r->records_used += memory_vli_put(r->records + r->records_used, unpadded);
+        r->records_used += memory_vli_put(r->records + r->records_used, uncompressed);
         r->record_count++;
         return true;
 }
@@ -3804,7 +3776,7 @@ static bool xz_par_index(xz_par address_to r)
                         break;
         }
         n++;
-        if (xz_par_vli(head + 1, n - 1, address_of count) != n - 1 || count != r->record_count)
+        if (memory_vli_get(head + 1, n - 1, 9, address_of count) != n - 1 || count != r->record_count)
                 return xz_par_fail(r, "xz index does not match the blocks");
 
         positive size = n + r->records_used;

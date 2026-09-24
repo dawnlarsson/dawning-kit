@@ -232,7 +232,7 @@ static bipolar link_read_private_records(string_address path,
         file_facts facts;
         bipolar handle = system_open_at(AT_FDCWD, path,
                                         FILE_READ | O_NOFOLLOW | O_CLOEXEC);
-        positive have = 0;
+        bipolar read;
 
         address_to got = 0;
         if (handle < 0)
@@ -246,21 +246,13 @@ static bipolar link_read_private_records(string_address path,
                 return -EPERM;
         }
 
-        while (have < (positive)facts.size)
-        {
-                bipolar read = system_read_once(handle, into + have,
-                                                (positive)facts.size - have);
-
-                if (read == -4)
-                        continue;
-                if (read <= 0)
-                        break;
-                have += (positive)read;
-        }
+        //      A private file of a few kilobytes arrives in one read, or is
+        //      refused: a short one is not half a record.
+        read = system_read_retry((positive)handle, into, (positive)facts.size);
         system_close(handle);
-        if (have != (positive)facts.size)
+        if (read != (bipolar)facts.size)
                 return -EIO;
-        address_to got = have;
+        address_to got = (positive)read;
         return 0;
 }
 
@@ -2386,41 +2378,14 @@ typedef struct
         p32 ours;      // an initiation waiting for its answer, or 0
         p64 initiated; // when it went
         positive attempts;
-        bool raw;
-        terminal_modes saved;
 } link_client_state;
 
 static link_client_state link_client;
 
-static fn link_client_restore(void)
-{
-        if (link_client.raw)
-        {
-                system_control(0, PTY_TCSETS, address_of link_client.saved);
-                link_client.raw = false;
-        }
-}
-
-static bool link_client_raw(void)
-{
-        terminal_modes raw;
-
-        if (system_control(0, PTY_TCGETS, address_of link_client.saved) < 0)
-                return false;
-        raw = link_client.saved;
-        raw.arriving &= ~(0001u | 0002u | 0010u | 0040u | 0100u | 0200u |
-                          0400u | 02000u);
-        raw.leaving &= ~0001u;
-        raw.behaviour &= ~(0010u | 0100u | 0002u | 0001u | 0100000u);
-        raw.hardware &= ~(0060u | 0400u);
-        raw.hardware |= 0060u;
-        raw.controls[6] = 1;
-        raw.controls[5] = 0;
-        if (system_control(0, PTY_TCSETS, address_of raw) < 0)
-                return false;
-        link_client.raw = true;
-        return true;
-}
+/*      The client's terminal goes raw as the line editor's does, and back:
+        edit.c's pair, which the shell includes after this. */
+static bool edit_terminal_raw();
+static fn edit_terminal_restore();
 
 // The initiator's half of the handshake, for a new session or a rekey.
 static bool link_client_initiate(struct link_session address_to s, p64 now)
@@ -2705,7 +2670,7 @@ static b32 link_client_run(string_address name, p8 kind,
                                                      WATERLINK_FRAME_LAST,
                                              request, (p16)request_length, now);
                         if (kind == LINK_KIND_SHELL)
-                                (void)link_client_raw();
+                                (void)edit_terminal_raw();
                         asked = true;
                 }
                 else if (now - s->now.made >= rekey_after &&
@@ -2753,7 +2718,7 @@ static b32 link_client_run(string_address name, p8 kind,
                 if (s->refused)
                 {
                         link_session_end(s, true);
-                        link_client_restore();
+                        edit_terminal_restore();
                         string_format(log_error, host_label "%s: %s\n", name,
                                       (string_address)s->refusal);
                         log_flush();
@@ -2771,7 +2736,7 @@ static b32 link_client_run(string_address name, p8 kind,
                 }
                 if (s->now.live && (now - s->heard > LINK_DEAD || s->finished))
                 {
-                        link_client_restore();
+                        edit_terminal_restore();
                         string_format(log_error,
                                       s->finished
                                               ? host_label "%s closed the link\n"
@@ -2790,7 +2755,7 @@ static b32 link_client_run(string_address name, p8 kind,
                 link_receive_all(link_now());
         }
 
-        link_client_restore();
+        edit_terminal_restore();
         crypto_forget(address_of link_client.noise, sizeof link_client.noise);
 
         //      A pulled file is only there under its name once it is whole.

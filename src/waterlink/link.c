@@ -121,7 +121,7 @@ struct waterlink_held {
 */
 struct waterlink_replay {
         p64 top;
-        p64 seen[WATERLINK_REPLAY_WINDOW / 64];
+        p64 seen[WATERLINK_REPLAY_WINDOW / 64 + 1];
 };
 
 _Static_assert(WATERLINK_KEYS <= 64, "the keys owing an acknowledgement are one word");
@@ -246,51 +246,15 @@ static p32 waterlink_band_of(p8 flags)
                                               : WATERLINK_BAND_NORMAL;
 }
 
-/*
-        The wire's numbers: seven bits a byte, low first, the top bit saying
-        another follows. Reading takes one spelling only -- a last byte of
-        zero after the first, or a bit past sixty four, is refused -- so two
-        bodies that differ never mean the same frames.
-*/
-static positive waterlink_number_size(p64 value)
-{
-        positive size = 1;
-
-        for (; value >= 0x80; value >>= 7)
-                size++;
-        return size;
-}
-
-static positive waterlink_number_put(p8 address_to at, p64 value)
-{
-        positive used = 0;
-
-        for (; value >= 0x80; value >>= 7)
-                at[used++] = (p8)(value | 0x80);
-        at[used++] = (p8)value;
-        return used;
-}
-
+// A number off the wire, the offset stepped past it: memory_vli_get's.
 static bool waterlink_number_get(p8 address_to bytes, positive length,
                                  positive address_to at, p64 address_to value)
 {
-        p64 got = 0;
+        positive used = memory_vli_get(bytes + address_to at,
+                                       length - address_to at, 10, value);
 
-        for (positive shift = 0; shift < 64 && address_to at < length;
-             shift += 7)
-        {
-                p8 byte = bytes[(address_to at)++];
-
-                if (shift == 63 && byte > 1)
-                        return false;
-                got |= (p64)(byte & 0x7f) << shift;
-                if (!(byte & 0x80))
-                {
-                        address_to value = got;
-                        return byte || !shift;
-                }
-        }
-        return false;
+        address_to at += used;
+        return used != 0;
 }
 
 // A slot's frame as it goes out, and what it costs the window.
@@ -301,15 +265,15 @@ static positive waterlink_head_put(p8 address_to at,
 
         at[0] = slot->flags;
         at[1] = slot->key;
-        used += waterlink_number_put(at + used, slot->sequence);
-        used += waterlink_number_put(at + used, slot->length);
+        used += memory_vli_put(at + used, slot->sequence);
+        used += memory_vli_put(at + used, slot->length);
         return used;
 }
 
 static p64 waterlink_bytes(struct waterlink_slot address_to slot)
 {
-        return 2 + waterlink_number_size(slot->sequence) +
-               waterlink_number_size(slot->length) + slot->length;
+        return 2 + memory_vli_size(slot->sequence) +
+               memory_vli_size(slot->length) + slot->length;
 }
 
 /*
@@ -773,14 +737,14 @@ static positive waterlink_ack_write(struct waterlink_link address_to link,
                                 mask |= 1ull << gap;
                 }
 
-                if (used + 2 + waterlink_number_size(live->delivered) +
-                            waterlink_number_size(mask) >
+                if (used + 2 + memory_vli_size(live->delivered) +
+                            memory_vli_size(mask) >
                     room)
                         break;
                 bytes[used++] = WATERLINK_FRAME_ACK;
                 bytes[used++] = key;
-                used += waterlink_number_put(bytes + used, live->delivered);
-                used += waterlink_number_put(bytes + used, mask);
+                used += memory_vli_put(bytes + used, live->delivered);
+                used += memory_vli_put(bytes + used, mask);
                 link->acking &= link->acking - 1;
         }
         return used;
@@ -1358,78 +1322,40 @@ bool waterlink_deliver(struct waterlink_link address_to link,
         would let anyone at all slide the window forward and lock the session
         out of its own traffic.
 
-        The window does not move. A counter owns the bit at counter modulo the
-        window width, forever, and advancing the top only clears the bits the
-        top has just passed over. The first way I wrote this shifted the whole
-        bitmap instead, which cost the same thirty two words whether the
-        counter advanced by one or by a thousand, and cost them on every
-        datagram that arrives in order -- which is nearly all of them.
-
-        Clearing is the part that is wrong quietly. A bit is not free when the
-        top moves past it: it still holds the answer for a counter exactly one
-        window older, and that counter is outside the window now but its bit
-        is in the way of the one arriving. So every slot between the old top
-        and the new is cleared, in whole words where a word is crossed and by
-        mask where it is not. Skip that and a session that runs long enough
-        starts refusing its own traffic as a replay, once per window, forever.
+        RFC 6479's window: a ring of 64-bit blocks, each counter's bit in the
+        block its high bits name. The top moving forward clears whole blocks
+        between the old top's and the new one's -- one spare block past the
+        window's width is what lets clearing be whole blocks and still keep
+        every counter the window promises. Nothing shifts, so an arrival in
+        order costs one word.
 */
-_Static_assert((WATERLINK_REPLAY_WINDOW & (WATERLINK_REPLAY_WINDOW - 1)) == 0,
-               "the replay window is a ring and its width must be a power of two");
+#define WATERLINK_REPLAY_BLOCKS (WATERLINK_REPLAY_WINDOW / 64 + 1)
+
+_Static_assert(WATERLINK_REPLAY_WINDOW % 64 == 0,
+               "the replay window is whole blocks");
 
 bool waterlink_replay_new(struct waterlink_replay address_to window, p64 counter)
 {
-        p64 behind;
-        positive slot;
+        p64 block = counter >> 6;
+        p64 bit = 1ull << (counter & 63);
+        p64 address_to word = window->seen + block % WATERLINK_REPLAY_BLOCKS;
 
         if (counter > window->top)
         {
-                p64 step = counter - window->top;
-                p64 at = window->top + 1;
+                p64 top = window->top >> 6;
+                p64 steps = block - top < WATERLINK_REPLAY_BLOCKS
+                                    ? block - top
+                                    : WATERLINK_REPLAY_BLOCKS;
 
-                //      Counted by what is left to clear, not by at <= counter:
-                //      a run that ends at the last counter there is wraps at
-                //      to zero, and that test then never fails.
-                if (step >= WATERLINK_REPLAY_WINDOW)
-                        memory_zero(window->seen, sizeof(window->seen));
-                else
-                        while (step)
-                        {
-                                positive low;
-                                positive high;
-                                p64 span = step - 1;
-                                p64 mask;
-
-                                slot = (positive)(at &
-                                                  (WATERLINK_REPLAY_WINDOW - 1));
-                                low = slot & 63;
-                                high = span >= (p64)(63 - low) ? 63
-                                                               : low +
-                                                                         (positive)span;
-
-                                mask = high == 63 ? ~0ull
-                                                  : (1ull << (high + 1)) - 1;
-                                mask &= ~((1ull << low) - 1);
-                                window->seen[slot >> 6] &= ~mask;
-
-                                at += high - low + 1;
-                                step -= high - low + 1;
-                        }
-
+                for (p64 step = 1; step <= steps; step++)
+                        window->seen[(top + step) % WATERLINK_REPLAY_BLOCKS] = 0;
                 window->top = counter;
-                slot = (positive)(counter & (WATERLINK_REPLAY_WINDOW - 1));
-                window->seen[slot >> 6] |= 1ull << (slot & 63);
-                return true;
         }
-
-        behind = window->top - counter;
-        if (behind >= WATERLINK_REPLAY_WINDOW)
+        else if (window->top - counter >= WATERLINK_REPLAY_WINDOW ||
+                 (address_to word & bit))
                 return false;
 
-        slot = (positive)(counter & (WATERLINK_REPLAY_WINDOW - 1));
-        if (window->seen[slot >> 6] & (1ull << (slot & 63)))
-                return false;
-
-        window->seen[slot >> 6] |= 1ull << (slot & 63);
+        address_to word |= bit;
         return true;
 }
 
