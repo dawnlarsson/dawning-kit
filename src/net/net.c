@@ -1915,6 +1915,75 @@ static fn crypto_hmac_sha256(p8 address_to key, positive key_length,
         crypto_hmac_close(address_of mac, out);
 }
 
+/*
+        PBKDF2 over HMAC with SHA-1 or SHA-256 (RFC 8018): WPA's pre-shared
+        key and waterlink's group key. Both pads are hashed once and each
+        round copies the two prepared states, so a round is two compressions
+        rather than the four an HMAC opened afresh would take -- the whole
+        cost of PBKDF2 is rounds, so that is the whole cost halved.
+*/
+static fn crypto_pbkdf2(positive algorithm, positive size,
+                        p8 address_to password, positive password_length,
+                        p8 address_to salt, positive salt_length,
+                        positive rounds, p8 address_to out,
+                        positive out_length)
+{
+        crypto_mac key;
+        digest_state inner;
+        digest_state outer;
+        digest_state work;
+        p8 pad[64];
+        p8 block[64];
+        p8 mix[64];
+        p8 number[4];
+
+        crypto_hmac_open(address_of key, algorithm, size, password,
+                         password_length);
+        inner = key.hash;
+        for (positive at = 0; at < 64; at++)
+                pad[at] = key.key_block[at] ^ 0x5c;
+        digest_open(address_of outer, algorithm, size);
+        digest_write(address_of outer, pad, 64);
+
+        for (positive index = 1, done = 0; done < out_length; index++)
+        {
+                positive take = out_length - done < size ? out_length - done
+                                                         : size;
+
+                network_store_32(number, (p32)index);
+                work = inner;
+                digest_write(address_of work, salt, salt_length);
+                digest_write(address_of work, number, 4);
+                digest_close(address_of work, block);
+                work = outer;
+                digest_write(address_of work, block, size);
+                digest_close(address_of work, block);
+                memory_copy(mix, block, size);
+
+                for (positive round = 1; round < rounds; round++)
+                {
+                        work = inner;
+                        digest_write(address_of work, block, size);
+                        digest_close(address_of work, block);
+                        work = outer;
+                        digest_write(address_of work, block, size);
+                        digest_close(address_of work, block);
+                        for (positive at = 0; at < size; at++)
+                                mix[at] ^= block[at];
+                }
+                memory_copy(out + done, mix, take);
+                done += take;
+        }
+
+        crypto_forget(address_of key, sizeof key);
+        crypto_forget(address_of inner, sizeof inner);
+        crypto_forget(address_of outer, sizeof outer);
+        crypto_forget(address_of work, sizeof work);
+        crypto_forget(pad, sizeof pad);
+        crypto_forget(block, sizeof block);
+        crypto_forget(mix, sizeof mix);
+}
+
 static fn crypto_hkdf_extract(p8 address_to salt, positive salt_length,
                               p8 address_to ikm, positive ikm_length,
                               p8 address_to prk)

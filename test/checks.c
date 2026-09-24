@@ -53567,6 +53567,42 @@ static fn group_keys(struct waterlink_group_keys address_to keys,
         waterlink_group_keys_from(keys, derived, namespace);
 }
 
+/*
+        PBKDF2 against RFC 6070 (HMAC-SHA1) and RFC 7914 (HMAC-SHA256, two
+        blocks of output): the derivation waterlink's groups and WPA's
+        pre-shared key are both made with.
+*/
+static bool pbkdf2_is(positive algorithm, positive size, string_address password,
+                      string_address salt, positive rounds, string_address hex)
+{
+        p8 out[64];
+        p8 want[64];
+        positive length = string_length(hex) / 2;
+
+        for (positive at = 0; at < length; at++)
+                want[at] = (p8)(digit_known(hex[2 * at], 16) << 4 |
+                                digit_known(hex[2 * at + 1], 16));
+        crypto_pbkdf2(algorithm, size, (p8 address_to)password,
+                      string_length(password), (p8 address_to)salt,
+                      string_length(salt), rounds, out, length);
+        return !memory_compare(out, want, length);
+}
+
+static fn pbkdf2_vectors(void)
+{
+        check("PBKDF2-HMAC-SHA1, one round (RFC 6070)",
+              pbkdf2_is(DIGEST_SHA1, 20, "password", "salt", 1,
+                        "0c60c80f961f0e71f3a9b524af6012062fe037a6"));
+        check("PBKDF2-HMAC-SHA1, 4096 rounds (RFC 6070)",
+              pbkdf2_is(DIGEST_SHA1, 20, "password", "salt", 4096,
+                        "4b007901b765489abead49d926f721d065a429c1"));
+        check("PBKDF2-HMAC-SHA256, two blocks out (RFC 7914)",
+              pbkdf2_is(DIGEST_SHA256, 32, "passwd", "salt", 1,
+                        "55ac046e56e3089fec1691c22544b605f94185216dde0465e6"
+                        "8b9d57c20dacbc49ca9cccf179b645991664b39d77ef317c71"
+                        "b845b1e30bd509112041d3a19783"));
+}
+
 static fn group_derivation(void)
 {
         static const p8 one[32] = {
@@ -54161,6 +54197,7 @@ b32 main(void)
         full_frame_beside_owed_ack();
         network_generated();
         handshake();
+        pbkdf2_vectors();
         group_derivation();
         group_tags();
         group_pairing();
@@ -54905,6 +54942,29 @@ static fn labels(void)
               link_nearby_labels(6) && link_nearby.labels_ready);
 }
 
+//      WPA's pre-shared key, made through the shared PBKDF2 (IEEE 802.11i).
+static fn wpa_key(void)
+{
+        p8 pmk[32];
+        static const p8 ieee[32] = {
+                0xf4, 0x2c, 0x6f, 0xc5, 0x2d, 0xf0, 0xeb, 0xef, 0x9e, 0xbb, 0x4b,
+                0x90, 0xb3, 0x8a, 0x5f, 0x90, 0x2e, 0x83, 0xfe, 0x1b, 0x13, 0x5a,
+                0x70, 0xe2, 0x3a, 0xed, 0x76, 0x2e, 0x97, 0x10, 0xa1, 0x2e};
+        static const p8 this_is[32] = {
+                0x0d, 0xc0, 0xd6, 0xeb, 0x90, 0x55, 0x5e, 0xd6, 0x41, 0x97, 0x56,
+                0xb9, 0xa1, 0x5e, 0xc3, 0xe3, 0x20, 0x9b, 0x63, 0xdf, 0x70, 0x7d,
+                0xd5, 0x08, 0xd1, 0x45, 0x81, 0xf8, 0x98, 0x27, 0x21, 0xaf};
+
+        check("the WPA key of \"password\" on IEEE (802.11i)",
+              wifi_psk((p8 address_to) "IEEE", 4, (p8 address_to) "password", 8,
+                       pmk) &&
+                      !memory_compare(pmk, ieee, 32));
+        check("the WPA key of \"ThisIsAPassword\" on ThisIsASSID (802.11i)",
+              wifi_psk((p8 address_to) "ThisIsASSID", 11,
+                       (p8 address_to) "ThisIsAPassword", 15, pmk) &&
+                      !memory_compare(pmk, this_is, 32));
+}
+
 static fn indexes_and_commands(void)
 {
         entropy_down = true;
@@ -54974,6 +55034,7 @@ b32 main(void)
         pairing_second(listener, port);
         pairing_third(listener, port);
         labels();
+        wpa_key();
         indexes_and_commands();
         return test_report(null);
 }

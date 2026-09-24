@@ -84,69 +84,22 @@ struct waterlink_group_keys {
 };
 
 /*
-        PBKDF2-HMAC-SHA256, one block of output: the pads are hashed once and
-        each round copies the two prepared states, so a round is two
-        compressions and not four.
+        PBKDF2-HMAC-SHA256, one block of output, the salt naming the protocol
+        and the namespace so no two groups share a derivation.
 */
 fn waterlink_group_derive(string_address namespace, p8 address_to secret,
                           positive secret_length, positive rounds,
                           p8 address_to out)
 {
-        digest_state inner;
-        digest_state outer;
-        digest_state work;
-        p8 key[64];
-        p8 pad[64];
-        p8 block[32];
-        p8 salt_tail[4] = {0, 0, 0, 1};
+        p8 salt[18 + WATERLINK_NAMESPACE_MAX];
         positive namespace_length = string_length(namespace);
 
-        memory_zero(key, sizeof key);
-        if (secret_length > 64)
-                crypto_sha256_of(secret, secret_length, key);
-        else
-                memory_copy(key, secret, secret_length);
-
-        for (positive at = 0; at < 64; at++)
-                pad[at] = key[at] ^ 0x36;
-        digest_open(address_of inner, DIGEST_SHA256, 32);
-        digest_write(address_of inner, pad, 64);
-        for (positive at = 0; at < 64; at++)
-                pad[at] = key[at] ^ 0x5c;
-        digest_open(address_of outer, DIGEST_SHA256, 32);
-        digest_write(address_of outer, pad, 64);
-
-        //      U1 = HMAC(secret, salt || 1), the salt naming the protocol and
-        //      the namespace, so no two groups share a derivation.
-        work = inner;
-        digest_write(address_of work, (p8 address_to) "waterlink group 1 ", 18);
-        digest_write(address_of work, (p8 address_to)namespace,
-                     namespace_length);
-        digest_write(address_of work, salt_tail, 4);
-        digest_close(address_of work, block);
-        work = outer;
-        digest_write(address_of work, block, 32);
-        digest_close(address_of work, block);
-        memory_copy(out, block, 32);
-
-        for (positive round = 1; round < rounds; round++)
-        {
-                work = inner;
-                digest_write(address_of work, block, 32);
-                digest_close(address_of work, block);
-                work = outer;
-                digest_write(address_of work, block, 32);
-                digest_close(address_of work, block);
-                for (positive at = 0; at < 32; at++)
-                        out[at] ^= block[at];
-        }
-
-        crypto_forget(key, sizeof key);
-        crypto_forget(pad, sizeof pad);
-        crypto_forget(block, sizeof block);
-        crypto_forget(address_of inner, sizeof inner);
-        crypto_forget(address_of outer, sizeof outer);
-        crypto_forget(address_of work, sizeof work);
+        if (namespace_length > WATERLINK_NAMESPACE_MAX)
+                namespace_length = WATERLINK_NAMESPACE_MAX;
+        memory_copy(salt, "waterlink group 1 ", 18);
+        memory_copy(salt + 18, namespace, namespace_length);
+        crypto_pbkdf2(DIGEST_SHA256, 32, secret, secret_length, salt,
+                      18 + namespace_length, rounds, out, 32);
 }
 
 fn waterlink_group_keys_from(struct waterlink_group_keys address_to keys,

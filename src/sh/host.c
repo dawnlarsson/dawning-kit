@@ -3857,11 +3857,6 @@ static COLD p8 wifi_nibble(p8 byte)
 static COLD bool wifi_psk(p8 address_to ssid, positive ssid_length,
                      p8 address_to pass, positive pass_length, p8 address_to pmk)
 {
-        p8 block[36];
-        p8 last[20];
-        p8 mix[20];
-        positive round;
-        positive which;
         positive i;
 
         if (pass_length == 64)
@@ -3879,28 +3874,10 @@ static COLD bool wifi_psk(p8 address_to ssid, positive ssid_length,
             ssid_length > 32)
                 return false;
 
-        memory_copy(block, ssid, ssid_length);
-        for (which = 1; which <= 2; which++)
-        {
-                block[ssid_length] = 0;
-                block[ssid_length + 1] = 0;
-                block[ssid_length + 2] = 0;
-                block[ssid_length + 3] = (p8)which;
-                wifi_hmac_sha1(pass, pass_length, block, ssid_length + 4, last);
-                memory_copy(mix, last, 20);
-                for (round = 1; round < 4096; round++)
-                {
-                        wifi_hmac_sha1(pass, pass_length, last, 20, last);
-                        for (i = 0; i < 20; i++)
-                                mix[i] ^= last[i];
-                }
-                memory_copy(pmk + (which - 1) * 20, mix,
-                            which == 1 ? 20 : 12);
-        }
-
-        crypto_forget(block, sizeof(block));
-        crypto_forget(last, sizeof(last));
-        crypto_forget(mix, sizeof(mix));
+        //      IEEE 802.11i: PBKDF2-HMAC-SHA1 of the passphrase, the SSID as
+        //      its salt, 4096 rounds, 256 bits.
+        crypto_pbkdf2(DIGEST_SHA1, 20, pass, pass_length, ssid, ssid_length,
+                      4096, pmk, 32);
         return true;
 }
 
