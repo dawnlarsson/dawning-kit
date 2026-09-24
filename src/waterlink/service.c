@@ -1041,7 +1041,8 @@ static fn link_batch_flush(void)
 
 /*
         Everything a session's link will send now: each datagram numbered,
-        sealed and sent, the full ones that need not go alone into a run.
+        sealed and sent, the full ones that need not go alone into a run and
+        the rest by themselves at their own length.
 */
 static fn link_session_flush(struct link_session address_to s, p64 now)
 {
@@ -1051,7 +1052,7 @@ static fn link_session_flush(struct link_session address_to s, p64 now)
                 struct waterlink_datagram head;
                 bool alone = false;
                 positive used;
-                p8 single[WATERLINK_DATAGRAM];
+                positive length;
 
                 if (link_self.batched == 64 ||
                     (link_self.batched &&
@@ -1072,22 +1073,11 @@ static fn link_session_flush(struct link_session address_to s, p64 now)
                 memory_copy(datagram, address_of head, 16);
                 s->spoke = now;
 
-                if (!s->link->carried)
+                length = waterlink_seal(address_of s->now.send, datagram, used);
+                if (alone || length < WATERLINK_DATAGRAM)
                 {
-                        positive length;
-
-                        memory_copy(single, datagram, 16 + used);
-                        length = waterlink_seal_short(address_of s->now.send,
-                                                      single, used);
-                        (void)link_send_to(single, length, s->address, s->port);
-                        continue;
-                }
-
-                waterlink_seal(address_of s->now.send, datagram, used);
-                if (alone)
-                {
-                        (void)link_send_to(datagram, WATERLINK_DATAGRAM,
-                                           s->address, s->port);
+                        (void)link_send_to(datagram, length, s->address,
+                                           s->port);
                         continue;
                 }
 
@@ -1107,7 +1097,7 @@ static fn link_session_say(struct link_session address_to s, p32 kind)
         positive length;
 
         memory_copy(datagram, address_of head, 16);
-        length = waterlink_seal_short(address_of s->now.send, datagram, 0);
+        length = waterlink_seal(address_of s->now.send, datagram, 0);
         (void)link_send_to(datagram, length, s->address, s->port);
         s->spoke = link_now();
 }
@@ -2059,8 +2049,8 @@ static bool link_carried(p8 address_to datagram, positive length,
 
         memory_copy(address_of head, datagram, 16);
         keys = link_keys_for(head.receiver, address_of s);
-        if (!keys || !waterlink_open_length(address_of keys->receive, datagram,
-                                            length))
+        if (!keys || !waterlink_open(address_of keys->receive, datagram,
+                                     length))
                 return false;
         if (!waterlink_replay_new(address_of keys->replay, head.counter))
                 return false;

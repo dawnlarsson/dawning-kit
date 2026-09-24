@@ -52133,7 +52133,9 @@ static fn datagram_make(p8 address_to datagram, p64 counter, p8 fill)
 
         used = waterlink_fill(address_of one, datagram + 16, 0,
                               address_of alone);
-        waterlink_seal(address_of sealing, datagram, used);
+        //      At the full size, the box every run of segments is made of.
+        waterlink_seal_box(address_of sealing, datagram, used,
+                           WATERLINK_PAYLOAD);
 }
 
 static fn sealed(void)
@@ -52178,7 +52180,7 @@ static fn sealed(void)
                       0x1122334455667788ull);
 
         check("a sealed datagram opens",
-              waterlink_open(address_of sealing, datagram));
+              waterlink_open(address_of sealing, datagram, WATERLINK_DATAGRAM));
         check("and gives back the frames that went in",
               !memory_compare(datagram + 16, plain, WATERLINK_PAYLOAD));
 
@@ -52198,7 +52200,7 @@ static fn sealed(void)
                 {
                         datagram_make(datagram, 42, 'q');
                         datagram[where[at]] ^= 0x10;
-                        if (!waterlink_open(address_of sealing, datagram))
+                        if (!waterlink_open(address_of sealing, datagram, WATERLINK_DATAGRAM))
                         {
                                 refused++;
                                 for (positive i = 0; i < WATERLINK_PAYLOAD; i++)
@@ -52221,18 +52223,22 @@ static fn sealed(void)
                 datagram_make(other, 101, 'q');
                 memory_copy(other, datagram, 16);
                 check("a header moved onto another box does not open",
-                      !waterlink_open(address_of sealing, other));
+                      !waterlink_open(address_of sealing, other, WATERLINK_DATAGRAM));
         }
 }
 
 /*
-        A datagram of acknowledgements alone is sealed at whole blocks, and is
-        still net.c's AES-GCM over the same header and the shorter box.
+        A datagram with room left for a frame is sealed at whole blocks, and
+        is still net.c's AES-GCM over the same header and the shorter box; one
+        without is padded to the full size. The box a full frame leaves is
+        always the full one, whatever else rides with it, so a run of them is
+        one size for segment offload.
 */
 static fn sealed_short(void)
 {
-        static const positive sizes[] = {1, 16, 17, 76, 100, 400,
-                                         WATERLINK_PAYLOAD};
+        static const positive sizes[] = {
+                1, 16, 17, 76, 100, 400, WATERLINK_PAYLOAD - WATERLINK_HEADER,
+                WATERLINK_PAYLOAD - WATERLINK_HEADER + 1, WATERLINK_PAYLOAD};
         positive agreed = 0;
         positive opened = 0;
         positive refused = 0;
@@ -52244,7 +52250,7 @@ static fn sealed_short(void)
                 p8 tag[16];
                 p8 iv[12];
                 struct waterlink_datagram head;
-                positive box = (sizes[at] + 15) & ~(positive)15;
+                positive box = waterlink_box(sizes[at]);
                 positive length;
 
                 head.kind = WATERLINK_KIND_CARRY;
@@ -52256,8 +52262,7 @@ static fn sealed_short(void)
                 memory_zero(reference, sizeof reference);
                 memory_copy(reference, datagram + 16, sizes[at]);
 
-                length = waterlink_seal_short(address_of sealing, datagram,
-                                              sizes[at]);
+                length = waterlink_seal(address_of sealing, datagram, sizes[at]);
 
                 memory_zero(iv, 4);
                 for (positive i = 0; i < 8; i++)
@@ -52270,16 +52275,22 @@ static fn sealed_short(void)
                     !memory_compare(datagram + 16 + box, tag, 16))
                         agreed++;
 
-                if (!waterlink_open_length(address_of sealing, datagram,
-                                           length - 16))
+                if (!waterlink_open(address_of sealing, datagram, length - 16))
                         refused++;
-                length = waterlink_seal_short(address_of sealing, datagram,
-                                              sizes[at]);
-                if (waterlink_open_length(address_of sealing, datagram,
-                                          length))
+                length = waterlink_seal(address_of sealing, datagram, sizes[at]);
+                if (waterlink_open(address_of sealing, datagram, length))
                         opened++;
         }
 
+        check("a box with room for another frame is cut to whole blocks, "
+              "and one without is the full payload",
+              waterlink_box(0) == 16 && waterlink_box(1) == 16 &&
+                      waterlink_box(17) == 32 &&
+                      waterlink_box(WATERLINK_PAYLOAD - WATERLINK_HEADER) ==
+                              ((WATERLINK_PAYLOAD - WATERLINK_HEADER + 15) & ~15u) &&
+                      waterlink_box(WATERLINK_PAYLOAD - WATERLINK_HEADER + 1) ==
+                              WATERLINK_PAYLOAD &&
+                      waterlink_box(WATERLINK_PAYLOAD) == WATERLINK_PAYLOAD);
         check("a short datagram is net.c's AES-GCM over the shorter box",
               agreed == sizeof sizes / sizeof sizes[0]);
         check("and opens at its own length", opened == agreed);
@@ -52346,12 +52357,9 @@ static fn sealed_generated(void)
                                 datagram[i] = (p8)(i * 31 + round);
                         memory_copy(datagram + 16, text, used);
 
-                        length = box == WATERLINK_PAYLOAD && round == 1
-                                         ? (waterlink_seal(address_of sealing_generated,
-                                                           datagram, used),
-                                            (positive)WATERLINK_DATAGRAM)
-                                         : waterlink_seal_short(address_of sealing_generated,
-                                                                datagram, used);
+                        waterlink_seal_box(address_of sealing_generated,
+                                           datagram, used, box);
+                        length = 32 + box;
 
                         memory_zero(iv, 4);
                         for (positive i = 0; i < 8; i++)
@@ -52372,7 +52380,7 @@ static fn sealed_generated(void)
                                 memory_copy(copy, datagram, sizeof copy);
                                 flip = (positive)(seed % length);
                                 copy[flip] ^= (p8)(1u << (seed >> 8) % 8);
-                                if (!waterlink_open_length(address_of sealing_generated,
+                                if (!waterlink_open(address_of sealing_generated,
                                                            copy, length))
                                         refused++;
                                 for (positive i = 0; i < box; i++)
@@ -52385,7 +52393,7 @@ static fn sealed_generated(void)
                         memory_zero(text, sizeof text);
                         for (positive i = 0; i < used; i++)
                                 text[i] = (p8)(seed >> (i % 56) ^ i);
-                        if (waterlink_open_length(address_of sealing_generated,
+                        if (waterlink_open(address_of sealing_generated,
                                                   datagram, length) &&
                             !memory_compare(datagram + 16, text, box))
                                 opened++;
@@ -52410,7 +52418,7 @@ static fn whole_path(void)
         memory_zero(address_of window, sizeof window);
 
         datagram_make(datagram, 9, 'w');
-        check("the datagram opens", waterlink_open(address_of sealing, datagram));
+        check("the datagram opens", waterlink_open(address_of sealing, datagram, WATERLINK_DATAGRAM));
 
         memory_copy(address_of head, datagram, 16);
         check("its counter is new", waterlink_replay_new(address_of window,
@@ -52837,23 +52845,17 @@ static p32 sim_heap_pop(void)
 
 //      One datagram onto the path from end `from`: the bottleneck, then the
 //      wire's loss, jitter and duplication.
-static fn sim_send(positive from, p8 address_to body, positive used, p64 now,
-                   bool short_ack)
+static fn sim_send(positive from, p8 address_to body, positive used, p64 now)
 {
         sim_end address_to edge = sim_ends + from;
         p64 depart;
-        p64 cost = edge->spacing;
+        //      A datagram holds the bottleneck for its share of a full one.
+        p64 cost = edge->spacing * (32 + waterlink_box(used)) /
+                   WATERLINK_DATAGRAM;
         positive copies;
 
-        //      A datagram of acknowledgements only is cut to whole blocks, and
-        //      holds the bottleneck for its share of a full one.
-        if (short_ack)
-        {
-                cost = edge->spacing * (32 + ((used + 15) & ~(positive)15)) /
-                       WATERLINK_DATAGRAM;
-                if (!cost)
-                        cost = 1;
-        }
+        if (!cost)
+                cost = 1;
 
         edge->sent++;
         if (edge->free_at > now &&
@@ -52891,10 +52893,8 @@ static fn sim_send(positive from, p8 address_to body, positive used, p64 now,
                 d->arrive = depart + edge->delay +
                             (edge->jitter ? sim_next() % edge->jitter : 0);
                 d->counter = edge->counter;
-                //      The box as the seal leaves it: zeros to the full
-                //      payload, or to whole blocks for acknowledgements alone.
-                d->used = short_ack ? (used + 15) & ~(positive)15
-                                    : WATERLINK_PAYLOAD;
+                //      The box as the seal leaves it, zeros to its end.
+                d->used = waterlink_box(used);
                 d->to = (p8)(1 - from);
                 memory_copy(d->body, body, used);
                 memory_zero(d->body + used, d->used - used);
@@ -53105,8 +53105,7 @@ static fn sim_drain_sends(positive side, p64 now)
 
                 if (!used)
                         return;
-                sim_send(side, sim_scratch, used, now,
-                         !sim_link[side].carried);
+                sim_send(side, sim_scratch, used, now);
         }
 }
 
@@ -53126,6 +53125,9 @@ typedef struct {
         //      The clean-bottleneck seeds, summed.
         p64 path_bytes;
         p64 path_capacity;
+        //      The bulk schedule that used the least of its path.
+        p64 thin_bytes;
+        p64 thin_capacity;
         p64 path_sent;
         p64 path_dropped;
 } sim_tally;
@@ -53279,12 +53281,21 @@ static fn sim_seed(positive seed)
                         p64 by_rate = span / edge->spacing;
                         p64 by_window;
 
+                        p64 capacity;
+
                         if (flying > WATERLINK_SLOTS)
                                 flying = WATERLINK_SLOTS;
                         by_window = span * flying / trip;
-                        sim_total.path_capacity +=
-                                (by_rate < by_window ? by_rate : by_window) *
-                                WATERLINK_FRAME_MAX;
+                        capacity = (by_rate < by_window ? by_rate : by_window) *
+                                   WATERLINK_FRAME_MAX;
+                        sim_total.path_capacity += capacity;
+                        if (!sim_total.thin_capacity ||
+                            edge->bytes * sim_total.thin_capacity <
+                                    sim_total.thin_bytes * capacity)
+                        {
+                                sim_total.thin_bytes = edge->bytes;
+                                sim_total.thin_capacity = capacity;
+                        }
                 }
                 sim_total.path_sent += edge->sent;
                 sim_total.path_dropped += edge->dropped;
@@ -53337,6 +53348,9 @@ static fn network_generated(void)
         check("the timer fired", sim_total.timeouts > 0);
         check("a bulk path is kept at least half full",
               sim_total.path_bytes * 2 >= sim_total.path_capacity);
+        check("and no bulk path stalls: each uses a quarter of what it "
+              "could carry",
+              sim_total.thin_bytes * 4 >= sim_total.thin_capacity);
         check("and its queue drops fewer than one datagram in ten",
               sim_total.path_dropped * 10 <= sim_total.path_sent);
 }
@@ -66238,9 +66252,9 @@ static fn frame_once(positive length, p16 flags, bool timed)
         t[2] = timed ? get_cpu_time() : 0;
         head.counter = counter++;
         memory_copy(datagram, address_of head, 16);
-        waterlink_seal(address_of key, datagram, used);
+        (void)waterlink_seal(address_of key, datagram, used);
         t[3] = timed ? get_cpu_time() : 0;
-        (void)waterlink_open(address_of key, datagram);
+        (void)waterlink_open(address_of key, datagram, WATERLINK_DATAGRAM);
         t[4] = timed ? get_cpu_time() : 0;
         (void)waterlink_replay_new(address_of window, head.counter);
         t[5] = timed ? get_cpu_time() : 0;

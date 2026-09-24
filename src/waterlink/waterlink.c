@@ -175,18 +175,19 @@
         sender's to split: reassembly is a queue, and a queue is a place to
         store an attacker's bytes.
 
-        Every datagram that carries a frame is padded to this, which buys two
-        things and the second one is worth more. A packed frame's length leaks nothing to an
-        observer. And segment offload will only cut a buffer into datagrams
-        that are all the same size -- so the fixed size is what lets one send
-        hand the kernel forty datagrams for the price of one. Measured on a
-        9950X: 2516 cycles a datagram sent one at a time, 2355 batched through
-        sendmmsg, 461 as uniform segments. Batching the syscall is worth six
-        percent; batching the segments is worth five times.
+        A datagram is cut to whole blocks, as WireGuard's are, unless its box
+        has no room left for another frame: then it is padded to this. So a
+        keystroke is 48 bytes on the wire and three blocks of cipher, not
+        1200 and seventy five, and a run of full frames is still all one
+        size -- which is what segment offload needs, and segments are the
+        lever: measured on a 9950X, 2516 cycles a datagram sent one at a time,
+        2355 batched through sendmmsg, 461 as uniform segments. Batching the
+        syscall is worth six percent; batching the segments is worth five
+        times.
 
-        One that carries only acknowledgements is cut to whole blocks
-        instead: it never rides in a segment run, and padded it made the
-        return path as heavy as the forward one. */
+        What that gives up is hiding a small frame's length. It was never
+        hidden well: the moment a datagram leaves says as much as its size,
+        and WireGuard makes the same choice. */
 #define WATERLINK_DATAGRAM 1200
 #define WATERLINK_PAYLOAD (WATERLINK_DATAGRAM - 16 - 16)
 

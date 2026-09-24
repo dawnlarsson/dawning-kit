@@ -761,35 +761,30 @@ __asm__(
 #endif
 
 /*
-        Seal a datagram whose header is written and whose box holds used
-        bytes of frames. The rest of the box is zeroed first -- padding is
-        part of what is authenticated, and a box that ends in leftover bytes
-        from the last datagram would be sealing whatever they were.
+        The box a datagram goes out with, for used bytes of frames: cut to
+        whole blocks, as WireGuard pads -- except a box with no room left for
+        another frame, which is padded to the full size. A keystroke is then
+        a 48-byte datagram and not a 1200-byte one, and a run of full frames
+        is still all one size, which is what segment offload needs.
 */
-fn waterlink_seal(crypto_aesgcm_key address_to key, p8 address_to datagram,
-                  positive used)
+positive waterlink_box(positive used)
 {
-        waterlink_seal_box(key, datagram, used, WATERLINK_PAYLOAD);
+        if (used + WATERLINK_HEADER > WATERLINK_PAYLOAD)
+                return WATERLINK_PAYLOAD;
+        return used ? (used + 15) & ~(positive)15 : 16;
 }
 
 /*
-        A datagram that carries only acknowledgements is cut to whole blocks
-        instead of padded. It says nothing its timing does not already say --
-        that the other way is carrying something -- and at full size it made
-        the return path carry as many bytes as the forward one, so on any
-        path slower one way than the other the acknowledgements became the
-        bottleneck and their losses looked like lost data. Returns the
-        datagram's length, a multiple of sixteen from 48 to the full size.
+        Seal a datagram whose header is written and whose box holds used
+        bytes of frames, and answer its length. The rest of the box is
+        zeroed first -- padding is part of what is authenticated, and a box
+        that ends in leftover bytes from the last datagram would be sealing
+        whatever they were.
 */
-positive waterlink_seal_short(crypto_aesgcm_key address_to key,
-                              p8 address_to datagram, positive used)
+positive waterlink_seal(crypto_aesgcm_key address_to key, p8 address_to datagram,
+                        positive used)
 {
-        positive box = (used + 15) & ~(positive)15;
-
-        if (!box)
-                box = 16;
-        if (box > WATERLINK_PAYLOAD)
-                box = WATERLINK_PAYLOAD;
+        positive box = waterlink_box(used);
 
         waterlink_seal_box(key, datagram, used, box);
         return 16 + box + 16;
@@ -807,18 +802,12 @@ positive waterlink_seal_short(crypto_aesgcm_key address_to key,
         a datagram's. The counter is only trustworthy after this returns true,
         which is why the replay window is asked afterwards and never before.
 */
-bool waterlink_open_length(crypto_aesgcm_key address_to key,
-                           p8 address_to datagram, positive length)
+bool waterlink_open(crypto_aesgcm_key address_to key, p8 address_to datagram,
+                    positive length)
 {
         if (length < 48 || length > WATERLINK_DATAGRAM || length % 16)
                 return false;
-
         return waterlink_open_box(key, datagram, length - 32);
-}
-
-bool waterlink_open(crypto_aesgcm_key address_to key, p8 address_to datagram)
-{
-        return waterlink_open_length(key, datagram, WATERLINK_DATAGRAM);
 }
 
 #endif // WATERLINK_SEAL_INCLUDED

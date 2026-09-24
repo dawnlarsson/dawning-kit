@@ -176,8 +176,6 @@ struct waterlink_link {
         p64 owed;          // when the oldest unacknowledged arrival came
         p32 owed_count;    // datagrams with frames since the last ack
         p8 owed_now;       // an arrival that should be answered at once
-        p8 carried;        // the last fill held a frame, not only acks
-        p8 unused_flags[2];
         p32 backoff;
         p32 probes;        // datagrams the probe timer lets past the window
 
@@ -478,13 +476,32 @@ static fn waterlink_band_remove(struct waterlink_link address_to link, p32 at)
         of a band is a queue of retransmissions in the order they were found.
         Putting the newest loss first instead starves the oldest -- which is
         the one the far side is holding everything else back for.
+
+        Except the oldest itself: a key's first unacknowledged frame goes in
+        front of every other retransmission. The far side's hold-back is one
+        pool for every key, so frames later on a key can fill it, be refused,
+        time out and come back first forever, with the window full of them
+        and the one frame that would empty the pool never reaching the front
+        -- a bulk transfer on a clean path stalled six seconds that way.
 */
 static fn waterlink_band_requeue(struct waterlink_link address_to link, p32 at)
 {
         p32 band = waterlink_band_of(link->slot[at].flags);
         p32 after = link->requeue[band];
+        p32 key_at = waterlink_key_find(link->sending, link->slot[at].key);
 
         link->slot[at].state = WATERLINK_SLOT_QUEUED;
+
+        if (key_at != WATERLINK_NONE && link->sending[key_at].first == at)
+        {
+                link->slot[at].next = link->head[band];
+                link->head[band] = at;
+                if (link->tail[band] == WATERLINK_NONE)
+                        link->tail[band] = at;
+                if (after == WATERLINK_NONE)
+                        link->requeue[band] = at;
+                return;
+        }
 
         if (after == WATERLINK_NONE)
         {
@@ -1000,9 +1017,8 @@ static positive waterlink_ack_write(struct waterlink_link address_to link,
         the one who notices.
 
         Frames already queued still ride along behind the urgent one when the
-        path allows. They were not going to leave sooner in any case, the
-        datagram is padded to a fixed size whether they are in it or not, and
-        the urgent frame is in front of them.
+        path allows. They were not going to leave sooner in any case, and the
+        urgent frame is in front of them.
 
         Acknowledgements are not held by the window either: they are what
         opens it.
@@ -1027,7 +1043,6 @@ positive waterlink_fill(struct waterlink_link address_to link,
         bool full = false;
 
         address_to alone = false;
-        link->carried = 0;
         if (now > link->clock)
                 link->clock = now;
 
@@ -1124,9 +1139,6 @@ positive waterlink_fill(struct waterlink_link address_to link,
 
         if (probed)
                 link->probes--;
-
-        if (used)
-                link->carried = 1;
 
         if (link->acks && (used || waterlink_ack_due(link, now)))
         {
@@ -1594,7 +1606,7 @@ bool waterlink_deliver_at(struct waterlink_link address_to link,
 
                 memory_copy(address_of head, bytes + at, WATERLINK_HEADER);
 
-                //      A sealed box is padded with zeros to the full payload,
+                //      A sealed box is padded with zeros to its whole blocks,
                 //      and no real frame has zero flags, so a zero header is
                 //      where the frames stop. The padding is inside the tag,
                 //      so this is the sender's statement and not a guess.
