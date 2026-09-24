@@ -85,6 +85,45 @@ DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "full",
                  "files": "full", "shell": "default", "util_linux": "full",
                  "misc": "full"}
 
+#       The reference tools the pins and floors below were last taken against.
+#       The box is a rolling distribution: on 2026-09-24 it moved bash, util-
+#       linux, gzip, xz and tar in one update and rebooted, and lanes went red
+#       in ways that looked like this tree -- hexdump's wording was
+#       util-linux's new one. A run now names any tool that has moved since.
+#       Change a version here when the pins and floors are taken again
+#       against the new one, not before.
+REFERENCE_VERSIONS = {
+    "bash": ("bash --version", rb"version (\d+\.\d+\.\d+)", "5.3.15"),
+    "coreutils": ("ls --version", rb"coreutils\)? (\d+\.\d+)", "9.11"),
+    "util-linux": ("hexdump --version", rb"util-linux (\d+\.\d+(?:\.\d+)?)", "2.42.2"),
+    "gawk": ("gawk --version", rb"GNU Awk (\d+\.\d+\.\d+)", "5.4.1"),
+    "gzip": ("gzip --version", rb"gzip (\d+\.\d+)", "1.14"),
+    "xz": ("xz --version", rb"xz \(XZ Utils\) (\d+\.\d+\.\d+)", "5.8.3"),
+    "tar": ("tar --version", rb"tar\)? (\d+\.\d+)", "1.35"),
+    "grep": ("grep --version", rb"grep\)? (\d+\.\d+)", "3.12"),
+    "sed": ("sed --version", rb"sed\)? (\d+\.\d+)", "4.10"),
+    "findutils": ("find --version", rb"findutils\)? (\d+\.\d+\.\d+)", "4.11.0"),
+    "procps-ng": ("ps --version", rb"procps-ng (\d+\.\d+\.\d+)", "4.0.7"),
+}
+
+
+def reference_moved():
+    """(name, recorded, found) for each reference tool whose version is not
+    the one REFERENCE_VERSIONS records. A tool that is missing or will not
+    say its version is left to the lanes, which report it themselves."""
+    moved = []
+    for name, (command, pattern, recorded) in REFERENCE_VERSIONS.items():
+        try:
+            out = subprocess.run(command.split(), capture_output=True,
+                                 timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        found = re.search(pattern, out)
+        if found and found.group(1).decode() != recorded:
+            moved.append((name, recorded, found.group(1).decode()))
+    return moved
+
+
 DOMAIN_FLOOR = {
     #       domain: (cases that agreed, cases run, the noise to ignore, what
     #       the gap is) when the floor was set. An entry is absent once its
@@ -1457,6 +1496,9 @@ def main(argv=None):
         f"{d}:{DOMAIN_BUDGET.get(d, 'default')}" for d in domains)
     print(f"  differential seed={hex(args.seed)} budget={shown_budget} cases={len(cases)} "
           f"domains={','.join(domains)} jobs={args.jobs}; compares status, stdout, effects and diagnostics")
+    for name, recorded, found in reference_moved():
+        print(f"  NOTE the reference {name} is {found}, and the pins and floors were taken "
+              f"against {recorded}: a failure here may be the reference moving, not this tree")
 
     passed = collections.Counter()
     total = collections.Counter()
