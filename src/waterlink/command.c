@@ -710,7 +710,12 @@ static b32 link_join(string_address address_to words, positive count)
         {
                 p8 random[20];
 
-                system_random_fill(random, sizeof random, 0);
+                if (system_random_fill(random, sizeof random, 0) < 0)
+                {
+                        crypto_forget(random, sizeof random);
+                        crypto_forget(address_of groups, sizeof groups);
+                        return host_fail("randomness", -EIO);
+                }
                 for (positive bit = 0, out = 0; out < 32; out++, bit += 5)
                 {
                         positive byte = bit / 8;

@@ -916,12 +916,13 @@ static link_service link_self;
 
 static p32 link_index_new(void)
 {
-        for (;;)
+        for (positive attempt = 0; attempt < 128; attempt++)
         {
                 p32 index = 0;
                 bool taken = false;
 
-                system_random_fill(address_of index, sizeof index, 0);
+                if (system_random_fill(address_of index, sizeof index, 0) < 0)
+                        return 0;
                 if (!index)
                         continue;
                 for (positive at = 0; at < LINK_SESSIONS; at++)
@@ -936,6 +937,7 @@ static p32 link_index_new(void)
                 if (!taken)
                         return index;
         }
+        return 0;
 }
 
 static bool link_session_open(struct link_session address_to s)
@@ -2025,10 +2027,14 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
         p32 ours;
 
         if (!waterlink_gate_passes(address_of link_self.me, datagram, length) ||
-            !waterlink_admit(address_of link_self.admission, address, now) ||
-            !waterlink_accept(address_of noise, address_of link_self.me,
-                              datagram, who, hello))
+            !waterlink_admit(address_of link_self.admission, address, now))
                 return;
+        if (!waterlink_accept(address_of noise, address_of link_self.me,
+                              datagram, who, hello))
+        {
+                crypto_forget(address_of noise, sizeof noise);
+                return;
+        }
 
         link_peers_load(address_of peers);
         peer = link_peer_keyed(address_of peers, who);
@@ -2052,6 +2058,16 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
                         s = look;
         }
 
+        /* Draw everything the answer needs before reserving a session: an
+           entropy outage must not let initiations fill the session table. */
+        ours = link_index_new();
+        if (!ours || system_random_fill(ephemeral, 32, 0) < 0)
+        {
+                crypto_forget(ephemeral, sizeof ephemeral);
+                crypto_forget(address_of noise, sizeof noise);
+                return;
+        }
+
         if (!s)
         {
                 if (of_peer >= LINK_SESSIONS_A_PEER)
@@ -2067,8 +2083,6 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
                 s->conversation = conversation;
         }
 
-        ours = link_index_new();
-        system_random_fill(ephemeral, 32, 0);
         waterlink_respond(address_of noise, ephemeral, theirs, ours, answer);
         waterlink_split(address_of noise, false, send, receive);
         crypto_forget(ephemeral, sizeof ephemeral);
@@ -2745,7 +2759,12 @@ static bool link_client_handshake(struct link_session address_to s,
                         (p32)(wall % 1000000000ull));
         memory_copy(hello + WATERLINK_STAMP_BYTES, address_of s->conversation, 8);
         memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of ours, 4);
-        system_random_fill(ephemeral, 32, 0);
+        if (system_random_fill(ephemeral, 32, 0) < 0)
+        {
+                crypto_forget(ephemeral, sizeof ephemeral);
+                crypto_forget(noise, sizeof(address_to noise));
+                return false;
+        }
         waterlink_initiate(noise, address_of link_self.me, s->peer, ephemeral,
                            hello, datagram);
         crypto_forget(ephemeral, sizeof ephemeral);
@@ -2759,17 +2778,28 @@ static bool link_client_answer(struct link_session address_to s,
                                positive length)
 {
         struct waterlink_datagram head;
+        struct waterlink_noise candidate;
         p8 send[16], receive[16];
         p32 theirs = 0;
 
         memory_copy(address_of head, datagram, 16);
         if (head.kind != WATERLINK_KIND_RESPOND || head.receiver != ours ||
-            !waterlink_gate_passes(address_of link_self.me, datagram, length) ||
-            !waterlink_answered(noise, address_of link_self.me, datagram,
-                                address_of theirs))
+            !waterlink_gate_passes(address_of link_self.me, datagram, length))
                 return false;
 
-        waterlink_split(noise, true, send, receive);
+        /* A forged answer must not advance the live transcript and spoil the
+           real answer which follows it. Commit the candidate only after every
+           DH and tag has verified. */
+        candidate = *noise;
+        if (!waterlink_answered(address_of candidate, address_of link_self.me,
+                                datagram, address_of theirs))
+        {
+                crypto_forget(address_of candidate, sizeof candidate);
+                return false;
+        }
+
+        waterlink_split(address_of candidate, true, send, receive);
+        crypto_forget(noise, sizeof(address_to noise));
         if (s->now.live)
                 s->before = s->now;
         link_keys_install(address_of s->now, send, receive, ours, theirs);
@@ -2909,10 +2939,19 @@ static b32 link_client_run(string_address name, p8 kind,
         memory_copy(s->name, peer->name, WATERLINK_NAME_MAX);
         memory_copy(s->address, peer->address, 16);
         s->port = peer->port;
-        system_random_fill(address_of s->conversation, 8, 0);
+        if (system_random_fill(address_of s->conversation, 8, 0) < 0)
+        {
+                link_session_close(s);
+                return host_fail("randomness", -EIO);
+        }
 
         //      The handshake: a new initiation a second until one is answered.
         ours = link_index_new();
+        if (!ours)
+        {
+                link_session_close(s);
+                return host_fail("randomness", -EIO);
+        }
         for (positive attempt = 0; attempt < LINK_ATTEMPTS && !keyed; attempt++)
         {
                 p64 until;
@@ -3075,9 +3114,17 @@ static b32 link_client_run(string_address name, p8 kind,
                 if (!rekey_sent && now - s->now.made >= rekey_after)
                 {
                         reours = link_index_new();
-                        link_client_handshake(s, address_of renoise, reours,
-                                              datagram);
-                        rekey_sent = now;
+                        if (!reours ||
+                            !link_client_handshake(s, address_of renoise,
+                                                   reours, datagram))
+                        {
+                                crypto_forget(address_of renoise,
+                                              sizeof renoise);
+                                answer = LINK_FAILED;
+                                break;
+                        }
+                        else
+                                rekey_sent = now;
                 }
                 else if (rekey_sent && now - rekey_sent > LINK_ATTEMPT)
                         rekey_sent = 0;
