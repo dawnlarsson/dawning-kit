@@ -2098,6 +2098,12 @@ def self_test():
             listed = re.search(r'^lanes="([^"]*)"', text, re.M)
             self.assertIsNotNone(listed, "test/run has no lanes= list")
             named = listed.group(1).split()
+            #      asked_lanes= holds the lanes that run only when named (wifi
+            #      wants an image with simulated radios); they are lanes all
+            #      the same and must be defined and described like the rest.
+            asked = re.search(r'^asked_lanes="([^"]*)"', text, re.M)
+            if asked:
+                named += asked.group(1).split()
             defined = set(re.findall(r"^lane_(\w+)\(\)", text, re.M))
             described = set(re.findall(r'^\s*(\w+)\)\s+echo "', text, re.M))
             self.assertEqual([n for n in named if n not in defined], [],

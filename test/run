@@ -2354,15 +2354,15 @@ lane_waterlink()
         #       WATERLINK_NOISE_PATH where the system has neither; without
         #       dnspython the interop half says NOT RUN and the lane stands on
         #       the rest.
+        #       Each harness named literally: the oracle proves every
+        #       registered harness is asked for by finding its word here.
         if [ -x "$work/waterlink.$host_arch" ]; then
-                for harness in waterlink_noise waterlink_mdns; do
-                        python3 test/differential.py --harness "$harness" \
-                                --binary "$work/waterlink.$host_arch"
-                        case $? in
-                        0|2) ;;
-                        *) waterlink_outcome=1 ;;
-                        esac
-                done
+                python3 test/differential.py --harness waterlink_noise \
+                        --binary "$work/waterlink.$host_arch"
+                case $? in 0|2) ;; *) waterlink_outcome=1 ;; esac
+                python3 test/differential.py --harness waterlink_mdns \
+                        --binary "$work/waterlink.$host_arch"
+                case $? in 0|2) ;; *) waterlink_outcome=1 ;; esac
         fi
         return "$waterlink_outcome"
 }
