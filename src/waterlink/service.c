@@ -447,95 +447,57 @@ static bool link_address_mapped(p8 address_to address)
 static bool link_hex_group(string_address text, positive length,
                            p16 address_to into)
 {
-        p32 value = 0;
+        positive used = 0;
 
-        if (!length || length > 4)
-                return false;
-        for (positive at = 0; at < length; at++)
-        {
-                p8 c = (p8)text[at];
-                p32 digit = c >= '0' && c <= '9'   ? c - '0'
-                            : c >= 'a' && c <= 'f' ? c - 'a' + 10
-                            : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                                   : 16;
-
-                if (digit == 16)
-                        return false;
-                value = value << 4 | digit;
-        }
-        address_to into = (p16)value;
-        return true;
+        address_to into = (p16)string_digits_hexadecimal_max(text, length,
+                                                             address_of used);
+        return length && length <= 4 && used == length;
 }
 
 // IPv6 text, with one :: at most and no embedded IPv4.
 static bool link_parse_v6(string_address text, positive length,
                           p8 address_to into)
 {
-        p16 head[8];
-        p16 tail[8];
-        positive heads = 0;
-        positive tails = 0;
-        bool gap = false;
+        p16 group[8];
+        positive count = 0;
+        positive gap = 9; // the group the :: stands before; 9 is none
         positive at = 0;
 
         if (length >= 2 && text[0] == ':' && text[1] == ':')
         {
-                gap = true;
+                gap = 0;
                 at = 2;
         }
-
         while (at < length)
         {
                 positive start = at;
-                p16 group;
 
                 while (at < length && text[at] != ':')
                         at++;
-                if (!link_hex_group(text + start, at - start, address_of group))
+                if (count == 8 ||
+                    !link_hex_group(text + start, at - start, group + count++))
                         return false;
-                if (gap)
-                {
-                        if (tails >= 8)
-                                return false;
-                        tail[tails++] = group;
-                }
-                else
-                {
-                        if (heads >= 8)
-                                return false;
-                        head[heads++] = group;
-                }
                 if (at < length)
                 {
                         at++;
                         if (at < length && text[at] == ':')
                         {
-                                if (gap)
+                                if (gap <= 8)
                                         return false;
-                                gap = true;
+                                gap = count;
                                 at++;
                         }
                         else if (at == length)
                                 return false;
                 }
         }
-
-        if (heads + tails > (gap ? 7u : 8u) || (!gap && heads != 8))
+        if (gap > 8 ? count != 8 : count > 7)
                 return false;
 
         memory_zero(into, 16);
-        for (positive i = 0; i < heads; i++)
-        {
-                into[2 * i] = (p8)(head[i] >> 8);
-                into[2 * i + 1] = (p8)head[i];
-        }
-        for (positive i = 0; i < tails; i++)
-        {
-                positive slot = 8 - tails + i;
-
-                into[2 * slot] = (p8)(tail[i] >> 8);
-                into[2 * slot + 1] = (p8)tail[i];
-        }
+        for (positive i = 0; i < count; i++)
+                network_store_16(into + 2 * (i < gap ? i : i + 8 - count),
+                                 group[i]);
         return true;
 }
 
@@ -613,39 +575,19 @@ static fn link_place_text(p8 address_to address, p16 port, p8 address_to text)
         positive used = 0;
 
         if (link_address_mapped(address))
-        {
-                for (positive at = 12; at < 16; at++)
-                {
-                        used += positive_into(text + used, address[at]);
-                        text[used++] = at < 15 ? '.' : ':';
-                }
-        }
+                used = host_into(text, network_load_32(address + 12));
         else
         {
-                static const char digits[] = "0123456789abcdef";
-
                 text[used++] = '[';
                 for (positive at = 0; at < 16; at += 2)
                 {
-                        p32 group = (p32)address[at] << 8 | address[at + 1];
-                        bool started = false;
-
-                        for (bipolar shift = 12; shift >= 0; shift -= 4)
-                        {
-                                p32 digit = group >> shift & 15;
-
-                                if (digit || started || !shift)
-                                {
-                                        text[used++] = (p8)digits[digit];
-                                        started = true;
-                                }
-                        }
-                        if (at < 14)
-                                text[used++] = ':';
+                        used += positive_into_base(text + used,
+                                                   network_load_16(address + at),
+                                                   16, false);
+                        text[used++] = at < 14 ? ':' : ']';
                 }
-                text[used++] = ']';
-                text[used++] = ':';
         }
+        text[used++] = ':';
         used += positive_into(text + used, port);
         text[used] = 0;
 }

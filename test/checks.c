@@ -54988,6 +54988,107 @@ static fn key_text(void)
               !link_key_parse((string_address)text, back));
 }
 
+//      Where a peer is, as text and back: IPv6 with its gap anywhere and of
+//      any width, IPv4, ports, and the spellings that are not an address.
+static bool wls_place(string_address text, string_address address,
+                      p16 want_port)
+{
+        p8 into[16], expect[16];
+        p16 port;
+
+        if (!link_parse_place(text, into, address_of port) ||
+            port != want_port)
+                return false;
+        if (string_first_of(address, ':'))
+                return link_parse_v6(address, string_length(address), expect) &&
+                       !memory_compare(into, expect, 16);
+        link_address_v4(expect, (p32)string_to_host(address));
+        return !memory_compare(into, expect, 16);
+}
+
+static fn places(void)
+{
+        static const p16 spread[5] = {0, 7, 0xab, 0xfff, 0xffff};
+        static const string_address refused[] = {
+                ":::", "1:2:3:4:5:6:7:8:9", "1::2::3", "1:2:3", "12345::", "1:",
+                ":1::", "g::", "1:2:3:4:5:6:7::8", "::1:", "[::1", "[::1]x",
+                "[::1]:0", "[::1]:65536", "1.2.3.4:", "[1.2.3.4]"};
+        bool whole = true, gapped = true, none = true;
+        p8 address[16], back[16], text[64], spelled[64];
+        p16 port;
+
+        for (positive seed = 0; seed < 360; seed++)
+        {
+                p16 group[8];
+                positive from = seed % 8, to = from + seed / 8 % (9 - from);
+                positive used = 0;
+
+                for (positive i = 0; i < 8; i++)
+                {
+                        group[i] = i >= from && i < to
+                                           ? 0
+                                           : spread[(seed * 7 + i * 13) % 5];
+                        network_store_16(address + 2 * i, group[i]);
+                }
+                if (link_address_mapped(address))
+                        continue;
+                link_place_text(address, (p16)(seed + 1), text);
+                if (!link_parse_place((string_address)text, back,
+                                      address_of port) ||
+                    memory_compare(address, back, 16) || port != seed + 1)
+                        whole = false;
+                if (to == from)
+                        continue;
+                for (positive i = 0; i < from; i++)
+                {
+                        if (i)
+                                spelled[used++] = ':';
+                        used += positive_into_base(spelled + used, group[i], 16,
+                                                   false);
+                }
+                spelled[used++] = ':';
+                spelled[used++] = ':';
+                for (positive i = to; i < 8; i++)
+                {
+                        if (i > to)
+                                spelled[used++] = ':';
+                        used += positive_into_base(spelled + used, group[i], 16,
+                                                   false);
+                }
+                if (!link_parse_v6((string_address)spelled, used, back) ||
+                    memory_compare(address, back, 16))
+                        gapped = false;
+        }
+        check("an address printed reads back with its port", whole);
+        check("an address with its zero run as :: reads back, wherever the "
+              "run is and however long",
+              gapped);
+
+        link_address_v4(address, 0x0a000001);
+        link_place_text(address, 77, text);
+        check("IPv4 prints dotted",
+              !string_compare((string_address)text, "10.0.0.1:77"));
+        memory_zero(address, 16);
+        address[15] = 1;
+        link_place_text(address, 9, text);
+        check("IPv6 prints bracketed, a zero group as one digit",
+              !string_compare((string_address)text, "[0:0:0:0:0:0:0:1]:9"));
+
+        check("the spellings a peer is given read as their addresses",
+              wls_place("[::1]:9", "::1", 9) &&
+                      wls_place("FE80::a:B", "fe80::a:b", LINK_PORT) &&
+                      wls_place("1:2:3:4:5:6:7::", "1:2:3:4:5:6:7:0",
+                                LINK_PORT) &&
+                      wls_place("::2:3:4:5:6:7:8", "0:2:3:4:5:6:7:8",
+                                LINK_PORT) &&
+                      wls_place("1.2.3.4", "1.2.3.4", LINK_PORT) &&
+                      wls_place("10.0.0.1:77", "10.0.0.1", 77));
+        for (positive at = 0; at < sizeof refused / sizeof refused[0]; at++)
+                if (link_parse_place(refused[at], back, address_of port))
+                        none = false;
+        check("and the ones that are not an address are refused", none);
+}
+
 static fn indexes_and_commands(void)
 {
         entropy_down = true;
@@ -55059,6 +55160,7 @@ b32 main(void)
         labels();
         wpa_key();
         key_text();
+        places();
         indexes_and_commands();
         return test_report(null);
 }
