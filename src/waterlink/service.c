@@ -901,6 +901,20 @@ static bool link_session_open(struct link_session address_to s)
 
 static fn link_session_close(struct link_session address_to s)
 {
+        /* An interrupted push must not leave a predictable staging name for
+           a later privileged listener to open.  Apart from filling the
+           directory, that stale file could be replaced with a hard link and
+           would have been truncated by the next push: O_NOFOLLOW only
+           rejects symbolic links. */
+        if (s->kind == LINK_KIND_PUSH && s->push_name[0])
+        {
+                p8 part[LINK_REQUEST_MAX + 16];
+                positive length = string_length((string_address)s->push_name);
+
+                memory_copy(part, s->push_name, length);
+                memory_copy(part + length, ".link-part", 11);
+                system_remove_at(AT_FDCWD, part, 0);
+        }
         if (s->pidfd >= 0)
         {
                 (void)system_call_4(syscall(pidfd_send_signal),
@@ -1431,8 +1445,14 @@ static bool link_start_file(struct link_session address_to s, p8 ask,
         //      Beside its name, then renamed over it: a push cut short leaves
         //      the name as it was.
         memory_copy(path + length, ".link-part", 11);
+        /* The fixed staging name is intentionally visible beside the target,
+           but it must be ours.  Opening an existing regular file would
+           truncate it despite O_NOFOLLOW, and two pushes could otherwise
+           write the same file and each publish a mixture as complete. */
         handle = system_open_at_mode(AT_FDCWD, path,
-                                     FILE_WRITE | O_NOFOLLOW | O_CLOEXEC, mode);
+                                     FILE_WRITE | FILE_EXCLUSIVE | O_NOFOLLOW |
+                                             O_CLOEXEC,
+                                     mode);
         if (handle < 0)
                 return false;
         (void)system_call_2(syscall(fchmod), (positive)handle, mode);
@@ -2859,7 +2879,9 @@ static b32 link_client_run(string_address name, p8 kind,
                 memory_copy(part, words[1], length);
                 memory_copy(part + length, ".link-part", 11);
                 link_client.output = system_open_at_mode(
-                        AT_FDCWD, part, FILE_WRITE | O_NOFOLLOW | O_CLOEXEC, 0644);
+                        AT_FDCWD, part,
+                        FILE_WRITE | FILE_EXCLUSIVE | O_NOFOLLOW | O_CLOEXEC,
+                        0644);
                 if (link_client.output < 0)
                         return host_fail((string_address)part, link_client.output);
         }

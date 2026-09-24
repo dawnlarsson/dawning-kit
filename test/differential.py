@@ -33618,9 +33618,23 @@ got = open(top + "/b/root/got", "rb").read() if os.path.exists(top + "/b/root/go
 say(status == 0 and got == blob, "push carries 3 MB whole (%r, %d bytes)" % (status, len(got)))
 say(os.stat(top + "/b/root/got").st_mode & 0o777 == 0o640 if got else False, "and its mode")
 say(not os.path.exists(top + "/b/root/got.link-part"), "and leaves no part file")
+with open(top + "/b/root/guarded.link-part", "wb") as f:
+    f.write(b"somebody else's staging file")
+status, out, err = on("a", moon + " link push b /root/blob /root/guarded", timeout=30)
+say(status == 255 and b"cannot be opened" in err and
+    open(top + "/b/root/guarded.link-part", "rb").read() == b"somebody else's staging file" and
+    not os.path.exists(top + "/b/root/guarded"),
+    "sec: a push refuses an existing staging file instead of truncating or publishing it")
 status, out, err = on("a", moon + " link pull b /root/got /root/back", timeout=120)
 back = open(top + "/a/root/back", "rb").read() if os.path.exists(top + "/a/root/back") else b""
 say(status == 0 and back == blob, "pull brings it back whole")
+with open(top + "/a/root/guarded-pull.link-part", "wb") as f:
+    f.write(b"local staging file")
+status, out, err = on("a", moon + " link pull b /root/got /root/guarded-pull", timeout=30)
+say(status != 0 and
+    open(top + "/a/root/guarded-pull.link-part", "rb").read() == b"local staging file" and
+    not os.path.exists(top + "/a/root/guarded-pull"),
+    "sec: a pull refuses an existing local staging file instead of truncating it")
 with open(top + "/b/root/target", "wb") as f:
     f.write(b"untouched")
 os.symlink(top + "/b/root/target", top + "/b/root/planted")

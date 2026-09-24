@@ -435,21 +435,62 @@ bool waterlink_stamp_newer(p8 address_to stamp, p8 address_to last)
 /*
         Initiations per source address: a bucket of WATERLINK_ADMIT_BURST
         that refills at WATERLINK_ADMIT_RATE a second, in a table of fixed
-        size where a new address takes the stalest entry. It only has to be
-        good enough that one source cannot keep the curve busy: an address
-        that is refused waits a fifth of a second, which is nothing to a
-        person and a lot to a flood.
+        size where a new address takes the stalest entry. A second bucket
+        caps the whole table: source addresses are unauthenticated here, so
+        without it a sender could rotate spoofed addresses through the table
+        and keep the curve busy without limit. Neither bucket is on the
+        established-session path.
 */
 #define WATERLINK_ADMIT_SOURCES 64
 #define WATERLINK_ADMIT_BURST 5
 #define WATERLINK_ADMIT_RATE 5
+#define WATERLINK_ADMIT_GLOBAL_BURST 64
+#define WATERLINK_ADMIT_GLOBAL_RATE 64
 
 struct waterlink_admission {
         p8 address[WATERLINK_ADMIT_SOURCES][16];
         p64 at[WATERLINK_ADMIT_SOURCES]; // microseconds, when last refilled
         p32 tokens[WATERLINK_ADMIT_SOURCES];
+        p64 global_at;
+        p32 global_tokens;
         p64 refused;
 };
+
+static bool waterlink_admit_global(struct waterlink_admission address_to table,
+                                   p64 now)
+{
+        if (!table->global_at)
+        {
+                table->global_at = now ? now : 1;
+                table->global_tokens = WATERLINK_ADMIT_GLOBAL_BURST - 1;
+                return true;
+        }
+
+        {
+                p64 earned = (now - table->global_at) *
+                             WATERLINK_ADMIT_GLOBAL_RATE / 1000000;
+
+                if (earned)
+                {
+                        table->global_tokens +=
+                                earned > WATERLINK_ADMIT_GLOBAL_BURST
+                                        ? WATERLINK_ADMIT_GLOBAL_BURST
+                                        : (p32)earned;
+                        if (table->global_tokens > WATERLINK_ADMIT_GLOBAL_BURST)
+                                table->global_tokens =
+                                        WATERLINK_ADMIT_GLOBAL_BURST;
+                        table->global_at = now;
+                }
+        }
+
+        if (!table->global_tokens)
+        {
+                table->refused++;
+                return false;
+        }
+        table->global_tokens--;
+        return true;
+}
 
 bool waterlink_admit(struct waterlink_admission address_to table,
                      p8 address_to address, p64 now)
@@ -482,7 +523,7 @@ bool waterlink_admit(struct waterlink_admission address_to table,
                                 return false;
                         }
                         table->tokens[at]--;
-                        return true;
+                        return waterlink_admit_global(table, now);
                 }
 
                 if (table->at[at] < table->at[stalest])
@@ -492,7 +533,7 @@ bool waterlink_admit(struct waterlink_admission address_to table,
         memory_copy(table->address[stalest], address, 16);
         table->at[stalest] = now ? now : 1;
         table->tokens[stalest] = WATERLINK_ADMIT_BURST - 1;
-        return true;
+        return waterlink_admit_global(table, now);
 }
 
 /*

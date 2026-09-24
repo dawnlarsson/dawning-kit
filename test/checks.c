@@ -53518,6 +53518,21 @@ static fn handshake(void)
         check("while another source is not held by it",
               waterlink_admit(address_of admission, source, 1000000 + 50000));
 
+        memory_zero(address_of admission, sizeof admission);
+        admitted = 0;
+        for (positive at = 0; at < 256; at++)
+        {
+                memory_zero(source, sizeof source);
+                source[14] = (p8)(at >> 8);
+                source[15] = (p8)at;
+                admitted += waterlink_admit(address_of admission, source,
+                                            2000000);
+        }
+        check("sec: rotating source addresses are held to the global burst",
+              admitted == WATERLINK_ADMIT_GLOBAL_BURST);
+        check("sec: the global admission bucket refills",
+              waterlink_admit(address_of admission, source, 3000000));
+
         check("a session is keyed again at two minutes",
               !waterlink_rekey_due(119999999, 5) &&
                       waterlink_rekey_due(120000000, 5) &&
