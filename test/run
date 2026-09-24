@@ -3812,6 +3812,14 @@ riscv_default_startup()
 STACK_FRAME_NOTICE=32768
 
 #       name ceiling -- the most this function may move %rsp in one go.
+#
+#       The pins from http_run down were drawn on 2026-09-24 over frames
+#       that had landed unpinned and left this lane red. None of them
+#       recurses: http_run, locale_auto_get, tls_handshake and the bowl and
+#       host settings writers run once per command, and the *_tree_enter
+#       functions are parallel_tree callbacks, called once per directory on
+#       a pool thread's 8 MB stack. They are the size of their buffers, not
+#       of a walk, so a ceiling at today's size is the whole of the risk.
 stack_frame_pins()
 {
         cat <<'PINS'
@@ -3821,6 +3829,21 @@ tools_factor 67000
 tools_dmesg_follow 4096
 text_tail_start 4096
 awk_option_seen 4096
+http_run 312640
+locale_auto_get 283648
+bowl_write_pacman 266280
+bowl_write_mirror 266248
+host_settings_save 70648
+tls_handshake 43368
+find_tree_enter 37256
+du_tree_enter 37256
+host_update 33464
+grep_tree_enter 33384
+rm_tree_enter 33336
+chown_tree_enter 33112
+chmod_tree_enter 33112
+cp_tree_enter 33080
+host_settings_image 32776
 PINS
 }
 
