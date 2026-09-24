@@ -33558,6 +33558,9 @@ status, _, err = on("b", moon + " link pair 'bad name' " + keys["a"])
 say(status != 0, "a name with a space is refused")
 status, _, err = on("b", moon + " link pair x AAAA")
 say(status != 0, "a key that is not one is refused")
+status, _, err = on("b", moon + " link pair low " + "A" * 43 + "=")
+say(status != 0 and b"not a usable link key" in err,
+    "sec: a low-order public key is refused before it is stored")
 status, _, err = on("b", "%s link pair me %s" % (moon, keys["b"]))
 say(status != 0, "a machine will not pair its own key")
 
@@ -33660,9 +33663,23 @@ got = open(top + "/b/root/got", "rb").read() if os.path.exists(top + "/b/root/go
 say(status == 0 and got == blob, "push carries 3 MB whole (%r, %d bytes)" % (status, len(got)))
 say(os.stat(top + "/b/root/got").st_mode & 0o777 == 0o640 if got else False, "and its mode")
 say(not os.path.exists(top + "/b/root/got.link-part"), "and leaves no part file")
+with open(top + "/b/root/guarded.link-part", "wb") as f:
+    f.write(b"somebody else's staging file")
+status, out, err = on("a", moon + " link push b /root/blob /root/guarded", timeout=30)
+say(status == 0 and
+    open(top + "/b/root/guarded.link-part", "rb").read() == b"somebody else's staging file" and
+    open(top + "/b/root/guarded", "rb").read() == blob,
+    "sec: a planted predictable staging name cannot clobber or deny a push")
 status, out, err = on("a", moon + " link pull b /root/got /root/back", timeout=120)
 back = open(top + "/a/root/back", "rb").read() if os.path.exists(top + "/a/root/back") else b""
 say(status == 0 and back == blob, "pull brings it back whole")
+with open(top + "/a/root/guarded-pull.link-part", "wb") as f:
+    f.write(b"local staging file")
+status, out, err = on("a", moon + " link pull b /root/got /root/guarded-pull", timeout=30)
+say(status == 0 and
+    open(top + "/a/root/guarded-pull.link-part", "rb").read() == b"local staging file" and
+    open(top + "/a/root/guarded-pull", "rb").read() == blob,
+    "sec: a planted predictable staging name cannot clobber or deny a pull")
 with open(top + "/b/root/target", "wb") as f:
     f.write(b"untouched")
 os.symlink(top + "/b/root/target", top + "/b/root/planted")
@@ -33684,6 +33701,15 @@ status, out, err = on("a", moon + " link run bwrong echo no", timeout=30)
 say(status == 255, "a peer paired under the wrong key is not answered")
 status, out, err = on("a", moon + " link run b echo still")
 say(status == 0 and out == b"still\n", "and the listener is still there for the right one")
+
+os.chmod(top + "/b/root/link.peers", 0o666)
+status, out, err = on("a", moon + " link run b echo no", timeout=30)
+say(status == 255 and b"did not answer" in err,
+    "sec: a publicly writable peer authorization database grants nothing")
+os.chmod(top + "/b/root/link.peers", 0o600)
+status, out, err = on("a", moon + " link run b echo restored")
+say(status == 0 and out == b"restored\n",
+    "sec: restoring private peer database permissions restores authorization")
 
 status, out, err = on("b", moon + " link")
 text = out.decode(errors="replace")

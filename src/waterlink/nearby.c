@@ -64,8 +64,11 @@ fn link_groups_load(link_groups address_to groups)
         positive got = 0;
 
         memory_zero(groups, sizeof(address_to groups));
-        if (link_read_exact(LINK_GROUPS_PATH, (p8 address_to)groups->record,
-                            sizeof(groups->record), address_of got) < 0)
+        if (link_read_private_records(LINK_GROUPS_PATH,
+                                      (p8 address_to)groups->record,
+                                      sizeof(groups->record),
+                                      sizeof(struct link_group_record),
+                                      address_of got) < 0)
                 return;
         groups->count = got / sizeof(struct link_group_record);
         for (positive at = 0; at < groups->count; at++)
@@ -288,6 +291,7 @@ typedef struct
         positive asked;
         p64 last_answer;
         p64 interfaces_looked;
+        bool labels_ready;
         struct link_pairing pairing[LINK_PAIRING];
         struct link_attempt attempt[LINK_PAIRING * 2];
         positive attempt_next;
@@ -298,21 +302,28 @@ typedef struct
 
 static link_nearby_state link_nearby;
 
-static fn link_nearby_labels(p64 now)
+static bool link_nearby_labels(p64 now)
 {
-        system_random_fill(link_nearby.host, sizeof link_nearby.host, 0);
+        link_nearby.labels_ready = false;
+        if (system_random_fill(link_nearby.host, sizeof link_nearby.host, 0) < 0)
+                return false;
         for (positive at = 0; at < link_nearby.groups.count; at++)
         {
                 struct waterlink_announce_group address_to group =
                         link_nearby.announce + at;
 
-                system_random_fill(group->instance, sizeof group->instance, 0);
-                system_random_fill(group->nonce, sizeof group->nonce, 0);
+                if (system_random_fill(group->instance,
+                                       sizeof group->instance, 0) < 0 ||
+                    system_random_fill(group->nonce,
+                                       sizeof group->nonce, 0) < 0)
+                        return false;
                 waterlink_tag(link_nearby.keys + at, group->nonce, group->tag);
                 waterlink_who(link_nearby.keys + at, group->nonce,
                               link_self.me.public, group->who);
         }
         link_nearby.rotated = now;
+        link_nearby.labels_ready = true;
+        return true;
 }
 
 typedef struct
@@ -444,7 +455,7 @@ static fn link_nearby_reload(p64 now)
         if (!link_nearby.groups.count && link_nearby.socket >= 0)
                 link_nearby_close();
 
-        link_nearby_labels(now);
+        (void)link_nearby_labels(now);
         link_nearby.announced = 0;
         link_nearby.asked = 0;
         link_nearby.next_announce = now;
@@ -552,11 +563,21 @@ static fn link_pair_begin(positive group, p8 address_to address, p16 port,
         pairing->initiator = true;
         pairing->group = group;
         pairing->ours = link_index_new();
+        if (!pairing->ours)
+        {
+                crypto_forget(pairing, sizeof(address_to pairing));
+                return;
+        }
         memory_copy(pairing->address, address, 16);
         pairing->port = port;
         pairing->started = now;
 
-        system_random_fill(ephemeral, 32, 0);
+        if (system_random_fill(ephemeral, 32, 0) < 0)
+        {
+                crypto_forget(ephemeral, sizeof ephemeral);
+                crypto_forget(pairing, sizeof(address_to pairing));
+                return;
+        }
         waterlink_pair_first(address_of pairing->noise,
                              link_nearby.keys[group].pair, ephemeral,
                              pairing->ours, datagram);
@@ -703,33 +724,58 @@ static fn link_pair_datagram(p8 address_to datagram, positive length,
                 {
                         p8 answer[WATERLINK_DATAGRAM];
                         p8 ephemeral[32];
+                        p32 ours;
 
                         if (!waterlink_pair_heard_first(
                                     address_of noise,
                                     link_nearby.keys[group].pair, datagram))
                                 continue;
-                        if (!waterlink_pair_fresh(address_of link_nearby.seen,
-                                                  datagram + 16))
-                                return;
                         pairing = link_pairing_free();
                         if (!pairing)
+                        {
+                                crypto_forget(address_of noise, sizeof noise);
                                 return;
+                        }
+                        ours = link_index_new();
+                        if (!ours ||
+                            system_random_fill(ephemeral, 32, 0) < 0)
+                        {
+                                crypto_forget(ephemeral, sizeof ephemeral);
+                                crypto_forget(address_of noise, sizeof noise);
+                                return;
+                        }
+                        /* Do not consume the replay marker until every local
+                           resource needed to answer exists. A full table or
+                           entropy outage must leave a legitimate retry usable. */
+                        if (!waterlink_pair_fresh(address_of link_nearby.seen,
+                                                  datagram + 16))
+                        {
+                                crypto_forget(ephemeral, sizeof ephemeral);
+                                crypto_forget(address_of noise, sizeof noise);
+                                return;
+                        }
 
                         memory_zero(pairing, sizeof(address_to pairing));
                         pairing->used = true;
                         pairing->group = group;
                         pairing->theirs = head.receiver;
-                        pairing->ours = link_index_new();
+                        pairing->ours = ours;
                         memory_copy(pairing->address, address, 16);
                         pairing->port = port;
                         pairing->started = now;
                         pairing->noise = noise;
+                        crypto_forget(address_of noise, sizeof noise);
 
-                        system_random_fill(ephemeral, 32, 0);
-                        waterlink_pair_second(address_of pairing->noise,
-                                              address_of link_self.me, ephemeral,
-                                              link_nearby.name, pairing->theirs,
-                                              answer);
+                        if (!waterlink_pair_second(address_of pairing->noise,
+                                                   address_of link_self.me,
+                                                   ephemeral, link_nearby.name,
+                                                   pairing->theirs, answer))
+                        {
+                                crypto_forget(ephemeral, sizeof ephemeral);
+                                crypto_forget(pairing,
+                                              sizeof(address_to pairing));
+                                return;
+                        }
                         crypto_forget(ephemeral, sizeof ephemeral);
                         //      Our index rides in the counter field, the one
                         //      the initiator does not use.
@@ -751,20 +797,35 @@ static fn link_pair_datagram(p8 address_to datagram, positive length,
                 if (!pairing->used || pairing->ours != head.receiver)
                         continue;
 
+                /* The receiver index is visible on the wire. Do not let a
+                   datagram replayed from somewhere else advance a pairing or
+                   move the learned endpoint away from the address that began
+                   it. Authentication below is still authoritative. */
+                if (memory_compare(pairing->address, address, 16) ||
+                    pairing->port != port)
+                        return;
+
                 if (head.kind == WATERLINK_KIND_PAIR_2 && pairing->initiator)
                 {
+                        struct waterlink_noise candidate = pairing->noise;
                         p8 third[WATERLINK_DATAGRAM];
                         p32 theirs;
 
                         memory_copy(address_of theirs, datagram + 8, 4);
-                        if (!waterlink_pair_heard_second(address_of pairing->noise,
-                                                         datagram, key, name))
+                        if (!waterlink_pair_heard_second(address_of candidate,
+                                                         datagram, key, name) ||
+                            !waterlink_pair_third(address_of candidate,
+                                                  address_of link_self.me,
+                                                  link_nearby.name, theirs,
+                                                  third))
+                        {
+                                crypto_forget(address_of candidate,
+                                              sizeof candidate);
                                 return;
-                        waterlink_pair_third(address_of pairing->noise,
-                                             address_of link_self.me,
-                                             link_nearby.name, theirs, third);
-                        (void)link_send_to(third, WATERLINK_DATAGRAM, address,
-                                           port);
+                        }
+                        crypto_forget(address_of candidate, sizeof candidate);
+                        (void)link_send_to(third, WATERLINK_DATAGRAM,
+                                           pairing->address, pairing->port);
                         (void)link_pair_keep(link_nearby.groups.record +
                                                      pairing->group,
                                              link_nearby.keys + pairing->group,
@@ -773,14 +834,22 @@ static fn link_pair_datagram(p8 address_to datagram, positive length,
                 }
                 else if (head.kind == WATERLINK_KIND_PAIR_3 && !pairing->initiator)
                 {
-                        if (!waterlink_pair_heard_third(address_of pairing->noise,
+                        struct waterlink_noise candidate = pairing->noise;
+
+                        if (!waterlink_pair_heard_third(address_of candidate,
                                                         address_of link_self.me,
                                                         datagram, key, name))
+                        {
+                                crypto_forget(address_of candidate,
+                                              sizeof candidate);
                                 return;
+                        }
+                        crypto_forget(address_of candidate, sizeof candidate);
                         (void)link_pair_keep(link_nearby.groups.record +
                                                      pairing->group,
                                              link_nearby.keys + pairing->group,
-                                             key, name, address, port);
+                                             key, name, pairing->address,
+                                             pairing->port);
                 }
                 else
                         return;
@@ -800,6 +869,8 @@ static p64 link_nearby_tick(p64 now)
 
         link_nearby_reload(now);
         if (link_nearby.socket < 0 || !link_nearby.groups.count)
+                return wake;
+        if (!link_nearby.labels_ready && !link_nearby_labels(now))
                 return wake;
 
         //      Interfaces come and go, and an address comes late -- a lease
@@ -832,7 +903,8 @@ static p64 link_nearby_tick(p64 now)
         if (now - link_nearby.rotated >= LINK_ROTATE_EVERY)
         {
                 link_nearby_announce(0);
-                link_nearby_labels(now);
+                if (!link_nearby_labels(now))
+                        return wake;
                 link_nearby.announced = 0;
         }
 

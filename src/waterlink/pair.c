@@ -133,10 +133,10 @@ bool waterlink_pair_heard_first(struct waterlink_noise address_to noise,
         return waterlink_open_hash(noise, at + 32, 0, nothing);
 }
 
-fn waterlink_pair_second(struct waterlink_noise address_to noise,
-                         struct waterlink_identity address_to me,
-                         p8 address_to ephemeral, p8 address_to name,
-                         p32 their_index, p8 address_to datagram)
+bool waterlink_pair_second(struct waterlink_noise address_to noise,
+                           struct waterlink_identity address_to me,
+                           p8 address_to ephemeral, p8 address_to name,
+                           p32 their_index, p8 address_to datagram)
 {
         p8 address_to at = datagram + 16;
 
@@ -151,7 +151,9 @@ fn waterlink_pair_second(struct waterlink_noise address_to noise,
         at += 32;
 
         // ee
-        waterlink_mix_dh(noise, noise->ephemeral, noise->remote_ephemeral);
+        if (!waterlink_mix_dh(noise, noise->ephemeral,
+                              noise->remote_ephemeral))
+                return false;
 
         // s
         memory_copy(at, me->public, 32);
@@ -159,10 +161,12 @@ fn waterlink_pair_second(struct waterlink_noise address_to noise,
         at += 48;
 
         // es: the initiator's ephemeral with our static
-        waterlink_mix_dh(noise, me->secret, noise->remote_ephemeral);
+        if (!waterlink_mix_dh(noise, me->secret, noise->remote_ephemeral))
+                return false;
 
         memory_copy(at, name, WATERLINK_PAIR_NAME);
         waterlink_seal_hash(noise, at, WATERLINK_PAIR_NAME);
+        return true;
 }
 
 bool waterlink_pair_heard_second(struct waterlink_noise address_to noise,
@@ -194,10 +198,10 @@ bool waterlink_pair_heard_second(struct waterlink_noise address_to noise,
         return true;
 }
 
-fn waterlink_pair_third(struct waterlink_noise address_to noise,
-                        struct waterlink_identity address_to me,
-                        p8 address_to name, p32 their_index,
-                        p8 address_to datagram)
+bool waterlink_pair_third(struct waterlink_noise address_to noise,
+                          struct waterlink_identity address_to me,
+                          p8 address_to name, p32 their_index,
+                          p8 address_to datagram)
 {
         p8 address_to at = datagram + 16;
 
@@ -209,10 +213,12 @@ fn waterlink_pair_third(struct waterlink_noise address_to noise,
         at += 48;
 
         // se: our static with the responder's ephemeral
-        waterlink_mix_dh(noise, me->secret, noise->remote_ephemeral);
+        if (!waterlink_mix_dh(noise, me->secret, noise->remote_ephemeral))
+                return false;
 
         memory_copy(at, name, WATERLINK_PAIR_NAME);
         waterlink_seal_hash(noise, at, WATERLINK_PAIR_NAME);
+        return true;
 }
 
 bool waterlink_pair_heard_third(struct waterlink_noise address_to noise,

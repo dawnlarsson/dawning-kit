@@ -271,6 +271,49 @@ static bipolar link_read_exact(string_address path, p8 address_to into,
         return 0;
 }
 
+/* Authorization databases are not ordinary state text. Refuse a partial,
+   oversized, linked, non-root-owned or publicly writable set rather than
+   interpreting the valid-looking prefix of a replaced file. */
+static bipolar link_read_private_records(string_address path,
+                                         p8 address_to into, positive room,
+                                         positive record,
+                                         positive address_to got)
+{
+        file_facts facts;
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        positive have = 0;
+
+        address_to got = 0;
+        if (handle < 0)
+                return handle;
+        if (!file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_FILE || facts.owner != 0 ||
+            (facts.mode & 077) || facts.size > room || facts.size % record)
+        {
+                system_close(handle);
+                return -EPERM;
+        }
+
+        while (have < (positive)facts.size)
+        {
+                bipolar read = system_read_once(handle, into + have,
+                                                (positive)facts.size - have);
+
+                if (read == -4)
+                        continue;
+                if (read <= 0)
+                        break;
+                have += (positive)read;
+        }
+        system_close(handle);
+        if (have != (positive)facts.size)
+                return -EIO;
+        address_to got = have;
+        return 0;
+}
+
 /*
         The machine's own key, made on first use.
 
@@ -295,7 +338,11 @@ static bipolar link_secret(p8 address_to secret, bool make)
 
                 if (system_random_fill(fresh, 32, 0) < 0 ||
                     system_random_fill(tail, 8, 0) < 0)
+                {
+                        crypto_forget(fresh, sizeof fresh);
+                        crypto_forget(tail, sizeof tail);
                         return -EIO;
+                }
                 for (positive at = 0; at < 8; at++)
                 {
                         name[used++] = (p8)link_alphabet[tail[at] >> 4 & 15];
@@ -308,16 +355,23 @@ static bipolar link_secret(p8 address_to secret, bool make)
                                                    O_NOFOLLOW | O_CLOEXEC,
                                            0600);
                 if (made < 0)
+                {
+                        crypto_forget(fresh, sizeof fresh);
+                        crypto_forget(tail, sizeof tail);
                         return made;
+                }
                 if (system_write_all((positive)made, fresh, 32) != 32 ||
                     system_call_1(syscall(fsync), (positive)made) < 0)
                 {
                         system_close(made);
                         system_remove_at(AT_FDCWD, name, 0);
+                        crypto_forget(fresh, sizeof fresh);
+                        crypto_forget(tail, sizeof tail);
                         return -EIO;
                 }
                 system_close(made);
                 crypto_forget(fresh, sizeof fresh);
+                crypto_forget(tail, sizeof tail);
 
                 //      linkat does not replace: whoever got there first wins,
                 //      and both read what won.
@@ -387,8 +441,11 @@ static fn link_peers_load(link_peers address_to peers)
         positive got = 0;
 
         memory_zero(peers, sizeof(address_to peers));
-        if (link_read_exact(LINK_PEERS_PATH, (p8 address_to)peers->peer,
-                            sizeof(peers->peer), address_of got) < 0)
+        if (link_read_private_records(LINK_PEERS_PATH,
+                                      (p8 address_to)peers->peer,
+                                      sizeof(peers->peer),
+                                      sizeof(struct waterlink_peer),
+                                      address_of got) < 0)
                 return;
 
         peers->count = got / sizeof(struct waterlink_peer);
@@ -825,6 +882,7 @@ struct link_session {
         bool exit_sent;
         bool failed;
         p8 push_name[LINK_REQUEST_MAX + 1];
+        p8 push_part[LINK_REQUEST_MAX + 32];
         p8 address_to pending;
         positive pending_at;
         positive pending_length;
@@ -858,12 +916,13 @@ static link_service link_self;
 
 static p32 link_index_new(void)
 {
-        for (;;)
+        for (positive attempt = 0; attempt < 128; attempt++)
         {
                 p32 index = 0;
                 bool taken = false;
 
-                system_random_fill(address_of index, sizeof index, 0);
+                if (system_random_fill(address_of index, sizeof index, 0) < 0)
+                        return 0;
                 if (!index)
                         continue;
                 for (positive at = 0; at < LINK_SESSIONS; at++)
@@ -878,6 +937,7 @@ static p32 link_index_new(void)
                 if (!taken)
                         return index;
         }
+        return 0;
 }
 
 static bool link_session_open(struct link_session address_to s)
@@ -899,8 +959,27 @@ static bool link_session_open(struct link_session address_to s)
         return true;
 }
 
+static bool link_part_owned(bipolar handle, p8 address_to path)
+{
+        file_facts opened;
+        file_facts named;
+
+        return handle >= 0 &&
+               file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                         address_of opened) &&
+               file_look(AT_FDCWD, (string_address)path,
+                         AT_SYMLINK_NOFOLLOW, address_of named) &&
+               file_same_identity(address_of opened, address_of named);
+}
+
 static fn link_session_close(struct link_session address_to s)
 {
+        /* Remove only the staging inode this session still has open. A name
+           replaced underneath an interrupted transfer belongs to somebody
+           else, just as it does at publication. */
+        if (s->kind == LINK_KIND_PUSH && s->push_part[0] &&
+            link_part_owned(s->input, s->push_part))
+                system_remove_at(AT_FDCWD, s->push_part, 0);
         if (s->pidfd >= 0)
         {
                 (void)system_call_4(syscall(pidfd_send_signal),
@@ -1380,10 +1459,39 @@ static bool link_start_run(struct link_session address_to s,
         standing at that name, and is only there under its name once it is
         whole; a pulled file is read as it is.
 */
+static bipolar link_part_open(string_address target, positive length,
+                              p8 address_to part, positive room, p32 mode)
+{
+        if (length + 28 > room)
+                return -ERROR_NAME_TOO_LONG;
+
+        memory_copy(part, target, length);
+        memory_copy(part + length, ".link-part.", 11);
+        for (positive attempt = 0; attempt < 8; attempt++)
+        {
+                p64 random;
+                bipolar handle;
+
+                if (system_random_fill(address_of random, sizeof random, 0) < 0)
+                        return -EIO;
+                for (positive at = 0; at < 16; at++)
+                        part[length + 11 + at] =
+                                (p8)link_alphabet[(random >> (at * 4)) & 15];
+                part[length + 27] = 0;
+                handle = system_open_at_mode(
+                        AT_FDCWD, part,
+                        FILE_WRITE | FILE_EXCLUSIVE | O_NOFOLLOW | O_CLOEXEC,
+                        mode);
+                if (handle >= 0 || handle != -ERROR_EXISTS)
+                        return handle;
+        }
+        return -ERROR_EXISTS;
+}
+
 static bool link_start_file(struct link_session address_to s, p8 ask,
                             p8 address_to request, positive length)
 {
-        p8 path[LINK_REQUEST_MAX + 16];
+        p8 path[LINK_REQUEST_MAX + 32];
         p32 mode = 0644;
         bipolar handle;
 
@@ -1428,16 +1536,17 @@ static bool link_start_file(struct link_session address_to s, p8 ask,
                 return true;
         }
 
-        //      Beside its name, then renamed over it: a push cut short leaves
-        //      the name as it was.
-        memory_copy(path + length, ".link-part", 11);
-        handle = system_open_at_mode(AT_FDCWD, path,
-                                     FILE_WRITE | O_NOFOLLOW | O_CLOEXEC, mode);
+        /* A fresh exclusive name prevents both collisions between concurrent
+           transfers and a planted predictable name from denying every push.
+           It remains beside the target so the final rename is atomic. */
+        handle = link_part_open((string_address)path, length, path,
+                                sizeof path, mode);
         if (handle < 0)
                 return false;
         (void)system_call_2(syscall(fchmod), (positive)handle, mode);
         memory_copy(s->push_name, path, length);
         s->push_name[length] = 0;
+        string_copy((string_address)s->push_part, (string_address)path);
         s->input = handle;
         s->kind = LINK_KIND_PUSH;
         s->output_read = true;
@@ -1640,15 +1749,26 @@ static fn link_push_done(struct link_session address_to s, p64 now)
         //      The part file becomes the name only whole.
         if (!s->failed)
         {
-                p8 part[LINK_REQUEST_MAX + 16];
                 p8 whole[LINK_REQUEST_MAX + 16];
                 positive length = string_length((string_address)s->push_name);
 
                 memory_copy(whole, s->push_name, length + 1);
-                memory_copy(part, s->push_name, length);
-                memory_copy(part + length, ".link-part", 11);
-                if (system_rename_at(AT_FDCWD, part, AT_FDCWD, whole, 0) < 0)
+                if (!link_part_owned(s->input, s->push_part))
+                {
                         s->failed = true;
+                        /* The name no longer belongs to this transfer. */
+                        s->push_part[0] = 0;
+                }
+                else if (system_rename_at(AT_FDCWD, s->push_part, AT_FDCWD,
+                                          whole, 0) < 0)
+                {
+                        s->failed = true;
+                        if (link_part_owned(s->input, s->push_part))
+                                system_remove_at(AT_FDCWD, s->push_part, 0);
+                        s->push_part[0] = 0;
+                }
+                else
+                        s->push_part[0] = 0;
         }
         s->exited = true;
         s->exited_at = now;
@@ -1760,10 +1880,10 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
                 if (s->kind == LINK_KIND_PUSH &&
                     system_call_1(syscall(fsync), (positive)s->input) < 0)
                         s->failed = true;
-                system_close(s->input);
-                s->input = -1;
                 if (s->kind == LINK_KIND_PUSH)
                         link_push_done(s, now);
+                system_close(s->input);
+                s->input = -1;
         }
         if (s->consumed + LINK_INPUT_ROOM >= s->credited + LINK_INPUT_ROOM / 4)
         {
@@ -1918,10 +2038,14 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
         p32 ours;
 
         if (!waterlink_gate_passes(address_of link_self.me, datagram, length) ||
-            !waterlink_admit(address_of link_self.admission, address, now) ||
-            !waterlink_accept(address_of noise, address_of link_self.me,
-                              datagram, who, hello))
+            !waterlink_admit(address_of link_self.admission, address, now))
                 return;
+        if (!waterlink_accept(address_of noise, address_of link_self.me,
+                              datagram, who, hello))
+        {
+                crypto_forget(address_of noise, sizeof noise);
+                return;
+        }
 
         link_peers_load(address_of peers);
         peer = link_peer_keyed(address_of peers, who);
@@ -1945,26 +2069,38 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
                         s = look;
         }
 
+        /* Make the whole answer before reserving a session: an entropy
+           outage or a refused DH must not leave initiations holding slots
+           of the session table that are never keyed. */
+        ours = link_index_new();
+        if (!ours || system_random_fill(ephemeral, 32, 0) < 0 ||
+            !waterlink_respond(address_of noise, ephemeral, theirs, ours,
+                               answer))
+        {
+                crypto_forget(ephemeral, sizeof ephemeral);
+                crypto_forget(address_of noise, sizeof noise);
+                return;
+        }
+        crypto_forget(ephemeral, sizeof ephemeral);
+
         if (!s)
         {
-                if (of_peer >= LINK_SESSIONS_A_PEER)
-                        return;
-                for (positive at = 0; at < LINK_SESSIONS && !s; at++)
-                        if (!link_self.session[at].used)
-                                s = link_self.session + at;
+                if (of_peer < LINK_SESSIONS_A_PEER)
+                        for (positive at = 0; at < LINK_SESSIONS && !s; at++)
+                                if (!link_self.session[at].used)
+                                        s = link_self.session + at;
                 if (!s || !link_session_open(s))
+                {
+                        crypto_forget(address_of noise, sizeof noise);
                         return;
+                }
                 memory_copy(s->peer, who, 32);
                 memory_copy(s->name, peer->name, WATERLINK_NAME_MAX);
                 s->may = peer->may;
                 s->conversation = conversation;
         }
 
-        ours = link_index_new();
-        system_random_fill(ephemeral, 32, 0);
-        waterlink_respond(address_of noise, ephemeral, theirs, ours, answer);
         waterlink_split(address_of noise, false, send, receive);
-        crypto_forget(ephemeral, sizeof ephemeral);
 
         //      A session keyed again sends under the old keys until the
         //      initiator has shown it holds the new ones.
@@ -2528,6 +2664,7 @@ typedef struct
         bipolar input;  // standard input, or the file a push sends
         bipolar output; // standard output, or the file a pull fills
         bool output_failed;
+        p8 output_part[4096];
 } link_client_state;
 
 static link_client_state link_client = {.input = 0, .output = 1};
@@ -2637,9 +2774,19 @@ static bool link_client_handshake(struct link_session address_to s,
                         (p32)(wall % 1000000000ull));
         memory_copy(hello + WATERLINK_STAMP_BYTES, address_of s->conversation, 8);
         memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of ours, 4);
-        system_random_fill(ephemeral, 32, 0);
-        waterlink_initiate(noise, address_of link_self.me, s->peer, ephemeral,
-                           hello, datagram);
+        if (system_random_fill(ephemeral, 32, 0) < 0)
+        {
+                crypto_forget(ephemeral, sizeof ephemeral);
+                crypto_forget(noise, sizeof(address_to noise));
+                return false;
+        }
+        if (!waterlink_initiate(noise, address_of link_self.me, s->peer,
+                                ephemeral, hello, datagram))
+        {
+                crypto_forget(ephemeral, sizeof ephemeral);
+                crypto_forget(noise, sizeof(address_to noise));
+                return false;
+        }
         crypto_forget(ephemeral, sizeof ephemeral);
         return link_send_to(datagram, WATERLINK_DATAGRAM, s->address,
                             s->port) >= 0;
@@ -2651,17 +2798,28 @@ static bool link_client_answer(struct link_session address_to s,
                                positive length)
 {
         struct waterlink_datagram head;
+        struct waterlink_noise candidate;
         p8 send[16], receive[16];
         p32 theirs = 0;
 
         memory_copy(address_of head, datagram, 16);
         if (head.kind != WATERLINK_KIND_RESPOND || head.receiver != ours ||
-            !waterlink_gate_passes(address_of link_self.me, datagram, length) ||
-            !waterlink_answered(noise, address_of link_self.me, datagram,
-                                address_of theirs))
+            !waterlink_gate_passes(address_of link_self.me, datagram, length))
                 return false;
 
-        waterlink_split(noise, true, send, receive);
+        /* A forged answer must not advance the live transcript and spoil the
+           real answer which follows it. Commit the candidate only after every
+           DH and tag has verified. */
+        candidate = *noise;
+        if (!waterlink_answered(address_of candidate, address_of link_self.me,
+                                datagram, address_of theirs))
+        {
+                crypto_forget(address_of candidate, sizeof candidate);
+                return false;
+        }
+
+        waterlink_split(address_of candidate, true, send, receive);
+        crypto_forget(noise, sizeof(address_to noise));
         if (s->now.live)
                 s->before = s->now;
         link_keys_install(address_of s->now, send, receive, ours, theirs);
@@ -2801,10 +2959,19 @@ static b32 link_client_run(string_address name, p8 kind,
         memory_copy(s->name, peer->name, WATERLINK_NAME_MAX);
         memory_copy(s->address, peer->address, 16);
         s->port = peer->port;
-        system_random_fill(address_of s->conversation, 8, 0);
+        if (system_random_fill(address_of s->conversation, 8, 0) < 0)
+        {
+                link_session_close(s);
+                return host_fail("randomness", -EIO);
+        }
 
         //      The handshake: a new initiation a second until one is answered.
         ours = link_index_new();
+        if (!ours)
+        {
+                link_session_close(s);
+                return host_fail("randomness", -EIO);
+        }
         for (positive attempt = 0; attempt < LINK_ATTEMPTS && !keyed; attempt++)
         {
                 p64 until;
@@ -2851,17 +3018,16 @@ static b32 link_client_run(string_address name, p8 kind,
 
         if (kind == LINK_KIND_PULL)
         {
-                p8 part[4096];
                 positive length = string_length(words[1]);
 
-                if (length + 11 > sizeof part)
+                if (length + 28 > sizeof link_client.output_part)
                         return host_refuse("%s is too long a name\n", words[1]);
-                memory_copy(part, words[1], length);
-                memory_copy(part + length, ".link-part", 11);
-                link_client.output = system_open_at_mode(
-                        AT_FDCWD, part, FILE_WRITE | O_NOFOLLOW | O_CLOEXEC, 0644);
+                link_client.output = link_part_open(
+                        words[1], length, link_client.output_part,
+                        sizeof link_client.output_part, 0644);
                 if (link_client.output < 0)
-                        return host_fail((string_address)part, link_client.output);
+                        return host_fail((string_address)link_client.output_part,
+                                         link_client.output);
         }
 
         link_client.kind = kind;
@@ -2968,9 +3134,17 @@ static b32 link_client_run(string_address name, p8 kind,
                 if (!rekey_sent && now - s->now.made >= rekey_after)
                 {
                         reours = link_index_new();
-                        link_client_handshake(s, address_of renoise, reours,
-                                              datagram);
-                        rekey_sent = now;
+                        if (!reours ||
+                            !link_client_handshake(s, address_of renoise,
+                                                   reours, datagram))
+                        {
+                                crypto_forget(address_of renoise,
+                                              sizeof renoise);
+                                answer = LINK_FAILED;
+                                break;
+                        }
+                        else
+                                rekey_sent = now;
                 }
                 else if (rekey_sent && now - rekey_sent > LINK_ATTEMPT)
                         rekey_sent = 0;
@@ -3082,18 +3256,27 @@ static b32 link_client_run(string_address name, p8 kind,
         //      A pulled file is only there under its name once it is whole.
         if (kind == LINK_KIND_PULL && link_client.output >= 0)
         {
-                p8 part[4096];
-                positive length = string_length(words[1]);
+                file_facts opened;
+                file_facts named;
+                bool owned = file_look(link_client.output, (string_address)"",
+                                       AT_EMPTY_PATH, address_of opened) &&
+                             file_look(AT_FDCWD,
+                                       (string_address)link_client.output_part,
+                                       AT_SYMLINK_NOFOLLOW, address_of named) &&
+                             file_same_identity(address_of opened,
+                                                address_of named);
 
-                memory_copy(part, words[1], length);
-                memory_copy(part + length, ".link-part", 11);
                 if (!answer && !link_client.output_failed &&
+                    owned &&
                     system_call_1(syscall(fsync), (positive)link_client.output) >= 0 &&
-                    system_rename_at(AT_FDCWD, part, AT_FDCWD, words[1], 0) >= 0)
+                    system_rename_at(AT_FDCWD, link_client.output_part,
+                                     AT_FDCWD, words[1], 0) >= 0)
                         ;
                 else
                 {
-                        system_remove_at(AT_FDCWD, part, 0);
+                        if (owned)
+                                system_remove_at(AT_FDCWD,
+                                                 link_client.output_part, 0);
                         if (!answer)
                                 answer = 1;
                 }
