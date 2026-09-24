@@ -724,20 +724,33 @@ static fn link_pair_datagram(p8 address_to datagram, positive length,
                 {
                         p8 answer[WATERLINK_DATAGRAM];
                         p8 ephemeral[32];
+                        p32 ours;
 
                         if (!waterlink_pair_heard_first(
                                     address_of noise,
                                     link_nearby.keys[group].pair, datagram))
                                 continue;
-                        if (!waterlink_pair_fresh(address_of link_nearby.seen,
-                                                  datagram + 16))
+                        pairing = link_pairing_free();
+                        if (!pairing)
                         {
                                 crypto_forget(address_of noise, sizeof noise);
                                 return;
                         }
-                        pairing = link_pairing_free();
-                        if (!pairing)
+                        ours = link_index_new();
+                        if (!ours ||
+                            system_random_fill(ephemeral, 32, 0) < 0)
                         {
+                                crypto_forget(ephemeral, sizeof ephemeral);
+                                crypto_forget(address_of noise, sizeof noise);
+                                return;
+                        }
+                        /* Do not consume the replay marker until every local
+                           resource needed to answer exists. A full table or
+                           entropy outage must leave a legitimate retry usable. */
+                        if (!waterlink_pair_fresh(address_of link_nearby.seen,
+                                                  datagram + 16))
+                        {
+                                crypto_forget(ephemeral, sizeof ephemeral);
                                 crypto_forget(address_of noise, sizeof noise);
                                 return;
                         }
@@ -746,27 +759,13 @@ static fn link_pair_datagram(p8 address_to datagram, positive length,
                         pairing->used = true;
                         pairing->group = group;
                         pairing->theirs = head.receiver;
-                        pairing->ours = link_index_new();
-                        if (!pairing->ours)
-                        {
-                                crypto_forget(pairing,
-                                              sizeof(address_to pairing));
-                                crypto_forget(address_of noise, sizeof noise);
-                                return;
-                        }
+                        pairing->ours = ours;
                         memory_copy(pairing->address, address, 16);
                         pairing->port = port;
                         pairing->started = now;
                         pairing->noise = noise;
                         crypto_forget(address_of noise, sizeof noise);
 
-                        if (system_random_fill(ephemeral, 32, 0) < 0)
-                        {
-                                crypto_forget(ephemeral, sizeof ephemeral);
-                                crypto_forget(pairing,
-                                              sizeof(address_to pairing));
-                                return;
-                        }
                         if (!waterlink_pair_second(address_of pairing->noise,
                                                    address_of link_self.me,
                                                    ephemeral, link_nearby.name,
@@ -798,26 +797,35 @@ static fn link_pair_datagram(p8 address_to datagram, positive length,
                 if (!pairing->used || pairing->ours != head.receiver)
                         continue;
 
+                /* The receiver index is visible on the wire. Do not let a
+                   datagram replayed from somewhere else advance a pairing or
+                   move the learned endpoint away from the address that began
+                   it. Authentication below is still authoritative. */
+                if (memory_compare(pairing->address, address, 16) ||
+                    pairing->port != port)
+                        return;
+
                 if (head.kind == WATERLINK_KIND_PAIR_2 && pairing->initiator)
                 {
+                        struct waterlink_noise candidate = pairing->noise;
                         p8 third[WATERLINK_DATAGRAM];
                         p32 theirs;
 
                         memory_copy(address_of theirs, datagram + 8, 4);
-                        if (!waterlink_pair_heard_second(address_of pairing->noise,
-                                                         datagram, key, name))
-                                return;
-                        if (!waterlink_pair_third(address_of pairing->noise,
+                        if (!waterlink_pair_heard_second(address_of candidate,
+                                                         datagram, key, name) ||
+                            !waterlink_pair_third(address_of candidate,
                                                   address_of link_self.me,
                                                   link_nearby.name, theirs,
                                                   third))
                         {
-                                crypto_forget(pairing,
-                                              sizeof(address_to pairing));
+                                crypto_forget(address_of candidate,
+                                              sizeof candidate);
                                 return;
                         }
-                        (void)link_send_to(third, WATERLINK_DATAGRAM, address,
-                                           port);
+                        crypto_forget(address_of candidate, sizeof candidate);
+                        (void)link_send_to(third, WATERLINK_DATAGRAM,
+                                           pairing->address, pairing->port);
                         (void)link_pair_keep(link_nearby.groups.record +
                                                      pairing->group,
                                              link_nearby.keys + pairing->group,
@@ -826,14 +834,22 @@ static fn link_pair_datagram(p8 address_to datagram, positive length,
                 }
                 else if (head.kind == WATERLINK_KIND_PAIR_3 && !pairing->initiator)
                 {
-                        if (!waterlink_pair_heard_third(address_of pairing->noise,
+                        struct waterlink_noise candidate = pairing->noise;
+
+                        if (!waterlink_pair_heard_third(address_of candidate,
                                                         address_of link_self.me,
                                                         datagram, key, name))
+                        {
+                                crypto_forget(address_of candidate,
+                                              sizeof candidate);
                                 return;
+                        }
+                        crypto_forget(address_of candidate, sizeof candidate);
                         (void)link_pair_keep(link_nearby.groups.record +
                                                      pairing->group,
                                              link_nearby.keys + pairing->group,
-                                             key, name, address, port);
+                                             key, name, pairing->address,
+                                             pairing->port);
                 }
                 else
                         return;
