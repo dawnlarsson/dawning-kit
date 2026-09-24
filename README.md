@@ -1,4 +1,4 @@
-<img width="1155" height="130" alt="Dawning Moonwater Header" src="https://github.com/user-attachments/assets/fdbdfe36-381a-4561-850c-09079a70e462" />
+<img width="1153" height="160" alt="Dawning Linux Header-2" src="https://github.com/user-attachments/assets/675f22bb-fc92-43a2-9ba5-d957ee0d4d56" />
 
 <br><br>
 
