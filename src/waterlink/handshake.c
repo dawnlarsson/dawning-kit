@@ -53,12 +53,22 @@
 #define WATERLINK_PROLOGUE "waterlink 3"
 
 /*
+        A group's handshake is the same IK to the group's own key, which every
+        member derives from the secret, with a pre-shared key from the secret
+        mixed in after the first message's tokens -- Noise's psk1 modifier --
+        so a first message that opens proves its sender holds the secret, as
+        well as the static key it sent. It is never answered: see nearby.c.
+*/
+#define WATERLINK_GROUP_PROTOCOL "Noise_IKpsk1_25519_AES128GCM_SHA256"
+
+/*
         What the first message carries, sealed: when it was made (TAI64N, so
-        a replay is refused), which conversation it opens or keys again, and
-        the index the initiator wants the far side to write on what it sends.
+        a replay is refused), then either which conversation it opens or keys
+        again and the index the initiator wants the far side to write on what
+        it sends, or, to a group, the name the member offers.
 */
 #define WATERLINK_STAMP_BYTES 12
-#define WATERLINK_HELLO_BYTES (WATERLINK_STAMP_BYTES + 8 + 4)
+#define WATERLINK_HELLO_BYTES (WATERLINK_STAMP_BYTES + 32)
 
 // ephemeral, sealed static, sealed hello, mac1
 #define WATERLINK_INITIATE_BYTES (32 + 48 + WATERLINK_HELLO_BYTES + 16 + 16)
@@ -168,12 +178,36 @@ static bool waterlink_open_hash(struct waterlink_noise address_to noise,
         return good;
 }
 
+// MixKeyAndHash: three outputs, the middle one into the hash.
+static fn waterlink_mix_key_hash(struct waterlink_noise address_to noise,
+                                 p8 address_to material, positive length)
+{
+        p8 prk[32];
+        p8 out[96];
+
+        crypto_hkdf_extract(noise->chain, 32, material, length, prk);
+        crypto_hkdf_expand(prk, (p8 address_to) "", 0, out, 96);
+        memory_copy(noise->chain, out, 32);
+        waterlink_mix_hash(noise, out + 32, 32);
+        memory_copy(noise->key, out + 64, 32);
+        noise->keyed = true;
+        noise->nonce = 0;
+        crypto_forget(prk, sizeof prk);
+        crypto_forget(out, sizeof out);
+}
+
+//      A name longer than a hash is hashed, as Noise says.
 static fn waterlink_noise_start(struct waterlink_noise address_to noise,
-                                p8 address_to responder_public)
+                                p8 address_to responder_public, bool group)
 {
         memory_zero(noise, sizeof(address_to noise));
-        memory_copy(noise->hash, WATERLINK_PROTOCOL,
-                    sizeof(WATERLINK_PROTOCOL) - 1);
+        if (group)
+                crypto_sha256_of((p8 address_to)WATERLINK_GROUP_PROTOCOL,
+                                 sizeof(WATERLINK_GROUP_PROTOCOL) - 1,
+                                 noise->hash);
+        else
+                memory_copy(noise->hash, WATERLINK_PROTOCOL,
+                            sizeof(WATERLINK_PROTOCOL) - 1);
         memory_copy(noise->chain, noise->hash, 32);
         waterlink_mix_hash(noise, (p8 address_to)WATERLINK_PROLOGUE,
                            sizeof(WATERLINK_PROLOGUE) - 1);
@@ -267,12 +301,13 @@ static fn waterlink_ephemeral(struct waterlink_noise address_to noise,
 
 /*
         Write the first message. ephemeral is 32 random bytes the caller
-        drew; hello is WATERLINK_HELLO_BYTES of stamp, conversation and index.
-        The datagram is written whole, padded to its full size.
+        drew; hello is WATERLINK_HELLO_BYTES. With a pre-shared key it is a
+        group's handshake. The datagram is written whole, padded to its full
+        size.
 */
 bool waterlink_initiate(struct waterlink_noise address_to noise,
                         struct waterlink_identity address_to me,
-                        p8 address_to responder_public,
+                        p8 address_to responder_public, p8 address_to psk,
                         p8 address_to ephemeral, p8 address_to hello,
                         p8 address_to datagram)
 {
@@ -280,12 +315,14 @@ bool waterlink_initiate(struct waterlink_noise address_to noise,
         p8 gate[32];
 
         waterlink_head(datagram, WATERLINK_KIND_INITIATE, 0);
-        waterlink_noise_start(noise, responder_public);
+        waterlink_noise_start(noise, responder_public, psk != null);
         memory_copy(noise->remote_static, responder_public, 32);
 
-        // -> e
+        // -> e, and in a psk handshake into the key too
         waterlink_ephemeral(noise, ephemeral, at);
         waterlink_mix_hash(noise, at, 32);
+        if (psk)
+                waterlink_mix_key(noise, at, 32);
         at += 32;
 
         // es
@@ -297,9 +334,11 @@ bool waterlink_initiate(struct waterlink_noise address_to noise,
         waterlink_seal_hash(noise, at, 32);
         at += 48;
 
-        // ss
+        // ss, psk
         if (!waterlink_mix_dh(noise, me->secret, responder_public))
                 return false;
+        if (psk)
+                waterlink_mix_key_hash(noise, psk, 32);
 
         // payload
         memory_copy(at, hello, WATERLINK_HELLO_BYTES);
@@ -317,17 +356,19 @@ bool waterlink_initiate(struct waterlink_noise address_to noise,
         either side fails here, at the sealed static or the sealed hello.
 */
 bool waterlink_accept(struct waterlink_noise address_to noise,
-                      struct waterlink_identity address_to me,
+                      struct waterlink_identity address_to me, p8 address_to psk,
                       p8 address_to datagram, p8 address_to initiator_public,
                       p8 address_to hello)
 {
         p8 address_to at = datagram + 16;
 
-        waterlink_noise_start(noise, me->public);
+        waterlink_noise_start(noise, me->public, psk != null);
 
         // -> e
         memory_copy(noise->remote_ephemeral, at, 32);
         waterlink_mix_hash(noise, at, 32);
+        if (psk)
+                waterlink_mix_key(noise, at, 32);
         at += 32;
 
         // es
@@ -339,9 +380,11 @@ bool waterlink_accept(struct waterlink_noise address_to noise,
                 return false;
         at += 48;
 
-        // ss
+        // ss, psk
         if (!waterlink_mix_dh(noise, me->secret, noise->remote_static))
                 return false;
+        if (psk)
+                waterlink_mix_key_hash(noise, psk, 32);
 
         if (!waterlink_open_hash(noise, at, WATERLINK_HELLO_BYTES, hello))
                 return false;

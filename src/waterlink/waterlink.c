@@ -109,6 +109,58 @@
         smaller window and the window is the throughput on any path longer
         than a room.
 
+        GROUPS: MACHINES THAT PAIR BY THEMSELVES
+
+        Pairing by key is one person with two machines in front of them. A
+        headless box installed somewhere nobody will stand is the other case,
+        and for it a machine joins a group -- a namespace and a secret --
+        and pairs by itself with every member it finds on the same local
+        network (discover.c finds them, nearby.c greets them). The rules:
+
+        The secret is the grant. Whoever holds it gets, on every member, what
+        that member's join line granted, and the verbs when it granted
+        nothing. Taking one machine out of a group is changing the secret on
+        all the others, and forgetting the one that left; there is no list of
+        members to strike a name from, only the secret.
+
+        The secret is also an identity: every member derives the same group
+        key pair from it, and pairing is the ordinary handshake addressed to
+        that key, with a key from the secret mixed in (Noise IKpsk1). A member
+        greets every machine it finds that way, and a machine that can read
+        the greeting knows the sender holds the secret and the static key it
+        sent, keeps it as a peer carrying the group's mark, and greets it
+        back if it was new. There is no second handshake, and no pairing
+        state: a greeting is one datagram and is never answered. A record
+        that is already there, by hand or by another group, is never replaced
+        or widened.
+
+        Nothing announced names the group, the machine or its key. What is on
+        the network is that a waterlink machine is here, under labels drawn
+        at every start. Discovery never leaves the local link: mDNS on
+        224.0.0.251, believed only at TTL 255, which no router forwards.
+        There is no rendezvous and no NAT traversal.
+
+        A weak secret can be guessed offline by anyone who captures one
+        greeting, so every key comes from the secret through
+        WATERLINK_GROUP_ROUNDS of PBKDF2, a protocol constant, and a secret
+        the machine makes itself has 160 random bits. The secret itself is
+        not kept: /root/link.groups, root's alone, holds what was derived
+        from it.
+
+        A machine in no group announces nothing and greets no one.
+
+        HOW MUCH MAY BE IN FLIGHT
+
+        A sender must not put more in flight than the path carries, and must
+        not send its window as one burst: it keeps an estimate of the round
+        trip, counts a frame lost when frames sent after it have arrived or a
+        timer runs out, gives the path less when frames are lost and more when
+        they are not, and paces what it sends across the round trip. Which
+        algorithm does that is the sender's own and never crosses the wire;
+        link.c says which it uses. Acknowledgements and urgent frames are not
+        held by it: the first are what open the window, and the second are a
+        few bytes somebody is waiting to see.
+
         URGENCY IS PER SEND
 
         A caller names the urgency on each send, because a terminal carrying

@@ -51701,7 +51701,6 @@ b32 main(void)
 #include "../src/waterlink/seal.c"
 #include "../src/waterlink/handshake.c"
 #include "../src/waterlink/discover.c"
-#include "../src/waterlink/pair.c"
 #define SHARED_counted
 #include "checks.c"
 #undef SHARED_counted
@@ -53465,20 +53464,20 @@ static fn handshake(void)
 
                 check("sec: an initiator refuses a low-order peer key",
                       !waterlink_initiate(address_of starting,
-                                          address_of alice, low_order, e1,
+                                          address_of alice, low_order, null, e1,
                                           hello, first));
         }
 
         check("an initiation is made for a valid peer key",
               waterlink_initiate(address_of starting, address_of alice,
-                                 bob.public, e1, hello, first));
+                                 bob.public, null, e1, hello, first));
         memory_copy(kept, first, sizeof kept);
         check("an initiation passes the responder's gate",
               waterlink_gate_passes(address_of bob, first, WATERLINK_DATAGRAM));
         check("and nobody else's", !waterlink_gate_passes(address_of eve, first,
                                                           WATERLINK_DATAGRAM));
         check("the responder learns who and what",
-              waterlink_accept(address_of answering, address_of bob, first,
+              waterlink_accept(address_of answering, address_of bob, null, first,
                                who, heard_hello) &&
                       !memory_compare(who, alice.public, 32) &&
                       !memory_compare(heard_hello, hello, sizeof hello));
@@ -53541,7 +53540,7 @@ static fn handshake(void)
                       waterlink_gate_passes(address_of eve, first,
                                             WATERLINK_DATAGRAM) &&
                               !waterlink_accept(address_of other,
-                                                address_of eve, first, who,
+                                                address_of eve, null, first, who,
                                                 heard_hello));
 
                 memory_copy(first, kept, sizeof first);
@@ -53550,7 +53549,7 @@ static fn handshake(void)
                 waterlink_mac1(gate, first, 16 + WATERLINK_INITIATE_BYTES - 16,
                                first + 16 + WATERLINK_INITIATE_BYTES - 16);
                 check("a tampered static does not open",
-                      !waterlink_accept(address_of other, address_of bob,
+                      !waterlink_accept(address_of other, address_of bob, null,
                                         first, who, heard_hello));
         }
 
@@ -53560,11 +53559,11 @@ static fn handshake(void)
                 struct waterlink_noise stranger;
 
                 waterlink_initiate(address_of starting, address_of alice,
-                                   bob.public, e1, hello, first);
-                waterlink_accept(address_of answering, address_of bob, first,
+                                   bob.public, null, e1, hello, first);
+                waterlink_accept(address_of answering, address_of bob, null, first,
                                  who, heard_hello);
                 waterlink_initiate(address_of stranger, address_of alice,
-                                   eve.public, e2, hello, first);
+                                   eve.public, null, e2, hello, first);
                 waterlink_respond(address_of answering, e2, 1, 2, second);
                 check("an answer to another initiation does not open",
                       !waterlink_answered(address_of stranger, address_of alice,
@@ -53702,109 +53701,78 @@ static fn group_derivation(void)
               !memory_compare(out, long_secret, 32));
 }
 
-static fn group_tags(void)
+static fn group_identity(void)
 {
         struct waterlink_group_keys office, again, other, elsewhere;
-        p8 nonce[16], second[16], tag[16], mine[16], theirs[16];
-        struct waterlink_identity one_machine, another;
-        positive told = 0;
 
         group_keys(address_of office, "office", "sesame");
         group_keys(address_of again, "office", "sesame");
         group_keys(address_of other, "office", "sesamf");
         group_keys(address_of elsewhere, "office2", "sesame");
-        identity_seeded(address_of one_machine, 11);
-        identity_seeded(address_of another, 12);
-
-        for (positive round = 0; round < 64; round++)
-        {
-                random_seeded(nonce, 16, (p8)round);
-                random_seeded(second, 16, (p8)(round + 100));
-                waterlink_tag(address_of office, nonce, tag);
-                waterlink_tag(address_of again, nonce, mine);
-                told += !memory_compare(tag, mine, 16);
-                waterlink_tag(address_of other, nonce, mine);
-                told += memory_compare(tag, mine, 16) != 0;
-                waterlink_tag(address_of elsewhere, nonce, mine);
-                told += memory_compare(tag, mine, 16) != 0;
-                waterlink_tag(address_of office, second, mine);
-                told += memory_compare(tag, mine, 16) != 0;
-                waterlink_who(address_of office, nonce, one_machine.public, mine);
-                waterlink_who(address_of again, nonce, one_machine.public, theirs);
-                told += !memory_compare(mine, theirs, 16);
-                waterlink_who(address_of office, nonce, another.public, theirs);
-                told += memory_compare(mine, theirs, 16) != 0;
-        }
-        check("a member recognises a member's tag and nobody else does, "
-              "and a nonce makes a new one",
-              told == 64 * 6);
+        check("members of a group derive one identity and one pre-shared key",
+              !memory_compare(office.identity.public, again.identity.public,
+                              32) &&
+                      !memory_compare(office.psk, again.psk, 32));
+        check("and another secret or another namespace derives another",
+              memory_compare(office.identity.public, other.identity.public,
+                             32) &&
+                      memory_compare(office.identity.public,
+                                     elsewhere.identity.public, 32) &&
+                      memory_compare(office.psk, other.psk, 32));
         check("groups mark their peers, never zero, one mark a namespace",
               office.mark && office.mark == again.mark &&
                       office.mark != elsewhere.mark);
 }
 
+/*
+        A greeting: the ordinary first message, to the group's key, with the
+        group's pre-shared key. A member reads the sender's key and name out
+        of it; a machine with another secret cannot pass its gate; the right
+        identity with a wrong pre-shared key, or one changed bit, reads
+        nothing.
+*/
 static fn group_pairing(void)
 {
         struct waterlink_group_keys office, other;
-        struct waterlink_identity a, b;
+        struct waterlink_identity a;
         struct waterlink_noise starting, answering;
-        struct waterlink_pair_seen seen;
-        p8 first[WATERLINK_DATAGRAM], second[WATERLINK_DATAGRAM],
-                third[WATERLINK_DATAGRAM];
-        p8 e1[32], e2[32], key[32], name[WATERLINK_PAIR_NAME];
-        p8 a_name[WATERLINK_PAIR_NAME] = "machine-a";
-        p8 b_name[WATERLINK_PAIR_NAME] = "machine-b";
+        p8 greeting[WATERLINK_DATAGRAM], hello[WATERLINK_HELLO_BYTES];
+        p8 heard[WATERLINK_HELLO_BYTES], who[32], e1[32], wrong[32];
 
         group_keys(address_of office, "office", "sesame");
         group_keys(address_of other, "office", "wrong");
         identity_seeded(address_of a, 21);
-        identity_seeded(address_of b, 22);
         random_seeded(e1, 32, 23);
-        random_seeded(e2, 32, 24);
-        memory_zero(address_of seen, sizeof seen);
+        memory_zero(hello, sizeof hello);
+        string_copy((string_address)hello + WATERLINK_STAMP_BYTES, "machine-a");
 
-        waterlink_pair_first(address_of starting, office.pair, e1, 77, first);
-        check("a first message under the wrong secret is refused with no curve",
-              !waterlink_pair_heard_first(address_of answering, other.pair,
-                                          first));
-        check("and under the right one it opens",
-              waterlink_pair_heard_first(address_of answering, office.pair,
-                                         first));
-        check("once", waterlink_pair_fresh(address_of seen, first + 16));
-        check("a first message made again is refused as a replay",
-              !waterlink_pair_fresh(address_of seen, first + 16));
-
-        waterlink_pair_second(address_of answering, address_of b, e2, b_name,
-                              77, second);
-        check("the initiator learns the responder's key and name",
-              waterlink_pair_heard_second(address_of starting, second, key,
-                                          name) &&
-                      !memory_compare(key, b.public, 32) &&
-                      !memory_compare(name, b_name, WATERLINK_PAIR_NAME));
-        waterlink_pair_third(address_of starting, address_of a, a_name, 99,
-                             third);
-        check("and the responder the initiator's",
-              waterlink_pair_heard_third(address_of answering, third, key,
-                                         name) &&
-                      !memory_compare(key, a.public, 32) &&
-                      !memory_compare(name, a_name, WATERLINK_PAIR_NAME));
-
-        //      Tampering after the first message: nothing opens.
-        {
-                bool refused = true;
-
-                waterlink_pair_first(address_of starting, office.pair, e1, 77,
-                                     first);
-                waterlink_pair_heard_first(address_of answering, office.pair,
-                                           first);
-                waterlink_pair_second(address_of answering, address_of b, e2,
-                                      b_name, 77, second);
-                second[16 + 40] ^= 4;
-                if (waterlink_pair_heard_second(address_of starting, second,
-                                                key, name))
-                        refused = false;
-                check("a changed second message does not open", refused);
-        }
+        check("a greeting is written",
+              waterlink_initiate(address_of starting, address_of a,
+                                 office.identity.public, office.psk, e1, hello,
+                                 greeting));
+        check("a machine with another secret cannot pass its gate",
+              !waterlink_gate_passes(address_of other.identity, greeting,
+                                     WATERLINK_DATAGRAM));
+        check("a member passes it and reads the sender's key and name",
+              waterlink_gate_passes(address_of office.identity, greeting,
+                                    WATERLINK_DATAGRAM) &&
+                      waterlink_accept(address_of answering,
+                                       address_of office.identity, office.psk,
+                                       greeting, who, heard) &&
+                      !memory_compare(who, a.public, 32) &&
+                      !memory_compare(heard, hello, sizeof hello));
+        memory_copy(wrong, office.psk, 32);
+        wrong[5] ^= 1;
+        check("the group's key with another pre-shared key reads nothing",
+              !waterlink_accept(address_of answering, address_of office.identity,
+                                wrong, greeting, who, heard));
+        check("and neither does an ordinary handshake to the group's key",
+              !waterlink_accept(address_of answering, address_of office.identity,
+                                null, greeting, who, heard));
+        greeting[16 + 32 + 5] ^= 4;
+        check("a changed greeting reads nothing",
+              !waterlink_accept(address_of answering, address_of office.identity,
+                                office.psk, greeting, who, heard));
 }
 
 /*
@@ -53837,7 +53805,7 @@ static bool mdns_read_edge(const p8 address_to packet, positive length,
 
 static fn mdns_parse(void)
 {
-        struct waterlink_announce_group groups[2];
+        p8 instance[10];
         struct waterlink_found found;
         p8 packet[WATERLINK_MDNS_MAX];
         p8 broken[WATERLINK_MDNS_MAX];
@@ -53847,32 +53815,19 @@ static fn mdns_parse(void)
         positive tries = 0;
 
         mdns_page_make();
-        for (positive g = 0; g < 2; g++)
-        {
-                random_seeded(groups[g].instance, 10, (p8)(g + 1));
-                random_seeded(groups[g].nonce, 16, (p8)(g + 3));
-                random_seeded(groups[g].tag, 16, (p8)(g + 5));
-                random_seeded(groups[g].who, 16, (p8)(g + 7));
-        }
+        random_seeded(instance, 10, 1);
 
-        length = waterlink_mdns_announce(packet, sizeof packet, groups, 2, host,
+        length = waterlink_mdns_announce(packet, sizeof packet, instance, host,
                                          22348, 0x0a000001, 4500, 0, null, 0);
-        check("an announcement reads back: two instances, ports and fields",
+        check("an announcement reads back: one instance, on its port",
               length && mdns_read_edge(packet, length, address_of found) &&
-                      found.response && found.count == 2 &&
+                      found.response && found.count == 1 &&
                       found.instance[0].has_port &&
-                      found.instance[0].port == 22348 &&
-                      found.instance[1].has_fields &&
-                      !memory_compare(found.instance[1].nonce, groups[1].nonce,
-                                      16) &&
-                      !memory_compare(found.instance[1].tag, groups[1].tag, 16) &&
-                      !memory_compare(found.instance[1].who, groups[1].who, 16));
+                      found.instance[0].port == 22348);
 
-        //      Letter case: the service's name and the fields' hex read the
-        //      same in capitals; a digit that is not hex, at either nibble,
-        //      costs that instance its fields and nothing else.
+        //      Letter case: the service's name reads the same in capitals.
         {
-                positive names = 0, fields = 0, first = 0, last = 0;
+                positive names = 0;
 
                 memory_copy(broken, packet, length);
                 for (positive at = 0; at + WATERLINK_SERVICE_BYTES <= length; at++)
@@ -53884,36 +53839,11 @@ static fn mdns_parse(void)
                                         if (broken[i] >= 'a' && broken[i] <= 'z')
                                                 broken[i] -= 32;
                         }
-                for (positive at = 0; at + 35 <= length; at++)
-                        if (broken[at] == 34 && broken[at + 2] == '=' &&
-                            (broken[at + 1] == 'n' || broken[at + 1] == 't' ||
-                             broken[at + 1] == 'w'))
-                        {
-                                if (!fields++)
-                                        first = at;
-                                last = at;
-                                for (positive i = at + 3; i < at + 35; i++)
-                                        if (broken[i] >= 'a' && broken[i] <= 'f')
-                                                broken[i] -= 32;
-                        }
-                check("the service's name and the fields' hex read the same in "
-                      "capitals",
-                      names && fields == 6 &&
+                check("the service's name reads the same in capitals",
+                      names &&
                               mdns_read_edge(broken, length, address_of found) &&
-                              found.count == 2 &&
-                              found.instance[0].has_fields &&
-                              found.instance[1].has_fields &&
-                              !memory_compare(found.instance[0].nonce,
-                                              groups[0].nonce, 16) &&
-                              !memory_compare(found.instance[1].who,
-                                              groups[1].who, 16));
-                broken[first + 3] = 'g';
-                broken[last + 34] = ':';
-                check("and a digit that is not hex drops that instance's fields",
-                      mdns_read_edge(broken, length, address_of found) &&
-                              found.count == 2 &&
-                              !found.instance[0].has_fields &&
-                              !found.instance[1].has_fields);
+                              found.count == 1 &&
+                              found.instance[0].port == 22348);
         }
 
         length = waterlink_mdns_query(packet, sizeof packet);
@@ -53997,7 +53927,7 @@ static fn mdns_parse(void)
         //      Generated: every cut of a real announcement, and a thousand
         //      random edits of it, each read at the page's edge. Surviving is
         //      the claim; what they read must never be more than was there.
-        length = waterlink_mdns_announce(packet, sizeof packet, groups, 2, host,
+        length = waterlink_mdns_announce(packet, sizeof packet, instance, host,
                                          22348, 0x0a000001, 4500, 0, null, 0);
         for (positive cut = 0; cut < length; cut++)
         {
@@ -54048,16 +53978,11 @@ static fn mdns_parse(void)
 */
 static fn hex_out(p8 address_to bytes, positive length)
 {
-        static const char digits[] = "0123456789abcdef";
-        p8 text[2 * 128 + 2];
+        p8 text[2 * 256 + 2];
+        positive used = memory_into_hex(text, bytes, length < 256 ? length : 256);
 
-        for (positive i = 0; i < length; i++)
-        {
-                text[2 * i] = (p8)digits[bytes[i] >> 4];
-                text[2 * i + 1] = (p8)digits[bytes[i] & 15];
-        }
-        text[2 * length] = ' ';
-        text[2 * length + 1] = 0;
+        text[used++] = ' ';
+        text[used] = 0;
         string_format(log, "%s", (string_address)text);
 }
 
@@ -54087,9 +54012,9 @@ static b32 noise_vectors(positive count)
 
                 waterlink_identity_from(address_of i, si);
                 waterlink_identity_from(address_of r, sr);
-                waterlink_initiate(address_of a, address_of i, r.public, ei,
+                waterlink_initiate(address_of a, address_of i, r.public, null, ei,
                                    hello, first);
-                if (!waterlink_accept(address_of b, address_of r, first, who,
+                if (!waterlink_accept(address_of b, address_of r, null, first, who,
                                       heard_hello))
                         return 1;
                 waterlink_respond(address_of b, er, 7, (p32)seed, second);
@@ -54115,56 +54040,45 @@ static b32 noise_vectors(positive count)
 }
 
 /*
-        XXpsk0 for the harness: seeded statics, ephemerals, PSK and names, and
-        the three message bodies, one line a seed.
+        Greetings for the harness: seeded initiator and group keys, ephemeral,
+        pre-shared key and hello, and the first message's body, one line a
+        seed.
 */
 static b32 pair_vectors(positive count)
 {
         for (positive seed = 0; seed < count; seed++)
         {
-                struct waterlink_identity i, r;
+                struct waterlink_identity i, group;
                 struct waterlink_noise a, b;
-                p8 si[32], sr[32], ei[32], er[32], psk[32];
-                p8 ni[WATERLINK_PAIR_NAME], nr[WATERLINK_PAIR_NAME];
-                p8 first[WATERLINK_DATAGRAM], second[WATERLINK_DATAGRAM],
-                        third[WATERLINK_DATAGRAM];
-                p8 key[32], name[WATERLINK_PAIR_NAME];
+                p8 si[32], sg[32], ei[32], psk[32], hello[WATERLINK_HELLO_BYTES];
+                p8 greeting[WATERLINK_DATAGRAM], who[32],
+                        heard[WATERLINK_HELLO_BYTES];
 
                 sim_rng = 0x9a1b2c3dull * (seed + 1);
                 for (positive n = 0; n < 32; n++)
                 {
                         si[n] = (p8)sim_next();
-                        sr[n] = (p8)sim_next();
+                        sg[n] = (p8)sim_next();
                         ei[n] = (p8)sim_next();
-                        er[n] = (p8)sim_next();
                         psk[n] = (p8)sim_next();
-                        ni[n] = (p8)sim_next();
-                        nr[n] = (p8)sim_next();
                 }
+                for (positive n = 0; n < WATERLINK_HELLO_BYTES; n++)
+                        hello[n] = (p8)sim_next();
                 waterlink_identity_from(address_of i, si);
-                waterlink_identity_from(address_of r, sr);
-                waterlink_pair_first(address_of a, psk, ei, 1, first);
-                if (!waterlink_pair_heard_first(address_of b, psk, first))
-                        return 1;
-                waterlink_pair_second(address_of b, address_of r, er, nr, 1,
-                                      second);
-                if (!waterlink_pair_heard_second(address_of a, second, key, name))
-                        return 1;
-                waterlink_pair_third(address_of a, address_of i, ni, 1, third);
-                if (!waterlink_pair_heard_third(address_of b, third, key,
-                                                name))
+                waterlink_identity_from(address_of group, sg);
+                if (!waterlink_initiate(address_of a, address_of i,
+                                        group.public, psk, ei, hello,
+                                        greeting) ||
+                    !waterlink_accept(address_of b, address_of group, psk,
+                                      greeting, who, heard))
                         return 1;
 
                 hex_out(si, 32);
-                hex_out(sr, 32);
+                hex_out(sg, 32);
                 hex_out(ei, 32);
-                hex_out(er, 32);
                 hex_out(psk, 32);
-                hex_out(ni, 32);
-                hex_out(nr, 32);
-                hex_out(first + 16, WATERLINK_PAIR_1_BYTES);
-                hex_out(second + 16, WATERLINK_PAIR_2_BYTES);
-                hex_out(third + 16, WATERLINK_PAIR_3_BYTES);
+                hex_out(hello, WATERLINK_HELLO_BYTES);
+                hex_out(greeting + 16, WATERLINK_INITIATE_BYTES - 16);
                 string_format(log, "\n");
         }
         log_flush();
@@ -54173,43 +54087,46 @@ static b32 pair_vectors(positive count)
 
 static fn hex_line(p8 address_to bytes, positive length)
 {
-        static const char digits[] = "0123456789abcdef";
-        p8 two[3];
+        static p8 text[2 * WATERLINK_MDNS_MAX + 2];
+        positive used = memory_into_hex(text, bytes, length);
 
-        for (positive at = 0; at < length; at++)
-        {
-                two[0] = (p8)digits[bytes[at] >> 4];
-                two[1] = (p8)digits[bytes[at] & 15];
-                two[2] = 0;
-                string_format(log, "%s", (string_address)two);
-        }
-        string_format(log, "\n");
+        text[used++] = '\n';
+        text[used] = 0;
+        string_format(log, "%s", (string_address)text);
 }
 
 /*
-        mDNS for the harness: an announcement of two groups for dnspython to
+        mDNS for the harness: an announcement for dnspython to
         read, and a reader for packets dnspython builds -- hex in on standard
         input, one packet a line, what was found out.
 */
+//      Hex in either case, for lines of packets.
+static p8 address_to mdns_hex_values(void)
+{
+        static p8 values[256];
+
+        memory_fill(values, 255, sizeof values);
+        for (positive at = 0; at < 16; at++)
+        {
+                values["0123456789abcdef"[at]] = (p8)at;
+                values["0123456789ABCDEF"[at]] = (p8)at;
+        }
+        return values;
+}
+
 static b32 mdns_modes(string_address mode)
 {
         if (string_equals(mode, "mdns-announce"))
         {
-                struct waterlink_announce_group groups[2];
+                p8 instance[10];
                 p8 host[6] = {0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6};
                 p8 packet[WATERLINK_MDNS_MAX];
                 positive length;
 
-                for (positive g = 0; g < 2; g++)
-                {
-                        random_seeded(groups[g].instance, 10, (p8)(g + 1));
-                        random_seeded(groups[g].nonce, 16, (p8)(g + 3));
-                        random_seeded(groups[g].tag, 16, (p8)(g + 5));
-                        random_seeded(groups[g].who, 16, (p8)(g + 7));
-                }
-                length = waterlink_mdns_announce(packet, sizeof packet, groups,
-                                                 2, host, 22348, 0x0a4d0002,
-                                                 4500, 0, null, 0);
+                random_seeded(instance, 10, 1);
+                length = waterlink_mdns_announce(packet, sizeof packet, instance,
+                                                 host, 22348, 0x0a4d0002, 4500,
+                                                 0, null, 0);
                 hex_line(packet, length);
                 length = waterlink_mdns_query(packet, sizeof packet);
                 hex_line(packet, length);
@@ -54243,7 +54160,9 @@ static b32 mdns_modes(string_address mode)
                                         used++;
                         }
                         if (used % 2 || used / 2 > WATERLINK_MDNS_MAX ||
-                            !waterlink_unhex(line, used / 2, packet))
+                            memory_decode_power2(packet, line, used / 2,
+                                                 mdns_hex_values(), 4) !=
+                                    used / 2)
                         {
                                 string_format(log, "bad\n");
                                 continue;
@@ -54258,16 +54177,9 @@ static b32 mdns_modes(string_address mode)
                                 struct waterlink_found_instance address_to one =
                                         found.instance + at;
 
-                                string_format(log, " %p:%p", one->has_fields,
-                                              (positive)one->port);
-                                if (one->has_fields)
-                                {
-                                        p8 hex[33];
-
-                                        hex[memory_into_hex(hex, one->nonce, 16)] = 0;
-                                        string_format(log, ":%s",
-                                                      (string_address)hex);
-                                }
+                                if (one->has_port)
+                                        string_format(log, " %p",
+                                                      (positive)one->port);
                         }
                         string_format(log, "\n");
                         log_flush();
@@ -54310,7 +54222,7 @@ b32 main(void)
         handshake();
         pbkdf2_vectors();
         group_derivation();
-        group_tags();
+        group_identity();
         group_pairing();
         mdns_parse();
         return test_report(null);
@@ -54753,7 +54665,7 @@ static fn wls_initiation(p8 address_to datagram, p64 conversation,
         memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of ours, 4);
         wls_seeded(ephemeral, 32, (p8)conversation);
         (void)waterlink_initiate(address_of noise, address_of wls_client,
-                                 wls_server.public, ephemeral, hello, datagram);
+                                 wls_server.public, null, ephemeral, hello, datagram);
 }
 
 static fn responder(bipolar listener, p16 port)
@@ -54809,8 +54721,8 @@ static fn initiator_answer(void)
         waterlink_stamp(hello, 5000, 0);
         memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of ours, 4);
         (void)waterlink_initiate(address_of live, address_of wls_client,
-                                 wls_server.public, e1, hello, first);
-        (void)waterlink_accept(address_of answering, address_of wls_server, first,
+                                 wls_server.public, null, e1, hello, first);
+        (void)waterlink_accept(address_of answering, address_of wls_server, null, first,
                                who, heard);
         (void)waterlink_respond(address_of answering, e2, ours, 0x55667788,
                                 second);
@@ -54861,179 +54773,132 @@ static fn wls_group(void)
         string_copy((string_address)link_nearby.name, "machine");
 }
 
-static positive wls_pairings(void)
+//      A greeting from one identity to a group, stamped seconds past now.
+static fn wls_greeting(struct waterlink_identity address_to from,
+                       struct waterlink_group_keys address_to to,
+                       string_address name, p64 ahead, p8 address_to datagram)
 {
-        positive used = 0;
+        struct waterlink_noise noise;
+        p8 hello[WATERLINK_HELLO_BYTES];
+        p8 ephemeral[32];
 
-        for (positive at = 0; at < LINK_PAIRING; at++)
-                used += link_nearby.pairing[at].used;
-        return used;
+        memory_zero(hello, sizeof hello);
+        waterlink_stamp(hello, system_clock_ns(0) / 1000000000ull + ahead, 0);
+        string_copy((string_address)hello + WATERLINK_STAMP_BYTES, name);
+        wls_seeded(ephemeral, 32, (p8)ahead);
+        (void)waterlink_initiate(address_of noise, from, to->identity.public,
+                                 to->psk, ephemeral, hello, datagram);
 }
 
-static fn pairing_first(bipolar listener, p16 port)
+/*
+        Greetings, at the machine greeted: a member is kept by its key with
+        the group's grants where it came from, and greeted back; a greeting
+        under another secret, changed, replayed or from this machine's own
+        key keeps nobody; a record paired by hand is never replaced or
+        widened; and a member greeting from somewhere new is followed there.
+*/
+static fn greetings(bipolar listener, p16 port)
 {
-        struct waterlink_noise starting;
-        p8 first[WATERLINK_DATAGRAM], heard[WATERLINK_DATAGRAM + 16];
-        p8 e1[32];
+        struct waterlink_group_keys other;
+        struct waterlink_noise noise;
+        p8 greeting[WATERLINK_DATAGRAM], back[WATERLINK_DATAGRAM + 16];
+        p8 who[32], hello[WATERLINK_HELLO_BYTES], derived[32];
+        link_peers peers;
 
         link_self.me = wls_b;
         wls_group();
         wls_drain(listener);
-        wls_seeded(e1, 32, 51);
-        waterlink_pair_first(address_of starting, wls_office.pair, e1, 77, first);
+        memory_zero(address_of link_self.admission, sizeof link_self.admission);
+        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
+        waterlink_group_derive("office", (p8 address_to) "wrong", 5, 1000,
+                               derived);
+        waterlink_group_keys_from(address_of other, derived, "office");
 
-        for (positive at = 0; at < LINK_PAIRING; at++)
-                link_nearby.pairing[at].used = true;
-        link_pair_datagram(first, WATERLINK_DATAGRAM, wls_loopback, port, 1000000);
-        check("sec: with the pairing table full a first message is not answered",
-              wls_heard(listener, heard) <= 0);
-        for (positive at = 0; at < LINK_PAIRING; at++)
-                link_nearby.pairing[at].used = false;
-        check("sec: and its replay marker is not spent",
-              link_nearby.seen.count == 0);
+        wls_greeting(address_of wls_client, address_of other, "outsider", 10,
+                     greeting);
+        link_server_initiation(greeting, WATERLINK_DATAGRAM, wls_loopback, port,
+                               1000000);
+        check("sec: a greeting under another secret keeps nobody and is not "
+              "answered",
+              wls_peers_count() == 0 && wls_heard(listener, back) <= 0);
 
+        wls_greeting(address_of wls_client, address_of wls_office, "machine-a",
+                     11, greeting);
+        greeting[16 + 40] ^= 1;
+        link_server_initiation(greeting, WATERLINK_DATAGRAM, wls_loopback, port,
+                               1100000);
+        check("sec: a changed greeting keeps nobody", wls_peers_count() == 0);
+
+        wls_greeting(address_of wls_client, address_of wls_office, "machine-a",
+                     12, greeting);
+        link_server_initiation(greeting, WATERLINK_DATAGRAM, wls_loopback, port,
+                               1200000);
+        link_peers_load(address_of peers);
+        check("a member's greeting keeps it by its key, named as it asked, with "
+              "the group's grants and where it came from",
+              peers.count == 1 &&
+                      !memory_compare(peers.peer[0].key, wls_client.public, 32) &&
+                      string_equals(peers.peer[0].name, "machine-a") &&
+                      peers.peer[0].group == wls_office.mark &&
+                      peers.peer[0].may == WATERLINK_MAY_DEFAULT &&
+                      !memory_compare(peers.peer[0].address, wls_loopback, 16) &&
+                      peers.peer[0].port == port);
+        check("and greets it back, from this machine's key, as a member",
+              wls_heard(listener, back) == WATERLINK_DATAGRAM &&
+                      waterlink_gate_passes(address_of wls_office.identity, back,
+                                            WATERLINK_DATAGRAM) &&
+                      waterlink_accept(address_of noise,
+                                       address_of wls_office.identity,
+                                       wls_office.psk, back, who, hello) &&
+                      !memory_compare(who, wls_b.public, 32));
+
+        link_server_initiation(greeting, WATERLINK_DATAGRAM, wls_loopback,
+                               (p16)(port + 1), 1300000);
+        link_peers_load(address_of peers);
+        check("sec: the same greeting again is not taken",
+              peers.count == 1 && peers.peer[0].port == port);
+
+        wls_greeting(address_of wls_client, address_of wls_office, "machine-a",
+                     13, greeting);
+        link_server_initiation(greeting, WATERLINK_DATAGRAM, wls_loopback,
+                               (p16)(port + 1), 1400000);
+        link_peers_load(address_of peers);
+        check("a member greeting from somewhere new is followed there",
+              peers.count == 1 && peers.peer[0].port == port + 1);
+
+        wls_greeting(address_of wls_b, address_of wls_office, "itself", 14,
+                     greeting);
+        link_server_initiation(greeting, WATERLINK_DATAGRAM, wls_loopback, port,
+                               1500000);
+        check("sec: this machine's own greeting, back through the loop, keeps "
+              "nothing",
+              wls_peers_count() == 1);
+
+        wls_peers_with(wls_client.public, WATERLINK_MAY_VERBS);
+        wls_greeting(address_of wls_client, address_of wls_office, "machine-a",
+                     15, greeting);
+        link_server_initiation(greeting, WATERLINK_DATAGRAM, wls_loopback,
+                               (p16)(port + 2), 1600000);
+        link_peers_load(address_of peers);
+        check("sec: a record paired by hand is never replaced, moved or widened",
+              peers.count == 1 && peers.peer[0].group == 0 &&
+                      peers.peer[0].may == WATERLINK_MAY_VERBS &&
+                      string_equals(peers.peer[0].name, "client") &&
+                      peers.peer[0].port != port + 2);
+
+        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
+        wls_group();
+        wls_drain(listener);
         entropy_down = true;
-        link_pair_datagram(first, WATERLINK_DATAGRAM, wls_loopback, port, 1100000);
+        wls_greeting(address_of wls_client, address_of wls_office, "machine-a",
+                     16, greeting);
+        link_server_initiation(greeting, WATERLINK_DATAGRAM, wls_loopback, port,
+                               1700000);
         entropy_down = false;
-        check("sec: with no entropy a first message is not answered",
-              wls_heard(listener, heard) <= 0 && wls_pairings() == 0);
-        check("sec: and its replay marker is not spent either",
-              link_nearby.seen.count == 0);
-
-        link_pair_datagram(first, WATERLINK_DATAGRAM, wls_loopback, port, 1200000);
-        check("sec: so the same first message retried is answered",
-              wls_heard(listener, heard) == WATERLINK_DATAGRAM &&
-                      wls_pairings() == 1);
-        link_pair_datagram(first, WATERLINK_DATAGRAM, wls_loopback, port, 1300000);
-        check("and a replay of it after that is not",
-              wls_heard(listener, heard) <= 0 && wls_pairings() == 1);
-        wls_group();
-        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
-}
-
-//      The initiator's side: its pairing is begun by the service itself.
-static fn pairing_second(bipolar listener, p16 port)
-{
-        struct waterlink_noise answering, before;
-        struct link_pairing address_to pairing;
-        p8 first[WATERLINK_DATAGRAM + 16], second[WATERLINK_DATAGRAM],
-                forged[WATERLINK_DATAGRAM], third[WATERLINK_DATAGRAM + 16];
-        p8 e2[32];
-        p8 b_name[WATERLINK_PAIR_NAME] = "machine-b";
-        p32 ours, b_index = 0x0badcafe;
-
-        link_self.me = wls_client;
-        wls_group();
-        wls_drain(listener);
-        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
-
-        link_pair_begin(0, wls_loopback, port, 1000000);
-        check("a pairing begins and sends its first message",
-              wls_heard(listener, first) == WATERLINK_DATAGRAM &&
-                      wls_pairings() == 1);
-        pairing = link_nearby.pairing;
-        if (!pairing->used)
-                return;
-        ours = pairing->ours;
-
-        wls_seeded(e2, 32, 61);
-        (void)waterlink_pair_heard_first(address_of answering, wls_office.pair,
-                                         first);
-        (void)waterlink_pair_second(address_of answering, address_of wls_b, e2,
-                                    b_name, ours, second);
-        memory_copy(second + 8, address_of b_index, 4);
-
-        before = pairing->noise;
-        link_pair_datagram(second, WATERLINK_DATAGRAM, wls_loopback,
-                           (p16)(port + 1), 2000000);
-        check("sec: a second message from another port does not advance it",
-              pairing->used && wls_heard(listener, third) <= 0 &&
-                      !memory_compare(address_of pairing->noise,
-                                      address_of before, sizeof before) &&
-                      wls_peers_count() == 0);
-
-        memory_copy(forged, second, WATERLINK_DATAGRAM);
-        forged[16 + 32 + 4] ^= 1;
-        link_pair_datagram(forged, WATERLINK_DATAGRAM, wls_loopback, port,
-                           2100000);
-        check("sec: a forged second message from the right place is refused",
-              pairing->used && wls_heard(listener, third) <= 0 &&
-                      wls_peers_count() == 0);
-        check("sec: and leaves the pairing's transcript as it was",
-              !memory_compare(address_of pairing->noise, address_of before,
-                              sizeof before));
-
-        link_pair_datagram(second, WATERLINK_DATAGRAM, wls_loopback, port,
-                           2200000);
-        check("sec: so the real second message still completes the pairing",
-              !pairing->used &&
-                      wls_heard(listener, third) == WATERLINK_DATAGRAM &&
-                      wls_peers_count() == 1);
-        {
-                link_peers peers;
-
-                link_peers_load(address_of peers);
-                check("sec: and the peer is kept where the pairing began",
-                      peers.count == 1 &&
-                              !memory_compare(peers.peer[0].address,
-                                              wls_loopback, 16) &&
-                              peers.peer[0].port == port);
-        }
-        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
-}
-
-//      The responder's side: the third message is judged the same way.
-static fn pairing_third(bipolar listener, p16 port)
-{
-        struct waterlink_noise starting, before;
-        struct link_pairing address_to pairing = null;
-        p8 first[WATERLINK_DATAGRAM], second[WATERLINK_DATAGRAM + 16],
-                third[WATERLINK_DATAGRAM], forged[WATERLINK_DATAGRAM];
-        p8 e1[32], key[32], name[WATERLINK_PAIR_NAME];
-        p8 a_name[WATERLINK_PAIR_NAME] = "machine-a";
-        p32 theirs;
-
-        link_self.me = wls_b;
-        wls_group();
-        wls_drain(listener);
-        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
-
-        wls_seeded(e1, 32, 71);
-        waterlink_pair_first(address_of starting, wls_office.pair, e1, 88, first);
-        link_pair_datagram(first, WATERLINK_DATAGRAM, wls_loopback, port, 1000000);
-        check("the responder answers a first message",
-              wls_heard(listener, second) == WATERLINK_DATAGRAM &&
-                      wls_pairings() == 1);
-        for (positive at = 0; at < LINK_PAIRING; at++)
-                if (link_nearby.pairing[at].used)
-                        pairing = link_nearby.pairing + at;
-        if (!pairing)
-                return;
-        memory_copy(address_of theirs, second + 8, 4);
-        (void)waterlink_pair_heard_second(address_of starting, second, key, name);
-        (void)waterlink_pair_third(address_of starting, address_of wls_client,
-                                   a_name, theirs, third);
-
-        before = pairing->noise;
-        link_pair_datagram(third, WATERLINK_DATAGRAM, wls_loopback,
-                           (p16)(port + 1), 2000000);
-        check("sec: a third message from another port is not taken",
-              pairing->used && wls_peers_count() == 0);
-
-        memory_copy(forged, third, WATERLINK_DATAGRAM);
-        forged[16 + 4] ^= 1;
-        link_pair_datagram(forged, WATERLINK_DATAGRAM, wls_loopback, port,
-                           2100000);
-        check("sec: a forged third message is refused",
-              pairing->used && wls_peers_count() == 0);
-        check("sec: and leaves the responder's transcript as it was",
-              !memory_compare(address_of pairing->noise, address_of before,
-                              sizeof before));
-
-        link_pair_datagram(third, WATERLINK_DATAGRAM, wls_loopback, port,
-                           2200000);
-        check("sec: so the real third message still completes it",
-              !pairing->used && wls_peers_count() == 1);
+        check("sec: with no entropy a member is still kept, but not greeted "
+              "back, and not marked as greeted",
+              wls_peers_count() == 1 && wls_heard(listener, back) <= 0 &&
+                      !link_greeted_lately(wls_loopback, port, 1700001));
         (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
 }
 
@@ -55043,10 +54908,10 @@ static fn labels(void)
         wls_group();
         entropy_down = true;
         check("sec: with no entropy the labels are not made",
-              !link_nearby_labels(5) && !link_nearby.labels_ready);
+              !link_nearby_labels() && !link_nearby.labels_ready);
         entropy_down = false;
         check("sec: and with it back they are",
-              link_nearby_labels(6) && link_nearby.labels_ready);
+              link_nearby_labels() && link_nearby.labels_ready);
 }
 
 //      WPA's pre-shared key, made through the shared PBKDF2 (IEEE 802.11i).
@@ -55338,9 +55203,7 @@ b32 main(void)
         publication();
         responder(listener, port);
         initiator_answer();
-        pairing_first(listener, port);
-        pairing_second(listener, port);
-        pairing_third(listener, port);
+        greetings(listener, port);
         labels();
         wpa_key();
         key_text();

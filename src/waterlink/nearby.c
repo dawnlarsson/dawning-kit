@@ -1,7 +1,20 @@
 /*
         Groups, as the listener keeps them: announcing on the local network,
-        recognising other members, pairing with the ones it does not know
-        yet, and following the ones it does when their addresses change.
+        greeting every machine it finds, and keeping the members whose
+        greetings it can read.
+
+        A greeting is the ordinary handshake's first message addressed to the
+        group's own key, which every member derives from the secret, with the
+        group's pre-shared key in it (handshake.c): the member's real static
+        key rides in it as in any initiation, with its name where a session's
+        conversation would be. A machine outside the group cannot even pass
+        the gate, since the gate is keyed by the group's key; a member that
+        can read it has proof of the secret and of the key, and keeps the
+        sender as a peer with what the group grants. A greeting is never
+        answered: the greeted machine greets back when the sender was new to
+        it, and that is how both sides learn each other -- even when only one
+        of them can see the other's announcements. A member that moved is
+        found the same way, by its greeting from the new place.
 
         A group is a line in /root/link.groups -- the namespace, the key
         derived from it and the secret (never the secret itself), a hash of
@@ -26,20 +39,17 @@
 #define WATERLINK_NEARBY_INCLUDED
 
 #include "discover.c"
-#include "pair.c"
 
 #define LINK_GROUPS_PATH "/root/link.groups"
 #define LINK_GROUPS_NEXT "/root/link.groups.next"
 #define LINK_PEERS_LOCK HOST_STATE "/link.peers.lock"
 #define LINK_GROUPS_MAX 8
 #define LINK_INTERFACES 16
-#define LINK_PAIRING 8
+#define LINK_GREETED 16
 
 #define LINK_ANNOUNCE_EVERY 60000000ull  // after the first three
 #define LINK_ASK_EVERY 30000000ull
-#define LINK_ROTATE_EVERY 3600000000ull  // new labels and nonces
-#define LINK_PAIR_WAIT 3000000ull
-#define LINK_PAIR_AGAIN 10000000ull      // the same place, not sooner
+#define LINK_GREET_AGAIN 10000000ull     // the same place, not sooner
 
 struct link_group_record {
         char namespace[WATERLINK_NAMESPACE_MAX];
@@ -139,7 +149,7 @@ fn link_machine_name(p8 address_to name)
         p8 uts[6 * 65];
         positive used = 0;
 
-        memory_zero(name, WATERLINK_PAIR_NAME);
+        memory_zero(name, WATERLINK_NAME_MAX);
         if (system_call_1(syscall(uname), (positive)uts) >= 0)
                 for (positive at = 65; at < 130 && uts[at] && used < 20; at++)
                 {
@@ -163,7 +173,7 @@ static fn link_name_for(link_peers address_to peers, p8 address_to offered,
         p8 base[WATERLINK_NAME_MAX];
         positive length;
 
-        offered[WATERLINK_PAIR_NAME - 1] = 0;
+        offered[WATERLINK_NAME_MAX - 1] = 0;
         memory_zero(base, sizeof base);
         length = string_length((string_address)offered);
         if (length > 20)
@@ -188,72 +198,9 @@ static fn link_name_for(link_peers address_to peers, p8 address_to offered,
         }
 }
 
-// Keeping the peer a pairing met. Never replaces a key already known.
-static bool link_pair_keep(struct link_group_record address_to group,
-                           struct waterlink_group_keys address_to keys,
-                           p8 address_to key, p8 address_to offered,
-                           p8 address_to address, p16 port)
-{
-        link_peers peers;
-        struct waterlink_peer peer;
-        bipolar lock = link_peers_lock();
-        bool kept = false;
-
-        link_peers_load(address_of peers);
-        if (!link_peer_keyed(address_of peers, key) &&
-            peers.count < LINK_PEERS_MAX &&
-            !crypto_same(key, link_self.me.public, 32))
-        {
-                memory_zero(address_of peer, sizeof peer);
-                memory_copy(peer.key, key, 32);
-                link_name_for(address_of peers, offered, key,
-                              (p8 address_to)peer.name);
-                peer.may = group->may ? group->may : WATERLINK_MAY_DEFAULT;
-                peer.group = keys->mark;
-                memory_copy(peer.address, address, 16);
-                peer.port = port;
-                peers.peer[peers.count++] = peer;
-                kept = link_peers_save(address_of peers) >= 0;
-        }
-        link_peers_unlock(lock);
-        link_self.state_dirty = true;
-        return kept;
-}
-
-// A known member announced from somewhere new: the record follows it.
-static fn link_peer_moved(p8 address_to key, p8 address_to address, p16 port)
-{
-        link_peers peers;
-        struct waterlink_peer address_to peer;
-        bipolar lock = link_peers_lock();
-
-        link_peers_load(address_of peers);
-        peer = link_peer_keyed(address_of peers, key);
-        if (peer && (memory_compare(peer->address, address, 16) ||
-                     peer->port != port))
-        {
-                memory_copy(peer->address, address, 16);
-                peer->port = port;
-                (void)link_peers_save(address_of peers);
-        }
-        link_peers_unlock(lock);
-}
-
 // The listener's side of it ------------------------------------------------
 
-struct link_pairing {
-        bool used;
-        bool initiator;
-        positive group;
-        p32 ours;
-        p32 theirs;
-        p8 address[16];
-        p16 port;
-        p64 started;
-        struct waterlink_noise noise;
-};
-
-struct link_attempt {
+struct link_greeted {
         p8 address[16];
         p16 port;
         p64 at;
@@ -263,7 +210,7 @@ typedef struct
 {
         link_groups groups;
         struct waterlink_group_keys keys[LINK_GROUPS_MAX];
-        struct waterlink_announce_group announce[LINK_GROUPS_MAX];
+        p8 instance[10]; // this start's random labels
         p8 host[6];
         p64 groups_changed; // inode and size of the file as last read
         p64 looked;
@@ -273,44 +220,76 @@ typedef struct
         positive interfaces;
         p64 next_announce;
         p64 next_ask;
-        p64 rotated;
         positive announced;
         positive asked;
         p64 last_answer;
         p64 interfaces_looked;
         bool labels_ready;
-        struct link_pairing pairing[LINK_PAIRING];
-        struct link_attempt attempt[LINK_PAIRING * 2];
-        positive attempt_next;
-        struct waterlink_pair_seen seen;
-        struct waterlink_admission admission;
-        p8 name[WATERLINK_PAIR_NAME];
+        struct link_greeted greeted[LINK_GREETED];
+        positive greeted_next;
+        p8 name[WATERLINK_NAME_MAX];
 } link_nearby_state;
 
 static link_nearby_state link_nearby;
 
-static bool link_nearby_labels(p64 now)
+static bool link_nearby_labels(void)
 {
-        link_nearby.labels_ready = false;
-        if (system_random_fill(link_nearby.host, sizeof link_nearby.host, 0) < 0)
-                return false;
-        for (positive at = 0; at < link_nearby.groups.count; at++)
-        {
-                struct waterlink_announce_group address_to group =
-                        link_nearby.announce + at;
+        link_nearby.labels_ready =
+                system_random_fill(link_nearby.host, sizeof link_nearby.host,
+                                   0) >= 0 &&
+                system_random_fill(link_nearby.instance,
+                                   sizeof link_nearby.instance, 0) >= 0;
+        return link_nearby.labels_ready;
+}
 
-                if (system_random_fill(group->instance,
-                                       sizeof group->instance, 0) < 0 ||
-                    system_random_fill(group->nonce,
-                                       sizeof group->nonce, 0) < 0)
-                        return false;
-                waterlink_tag(link_nearby.keys + at, group->nonce, group->tag);
-                waterlink_who(link_nearby.keys + at, group->nonce,
-                              link_self.me.public, group->who);
+/*
+        Keeping a member whose greeting opened: new, with the group's grants,
+        or moved, when the record is the group's own. A record paired by hand
+        or by another group is never replaced or widened. True when the
+        member was new here.
+*/
+static bool link_pair_keep(positive group, p8 address_to key,
+                           p8 address_to offered, p8 address_to address,
+                           p16 port)
+{
+        struct waterlink_group_keys address_to keys = link_nearby.keys + group;
+        link_peers peers;
+        struct waterlink_peer address_to peer;
+        bipolar lock = link_peers_lock();
+        bool changed = false;
+        bool new = false;
+
+        link_peers_load(address_of peers);
+        peer = link_peer_keyed(address_of peers, key);
+        if (!peer && peers.count < LINK_PEERS_MAX &&
+            !crypto_same(key, link_self.me.public, 32))
+        {
+                p8 name[WATERLINK_NAME_MAX];
+
+                //      Named before it is in the list, or it meets itself.
+                link_name_for(address_of peers, offered, key, name);
+                peer = peers.peer + peers.count++;
+                memory_zero(peer, sizeof(address_to peer));
+                memory_copy(peer->key, key, 32);
+                memory_copy(peer->name, name, WATERLINK_NAME_MAX);
+                peer->may = link_nearby.groups.record[group].may
+                                    ? link_nearby.groups.record[group].may
+                                    : WATERLINK_MAY_DEFAULT;
+                peer->group = keys->mark;
+                new = changed = true;
         }
-        link_nearby.rotated = now;
-        link_nearby.labels_ready = true;
-        return true;
+        if (peer && peer->group == keys->mark &&
+            (memory_compare(peer->address, address, 16) || peer->port != port))
+        {
+                memory_copy(peer->address, address, 16);
+                peer->port = port;
+                changed = true;
+        }
+        if (changed)
+                new = link_peers_save(address_of peers) >= 0 && new;
+        link_peers_unlock(lock);
+        link_self.state_dirty = true;
+        return new;
 }
 
 typedef struct
@@ -440,7 +419,7 @@ static fn link_nearby_reload(p64 now)
         if (!link_nearby.groups.count && link_nearby.socket >= 0)
                 link_nearby_close();
 
-        (void)link_nearby_labels(now);
+        (void)link_nearby_labels();
         link_nearby.announced = 0;
         link_nearby.asked = 0;
         link_nearby.next_announce = now;
@@ -468,10 +447,9 @@ static fn link_nearby_announce(p32 ttl)
         for (positive at = 0; at < link_nearby.interfaces; at++)
         {
                 positive length = waterlink_mdns_announce(
-                        packet, sizeof packet, link_nearby.announce,
-                        link_nearby.groups.count, link_nearby.host,
-                        link_port(), link_nearby.interface_address[at], ttl, 0,
-                        null, 0);
+                        packet, sizeof packet, link_nearby.instance,
+                        link_nearby.host, link_port(),
+                        link_nearby.interface_address[at], ttl, 0, null, 0);
 
                 if (length)
                         link_nearby_send(packet, length, at);
@@ -495,89 +473,80 @@ static fn link_nearby_stop(void)
         link_nearby_close();
 }
 
-static struct link_pairing address_to link_pairing_free(void)
+// The same place is greeted once in a while, not at every announcement.
+static bool link_greeted_lately(p8 address_to address, p16 port, p64 now)
 {
-        for (positive at = 0; at < LINK_PAIRING; at++)
-                if (!link_nearby.pairing[at].used)
-                        return link_nearby.pairing + at;
-        return null;
-}
-
-static bool link_attempted(p8 address_to address, p16 port, p64 now)
-{
-        for (positive at = 0; at < LINK_PAIRING * 2; at++)
+        for (positive at = 0; at < LINK_GREETED; at++)
         {
-                struct link_attempt address_to attempt = link_nearby.attempt + at;
+                struct link_greeted address_to greeted = link_nearby.greeted + at;
 
-                if (attempt->at && now - attempt->at < LINK_PAIR_AGAIN &&
-                    attempt->port == port &&
-                    !memory_compare(attempt->address, address, 16))
+                if (greeted->at && now - greeted->at < LINK_GREET_AGAIN &&
+                    greeted->port == port &&
+                    !memory_compare(greeted->address, address, 16))
                         return true;
-        }
-        {
-                struct link_attempt address_to attempt =
-                        link_nearby.attempt + link_nearby.attempt_next;
-
-                memory_copy(attempt->address, address, 16);
-                attempt->port = port;
-                attempt->at = now ? now : 1;
-                link_nearby.attempt_next =
-                        (link_nearby.attempt_next + 1) % (LINK_PAIRING * 2);
         }
         return false;
 }
 
-// A member this machine has not met: send it a first message.
+/*
+        Greet a machine as a member of a group: the ordinary first message,
+        to the group's key and with its pre-shared key, from this machine's
+        own key and with its name.
+*/
 static fn link_pair_begin(positive group, p8 address_to address, p16 port,
                           p64 now)
 {
-        struct link_pairing address_to pairing;
+        struct waterlink_group_keys address_to keys = link_nearby.keys + group;
+        struct waterlink_noise noise;
         p8 datagram[WATERLINK_DATAGRAM];
+        p8 hello[WATERLINK_HELLO_BYTES];
         p8 ephemeral[32];
+        p64 wall = system_clock_ns(0);
 
-        if (link_attempted(address, port, now))
+        if (link_greeted_lately(address, port, now) ||
+            system_random_fill(ephemeral, 32, 0) < 0)
                 return;
-        pairing = link_pairing_free();
-        if (!pairing)
-                return;
-
-        memory_zero(pairing, sizeof(address_to pairing));
-        pairing->used = true;
-        pairing->initiator = true;
-        pairing->group = group;
-        pairing->ours = link_index_new();
-        if (!pairing->ours)
+        waterlink_stamp(hello, wall / 1000000000ull,
+                        (p32)(wall % 1000000000ull));
+        memory_copy(hello + WATERLINK_STAMP_BYTES, link_nearby.name,
+                    WATERLINK_NAME_MAX);
+        if (waterlink_initiate(address_of noise, address_of link_self.me,
+                               keys->identity.public, keys->psk, ephemeral,
+                               hello, datagram) &&
+            link_send_to(datagram, WATERLINK_DATAGRAM, address, port) >= 0)
         {
-                crypto_forget(pairing, sizeof(address_to pairing));
-                return;
-        }
-        memory_copy(pairing->address, address, 16);
-        pairing->port = port;
-        pairing->started = now;
+                struct link_greeted address_to next =
+                        link_nearby.greeted + link_nearby.greeted_next;
 
-        if (system_random_fill(ephemeral, 32, 0) < 0)
-        {
-                crypto_forget(ephemeral, sizeof ephemeral);
-                crypto_forget(pairing, sizeof(address_to pairing));
-                return;
+                link_nearby.greeted_next =
+                        (link_nearby.greeted_next + 1) % LINK_GREETED;
+                memory_copy(next->address, address, 16);
+                next->port = port;
+                next->at = now ? now : 1;
         }
-        waterlink_pair_first(address_of pairing->noise,
-                             link_nearby.keys[group].pair, ephemeral,
-                             pairing->ours, datagram);
         crypto_forget(ephemeral, sizeof ephemeral);
-        (void)link_send_to(datagram, WATERLINK_DATAGRAM, address, port);
+        crypto_forget(address_of noise, sizeof noise);
+}
+
+//      A greeting that opened: the member is kept, and greeted back if new.
+static fn link_pair_greeted(positive group, p8 address_to key,
+                            p8 address_to name, p8 address_to address,
+                            p16 port, p64 now)
+{
+        if (link_pair_keep(group, key, name, address, port))
+                link_pair_begin(group, address, port, now);
 }
 
 /*
         One mDNS packet from the local link: a question about the service is
-        answered, and an announcement is read for members.
+        answered, and every machine an announcement names is greeted for
+        each group, unless a member of that group is already known there.
 */
 static fn link_nearby_heard(p8 address_to packet, positive length,
                             p8 address_to address, p16 source_port, p64 now)
 {
         struct waterlink_found found;
         link_peers peers;
-        bool peers_loaded = false;
 
         if (!waterlink_mdns_read(packet, length, address_of found))
                 return;
@@ -590,9 +559,8 @@ static fn link_nearby_heard(p8 address_to packet, positive length,
                         //      itself, its ID and question with it.
                         p8 reply[WATERLINK_MDNS_MAX];
                         positive reply_length = waterlink_mdns_announce(
-                                reply, sizeof reply, link_nearby.announce,
-                                link_nearby.groups.count, link_nearby.host,
-                                link_port(),
+                                reply, sizeof reply, link_nearby.instance,
+                                link_nearby.host, link_port(),
                                 link_nearby.interfaces
                                         ? link_nearby.interface_address[0]
                                         : 0,
@@ -615,59 +583,32 @@ static fn link_nearby_heard(p8 address_to packet, positive length,
                 }
         }
 
+        if (found.count)
+                link_peers_load(address_of peers);
         for (positive at = 0; at < found.count; at++)
         {
                 struct waterlink_found_instance address_to instance =
                         found.instance + at;
-                bool ours = false;
-
-                if (!instance->has_fields || !instance->has_port)
-                        continue;
+                p8 ours[23];
 
                 //      Our own, back through the loop.
-                for (positive group = 0; group < link_nearby.groups.count; group++)
-                        if (!memory_compare(link_nearby.announce[group].nonce,
-                                            instance->nonce,
-                                            WATERLINK_NONCE_BYTES))
-                                ours = true;
-                if (ours)
+                memory_copy(ours, "wl-", 3);
+                memory_into_hex(ours + 3, link_nearby.instance, 10);
+                if (!instance->has_port ||
+                    (instance->label_length == sizeof ours &&
+                     !memory_compare(instance->label, ours, sizeof ours)))
                         continue;
 
                 for (positive group = 0; group < link_nearby.groups.count; group++)
                 {
-                        struct waterlink_group_keys address_to keys =
-                                link_nearby.keys + group;
-                        p8 tag[WATERLINK_TAG_BYTES_SHORT];
                         bool known = false;
 
-                        waterlink_tag(keys, instance->nonce, tag);
-                        if (!crypto_same(tag, instance->tag,
-                                         WATERLINK_TAG_BYTES_SHORT))
-                                continue;
-
-                        //      A member. Which one, of those this group
-                        //      already paired?
-                        if (!peers_loaded)
-                        {
-                                link_peers_load(address_of peers);
-                                peers_loaded = true;
-                        }
                         for (positive p = 0; p < peers.count && !known; p++)
-                        {
-                                p8 who[WATERLINK_TAG_BYTES_SHORT];
-
-                                if (peers.peer[p].group != keys->mark)
-                                        continue;
-                                waterlink_who(keys, instance->nonce,
-                                              peers.peer[p].key, who);
-                                if (crypto_same(who, instance->who,
-                                                WATERLINK_TAG_BYTES_SHORT))
-                                {
-                                        known = true;
-                                        link_peer_moved(peers.peer[p].key,
-                                                        address, instance->port);
-                                }
-                        }
+                                known = peers.peer[p].group ==
+                                                link_nearby.keys[group].mark &&
+                                        peers.peer[p].port == instance->port &&
+                                        !memory_compare(peers.peer[p].address,
+                                                        address, 16);
                         if (!known)
                                 link_pair_begin(group, address, instance->port,
                                                 now);
@@ -676,161 +617,8 @@ static fn link_nearby_heard(p8 address_to packet, positive length,
 }
 
 /*
-        The pairing datagrams, on the link's own socket. A first message is
-        tried against each group's key, which is one AEAD check each and no
-        curve at all; one that opens and was not seen before is answered.
-*/
-static fn link_pair_datagram(p8 address_to datagram, positive length,
-                             p8 address_to address, p16 port, p64 now)
-{
-        struct waterlink_datagram head;
-
-        if (length != WATERLINK_DATAGRAM || !link_nearby.groups.count)
-                return;
-        memory_copy(address_of head, datagram, 16);
-
-        if (head.kind == WATERLINK_KIND_PAIR_1)
-        {
-                struct waterlink_noise noise;
-                struct link_pairing address_to pairing;
-
-                for (positive at = 16 + WATERLINK_PAIR_1_BYTES;
-                     at < WATERLINK_DATAGRAM; at++)
-                        if (datagram[at])
-                                return;
-                if (!waterlink_admit(address_of link_nearby.admission, address,
-                                     now))
-                        return;
-
-                for (positive group = 0; group < link_nearby.groups.count; group++)
-                {
-                        p8 answer[WATERLINK_DATAGRAM];
-                        p8 ephemeral[32];
-                        p32 ours;
-
-                        if (!waterlink_pair_heard_first(
-                                    address_of noise,
-                                    link_nearby.keys[group].pair, datagram))
-                                continue;
-                        pairing = link_pairing_free();
-                        if (!pairing)
-                        {
-                                crypto_forget(address_of noise, sizeof noise);
-                                return;
-                        }
-                        ours = link_index_new();
-                        if (!ours ||
-                            system_random_fill(ephemeral, 32, 0) < 0)
-                        {
-                                crypto_forget(ephemeral, sizeof ephemeral);
-                                crypto_forget(address_of noise, sizeof noise);
-                                return;
-                        }
-                        /* Do not consume the replay marker until every local
-                           resource needed to answer exists. A full table or
-                           entropy outage must leave a legitimate retry usable. */
-                        if (!waterlink_pair_fresh(address_of link_nearby.seen,
-                                                  datagram + 16))
-                        {
-                                crypto_forget(ephemeral, sizeof ephemeral);
-                                crypto_forget(address_of noise, sizeof noise);
-                                return;
-                        }
-
-                        memory_zero(pairing, sizeof(address_to pairing));
-                        pairing->used = true;
-                        pairing->group = group;
-                        pairing->theirs = head.receiver;
-                        pairing->ours = ours;
-                        memory_copy(pairing->address, address, 16);
-                        pairing->port = port;
-                        pairing->started = now;
-                        pairing->noise = noise;
-                        crypto_forget(address_of noise, sizeof noise);
-
-                        if (!waterlink_pair_second(address_of pairing->noise,
-                                                   address_of link_self.me,
-                                                   ephemeral, link_nearby.name,
-                                                   pairing->theirs, answer))
-                        {
-                                crypto_forget(ephemeral, sizeof ephemeral);
-                                crypto_forget(pairing,
-                                              sizeof(address_to pairing));
-                                return;
-                        }
-                        crypto_forget(ephemeral, sizeof ephemeral);
-                        //      Our index rides in the counter field, the one
-                        //      the initiator does not use.
-                        memory_copy(answer + 8, address_of pairing->ours, 4);
-                        (void)link_send_to(answer, WATERLINK_DATAGRAM, address,
-                                           port);
-                        return;
-                }
-                crypto_forget(address_of noise, sizeof noise);
-                return;
-        }
-
-        for (positive at = 0; at < LINK_PAIRING; at++)
-        {
-                struct link_pairing address_to pairing = link_nearby.pairing + at;
-                p8 key[32];
-                p8 name[WATERLINK_PAIR_NAME];
-
-                if (!pairing->used || pairing->ours != head.receiver)
-                        continue;
-
-                /* The receiver index is visible on the wire. Do not let a
-                   datagram replayed from somewhere else advance a pairing or
-                   move the learned endpoint away from the address that began
-                   it. Authentication below is still authoritative. */
-                if (memory_compare(pairing->address, address, 16) ||
-                    pairing->port != port)
-                        return;
-
-                //      Checked on a copy: a message that fails leaves the
-                //      pairing as it was, for the real one to arrive.
-                {
-                        struct waterlink_noise candidate = pairing->noise;
-                        p8 third[WATERLINK_DATAGRAM];
-                        p32 theirs;
-                        bool heard = false;
-
-                        memory_copy(address_of theirs, datagram + 8, 4);
-                        if (head.kind == WATERLINK_KIND_PAIR_2 &&
-                            pairing->initiator)
-                                heard = waterlink_pair_heard_second(
-                                                address_of candidate, datagram,
-                                                key, name) &&
-                                        waterlink_pair_third(
-                                                address_of candidate,
-                                                address_of link_self.me,
-                                                link_nearby.name, theirs, third);
-                        else if (head.kind == WATERLINK_KIND_PAIR_3 &&
-                                 !pairing->initiator)
-                                heard = waterlink_pair_heard_third(
-                                        address_of candidate, datagram, key,
-                                        name);
-                        crypto_forget(address_of candidate, sizeof candidate);
-                        if (!heard)
-                                return;
-                        if (pairing->initiator)
-                                (void)link_send_to(third, WATERLINK_DATAGRAM,
-                                                   pairing->address,
-                                                   pairing->port);
-                        (void)link_pair_keep(link_nearby.groups.record +
-                                                     pairing->group,
-                                             link_nearby.keys + pairing->group,
-                                             key, name, pairing->address,
-                                             pairing->port);
-                }
-                crypto_forget(pairing, sizeof(address_to pairing));
-                return;
-        }
-}
-
-/*
-        The listener's turn: reload the groups if they changed, rotate, send
-        what is due, time out pairings. Answers when it next wants a turn.
+        The listener's turn: reload the groups if they changed, and send what
+        is due. Answers when it next wants a turn.
 */
 static p64 link_nearby_tick(p64 now)
 {
@@ -839,7 +627,7 @@ static p64 link_nearby_tick(p64 now)
         link_nearby_reload(now);
         if (link_nearby.socket < 0 || !link_nearby.groups.count)
                 return wake;
-        if (!link_nearby.labels_ready && !link_nearby_labels(now))
+        if (!link_nearby.labels_ready && !link_nearby_labels())
                 return wake;
 
         //      Interfaces come and go, and an address comes late -- a lease
@@ -869,14 +657,6 @@ static p64 link_nearby_tick(p64 now)
                 }
         }
 
-        if (now - link_nearby.rotated >= LINK_ROTATE_EVERY)
-        {
-                link_nearby_announce(0);
-                if (!link_nearby_labels(now))
-                        return wake;
-                link_nearby.announced = 0;
-        }
-
         //      Three quick announcements and questions at the start, as
         //      RFC 6762 asks of a responder, then the steady pace.
         if (now >= link_nearby.next_announce)
@@ -894,12 +674,6 @@ static p64 link_nearby_tick(p64 now)
                 link_nearby.next_ask =
                         now + (link_nearby.asked < 3 ? 1000000 : LINK_ASK_EVERY);
         }
-
-        for (positive at = 0; at < LINK_PAIRING; at++)
-                if (link_nearby.pairing[at].used &&
-                    now - link_nearby.pairing[at].started > LINK_PAIR_WAIT)
-                        crypto_forget(link_nearby.pairing + at,
-                                      sizeof(link_nearby.pairing[0]));
 
         if (link_nearby.next_announce < wake)
                 wake = link_nearby.next_announce;

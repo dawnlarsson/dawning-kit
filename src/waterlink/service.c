@@ -1813,6 +1813,8 @@ static fn link_session_watch(struct link_session address_to s,
         link_watch(watch, count, s->pidfd, s->exited ? 0 : SYSTEM_POLL_READ);
 }
 
+#include "nearby.c"
+
 // The handshake, at the machine's end -----------------------------------------
 
 static bool link_stamp_fresh(p8 address_to key, p8 address_to stamp)
@@ -1844,6 +1846,9 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
                                  p8 address_to address, p16 port, p64 now)
 {
         struct waterlink_noise noise;
+        struct waterlink_identity address_to me = address_of link_self.me;
+        p8 address_to psk = null;
+        positive group = 0;
         p8 who[32];
         p8 hello[WATERLINK_HELLO_BYTES];
         p8 ephemeral[32];
@@ -1857,13 +1862,33 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
         p32 theirs;
         p32 ours;
 
-        if (!waterlink_gate_passes(address_of link_self.me, datagram, length) ||
-            !waterlink_admit(address_of link_self.admission, address, now))
+        //      To this machine's key, or a member's greeting to a group's.
+        if (!waterlink_gate_passes(me, datagram, length))
+        {
+                while (group < link_nearby.groups.count &&
+                       !waterlink_gate_passes(
+                               address_of link_nearby.keys[group].identity,
+                               datagram, length))
+                        group++;
+                if (group == link_nearby.groups.count)
+                        return;
+                me = address_of link_nearby.keys[group].identity;
+                psk = link_nearby.keys[group].psk;
+        }
+        if (!waterlink_admit(address_of link_self.admission, address, now))
                 return;
-        if (!waterlink_accept(address_of noise, address_of link_self.me,
-                              datagram, who, hello))
+        if (!waterlink_accept(address_of noise, me, psk, datagram, who, hello))
         {
                 crypto_forget(address_of noise, sizeof noise);
+                return;
+        }
+        if (psk)
+        {
+                crypto_forget(address_of noise, sizeof noise);
+                if (link_stamp_fresh(who, hello))
+                        link_pair_greeted(group, who,
+                                          hello + WATERLINK_STAMP_BYTES,
+                                          address, port, now);
                 return;
         }
 
@@ -2110,7 +2135,6 @@ static fn link_state_write(p64 now)
                                 sizeof(address_to state), false);
 }
 
-#include "nearby.c"
 
 // The listener ------------------------------------------------------------------
 
@@ -2275,10 +2299,6 @@ static fn link_receive_all(p64 now)
                 else if (head.kind == WATERLINK_KIND_INITIATE)
                         link_server_initiation(datagram, (positive)got, address,
                                                port, now);
-                else if (head.kind >= WATERLINK_KIND_PAIR_1 &&
-                         head.kind <= WATERLINK_KIND_PAIR_3)
-                        link_pair_datagram(datagram, (positive)got, address,
-                                           port, now);
         }
 }
 
@@ -2413,6 +2433,7 @@ static bool link_client_initiate(struct link_session address_to s, p64 now)
 
         link_client.ours = link_index_new();
         link_client.initiated = now;
+        memory_zero(hello, sizeof hello);
         waterlink_stamp(hello, wall / 1000000000ull,
                         (p32)(wall % 1000000000ull));
         memory_copy(hello + WATERLINK_STAMP_BYTES, address_of s->conversation, 8);
@@ -2421,8 +2442,8 @@ static bool link_client_initiate(struct link_session address_to s, p64 now)
         sent = link_client.ours &&
                system_random_fill(ephemeral, 32, 0) >= 0 &&
                waterlink_initiate(address_of link_client.noise,
-                                  address_of link_self.me, s->peer, ephemeral,
-                                  hello, datagram) &&
+                                  address_of link_self.me, s->peer, null,
+                                  ephemeral, hello, datagram) &&
                link_send_to(datagram, WATERLINK_DATAGRAM, s->address,
                             s->port) >= 0;
         crypto_forget(ephemeral, sizeof ephemeral);
