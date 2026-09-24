@@ -51723,19 +51723,20 @@ static p16 heard_length[64];
 static p8 heard_first[64];
 static positive heard;
 
-static fn hear(address_any context, struct waterlink_frame address_to head,
-               p8 address_to payload)
+static bool hear(address_any context, struct waterlink_frame address_to head,
+                 p8 address_to payload)
 {
         (void)context;
 
         if (heard >= 64)
-                return;
+                return true;
 
         heard_key[heard] = head->key;
         heard_sequence[heard] = head->sequence;
         heard_length[heard] = head->length;
         heard_first[heard] = head->length ? payload[0] : 0;
         heard++;
+        return true;
 }
 
 //      One datagram out of the sender and straight into the receiver, which
@@ -51753,7 +51754,7 @@ static positive carry(p64 now, bool address_to alone)
         return used;
 }
 
-static fn post_one(p64 key, p16 flags, p16 deadline, p8 mark, p64 now)
+static fn post_one(p8 key, p8 flags, p8 mark, p64 now)
 {
         p8 payload[4];
 
@@ -51761,8 +51762,7 @@ static fn post_one(p64 key, p16 flags, p16 deadline, p8 mark, p64 now)
         payload[1] = mark;
         payload[2] = mark;
         payload[3] = mark;
-        waterlink_post(address_of one, key, (p8)flags, deadline, payload, 4,
-                       now);
+        waterlink_post(address_of one, key, flags, payload, 4, now);
 }
 
 static fn refusals(void)
@@ -51776,28 +51776,30 @@ static fn refusals(void)
         //      Neither bit says nothing about whether it may be dropped, and
         //      both bits say two things at once.
         check("a frame with no class is refused",
-              !waterlink_post(address_of one, 1, 0, 0, payload, 4, 0));
+              !waterlink_post(address_of one, 1, 0, payload, 4, 0));
         check("a frame with both classes is refused",
               !waterlink_post(address_of one, 1,
                               WATERLINK_FRAME_REPLACEABLE |
                                       WATERLINK_FRAME_DURABLE,
-                              0, payload, 4, 0));
+                              payload, 4, 0));
 
         //      A bit the link does not know is a meaning the far side would
         //      have to guess, and the acknowledgement bit is the link's own.
         check("a frame with a flag this link does not know is refused",
               !waterlink_post(address_of one, 1, WATERLINK_FRAME_DURABLE | 0x40,
-                              0, payload, 4, 0));
+                              payload, 4, 0));
         check("a caller's frame marked as an acknowledgement is refused",
               !waterlink_post(address_of one, 1,
-                              WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_ACK, 0,
+                              WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_ACK,
                               payload, 4, 0));
-
         check("a frame larger than a datagram is refused",
-              !waterlink_post(address_of one, 2, WATERLINK_FRAME_DURABLE, 0,
+              !waterlink_post(address_of one, 2, WATERLINK_FRAME_DURABLE,
                               payload, WATERLINK_FRAME_MAX + 1, 0));
+        check("a key past the last is refused",
+              !waterlink_post(address_of one, WATERLINK_KEYS,
+                              WATERLINK_FRAME_DURABLE, payload, 4, 0));
 
-        check("every refusal was counted", one.refused - before == 5);
+        check("every refusal was counted", one.refused - before == 6);
 }
 
 static fn supersession(void)
@@ -51808,10 +51810,10 @@ static fn supersession(void)
 
         //      Three states for one key. Only the last is worth sending, and
         //      it must arrive where the first one stood.
-        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'a', 0);
-        post_one(9, WATERLINK_FRAME_REPLACEABLE, 0, 'x', 0);
-        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'b', 0);
-        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'c', 0);
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 'a', 0);
+        post_one(9, WATERLINK_FRAME_REPLACEABLE, 'x', 0);
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 'b', 0);
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 'c', 0);
 
         check("two supersessions happened", one.superseded == 2);
         check("only two slots were ever posted", one.posted == 2);
@@ -51824,47 +51826,34 @@ static fn supersession(void)
         check("a replaceable run needs no urgency", !alone);
 }
 
-static fn durable_is_a_wall(void)
+static fn class_is_the_keys(void)
 {
         bool alone = false;
 
         waterlink_link_reset(address_of one);
 
-        //      The rule: a replaceable frame may only be dropped if no
-        //      durable frame sits between it and the one replacing it.
-        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'a', 0);
-        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'S', 0);
-        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'b', 0);
-
-        check("nothing was superseded across the durable frame",
-              one.superseded == 0);
+        //      A key is a stream or a register, and its first frame says
+        //      which: a frame of the other class on it is refused, so no
+        //      frame ever has to name the one it comes after.
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 'a', 0);
+        check("a stream frame on a register key is refused",
+              !waterlink_post(address_of one, 7, WATERLINK_FRAME_DURABLE,
+                              (p8 address_to) "S", 1, 0));
+        post_one(8, WATERLINK_FRAME_DURABLE, 'a', 0);
+        post_one(8, WATERLINK_FRAME_DURABLE, 'b', 0);
+        check("a register frame on a stream key is refused",
+              !waterlink_post(address_of one, 8, WATERLINK_FRAME_REPLACEABLE,
+                              (p8 address_to) "r", 1, 0));
+        check("and a stream is never superseded", one.superseded == 0);
 
         carry(0, address_of alone);
         check("all three went out", heard == 3);
-        check("in the order they were posted",
-              heard_first[0] == 'a' && heard_first[1] == 'S' &&
-                      heard_first[2] == 'b');
-        check("with sequences that increase from one",
-              heard_sequence[0] == 1 && heard_sequence[1] == 2 &&
-                      heard_sequence[2] == 3);
+        check("the stream in the order it was posted, from sequence one",
+              heard_key[1] == 8 && heard_first[1] == 'a' &&
+                      heard_sequence[1] == 1 && heard_first[2] == 'b' &&
+                      heard_sequence[2] == 2);
 }
 
-static fn deadlines(void)
-{
-        bool alone = false;
-
-        waterlink_link_reset(address_of one);
-
-        //      A replaceable frame that has run out of time is worthless. A
-        //      durable one is late, which still beats never.
-        post_one(7, WATERLINK_FRAME_REPLACEABLE, 16, 'a', 100000);
-        post_one(8, WATERLINK_FRAME_DURABLE, 16, 'S', 100000);
-
-        carry(400000, address_of alone);
-        check("the late replaceable frame was dropped", one.expired == 1);
-        check("the late durable frame was not", heard == 1);
-        check("and it is the durable one", heard_first[0] == 'S');
-}
 
 static fn urgency(void)
 {
@@ -51872,8 +51861,8 @@ static fn urgency(void)
 
         waterlink_link_reset(address_of one);
 
-        post_one(1, WATERLINK_FRAME_BULK | WATERLINK_FRAME_DURABLE, 0, 'B', 0);
-        post_one(2, WATERLINK_FRAME_URGENT | WATERLINK_FRAME_DURABLE, 0, 'U', 0);
+        post_one(1, WATERLINK_FRAME_DURABLE, 'B', 0);
+        post_one(2, WATERLINK_FRAME_URGENT | WATERLINK_FRAME_DURABLE, 'U', 0);
 
         //      An urgent frame cannot wait in a segment run for the frames
         //      behind it, so the datagram carrying it says so.
@@ -51881,12 +51870,11 @@ static fn urgency(void)
         check("the urgent frame went first", heard_first[0] == 'U');
         check("its datagram must travel alone", alone);
 
-        //      The bulk frame rides along in the same datagram rather than
-        //      waiting for the next one. It was already queued, the datagram
-        //      is padded to a fixed size either way, and the urgent frame is
-        //      in front of it -- so the ride is free and nothing is delayed.
-        check("the bulk frame rode along behind it", heard == 2);
-        check("and it is the bulk one", heard_first[1] == 'B');
+        //      The other frame rides along in the same datagram rather than
+        //      waiting for the next one. It was already queued and the urgent
+        //      frame is in front of it, so nothing is delayed.
+        check("the other frame rode along behind it", heard == 2);
+        check("and it is the other one", heard_first[1] == 'B');
 
         //      What comes back is the acknowledgement of both, which frees
         //      them, and then there is nothing.
@@ -51907,10 +51895,10 @@ static fn stale_arrivals(void)
 
         waterlink_link_reset(address_of one);
 
-        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'a', 0);
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 'a', 0);
         kept = waterlink_fill(address_of one, first, 0, address_of alone);
 
-        post_one(7, WATERLINK_FRAME_REPLACEABLE, 0, 'b', 0);
+        post_one(7, WATERLINK_FRAME_REPLACEABLE, 'b', 0);
         used = waterlink_fill(address_of one, body, 0, address_of alone);
 
         heard = 0;
@@ -51944,9 +51932,9 @@ static fn durable_reordered(void)
         bool alone = false;
 
         waterlink_link_reset(address_of one);
-        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'a', 0);
+        post_one(7, WATERLINK_FRAME_DURABLE, 'a', 0);
         early_used = waterlink_fill(address_of one, early, 0, address_of alone);
-        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'b', 0);
+        post_one(7, WATERLINK_FRAME_DURABLE, 'b', 0);
         late_used = waterlink_fill(address_of one, late, 0, address_of alone);
 
         heard = 0;
@@ -51968,47 +51956,43 @@ static fn durable_reordered(void)
 static fn malformed_bodies(void)
 {
         //      Bodies by hand, each one thing wrong, the rest of it a good
-        //      durable frame on key 7: flags 2, key, sequence 1, back 1,
-        //      length 1, then the payload.
+        //      stream frame on key 7: flags 2, key 7, sequence 1, length 1,
+        //      then the payload.
         static const struct {
                 p8 bytes[16];
                 positive length;
         } wrong[] = {
-                {{2, 0x87, 0x00, 1, 1, 1, 'a'}, 7},          // key in two bytes
-                {{2, 7, 1, 0, 1, 'a'}, 6},                   // follows itself
-                {{2, 7, 1, 2, 1, 'a'}, 6},                   // follows sequence -1
-                {{2, 7, 0, 1, 1, 'a'}, 6},                   // sequence zero
-                {{2, 7, 0xff, 0xff, 0xff, 0xff, 0x0f, 1, 1, 'a'}, 10}, // 2^32-1
-                {{0x42, 7, 1, 1, 1, 'a'}, 6},                // a flag it does not know
-                {{3, 7, 1, 1, 1, 'a'}, 6},                   // both classes
-                {{0x22, 7, 1, 1, 1, 'a'}, 6},                // bulk, the sender's own
-                {{0x0a, 7, 1, 1, 1, 'a'}, 6},                // a class on an ack
-                {{2, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                  0x02, 1, 1, 1, 'a'}, 15},                  // a key past 64 bits
+                {{2, 7, 0x81, 0x00, 1, 'a'}, 6},             // sequence in two bytes
+                {{2, 7, 0, 1, 'a'}, 5},                      // sequence zero
+                {{2, 7, 0xff, 0xff, 0xff, 0xff, 0x0f, 1, 'a'}, 9}, // 2^32-1
+                {{2, 7, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                  0x02, 1, 'a'}, 14},                        // past 64 bits
+                {{0x42, 7, 1, 1, 'a'}, 5},                   // a flag it does not know
+                {{3, 7, 1, 1, 'a'}, 5},                      // both classes
+                {{0x0a, 7, 1, 1, 'a'}, 5},                   // a class on an ack
+                {{2, WATERLINK_KEYS, 1, 1, 'a'}, 5},         // a key past the last
                 {{8, 7, 1, 0x80, 0x00}, 5},                  // an ack's mask in two
-                {{8, 7, 0xff, 0xff, 0xff, 0xff, 0x0f, 0}, 8}, // delivered 2^32-1
-                {{2, 7, 1, 1, 1, 'a', 0, 5}, 8},             // bytes after the end
-                {{2, 7, 1, 1, 9, 'a'}, 6},                   // a length past the body
-                {{2, 7, 1, 1}, 4},                           // cut inside its header
-                {{2, 7, 1, 1, 0x80}, 5},                     // cut inside a number
+                {{8, 7, 0xff, 0xff, 0xff, 0xff, 0x0f, 0}, 8}, // taken 2^32-1
+                {{2, 7, 1, 1, 'a', 0, 5}, 7},                // bytes after the end
+                {{2, 7, 1, 9, 'a'}, 5},                      // a length past the body
+                {{2, 7, 1}, 3},                              // cut inside its header
+                {{2, 7, 1, 0x80}, 4},                        // cut inside a number
+                {{2}, 1},                                    // a flags byte alone
         };
-        static const p8 widest[] = {
-                2, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
-                0xfe, 0xff, 0xff, 0xff, 0x0f, 0xfe, 0xff, 0xff, 0xff, 0x0f,
-                1, 'z'};
+        static const p8 widest[] = {1, WATERLINK_KEYS - 1, 0xfe, 0xff, 0xff,
+                                    0xff, 0x0f, 1, 'z'};
         p8 body[WATERLINK_PAYLOAD];
         positive used;
         positive refused = 0;
         bool alone = false;
 
         waterlink_link_reset(address_of one);
-        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'a', 0);
+        post_one(7, WATERLINK_FRAME_DURABLE, 'a', 0);
         used = waterlink_fill(address_of one, body, 0, address_of alone);
 
-        check("a durable frame's header is five bytes on the wire",
-              used == 5 + 4 && body[0] == WATERLINK_FRAME_DURABLE &&
-                      body[1] == 7 && body[2] == 1 && body[3] == 1 &&
-                      body[4] == 4);
+        check("a stream frame's header is four bytes on the wire",
+              used == 4 + 4 && body[0] == WATERLINK_FRAME_DURABLE &&
+                      body[1] == 7 && body[2] == 1 && body[3] == 4);
         check("a body longer than a datagram is refused",
               !waterlink_deliver(address_of one, body, WATERLINK_PAYLOAD + 1,
                                  null, null));
@@ -52022,18 +52006,18 @@ static fn malformed_bodies(void)
                                               (p8 address_to)wrong[at].bytes,
                                               wrong[at].length, null, null);
         }
-        check("a second spelling, a sequence out of range, a follows that is "
-              "not behind it, an unknown or mixed flag, a number past 64 bits, "
-              "bytes after the end, a length past the body and a cut header "
-              "are each refused",
+        check("a second spelling, a sequence out of range, an unknown or mixed "
+              "flag, a key past the last, a number past 64 bits, bytes after "
+              "the end, a length past the body and a cut header are each "
+              "refused",
               refused == sizeof wrong / sizeof wrong[0]);
 
         waterlink_link_reset(address_of one);
         heard = 0;
-        check("and the widest key and sequence there are read back",
+        check("and the last key and the widest sequence read back",
               waterlink_deliver(address_of one, (p8 address_to)widest,
                                 sizeof widest, hear, null) &&
-                      heard == 1 && heard_key[0] == ~0ull &&
+                      heard == 1 && heard_key[0] == WATERLINK_KEYS - 1 &&
                       heard_sequence[0] == 0xfffffffeu && heard_first[0] == 'z');
 }
 
@@ -52122,16 +52106,13 @@ static fn saturation(void)
         //      Choosing is the caller's, which is why this returns false
         //      instead of quietly dropping the oldest durable frame.
         for (positive at = 0; at < WATERLINK_SLOTS + 8; at++)
-                if (waterlink_post(address_of one, 1000 + at,
-                                   WATERLINK_FRAME_DURABLE, 0, payload, 4, 0))
+                if (waterlink_post(address_of one,
+                                   (p8)(at % WATERLINK_KEYS),
+                                   WATERLINK_FRAME_DURABLE, payload, 4, 0))
                         taken++;
 
         check("the queue filled to its ceiling", taken == WATERLINK_SLOTS);
         check("and refused everything past it", one.refused == 8);
-
-        for (positive at = 0; at < WATERLINK_KEYS; at++)
-                taken -= one.sending[at].taken;
-        check("and a refused post on a new key leaves no key behind", !taken);
 }
 
 /*
@@ -52150,8 +52131,8 @@ static fn datagram_make(p8 address_to datagram, p64 counter, p8 fill)
         bool alone = false;
 
         waterlink_link_reset(address_of one);
-        post_one(7, WATERLINK_FRAME_DURABLE, 0, fill, 0);
-        post_one(8, WATERLINK_FRAME_REPLACEABLE, 0, (p8)(fill + 1), 0);
+        post_one(7, WATERLINK_FRAME_DURABLE, fill, 0);
+        post_one(8, WATERLINK_FRAME_REPLACEABLE, (p8)(fill + 1), 0);
 
         head.kind = WATERLINK_KIND_CARRY;
         head.receiver = 0x01020304;
@@ -52184,8 +52165,8 @@ static fn sealed(void)
         //      The plaintext as it went in, taken before sealing so the
         //      reference encrypts the same padded box.
         waterlink_link_reset(address_of one);
-        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'q', 0);
-        post_one(8, WATERLINK_FRAME_REPLACEABLE, 0, 'r', 0);
+        post_one(7, WATERLINK_FRAME_DURABLE, 'q', 0);
+        post_one(8, WATERLINK_FRAME_REPLACEABLE, 'r', 0);
         memory_zero(plain, sizeof plain);
         used = waterlink_fill(address_of one, plain, 0, address_of alone);
 
@@ -52558,29 +52539,13 @@ static fn replay_generated(void)
 }
 
 /*
-        The three shapes the generated network below reaches only by luck,
-        made on purpose.
-
-        A replaceable frame with a durable one posted behind it is followed,
-        so its deadline stops meaning anything: the durable frame names it,
-        and the far side would wait for it forever. A key's last frame arrives
-        once however often it is sent. A replaceable frame superseded while
-        it was in flight goes out as the new value, and a late copy of the old
-        one is not applied over it.
+        The shapes the generated network below reaches only by luck, made on
+        purpose. A key's last frame arrives once however often it is sent. A
+        register frame superseded while it was in flight goes out as the new
+        value, and a late copy of the old one is not applied over it. A
+        reader that says "not now" holds the sender back without a frame
+        being sent twice.
 */
-static fn followed_outlives_deadline(void)
-{
-        bool alone = false;
-
-        waterlink_link_reset(address_of one);
-        post_one(7, WATERLINK_FRAME_REPLACEABLE, 1, 'r', 0);
-        post_one(7, WATERLINK_FRAME_DURABLE, 0, 'D', 0);
-
-        carry(50000, address_of alone);
-        check("a followed replaceable frame outlives its deadline",
-              heard == 2 && heard_first[0] == 'r' && heard_first[1] == 'D');
-        check("and nothing was expired", one.expired == 0);
-}
 
 static fn last_arrives_once(void)
 {
@@ -52589,10 +52554,10 @@ static fn last_arrives_once(void)
         bool alone = false;
 
         waterlink_link_reset(address_of one);
-        post_one(40, WATERLINK_FRAME_DURABLE, 0, 'x', 0);
-        post_one(40, WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_LAST, 0, 'z', 0);
+        post_one(40, WATERLINK_FRAME_DURABLE, 'x', 0);
+        post_one(40, WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_LAST, 'z', 0);
         check("nothing may follow a key's last frame",
-              !waterlink_post(address_of one, 40, WATERLINK_FRAME_DURABLE, 0,
+              !waterlink_post(address_of one, 40, WATERLINK_FRAME_DURABLE,
                               body, 1, 0));
 
         used = waterlink_fill(address_of one, body, 0, address_of alone);
@@ -52622,52 +52587,9 @@ static fn last_arrives_once(void)
                                              hear, null);
         }
         check("and nothing on the key is delivered again", heard == 0);
-        check("an acknowledged last frame retires its key",
-              waterlink_key_find(one.sending, 40) == WATERLINK_NONE &&
+        check("an acknowledged last frame leaves the key empty",
+              one.sending[40].first == WATERLINK_NONE &&
                       waterlink_idle(address_of one));
-}
-
-/*
-        A key's last frame, replaceable with a deadline, that runs out of time
-        before it is sent. Retiring the key then, as an acknowledged last
-        frame does, starts its count over while the far side never heard it
-        end, so whatever the key carries next arrives as stale -- or nothing
-        may follow, as the contract says of a last frame.
-*/
-static fn last_outlives_deadline(void)
-{
-        p8 body[WATERLINK_PAYLOAD];
-        positive used;
-        bool alone = false;
-        bool posted;
-
-        waterlink_link_reset(address_of one);
-        heard = 0;
-        post_one(41, WATERLINK_FRAME_DURABLE, 0, 'a', 0);
-        for (p64 now = 0; now < 10; now++)
-        {
-                used = waterlink_fill(address_of one, body, now, address_of alone);
-                if (used)
-                        waterlink_deliver_at(address_of one, body, used, now,
-                                             hear, null);
-        }
-        post_one(41, WATERLINK_FRAME_REPLACEABLE | WATERLINK_FRAME_LAST, 1,
-                 'b', 10);
-        heard = 0;
-        posted = false;
-        for (p64 now = 20000; now < 20010; now++)
-        {
-                if (now == 20001)
-                        posted = waterlink_post(address_of one, 41,
-                                                WATERLINK_FRAME_DURABLE, 0,
-                                                body, 1, now);
-                used = waterlink_fill(address_of one, body, now, address_of alone);
-                if (used)
-                        waterlink_deliver_at(address_of one, body, used, now,
-                                             hear, null);
-        }
-        check("a key whose last frame ran out of time takes nothing it then "
-              "loses", !posted || heard >= 1);
 }
 
 /*
@@ -52686,21 +52608,97 @@ static fn full_frame_beside_owed_ack(void)
         bool alone = false;
 
         waterlink_link_reset(address_of one);
-        post_one(3, WATERLINK_FRAME_REPLACEABLE, 0, 'c', 0);
+        post_one(3, WATERLINK_FRAME_REPLACEABLE, 'c', 0);
         used = waterlink_fill(address_of one, body, 0, address_of alone);
         waterlink_deliver_at(address_of one, body, used, 0, null, null);
         check("one frame in is an acknowledgement owed, not yet due",
-              one.acks == 1 && waterlink_fill(address_of one, body, 10,
+              one.acking == 1ull << 3 && waterlink_fill(address_of one, body, 10,
                                                address_of alone) == 0);
 
         memory_zero(big, sizeof big);
         big[0] = 'F';
-        waterlink_post(address_of one, 4, WATERLINK_FRAME_DURABLE, 0, big,
+        waterlink_post(address_of one, 4, WATERLINK_FRAME_DURABLE, big,
                        WATERLINK_FRAME_MAX, 20);
         used = waterlink_fill(address_of one, body, 20, address_of alone);
         check("a full frame goes at once beside an acknowledgement owed",
               used > WATERLINK_FRAME_MAX &&
                       waterlink_box(used) == WATERLINK_PAYLOAD);
+}
+
+/*
+        The acknowledgement is the credit. A reader that will not take a
+        frame keeps it held, the sender hears it is held and does not send
+        it again however long it waits, and a key runs no further than its
+        window past what was taken -- then, taken, everything flows.
+*/
+static bool refusing;
+
+static bool hear_or_refuse(address_any context,
+                           struct waterlink_frame address_to head,
+                           p8 address_to payload)
+{
+        return !refusing && hear(context, head, payload);
+}
+
+static fn pump(p64 from, p64 to)
+{
+        p8 body[WATERLINK_PAYLOAD];
+        bool alone = false;
+
+        for (p64 now = from; now < to; now++)
+        {
+                positive used = waterlink_fill(address_of one, body, now,
+                                               address_of alone);
+
+                if (used)
+                        waterlink_deliver_at(address_of one, body, used, now,
+                                             hear_or_refuse, null);
+        }
+}
+
+static fn reader_credit(void)
+{
+        positive posted = 0;
+        positive held = 0;
+
+        waterlink_link_reset(address_of one);
+        heard = 0;
+        refusing = true;
+        post_one(5, WATERLINK_FRAME_DURABLE, 'a', 0);
+        pump(0, 3000);
+        check("a frame the reader will not take is held, not handed on",
+              heard == 0 && waterlink_paused(address_of one, 5));
+        check("and the sender hears it is held, so nothing is in flight",
+              one.flight_head == WATERLINK_NONE &&
+                      one.slot[one.sending[5].first].state ==
+                              WATERLINK_SLOT_HELD);
+        pump(3000, 3001);
+        pump(10000000, 10000001);
+        check("so the timer sends nothing again", one.timeouts == 0 &&
+                                                  one.retransmitted == 0);
+
+        for (positive at = 0; at < 100; at++)
+                posted += waterlink_post(address_of one, 5,
+                                         WATERLINK_FRAME_DURABLE,
+                                         (p8 address_to) "b", 1, 10000001);
+        pump(10000001, 10005000);
+        for (p32 at = one.receiving[5].first; at != WATERLINK_NONE;
+             at = one.held[at].next)
+                held++;
+        check("a key the reader holds runs no further than its window",
+              posted == 100 && held == WATERLINK_KEY_WINDOW && heard == 0);
+
+        refusing = false;
+        waterlink_resume(address_of one, 5, hear_or_refuse, null);
+        check("taken again, what was held is handed on in order",
+              heard == WATERLINK_KEY_WINDOW && heard_first[0] == 'a' &&
+                      heard_first[1] == 'b' &&
+                      !waterlink_paused(address_of one, 5));
+        heard = 0;
+        pump(10005000, 10010000);
+        check("and the rest follows, with the link left idle",
+              one.delivered == 101 && waterlink_idle(address_of one) &&
+                      one.retransmitted == 0);
 }
 
 static fn superseded_in_flight(void)
@@ -52712,10 +52710,10 @@ static fn superseded_in_flight(void)
         bool alone = false;
 
         waterlink_link_reset(address_of one);
-        post_one(9, WATERLINK_FRAME_REPLACEABLE, 0, '1', 0);
+        post_one(9, WATERLINK_FRAME_REPLACEABLE, '1', 0);
         old_used = waterlink_fill(address_of one, old_body, 0,
                                   address_of alone);
-        post_one(9, WATERLINK_FRAME_REPLACEABLE, 0, '2', 0);
+        post_one(9, WATERLINK_FRAME_REPLACEABLE, '2', 0);
         check("a frame in flight is superseded, not queued behind",
               one.superseded == 1 && one.posted == 1);
         used = waterlink_fill(address_of one, body, 0, address_of alone);
@@ -52733,14 +52731,13 @@ static fn superseded_in_flight(void)
 
         Each seed builds a path -- a bottleneck with a rate and a queue that
         drops when full, a propagation delay, jitter that reorders, random
-        loss and duplication -- and a workload on both ends: durable streams,
-        urgent keystrokes, bulk runs, replaceable state with deadlines, keys
-        that mix the two classes, and keys that end. The receiving
+        loss and duplication -- and a workload on both ends: streams, urgent
+        keystrokes, bulk runs, registers, keys that end, and streams whose
+        reader keeps saying "not now" and comes back later. The receiving
         application is the oracle: on every key, what it is handed must move
-        forward, skip no durable frame and no replaceable frame a durable one
-        was posted behind, and carry exactly the bytes posted; when the
-        workload is done and the network drained, every key must have
-        arrived through its last post. Half the seeds put the datagram replay
+        forward, skip nothing on a stream, and carry exactly the bytes
+        posted; when the workload is done and the network drained, every key
+        must have arrived through its last post. Half the seeds put the datagram replay
         window in front of the link and half hand it the network's copies
         raw, so the link's own answer to a repeated frame is tested too.
 
@@ -52771,15 +52768,12 @@ static struct waterlink_link sim_link[2];
 static struct waterlink_replay sim_window[2];
 
 typedef struct {
-        p64 key;       // the link's key, never reused
-        p16 flags;     // the class chooses per post for a mixed key
-        p16 deadline;
-        p8 mix;        // durable or replaceable, chosen per post
+        p8 flags;
+        p8 slow;       // its reader refuses a third of what it is handed
         p8 ends;       // the key's last post is flagged LAST
         p8 size;       // 0 small, 1 medium, 2 bulk
         positive posts;       // how many this key will get
         positive posted;      // how many it has had
-        p8 durable[SIM_POSTS];
         bipolar delivered;    // the index last handed over, -1 for none
         positive handed;
 } sim_key;
@@ -52805,6 +52799,8 @@ typedef struct {
         p64 bytes;
         p64 first_post;
         p64 last_arrival;
+        p64 resume_at; // when a slow reader at this end comes back
+        positive refusals;
         bool wrong;
         bool bulk;
 } sim_end;
@@ -52936,7 +52932,7 @@ static p16 sim_length(sim_key address_to key, positive index)
 {
         positive base = key->size == 2 ? 900 : key->size == 1 ? 120 : 6;
 
-        return (p16)(base + (index * 7 + (positive)key->key) % 97);
+        return (p16)(base + (index * 7 + key->posts) % 97);
 }
 
 static fn sim_fill(p8 address_to into, positive k, positive index, p16 length)
@@ -52955,8 +52951,10 @@ static fn sim_wrong_at(sim_end address_to edge)
         edge->wrong = true;
 }
 
-static fn sim_hear(address_any context, struct waterlink_frame address_to head,
-                   p8 address_to payload)
+static p64 sim_now;
+
+static bool sim_hear(address_any context, struct waterlink_frame address_to head,
+                     p8 address_to payload)
 {
         sim_end address_to edge = sim_ends + (positive)context;
         positive k;
@@ -52967,7 +52965,7 @@ static fn sim_hear(address_any context, struct waterlink_frame address_to head,
         if (head->length < 3)
         {
                 sim_wrong_at(edge);
-                return;
+                return true;
         }
 
         k = payload[0];
@@ -52975,26 +52973,31 @@ static fn sim_hear(address_any context, struct waterlink_frame address_to head,
         if (k >= edge->keys || index >= edge->key[k].posted)
         {
                 sim_wrong_at(edge);
-                return;
+                return true;
         }
 
         key = edge->key + k;
 
-        //      Forward only, and nothing skipped that could not be.
-        if ((bipolar)index <= key->delivered)
+        //      A slow reader: the frame stays with the link until it comes
+        //      back for it.
+        if (key->slow && !sim_below(3))
         {
-                sim_wrong_at(edge);
-                return;
+                sim_ends[1 - (positive)context].resume_at =
+                        sim_now + 1 + sim_below(3000);
+                edge->refusals++;
+                return false;
         }
 
-        for (positive skipped = (positive)(key->delivered + 1);
-             skipped < index; skipped++)
-                if (key->durable[skipped] ||
-                    (skipped + 1 < key->posted && key->durable[skipped + 1]))
-                        sim_wrong_at(edge);
+        //      Forward only, and nothing skipped on a stream.
+        if ((bipolar)index <= key->delivered ||
+            ((key->flags & WATERLINK_FRAME_DURABLE) &&
+             (bipolar)index != key->delivered + 1))
+        {
+                sim_wrong_at(edge);
+                return true;
+        }
 
-        if (head->length != sim_length(key, index) ||
-            head->key != key->key)
+        if (head->length != sim_length(key, index) || head->key != k)
                 sim_wrong_at(edge);
         else
         {
@@ -53006,51 +53009,46 @@ static fn sim_hear(address_any context, struct waterlink_frame address_to head,
         key->delivered = (bipolar)index;
         key->handed++;
         edge->bytes += head->length;
+        return true;
 }
-
-static p64 sim_key_serial;
 
 static fn sim_workload(sim_end address_to edge, bool bulk_only)
 {
         memory_zero(edge, sizeof(address_to edge));
         edge->bulk = bulk_only;
-        edge->keys = bulk_only ? 2 + sim_below(3) : 4 + sim_below(SIM_KEYS - 3);
+        edge->keys = bulk_only ? 2 + sim_below(5) : 4 + sim_below(SIM_KEYS - 3);
 
         for (positive k = 0; k < edge->keys; k++)
         {
                 sim_key address_to key = edge->key + k;
                 positive shape = bulk_only ? 0 : sim_below(6);
 
-                key->key = ++sim_key_serial * 0x10001ull + k;
                 key->delivered = -1;
                 key->posts = bulk_only ? 200 + sim_below(300)
                                        : 5 + sim_below(80);
 
                 switch (shape)
                 {
-                case 0: // a durable run, bulk or not
-                        key->flags = WATERLINK_FRAME_DURABLE |
-                                     (bulk_only || sim_below(2)
-                                              ? WATERLINK_FRAME_BULK
-                                              : 0);
+                case 0: // a stream, bulk or not
+                        key->flags = WATERLINK_FRAME_DURABLE;
                         key->size = bulk_only ? 2 : (p8)sim_below(3);
                         break;
                 case 1: // keystrokes
                         key->flags = WATERLINK_FRAME_DURABLE |
                                      WATERLINK_FRAME_URGENT;
                         break;
-                case 2: // state with a deadline, all but the last post
+                case 2: // a register, small
                         key->flags = WATERLINK_FRAME_REPLACEABLE;
-                        key->deadline = (p16)(1 + sim_below(40));
                         key->size = (p8)sim_below(2);
                         break;
-                case 3: // state with none
+                case 3: // a register, any size
                         key->flags = WATERLINK_FRAME_REPLACEABLE;
                         key->size = (p8)sim_below(3);
                         break;
-                case 4: // both classes on one key
-                        key->mix = 1;
-                        key->size = (p8)sim_below(2);
+                case 4: // a stream whose reader is slow
+                        key->flags = WATERLINK_FRAME_DURABLE;
+                        key->slow = 1;
+                        key->size = (p8)sim_below(3);
                         break;
                 default: // a key that ends
                         key->flags = WATERLINK_FRAME_DURABLE;
@@ -53072,8 +53070,7 @@ static fn sim_post(sim_end address_to edge, positive side, p64 now)
                 positive k = sim_below(edge->keys);
                 sim_key address_to key;
                 p8 payload[WATERLINK_FRAME_MAX];
-                p16 flags;
-                p16 deadline;
+                p8 flags;
                 p16 length;
                 positive index;
                 bool last_post;
@@ -53091,18 +53088,14 @@ static fn sim_post(sim_end address_to edge, positive side, p64 now)
                 index = key->posted;
                 last_post = index + 1 == key->posts;
                 flags = key->flags;
-                if (key->mix)
-                        flags = sim_below(3) ? WATERLINK_FRAME_REPLACEABLE
-                                             : WATERLINK_FRAME_DURABLE;
-                deadline = last_post ? 0 : key->deadline;
                 if (key->ends && last_post)
                         flags |= WATERLINK_FRAME_LAST;
 
                 length = sim_length(key, index);
                 sim_fill(payload, k, index, length);
 
-                if (!waterlink_post(sim_link + side, key->key, (p8)flags,
-                                    deadline, payload, length, now))
+                if (!waterlink_post(sim_link + side, (p8)k, flags, payload,
+                                    length, now))
                 {
                         //      The queue is full: the application waits for
                         //      an acknowledgement to free a slot.
@@ -53112,7 +53105,6 @@ static fn sim_post(sim_end address_to edge, positive side, p64 now)
 
                 if (!edge->first_post)
                         edge->first_post = now ? now : 1;
-                key->durable[index] = (flags & WATERLINK_FRAME_DURABLE) != 0;
                 key->posted++;
                 edge->remaining--;
                 edge->next_post = edge->bulk ? now : now + sim_below(1500);
@@ -53145,16 +53137,16 @@ typedef struct {
         p64 retransmitted;
         p64 spilled;
         p64 kept;
-        p64 expired;
+        p64 refusals;
         p64 superseded;
         p64 timeouts;
         p64 unfinished;
         //      The clean-bottleneck seeds, summed.
         p64 path_bytes;
         p64 path_capacity;
-        //      The bulk schedule that used the least of its path.
-        p64 thin_bytes;
-        p64 thin_capacity;
+        //      The bulk schedule slowest against what its path allows.
+        p64 slow_span;
+        p64 slow_ideal;
         p64 path_sent;
         p64 path_dropped;
 } sim_tally;
@@ -53204,6 +53196,7 @@ static fn sim_seed(positive seed)
         {
                 p64 next = ~0ull;
 
+                sim_now = now;
                 while (sim_heap_count && sim_pool[sim_heap[0]].arrive <= now)
                 {
                         p32 at = sim_heap_pop();
@@ -53224,6 +53217,22 @@ static fn sim_seed(positive seed)
                         if (sim_ends[to].next_post == ~0ull)
                                 sim_ends[to].next_post = now;
                 }
+
+                //      A slow reader comes back for what it left.
+                for (positive to = 0; to < 2; to++)
+                        if (sim_ends[to].resume_at &&
+                            sim_ends[to].resume_at <= now)
+                        {
+                                sim_ends[to].resume_at = 0;
+                                for (positive k = 0; k < sim_ends[1 - to].keys;
+                                     k++)
+                                        if (waterlink_paused(sim_link + to,
+                                                             (p8)k))
+                                                waterlink_resume(
+                                                        sim_link + to, (p8)k,
+                                                        sim_hear,
+                                                        (address_any)(1 - to));
+                        }
 
                 for (positive side = 0; side < 2; side++)
                         sim_post(sim_ends + side, side, now);
@@ -53254,6 +53263,12 @@ static fn sim_seed(positive seed)
 
                 if (sim_heap_count && sim_pool[sim_heap[0]].arrive < next)
                         next = sim_pool[sim_heap[0]].arrive;
+                for (positive side = 0; side < 2; side++)
+                        if (sim_ends[side].resume_at &&
+                            sim_ends[side].resume_at < next)
+                                next = sim_ends[side].resume_at > now
+                                               ? sim_ends[side].resume_at
+                                               : now + 1;
 
                 if (next == ~0ull)
                         break;
@@ -53284,7 +53299,7 @@ static fn sim_seed(positive seed)
                 sim_total.retransmitted += link->retransmitted;
                 sim_total.spilled += sim_link[1 - side].spilled;
                 sim_total.kept += sim_link[1 - side].kept;
-                sim_total.expired += link->expired;
+                sim_total.refusals += edge->refusals;
                 sim_total.superseded += link->superseded;
                 sim_total.timeouts += link->timeouts;
                 for (positive k = 0; k < edge->keys; k++)
@@ -53303,7 +53318,9 @@ static fn sim_seed(positive seed)
                 //      that is less -- the check is of the window, not of
                 //      the slot count.
                 {
-                        p64 trip = 2 * edge->delay + 2 * edge->spacing;
+                        //      There and back: each way has its own delay.
+                        p64 trip = edge->delay + sim_ends[1].delay +
+                                   2 * edge->spacing;
                         p64 flying = edge->keys * WATERLINK_KEY_WINDOW;
                         p64 by_rate = span / edge->spacing;
                         p64 by_window;
@@ -53315,13 +53332,19 @@ static fn sim_seed(positive seed)
                         by_window = span * flying / trip;
                         capacity = (by_rate < by_window ? by_rate : by_window) *
                                    WATERLINK_FRAME_MAX;
+                        //      What the path allows: every frame through the
+                        //      bottleneck, and a few round trips to start.
+                        p64 ideal = edge->bytes / WATERLINK_FRAME_MAX *
+                                            edge->spacing +
+                                    4 * trip;
+
                         sim_total.path_capacity += capacity;
-                        if (!sim_total.thin_capacity ||
-                            edge->bytes * sim_total.thin_capacity <
-                                    sim_total.thin_bytes * capacity)
+                        if (!sim_total.slow_ideal ||
+                            span * sim_total.slow_ideal >
+                                    sim_total.slow_span * ideal)
                         {
-                                sim_total.thin_bytes = edge->bytes;
-                                sim_total.thin_capacity = capacity;
+                                sim_total.slow_span = span;
+                                sim_total.slow_ideal = ideal;
                         }
                 }
                 sim_total.path_sent += edge->sent;
@@ -53343,14 +53366,15 @@ static fn network_generated(void)
 
         string_format(log, "  waterlink network: %p schedules (%p bulk), "
                            "%p frames posted, %p delivered, %p lost, %p sent "
-                           "again, %p held back, %p spilled, %p expired, "
+                           "again, %p held back, %p spilled, %p refused by a "
+                           "slow reader, "
                            "%p timeouts\n",
                       sim_total.seeds, sim_total.schedules_bulk,
                       (positive)sim_total.posts, (positive)sim_total.delivered,
                       (positive)sim_total.lost,
                       (positive)sim_total.retransmitted,
                       (positive)sim_total.kept, (positive)sim_total.spilled,
-                      (positive)sim_total.expired,
+                      (positive)sim_total.refusals,
                       (positive)sim_total.timeouts);
         string_format(log, "  waterlink link: %p bytes a session\n",
                       (positive)sizeof(struct waterlink_link));
@@ -53370,14 +53394,19 @@ static fn network_generated(void)
               sim_total.kept > 0);
         check("and the hold-back overflowed, and that was recovered",
               sim_total.spilled > 0);
-        check("replaceable frames were superseded and expired",
-              sim_total.superseded > 0 && sim_total.expired > 0);
+        check("register frames were superseded", sim_total.superseded > 0);
+        check("slow readers held frames back and every one was taken later",
+              sim_total.refusals > 0);
         check("the timer fired", sim_total.timeouts > 0);
         check("a bulk path is kept at least half full",
               sim_total.path_bytes * 2 >= sim_total.path_capacity);
-        check("and no bulk path stalls: each uses a quarter of what it "
-              "could carry",
-              sim_total.thin_bytes * 4 >= sim_total.thin_capacity);
+        string_format(log, "  waterlink slowest bulk: %p us where its path "
+                           "allows %p\n",
+                      (positive)sim_total.slow_span,
+                      (positive)sim_total.slow_ideal);
+        check("and no bulk path stalls: each takes under eight times what "
+              "its bottleneck and round trip allow",
+              sim_total.slow_span < 8 * sim_total.slow_ideal);
         check("and its queue drops fewer than one datagram in ten",
               sim_total.path_dropped * 10 <= sim_total.path_sent);
 }
@@ -54270,8 +54299,7 @@ b32 main(void)
         whole_path();
         refusals();
         supersession();
-        durable_is_a_wall();
-        deadlines();
+        class_is_the_keys();
         urgency();
         stale_arrivals();
         durable_reordered();
@@ -54279,11 +54307,10 @@ b32 main(void)
         replay();
         saturation();
         replay_generated();
-        followed_outlives_deadline();
         last_arrives_once();
-        last_outlives_deadline();
         superseded_in_flight();
         full_frame_beside_owed_ack();
+        reader_credit();
         network_generated();
         handshake();
         pbkdf2_vectors();
@@ -54644,7 +54671,7 @@ static bool wls_push(struct link_session address_to s, string_address target)
         memory_copy(request + 4, target, length);
         if (!link_start_file(s, LINK_ASK_PUSH, request, 4 + length))
                 return false;
-        return system_write_all((positive)s->input, "whole", 5) == 5;
+        return system_write_all((positive)s->writes[0].fd, "whole", 5) == 5;
 }
 
 static fn publication(void)
@@ -54664,13 +54691,13 @@ static fn publication(void)
                 check("sec: a whole, still-owned push is published",
                       !s->failed && got == 5 && !memory_compare(read, "whole", 5));
         }
-        system_close(s->input);
-        s->input = -1;
+        system_close(s->writes[0].fd);
+        s->writes[0].fd = -1;
         link_session_close(s);
 
         (void)wls_write("/root/dest", "before", 6, 0644);
         check("a second push opens", wls_push(s, "/root/dest"));
-        string_copy((string_address)kept, (string_address)s->push_part);
+        string_copy((string_address)kept, (string_address)s->part);
         (void)system_remove_at(AT_FDCWD, (string_address)kept, 0);
         (void)wls_write((string_address)kept, "planted", 7, 0600);
         link_push_done(s, 1);
@@ -54688,19 +54715,19 @@ static fn publication(void)
                 if (planted >= 0)
                         system_close(planted);
         }
-        system_close(s->input);
-        s->input = -1;
+        system_close(s->writes[0].fd);
+        s->writes[0].fd = -1;
         link_session_close(s);
         (void)system_remove_at(AT_FDCWD, (string_address)kept, 0);
 
         check("a third push opens", wls_push(s, "/root/dest"));
-        string_copy((string_address)kept, (string_address)s->push_part);
+        string_copy((string_address)kept, (string_address)s->part);
         link_session_close(s);
         check("sec: an interrupted push removes its own staging file",
               system_open_at(AT_FDCWD, (string_address)kept, FILE_READ) < 0);
 
         check("a fourth push opens", wls_push(s, "/root/dest"));
-        string_copy((string_address)kept, (string_address)s->push_part);
+        string_copy((string_address)kept, (string_address)s->part);
         (void)system_remove_at(AT_FDCWD, (string_address)kept, 0);
         (void)wls_write((string_address)kept, "planted", 7, 0600);
         link_session_close(s);
@@ -66272,8 +66299,8 @@ static fn frame_once(positive length, p16 flags, bool timed)
 
         stream_clock += 20;
         t[0] = timed ? get_cpu_time() : 0;
-        waterlink_post(address_of sender, 1, (p8)flags, 0, payload,
-                       (p16)length, stream_clock);
+        waterlink_post(address_of sender, 1, (p8)flags, payload, (p16)length,
+                       stream_clock);
         t[1] = timed ? get_cpu_time() : 0;
         used = waterlink_fill(address_of sender, datagram + 16, stream_clock,
                               address_of alone);
@@ -66378,16 +66405,14 @@ b32 main(void)
                         frame_once(keystroke ? 1 : WATERLINK_FRAME_MAX,
                                    keystroke ? WATERLINK_FRAME_DURABLE |
                                                        WATERLINK_FRAME_URGENT
-                                             : WATERLINK_FRAME_DURABLE |
-                                                       WATERLINK_FRAME_BULK,
+                                             : WATERLINK_FRAME_DURABLE,
                                    false);
                 string_format(log, "%p frames\n", count);
                 log_flush();
                 return 0;
         }
 
-        shape("bulk", WATERLINK_FRAME_MAX,
-              WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_BULK);
+        shape("bulk", WATERLINK_FRAME_MAX, WATERLINK_FRAME_DURABLE);
         shape("keystroke", 1, WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_URGENT);
         log_flush();
         return 0;

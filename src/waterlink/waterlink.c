@@ -27,34 +27,39 @@
 
         THE KEY IS THE WHOLE DESIGN
 
-        A frame carries a key, opaque to the link, doing two jobs at once: a
-        newer frame for the same key replaces an older one not yet delivered,
-        and frames for one key arrive in order while frames for different keys
-        have no order between them. Those being one concept is what makes this
-        small, and it lets an application pick its own granularity -- one key
-        per screen, per entity, per window's damage.
+        A frame carries a key, a number below sixty four that the
+        application gives its own meaning, and a key is one of two things,
+        fixed by its first frame:
+
+                a stream: every frame arrives, once, in order -- a
+                terminal's bytes, a file, a request;
+                a register: only the newest value matters -- a window's
+                size, a cursor, a screen.
+
+        Frames on different keys have no order between them, which is what
+        keeps a keystroke from waiting behind a file. A key being one kind
+        and not both is what makes this small: no frame ever has to say
+        which frame it comes after, since on a stream it is the one before
+        and on a register it is none.
 
         THE RULE THAT MAKES IT CORRECT
 
-        The sender may drop a replaceable frame only if a newer frame for the
-        same key is queued and no durable frame sits between them.
+        A register frame not yet delivered may be replaced by a newer one.
 
-        That sentence is the scheduler. It throws away superseded work without
-        letting an event overtake the state it describes.
+        That sentence is the scheduler. It throws away superseded state and
+        never an event, because events ride streams.
 
         AND THE ONE THAT IS EASY TO GET WRONG
 
-        Losing a superseded frame is correct; losing the last frame for a key
-        is wrong forever, and losing a durable frame is wrong at once. So
-        every frame is held by its sender until the far side acknowledges it,
-        and the acknowledgement is per key and cumulative: "this key is
-        delivered through sequence n, and of the ones after it I hold these,
-        waiting for n + 1". A
-        replaceable frame that is superseded while it waits is not sent
-        again; its slot carries the current value instead, under a new
-        sequence, so what is retransmitted is always the current value and
-        never the old frame it already replaced. That is fixed size per slot,
-        which is why the datapath allocates nothing.
+        Losing a superseded value is correct; losing a stream frame, or the
+        last value of a register, is not. So every frame is held by its
+        sender until the far side acknowledges it, and the acknowledgement is
+        per key and cumulative: "this key is taken through sequence n, and of
+        the sixty four after it I hold these". A register frame superseded
+        while it waits is not sent again; its slot carries the current value
+        instead, under a new sequence, so what is retransmitted is always the
+        current value. That is fixed size per slot, which is why the
+        datapath allocates nothing.
 
         Per key and not per datagram, because the key is already the unit of
         order: one number per key says everything a receiver has, where a
@@ -62,29 +67,29 @@
         which frames of which keys it carried. It is how QUIC acknowledges
         streams, without QUIC's packet ranges under it.
 
-        THE RULE THAT MAKES RETRANSMISSION CORRECT
+        THE ACKNOWLEDGEMENT IS THE CREDIT
 
-        A frame names the frame on its key it follows.
+        Taken means the application took it, not that it arrived. An
+        application that cannot take a frame now -- a pipe that is full, a
+        disk that is slow -- says so, and the frame is held; the sender hears
+        it is held and does not send it again, and a key may run only sixty
+        four frames past what was taken, so the sender stops. There is no
+        second flow control on top: the window the link keeps anyway is the
+        one the reader controls.
 
-        follows is the sequence of the last frame on the key that must be
-        delivered before this one: the last durable frame, or a replaceable
-        frame that a durable one was posted behind -- which the supersession
-        rule already says may not be dropped. A receiver delivers a frame
-        once what it follows has been delivered, holds it back until then,
-        and drops anything at or behind what the key has delivered. So a
-        durable frame arrives exactly once and in order however the network
-        reorders, loses or repeats datagrams, and a replaceable frame can
-        still be skipped, because nothing follows it. The hold-back is a
+        A receiver delivers a stream frame when it is the next and holds it
+        when it is ahead; it takes a register frame when it is newer than
+        what it has. Anything at or behind what the key has taken is dropped,
+        so a stream frame arrives exactly once and in order however the
+        network reorders, loses or repeats datagrams. The hold-back is a
         fixed pool; a frame that finds it full is dropped unacknowledged and
         comes again.
 
         A key's sequence counts from one and never wraps: a key carries at
-        most 2^32 - 2 frames, and a sender that needs more uses a new key.
-
-        LAST ends a key for good. The receiver remembers that it ended, so a
-        copy of the last frame the sender repeats because the acknowledgement
-        was lost is not taken for something new -- which is also why a key
-        that has ended is never posted to again.
+        most 2^32 - 2 frames. LAST ends a key for good, and the receiver
+        remembers that it ended, so a copy of the last frame the sender
+        repeats because the acknowledgement was lost is not taken for
+        something new.
 
         WHAT A PEER CAN SPEND
 
@@ -97,70 +102,19 @@
         What keeps a peer from holding many sessions is the handshake's
         limit, not this file.
 
-        A link is about 430 KB, taken once when the session is made and never
-        grown: 300 KB of it the send slots, which are the window, 75 KB the
-        hold-back, which is what exactly-once costs, and 40 KB the two key
-        tables. That was 300 KB before the hold-back existed, and it is kept
-        rather than cut, because a smaller queue is a smaller window and the
-        window is the throughput on any path longer than a room.
+        A link is about 450 KB, taken once when the session is made and never
+        grown: 300 KB of it the send slots, which are the window, and 150 KB
+        the hold-back, which is what exactly-once and the reader's credit
+        cost. It is kept rather than cut, because a smaller queue is a
+        smaller window and the window is the throughput on any path longer
+        than a room.
 
-        GROUPS: MACHINES THAT PAIR BY THEMSELVES
+        URGENCY IS PER SEND
 
-        Pairing by key is one person with two machines in front of them. A
-        headless box installed somewhere nobody will stand is the other case,
-        and for it a machine joins a group -- a namespace and a secret --
-        and pairs by itself with every member it finds on the same local
-        network (discover.c finds them, pair.c pairs them). The rules:
-
-        The secret is the grant. Whoever holds it gets, on every member, what
-        that member's join line granted, and the verbs when it granted
-        nothing. Taking one machine out of a group is changing the secret on
-        all the others, and forgetting the one that left; there is no list of
-        members to strike a name from, only the secret.
-
-        Nothing announced names the group, the machine or its key. What is on
-        the network is that a waterlink machine is here, under labels that
-        change every boot and every hour. Discovery never leaves the local
-        link: mDNS on 224.0.0.251, believed only at TTL 255, which no router
-        forwards. There is no rendezvous and no NAT traversal.
-
-        A weak secret can be guessed offline by anyone who hears one
-        announcement, so every key comes from the secret through
-        WATERLINK_GROUP_ROUNDS of PBKDF2, a protocol constant, and a secret
-        the machine makes itself has 160 random bits. The secret itself is
-        not kept: /root/link.groups, root's alone, holds what was derived
-        from it.
-
-        A member met for the first time is paired by Noise XXpsk0 under a key
-        from the group, which a machine without the secret cannot get past the
-        first message of, and does not learn a static key from. From then on
-        it is an ordinary peer -- IK, by the key it was given -- carrying the
-        mark of the group that paired it, and auto-pairing never replaces or
-        widens a record that is already there, by hand or by another group.
-
-        A machine in no group announces nothing and answers no one.
-
-        HOW MUCH MAY BE IN FLIGHT
-
-        A sender must not put more in flight than the path carries, and must
-        not send its window as one burst: it keeps an estimate of the round
-        trip, counts a frame lost when frames sent after it have arrived or a
-        timer runs out, gives the path less when frames are lost and more when
-        they are not, and paces what it sends across the round trip. Which
-        algorithm does that is the sender's own and never crosses the wire;
-        link.c says which it uses. Acknowledgements and urgent frames are not
-        held by it: the first are what open the window, and the second are a
-        few bytes somebody is waiting to see.
-
-        EVERY SETTING IS PER SEND
-
-        There are no stream types and no stored per-key settings. A caller
-        names the class, the urgency and the deadline on each send, because a
-        terminal carrying a file for a moment is the ordinary case, not the
-        exception. Only what the receiver acts on crosses the wire: the class
-        and the end, because delivery depends on them, and urgency, because
-        it asks for an acknowledgement at once. A deadline is the sender's
-        alone -- it decides what is still worth sending -- and never leaves.
+        A caller names the urgency on each send, because a terminal carrying
+        a file for a moment is the ordinary case: an urgent frame leaves at
+        once and alone, the rest share the window. It crosses the wire only
+        because it asks the far side to acknowledge at once.
 
         This file is the contract and nothing else, included where lib.c's
         types are already in scope.
@@ -210,54 +164,43 @@ _Static_assert(sizeof(struct waterlink_datagram) == 16,
 /*      A frame, inside the box, so the code that parses attacker-shaped bytes
         only ever runs on bytes that were already authenticated.
 
-        On the wire a frame is its flags byte and then numbers, each seven
-        bits a byte, low first, with the top bit saying another follows
-        (LEB128): the key, the sequence, how far back the frame it follows
-        is, and the payload's length, then the payload. How far back and not
-        which: a durable stream follows the frame before it, so that is one
-        byte, and zero is never a distance, since a frame follows only
-        something before it. A keystroke's frame is five bytes of header
-        where a fixed layout took twenty eight, and a key or a sequence costs
-        its size and not its width. Each number has one spelling -- no
-        trailing zero byte, nothing past sixty four bits -- so a body means
-        one thing. A zero flags byte is where the frames stop: every frame
-        has a class or is an acknowledgement, and the rest of the box is
-        zeros.
+        On the wire a frame is its flags byte, its key byte, and two numbers
+        -- the sequence and the payload's length -- each seven bits a byte,
+        low first, with the top bit saying another follows (LEB128); then the
+        payload. A keystroke's frame is four bytes of header where a fixed
+        layout took twenty eight. Each number has one spelling -- no trailing
+        zero byte, nothing past sixty four bits -- so a body means one thing.
+        A zero flags byte is where the frames stop: every frame has a class
+        or is an acknowledgement, and the rest of the box is zeros.
 
         In memory it is this, whole: what a receiver hands on, and what it
-        holds back for the frame it follows. */
+        holds back. */
 struct waterlink_frame {
-        p64 key;      // opaque to the link; the sender's meaning
         p32 sequence; // per key, from one, increasing
-        p32 follows;  // the sequence this frame is delivered after, or 0
         p16 length;   // the payload's bytes
+        p8 key;       // below WATERLINK_KEYS; the application's meaning
         p8 flags;     // WATERLINK_FRAME_*
 };
 
-// The most a frame's header takes: flags, a 64-bit key, two 32-bit numbers
-// and a length.
-#define WATERLINK_HEADER_MOST (1 + 10 + 5 + 5 + 2)
+#define WATERLINK_KEYS 64
 
-// A frame with neither of these is refused rather than guessed at.
+// The most a frame's header takes: flags, key, a 32-bit sequence, a length.
+#define WATERLINK_HEADER_MOST (1 + 1 + 5 + 2)
+
+// A frame's key class: a register (replaceable) or a stream (durable).
 #define WATERLINK_FRAME_REPLACEABLE 0x01u
 #define WATERLINK_FRAME_DURABLE 0x02u
 #define WATERLINK_FRAME_LAST 0x04u // the key ends with this frame
 
 /*      The link's own frame, and the only one with neither class: the flags
-        byte and three numbers -- the key, what it is delivered through, and
-        a mask of which of the sixty four sequences after the first missing
-        one are held. One per key, back to back with the frames, so the
-        acknowledgement of a keystroke is four bytes. A caller cannot post
-        one. */
+        byte, the key, and two numbers -- what the key is taken through, and
+        a mask of which of the sixty four sequences after that are held. One
+        per key, back to back with the frames, so the acknowledgement of a
+        keystroke is four bytes. A caller cannot post one. */
 #define WATERLINK_FRAME_ACK 0x08u
-#define WATERLINK_ACK_MOST (1 + 10 + 5 + 10)
+#define WATERLINK_ACK_MOST (1 + 1 + 5 + 10)
 
-/*      Urgency, and only the tiebreak: deadline says when a frame is worth
-        sending, this says which one goes first when two are both about to
-        miss. Without it a desktop that is always late starves a keystroke
-        that is merely late. */
 #define WATERLINK_FRAME_URGENT 0x10u // a keystroke; nothing waits behind it
-#define WATERLINK_FRAME_BULK 0x20u   // a file; the sender's alone
 
 #define WATERLINK_FRAME_WIRE                                                   \
         (WATERLINK_FRAME_REPLACEABLE | WATERLINK_FRAME_DURABLE |              \

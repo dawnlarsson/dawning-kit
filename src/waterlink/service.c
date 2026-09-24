@@ -23,15 +23,19 @@
                           so a drag of the corner sends the last size only
                 signal    client to machine, durable: a signal for the
                           command, when there is no terminal to type ^C at
-                credit    machine to client, replaceable: how much input the
-                          machine will take, which is how a command that
-                          reads slowly slows the sender down
                 output    machine to client, durable: the terminal's bytes,
                           or standard output, ending in the exit status
                 error     machine to client, durable: standard error
 
         Every payload starts with one byte naming what it is -- data, end,
         exit -- so a stream ends in order with what it carried.
+
+        Both ends are the same machine: a session has descriptors read into
+        frames on a key and keys whose frames are written to descriptors,
+        and one loop moves them. A command that reads slowly slows the sender
+        by not taking what arrives: the link holds it, and the sender's
+        window on that key stops (waterlink.c, the acknowledgement is the
+        credit).
 
         Dawn Larsson - Apache-2.0 license
         github.com/dawnlarsson/dawning-kit
@@ -61,7 +65,6 @@
 #define LINK_PEERS_MAX 64
 #define LINK_SESSIONS 16
 #define LINK_SESSIONS_A_PEER 8
-#define LINK_INPUT_ROOM (256 * 1024)
 #define LINK_REQUEST_MAX 1024
 
 #define LINK_KEEPALIVE 10000000ull   // microseconds of silence, then a datagram
@@ -75,7 +78,6 @@
 #define LINK_KEY_INPUT 3
 #define LINK_KEY_SIZE 4
 #define LINK_KEY_SIGNAL 5
-#define LINK_KEY_CREDIT 6
 #define LINK_KEY_OUTPUT 7
 #define LINK_KEY_ERROR 8
 
@@ -698,6 +700,14 @@ struct link_keys {
         bool live;
 };
 
+struct link_stream {
+        bipolar fd;
+        positive skip; // bytes of the frame in hand already written
+        p8 key;
+        p8 flags;
+        bool done;
+};
+
 struct link_session {
         bool used;
         bool finished;
@@ -717,29 +727,22 @@ struct link_session {
         p64 spoke;
         struct waterlink_link address_to link;
 
-        //      The machine's end: the command and its streams.
+        //      The streams, and the command behind them at the machine.
+        struct link_stream reads[2];  // a descriptor read into a key
+        struct link_stream writes[2]; // a key written to a descriptor
         bipolar pid;
         bipolar pidfd;
-        bipolar terminal;
-        bipolar input;
-        bipolar output;
-        bipolar error;
+        bipolar terminal; // a shell's, both a read and a write
         bool exited;
         b32 status;
         p64 exited_at;
-        bool output_read;
-        bool error_read;
-        bool error_ended;
         bool exit_sent;
         bool failed;
-        p8 push_name[LINK_REQUEST_MAX + 1];
-        p8 push_part[LINK_REQUEST_MAX + 32];
-        p8 address_to pending;
-        positive pending_at;
-        positive pending_length;
-        bool pending_end;
-        p64 consumed;
-        p64 credited;
+        bool answered;
+        bool refused;
+        p8 refusal[128];
+        p8 part[LINK_REQUEST_MAX + 32]; // a transfer's staging file
+        p8 whole[LINK_REQUEST_MAX + 1]; // and the name it becomes
 };
 
 /*
@@ -843,7 +846,12 @@ static bool link_session_open(struct link_session address_to s)
         waterlink_link_reset(s->link);
         s->used = true;
         s->pid = 0;
-        s->pidfd = s->terminal = s->input = s->output = s->error = -1;
+        s->pidfd = s->terminal = -1;
+        for (positive at = 0; at < 2; at++)
+        {
+                s->reads[at].fd = s->writes[at].fd = -1;
+                s->reads[at].done = s->writes[at].done = true;
+        }
         s->opened = s->heard = s->spoke = link_now();
         return true;
 }
@@ -885,8 +893,8 @@ static bool link_part_publish(bipolar handle, p8 address_to part,
 
 static fn link_session_close(struct link_session address_to s)
 {
-        if (s->kind == LINK_KIND_PUSH && s->push_part[0])
-                link_part_discard(s->input, s->push_part);
+        if (s->part[0])
+                link_part_discard(s->writes[0].fd, s->part);
         if (s->pidfd >= 0)
         {
                 (void)system_call_4(syscall(pidfd_send_signal),
@@ -895,17 +903,15 @@ static fn link_session_close(struct link_session address_to s)
         }
         if (s->pid > 0)
                 (void)system_call_2(syscall(kill), (positive)-s->pid, 1);
+        for (positive at = 0; at < 2; at++)
+        {
+                if (s->reads[at].fd > 2 && s->reads[at].fd != s->terminal)
+                        system_close(s->reads[at].fd);
+                if (s->writes[at].fd > 2 && s->writes[at].fd != s->terminal)
+                        system_close(s->writes[at].fd);
+        }
         if (s->terminal >= 0)
                 system_close(s->terminal);
-        if (s->input >= 0)
-                system_close(s->input);
-        if (s->output >= 0)
-                system_close(s->output);
-        if (s->error >= 0)
-                system_close(s->error);
-        if (s->pending)
-                system_call_2(syscall(munmap), (positive)s->pending,
-                              LINK_INPUT_ROOM);
         if (s->link)
                 system_call_2(syscall(munmap), (positive)s->link,
                               sizeof(struct waterlink_link));
@@ -1102,7 +1108,7 @@ static fn link_session_say(struct link_session address_to s, p32 kind)
         s->spoke = link_now();
 }
 
-static bool link_post(struct link_session address_to s, p64 key, p8 flags,
+static bool link_post(struct link_session address_to s, p8 key, p8 flags,
                       p8 type, p8 address_to data, positive length)
 {
         p8 payload[WATERLINK_FRAME_MAX];
@@ -1112,47 +1118,27 @@ static bool link_post(struct link_session address_to s, p64 key, p8 flags,
         payload[0] = type;
         if (length)
                 memory_copy(payload + 1, data, length);
-        return waterlink_post(s->link, key, flags, 0, payload,
-                              (p16)(length + 1), link_now());
-}
-
-// Room for a frame and one more, so an ending always has a slot to take.
-static bool link_room(struct link_session address_to s)
-{
-        p32 at = s->link->free;
-
-        return at != WATERLINK_NONE && s->link->slot[at].next != WATERLINK_NONE;
+        return waterlink_post(s->link, key, flags, payload, (p16)(length + 1),
+                              link_now());
 }
 
 /*
-        How many frames may be posted now, keeping one slot back so an ending
-        always has somewhere to go: a read is sized to this, so a busy stream
+        How much may be read now: a read is sized to the slots free, keeping
+        one back so an ending always has somewhere to go, so a busy stream
         costs one system call for a run of frames and not one a frame.
 */
 #define LINK_READ_FRAMES 48
 #define LINK_CHUNK (WATERLINK_FRAME_MAX - 1)
 
-static positive link_room_frames(struct link_session address_to s)
-{
-        positive count = 0;
-
-        for (p32 at = s->link->free;
-             at != WATERLINK_NONE && count <= LINK_READ_FRAMES;
-             at = s->link->slot[at].next)
-                count++;
-        return count ? count - 1 : 0;
-}
-
 static p8 link_read_buffer[LINK_READ_FRAMES * LINK_CHUNK];
 
-// What was read into the buffer, as frames on one key.
-static fn link_post_read(struct link_session address_to s, p64 key, p8 flags,
-                         positive length)
+static positive link_room(struct link_session address_to s)
 {
-        for (positive at = 0; at < length; at += LINK_CHUNK)
-                (void)link_post(s, key, flags, LINK_DATA, link_read_buffer + at,
-                                length - at < LINK_CHUNK ? length - at
-                                                         : LINK_CHUNK);
+        p32 room = waterlink_room(s->link);
+
+        return room > 1 ? (room - 1 < LINK_READ_FRAMES ? room - 1
+                                                       : LINK_READ_FRAMES)
+                        : 0;
 }
 
 /*
@@ -1176,6 +1162,53 @@ static winsize link_size_unpack(p8 address_to packed)
         return (winsize){(p16)(packed[0] | packed[1] << 8),
                          (p16)(packed[2] | packed[3] << 8), 0, 0};
 }
+
+// The streams --------------------------------------------------------------
+
+static fn link_stream_set(struct link_stream address_to stream, bipolar fd,
+                          p8 key, p8 flags)
+{
+        stream->fd = fd;
+        stream->key = key;
+        stream->flags = flags;
+        stream->done = fd < 0;
+        stream->skip = 0;
+}
+
+static fn link_stream_close(struct link_session address_to s,
+                            struct link_stream address_to stream)
+{
+        //      A terminal is both ends of one descriptor, and standard
+        //      output and error belong to whoever started the client.
+        if (stream->fd > 2 && stream->fd != s->terminal)
+                system_close(stream->fd);
+        stream->fd = -1;
+        stream->done = true;
+}
+
+// The session's command has ended, with this status.
+static fn link_exited(struct link_session address_to s, b32 status, p64 now)
+{
+        s->exited = true;
+        s->exited_at = now;
+        s->status = status;
+}
+
+static fn link_push_done(struct link_session address_to s, p64 now)
+{
+        //      The part file becomes the name only whole. Either way it is
+        //      no longer this session's to remove at close.
+        if (!s->failed)
+        {
+                s->failed = system_call_1(syscall(fsync),
+                                          (positive)s->writes[0].fd) < 0 ||
+                            !link_part_publish(s->writes[0].fd, s->part,
+                                               s->whole);
+                s->part[0] = 0;
+        }
+        link_exited(s, s->failed ? 1 : 0, now);
+}
+
 
 // The machine's end ---------------------------------------------------------
 
@@ -1303,9 +1336,10 @@ static bool link_start_shell(struct link_session address_to s,
         s->pid = child;
         s->pidfd = system_call_2(syscall(pidfd_open), (positive)child, 0);
         s->terminal = master;
+        link_stream_set(s->reads, master, LINK_KEY_OUTPUT,
+                        WATERLINK_FRAME_DURABLE);
+        link_stream_set(s->writes, master, LINK_KEY_INPUT, 0);
         s->kind = LINK_KIND_SHELL;
-        s->error_read = true;
-        s->error_ended = true;
         return true;
 }
 
@@ -1368,9 +1402,11 @@ static bool link_start_run(struct link_session address_to s,
         link_nonblocking(err[0]);
         s->pid = child;
         s->pidfd = system_call_2(syscall(pidfd_open), (positive)child, 0);
-        s->input = in[1];
-        s->output = out[0];
-        s->error = err[0];
+        link_stream_set(s->reads, out[0], LINK_KEY_OUTPUT,
+                        WATERLINK_FRAME_DURABLE);
+        link_stream_set(s->reads + 1, err[0], LINK_KEY_ERROR,
+                        WATERLINK_FRAME_DURABLE);
+        link_stream_set(s->writes, in[1], LINK_KEY_INPUT, 0);
         s->kind = LINK_KIND_RUN;
         return true;
 }
@@ -1422,10 +1458,9 @@ static bool link_start_file(struct link_session address_to s, p8 ask,
                                         FILE_READ | O_NONBLOCK | O_CLOEXEC);
                 if (handle < 0)
                         return false;
-                s->output = handle;
+                link_stream_set(s->reads, handle, LINK_KEY_OUTPUT,
+                                WATERLINK_FRAME_DURABLE);
                 s->kind = LINK_KIND_LOG;
-                s->error_read = true;
-                s->error_ended = true;
                 return true;
         }
 
@@ -1451,9 +1486,9 @@ static bool link_start_file(struct link_session address_to s, p8 ask,
                                         FILE_READ | O_CLOEXEC);
                 if (handle < 0)
                         return false;
-                s->output = handle;
+                link_stream_set(s->reads, handle, LINK_KEY_OUTPUT,
+                                WATERLINK_FRAME_DURABLE);
                 s->kind = LINK_KIND_PULL;
-                s->error_read = true;
                 return true;
         }
 
@@ -1465,13 +1500,11 @@ static bool link_start_file(struct link_session address_to s, p8 ask,
         if (handle < 0)
                 return false;
         (void)system_call_2(syscall(fchmod), (positive)handle, mode);
-        memory_copy(s->push_name, path, length);
-        s->push_name[length] = 0;
-        string_copy((string_address)s->push_part, (string_address)path);
-        s->input = handle;
+        memory_copy(s->whole, request, length);
+        s->whole[length] = 0;
+        string_copy((string_address)s->part, (string_address)path);
+        link_stream_set(s->writes, handle, LINK_KEY_INPUT, 0);
         s->kind = LINK_KIND_PUSH;
-        s->output_read = true;
-        s->error_read = true;
         return true;
 }
 
@@ -1550,114 +1583,38 @@ static fn link_request(struct link_session address_to s, p8 address_to payload,
                 return;
         }
 
-        {
-                bipolar mapped = system_call_6(syscall(mmap), 0,
-                                               LINK_INPUT_ROOM, 3, 0x22,
-                                               (positive)(bipolar)-1, 0);
-
-                s->pending = mapped < 0 && mapped > -4096
-                                     ? null
-                                     : (p8 address_to)mapped;
-        }
-
         (void)link_post(s, LINK_KEY_ANSWER,
                         WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_LAST, 'O',
                         null, 0);
-        {
-                p64 credit = LINK_INPUT_ROOM;
-
-                (void)link_post(s, LINK_KEY_CREDIT, WATERLINK_FRAME_REPLACEABLE,
-                                'C', (p8 address_to)address_of credit, 8);
-                s->credited = credit;
-        }
         link_self.state_dirty = true;
 }
 
-static fn link_input(struct link_session address_to s, p8 type,
-                     p8 address_to data, positive length)
-{
-        if (type == LINK_END)
-        {
-                s->pending_end = true;
-                return;
-        }
-        if (type != LINK_DATA || !s->pending)
-                return;
-
-        //      Credit is what keeps this from happening; a client that sends
-        //      past it is broken, and loses what did not fit.
-        if (s->pending_at + s->pending_length + length > LINK_INPUT_ROOM)
-        {
-                if (s->pending_at)
-                {
-                        memory_copy(s->pending, s->pending + s->pending_at,
-                                    s->pending_length);
-                        s->pending_at = 0;
-                }
-                if (s->pending_length + length > LINK_INPUT_ROOM)
-                        length = LINK_INPUT_ROOM - s->pending_length;
-        }
-        memory_copy(s->pending + s->pending_at + s->pending_length, data,
-                    length);
-        s->pending_length += length;
-}
-
 /*
-        A frame arrives at the machine's end. The payload's first byte says
-        what it is; the key says which stream.
+        One descriptor to wait on, when it is open and wants something: a
+        descriptor watched for nothing still wakes the wait on a hangup.
 */
-static fn link_server_hear(address_any context,
-                           struct waterlink_frame address_to head,
-                           p8 address_to payload)
+static fn link_watch(system_poll_descriptor address_to watch,
+                     positive address_to count, bipolar handle, p16 events)
 {
-        struct link_session address_to s = (struct link_session address_to)context;
-        positive length = head->length;
-
-        if (!length)
+        if (handle < 0 || !events)
                 return;
-
-        switch (head->key)
-        {
-        case LINK_KEY_REQUEST:
-                link_request(s, payload, length);
-                break;
-        case LINK_KEY_INPUT:
-                link_input(s, payload[0], payload + 1, length - 1);
-                break;
-        case LINK_KEY_SIZE:
-                if (length >= 5 && s->terminal >= 0)
-                {
-                        winsize size = link_size_unpack(payload + 1);
-
-                        system_control(s->terminal, TIOCSWINSZ,
-                                       address_of size);
-                }
-                break;
-        case LINK_KEY_SIGNAL:
-                if (length >= 2 && s->pid > 0 && !s->exited &&
-                    (payload[1] == 1 || payload[1] == 2 || payload[1] == 3 ||
-                     payload[1] == 9 || payload[1] == 15))
-                        (void)system_call_2(syscall(kill), (positive)-s->pid,
-                                            payload[1]);
-                break;
-        default:
-                break;
-        }
+        watch[address_to count].descriptor = (b32)handle;
+        watch[address_to count].events = events;
+        (address_to count)++;
 }
 
-static fn link_push_done(struct link_session address_to s, p64 now)
+// Until something is ready or wake comes, whichever is first.
+static fn link_wait(system_poll_descriptor address_to watch, positive count,
+                    p64 wake)
 {
-        //      The part file becomes the name only whole. Either way it is
-        //      no longer this session's to remove at close.
-        if (!s->failed)
-        {
-                s->failed = !link_part_publish(s->input, s->push_part,
-                                               s->push_name);
-                s->push_part[0] = 0;
-        }
-        s->exited = true;
-        s->exited_at = now;
-        s->status = s->failed ? 1 : 0;
+        p64 now = link_now();
+        timespec limit;
+
+        if (wake < now)
+                wake = now;
+        limit.tv_sec = (wake - now) / 1000000;
+        limit.tv_nsec = (wake - now) % 1000000 * 1000;
+        (void)system_poll_wait(watch, count, address_of limit, null);
 }
 
 /*
@@ -1671,7 +1628,7 @@ static fn link_log_read(struct link_session address_to s)
 
         while (link_room(s))
         {
-                bipolar got = system_read_once(s->output, record,
+                bipolar got = system_read_once(s->reads[0].fd, record,
                                                sizeof record - 1);
                 p8 line[WATERLINK_FRAME_MAX];
                 positive used = 0;
@@ -1729,101 +1686,181 @@ static fn link_log_read(struct link_session address_to s)
         }
 }
 
-// The command's streams, moved: input to it, output from it, and its end.
-static fn link_session_streams(struct link_session address_to s, p64 now)
+/*
+        A descriptor read into frames on its key while the link has room.
+        Its end is the stream's end: the client says so on input, a pulled
+        file is the command's end, and the rest wait for the command.
+*/
+static fn link_stream_read(struct link_session address_to s,
+                           struct link_stream address_to stream, p64 now)
 {
-        bipolar input = s->terminal >= 0 ? s->terminal : s->input;
-
-        //      Input, as far as the command will take it.
-        while (input >= 0 && s->pending_length)
+        while (!stream->done && link_room(s))
         {
-                bipolar wrote = system_write_once(input,
-                                                  s->pending + s->pending_at,
-                                                  s->pending_length);
+                bipolar got = system_read_once(stream->fd, link_read_buffer,
+                                               link_room(s) * LINK_CHUNK);
 
-                if (wrote < 0 && wrote != -EAGAIN && wrote != -4 &&
-                    s->kind == LINK_KIND_PUSH)
+                if (got == -EAGAIN || got == -4)
+                        return;
+                if (got <= 0)
                 {
-                        //      A disk that refuses: the rest is dropped and
-                        //      the push fails, rather than reading forever.
-                        s->failed = true;
-                        s->consumed += s->pending_length;
-                        s->pending_length = 0;
-                        s->pending_at = 0;
-                        break;
+                        //      A terminal whose last holder closed it reads
+                        //      as EIO: that is its end.
+                        stream->done = true;
+                        if (stream->key == LINK_KEY_INPUT)
+                                (void)link_post(s, LINK_KEY_INPUT,
+                                                WATERLINK_FRAME_DURABLE |
+                                                        WATERLINK_FRAME_LAST,
+                                                LINK_END, null, 0);
+                        else if (s->kind == LINK_KIND_PULL)
+                                link_exited(s, got < 0, now);
+                        return;
                 }
-                if (wrote <= 0)
-                        break;
-                s->pending_at += (positive)wrote;
-                s->pending_length -= (positive)wrote;
-                s->consumed += (positive)wrote;
-                if (!s->pending_length)
-                        s->pending_at = 0;
+                for (positive at = 0; at < (positive)got; at += LINK_CHUNK)
+                        (void)link_post(s, stream->key, stream->flags, LINK_DATA,
+                                        link_read_buffer + at,
+                                        (positive)got - at < LINK_CHUNK
+                                                ? (positive)got - at
+                                                : LINK_CHUNK);
         }
-        if (s->pending_end && !s->pending_length && s->input >= 0)
-        {
-                if (s->kind == LINK_KIND_PUSH &&
-                    system_call_1(syscall(fsync), (positive)s->input) < 0)
-                        s->failed = true;
-                if (s->kind == LINK_KIND_PUSH)
-                        link_push_done(s, now);
-                system_close(s->input);
-                s->input = -1;
-        }
-        if (s->consumed + LINK_INPUT_ROOM >= s->credited + LINK_INPUT_ROOM / 4)
-        {
-                p64 credit = s->consumed + LINK_INPUT_ROOM;
+}
 
-                if (link_post(s, LINK_KEY_CREDIT, WATERLINK_FRAME_REPLACEABLE,
-                              'C', (p8 address_to)address_of credit, 8))
-                        s->credited = credit;
-        }
-
-        if (s->kind == LINK_KIND_LOG)
+/*
+        One frame of a key that is written to a descriptor. Data goes as far
+        as the descriptor takes it; a descriptor that is full says "not now",
+        and the link holds the frame, tells the sender, and hands the frame
+        over again at waterlink_resume -- which is all the flow control there
+        is. The end of the stream is the end of what it feeds.
+*/
+static bool link_stream_take(struct link_session address_to s,
+                             struct link_stream address_to stream,
+                             p8 address_to payload, positive length)
+{
+        if (payload[0] == LINK_DATA)
         {
-                link_log_read(s);
-                return;
-        }
-
-        //      Output, while the link has room for it.
-        for (positive turn = 0; turn < 2; turn++)
-        {
-                bipolar address_to handle =
-                        turn ? address_of s->error
-                             : (s->terminal >= 0 ? address_of s->terminal
-                                                 : address_of s->output);
-                bool address_to done = turn ? address_of s->error_read
-                                            : address_of s->output_read;
-
-                while (address_to handle >= 0 && !address_to done &&
-                       link_room(s))
+                while (stream->fd >= 0 && stream->skip < length - 1)
                 {
-                        positive frames = link_room_frames(s);
-                        bipolar got = system_read_once(address_to handle,
-                                                       link_read_buffer,
-                                                       frames * LINK_CHUNK);
+                        bipolar wrote = system_write_once(
+                                stream->fd, payload + 1 + stream->skip,
+                                length - 1 - stream->skip);
 
-                        if (got == -EAGAIN || got == -4)
-                                break;
-                        if (got <= 0)
+                        if (wrote == -EAGAIN || wrote == -4)
+                                return false;
+                        if (wrote <= 0)
                         {
-                                //      A terminal whose last holder closed it
-                                //      reads as EIO: that is its end.
-                                address_to done = true;
-                                if (s->kind == LINK_KIND_PULL)
-                                {
-                                        s->failed = got < 0;
-                                        s->exited = true;
-                                        s->exited_at = now;
-                                        s->status = s->failed ? 1 : 0;
-                                }
+                                //      A disk that refuses: the rest is
+                                //      dropped and the push fails, rather
+                                //      than reading forever.
+                                s->failed = true;
                                 break;
                         }
-                        link_post_read(s, turn ? LINK_KEY_ERROR
-                                               : LINK_KEY_OUTPUT,
-                                       WATERLINK_FRAME_DURABLE, (positive)got);
+                        stream->skip += (positive)wrote;
                 }
+                stream->skip = 0;
         }
+        else if (payload[0] == LINK_EXIT && length >= 5)
+        {
+                memory_copy(address_of s->status, payload + 1, 4);
+                s->exited = true;
+                stream->done = true;
+        }
+        else if (payload[0] == LINK_END)
+        {
+                stream->done = true;
+                if (s->kind == LINK_KIND_PUSH && stream->key == LINK_KEY_INPUT)
+                        link_push_done(s, link_now());
+                if (stream->fd != s->terminal)
+                        link_stream_close(s, stream);
+        }
+        return true;
+}
+
+/*
+        A frame arrives, at either end. The key says which stream or which
+        question; the payload's first byte says what it is.
+*/
+static bool link_hear(address_any context, struct waterlink_frame address_to head,
+                      p8 address_to payload)
+{
+        struct link_session address_to s = (struct link_session address_to)context;
+        positive length = head->length;
+
+        if (!length)
+                return true;
+        for (positive at = 0; at < 2; at++)
+                if (s->writes[at].key == head->key)
+                        return link_stream_take(s, s->writes + at, payload,
+                                                length);
+
+        switch (head->key)
+        {
+        case LINK_KEY_REQUEST:
+                if (link_self.server)
+                        link_request(s, payload, length);
+                break;
+        case LINK_KEY_ANSWER:
+                if (link_self.server)
+                        break;
+                s->answered = true;
+                if (payload[0] == 'N')
+                {
+                        positive keep = length - 1 < sizeof s->refusal - 1
+                                                ? length - 1
+                                                : sizeof s->refusal - 1;
+
+                        //      Printed to a terminal: printable bytes only.
+                        for (positive at = 0; at < keep; at++)
+                                s->refusal[at] = payload[1 + at] >= ' ' &&
+                                                                 payload[1 + at] < 127
+                                                         ? payload[1 + at]
+                                                         : '?';
+                        s->refusal[keep] = 0;
+                        s->refused = true;
+                }
+                break;
+        case LINK_KEY_SIZE:
+                if (length >= 5 && s->terminal >= 0)
+                {
+                        winsize size = link_size_unpack(payload + 1);
+
+                        system_control(s->terminal, TIOCSWINSZ,
+                                       address_of size);
+                }
+                break;
+        case LINK_KEY_SIGNAL:
+                if (length >= 2 && s->pid > 0 && !s->exited &&
+                    (payload[1] == 1 || payload[1] == 2 || payload[1] == 3 ||
+                     payload[1] == 9 || payload[1] == 15))
+                        (void)system_call_2(syscall(kill), (positive)-s->pid,
+                                            payload[1]);
+                break;
+        default:
+                break;
+        }
+        return true;
+}
+
+/*
+        The session's streams, moved: what may be read is read and posted,
+        what the far side sent and a descriptor would not take is offered
+        again, and at the machine's end the command's end is noticed and
+        said, after everything it wrote.
+*/
+static fn link_session_streams(struct link_session address_to s, p64 now)
+{
+        for (positive at = 0; at < 2; at++)
+                if (s->writes[at].fd >= 0 &&
+                    waterlink_paused(s->link, s->writes[at].key))
+                        waterlink_resume(s->link, s->writes[at].key, link_hear,
+                                         s);
+
+        if (s->kind == LINK_KIND_LOG && link_self.server)
+                link_log_read(s);
+        else
+                for (positive at = 0; at < 2; at++)
+                        link_stream_read(s, s->reads + at, now);
+
+        if (!link_self.server || s->kind == LINK_KIND_NONE)
+                return;
 
         //      The command's end, once: its status, after everything it said.
         if (s->pidfd >= 0 && !s->exited)
@@ -1840,35 +1877,50 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
                         b32 code = ((b32 address_to)information)[2];
                         b32 value = ((b32 address_to)information)[6];
 
-                        s->exited = true;
-                        s->exited_at = now;
-                        s->status = code == 1 ? value : 128 + value;
+                        link_exited(s, code == 1 ? value : 128 + value, now);
                 }
         }
 
         //      A terminal can stay open behind a command that left something
         //      running in the background; a moment after the command ends, the
         //      session ends with it, as ssh's does.
-        if (s->exited && !s->output_read && now - s->exited_at > 300000)
-                s->output_read = true;
-        if (s->exited && !s->error_read && now - s->exited_at > 300000)
-                s->error_read = true;
+        if (s->exited && now - s->exited_at > 300000)
+                s->reads[0].done = s->reads[1].done = true;
 
-        if (s->exited && s->output_read && s->error_read && !s->error_ended &&
-            link_room(s))
-                s->error_ended = link_post(s, LINK_KEY_ERROR,
-                                           WATERLINK_FRAME_DURABLE |
-                                                   WATERLINK_FRAME_LAST,
-                                           LINK_END, null, 0);
-
-        if (s->exited && s->output_read && s->error_ended && !s->exit_sent &&
-            link_room(s))
+        if (s->exited && s->reads[0].done && s->reads[1].done && !s->exit_sent &&
+            waterlink_room(s->link) >= 2)
+        {
+                if (s->reads[1].key)
+                        (void)link_post(s, LINK_KEY_ERROR,
+                                        WATERLINK_FRAME_DURABLE |
+                                                WATERLINK_FRAME_LAST,
+                                        LINK_END, null, 0);
                 s->exit_sent = link_post(s, LINK_KEY_OUTPUT,
                                          WATERLINK_FRAME_DURABLE |
                                                  WATERLINK_FRAME_LAST,
                                          LINK_EXIT,
                                          (p8 address_to)address_of s->status,
                                          4);
+        }
+}
+
+// What a session waits on: descriptors with something to read or room to take.
+static fn link_session_watch(struct link_session address_to s,
+                             system_poll_descriptor address_to watch,
+                             positive address_to count)
+{
+        bool room = link_room(s) != 0;
+
+        for (positive at = 0; at < 2; at++)
+        {
+                link_watch(watch, count, s->reads[at].fd,
+                           room && !s->reads[at].done ? SYSTEM_POLL_READ : 0);
+                link_watch(watch, count, s->writes[at].fd,
+                           waterlink_paused(s->link, s->writes[at].key)
+                                   ? SYSTEM_POLL_WRITE
+                                   : 0);
+        }
+        link_watch(watch, count, s->pidfd, s->exited ? 0 : SYSTEM_POLL_READ);
 }
 
 // The handshake, at the machine's end -----------------------------------------
@@ -2233,31 +2285,111 @@ static fn link_signals_take(bipolar handle, b32 address_to last)
 }
 
 /*
-        One descriptor to wait on, when it is open and wants something: a
-        descriptor watched for nothing still wakes the wait on a hangup.
+        The loop both ends run, in three parts: a turn of every session --
+        its streams, its sends, its timers, and at the machine the end of
+        the ones that are over -- then a wait on everything any of them
+        waits on, then every datagram that came.
 */
-static fn link_watch(system_poll_descriptor address_to watch,
-                     positive address_to count, bipolar handle, p16 events)
+static p64 link_sessions_turn(p64 now)
 {
-        if (handle < 0 || !events)
-                return;
-        watch[address_to count].descriptor = (b32)handle;
-        watch[address_to count].events = events;
-        (address_to count)++;
+        p64 wake = now + 1000000;
+
+        for (positive at = 0; at < LINK_SESSIONS; at++)
+        {
+                struct link_session address_to s = link_self.session + at;
+                p64 due;
+
+                if (!s->used)
+                        continue;
+                if (s->now.live)
+                        link_session_streams(s, now);
+
+                if (link_self.server)
+                {
+                        if (s->exit_sent && waterlink_idle(s->link))
+                                s->finished = true;
+                        if (now - s->heard > LINK_DEAD ||
+                            (s->now.live &&
+                             waterlink_session_spent(now - s->now.made,
+                                                     s->now.counter)))
+                                s->finished = true;
+                        if (s->finished)
+                        {
+                                if (s->now.live && s->exit_sent)
+                                        link_session_end(s, true);
+                                link_session_close(s);
+                                continue;
+                        }
+                }
+
+                if (s->now.live)
+                {
+                        link_session_flush(s, now);
+                        if (now - s->spoke > LINK_KEEPALIVE)
+                                link_session_say(s, WATERLINK_KIND_CARRY);
+                }
+
+                due = waterlink_wake(s->link, now);
+                if (link_self.server && s->exited && !s->exit_sent &&
+                    s->exited_at + 300000 < due)
+                        due = s->exited_at + 300000;
+                if (due < wake)
+                        wake = due;
+        }
+        return wake;
 }
 
-// Until something is ready or wake comes, whichever is first.
-static fn link_wait(system_poll_descriptor address_to watch, positive count,
-                    p64 wake)
+static positive link_sessions_watch(system_poll_descriptor address_to watch,
+                                    bipolar signals)
 {
-        p64 now = link_now();
-        timespec limit;
+        positive count = 0;
 
-        if (wake < now)
-                wake = now;
-        limit.tv_sec = (wake - now) / 1000000;
-        limit.tv_nsec = (wake - now) % 1000000 * 1000;
-        (void)system_poll_wait(watch, count, address_of limit, null);
+        link_watch(watch, address_of count, link_self.socket, SYSTEM_POLL_READ);
+        link_watch(watch, address_of count, signals, SYSTEM_POLL_READ);
+        link_watch(watch, address_of count, link_nearby.socket,
+                   SYSTEM_POLL_READ);
+        for (positive at = 0; at < LINK_SESSIONS; at++)
+                if (link_self.session[at].used)
+                        link_session_watch(link_self.session + at, watch,
+                                           address_of count);
+        return count;
+}
+
+static fn link_client_answered(p8 address_to datagram, positive length);
+
+static fn link_receive_all(p64 now)
+{
+        p8 datagram[WATERLINK_DATAGRAM + 16];
+
+        for (positive turn = 0; turn < 256; turn++)
+        {
+                p8 address[16];
+                p16 port;
+                bipolar got = link_receive(datagram, address, address_of port);
+                struct waterlink_datagram head;
+
+                if (got < 0)
+                        break;
+                if (got < 16)
+                        continue;
+                memory_copy(address_of head, datagram, 16);
+                if (head.kind == WATERLINK_KIND_CARRY ||
+                    head.kind == WATERLINK_KIND_CLOSE)
+                        (void)link_carried(datagram, (positive)got, address,
+                                           port, now, link_hear);
+                else if (!link_self.server)
+                {
+                        if (head.kind == WATERLINK_KIND_RESPOND)
+                                link_client_answered(datagram, (positive)got);
+                }
+                else if (head.kind == WATERLINK_KIND_INITIATE)
+                        link_server_initiation(datagram, (positive)got, address,
+                                               port, now);
+                else if (head.kind >= WATERLINK_KIND_PAIR_1 &&
+                         head.kind <= WATERLINK_KIND_PAIR_3)
+                        link_pair_datagram(datagram, (positive)got, address,
+                                           port, now);
+        }
 }
 
 /*
@@ -2271,7 +2403,6 @@ static b32 link_serve(void)
         bipolar signals;
         b32 stop = 0;
         p16 port = link_port();
-        p8 datagram[WATERLINK_DATAGRAM + 16];
 
         if (link_identity(address_of link_self.me, true) < 0)
                 return host_refuse("%s cannot be read or made\n", LINK_KEY_PATH);
@@ -2299,125 +2430,21 @@ static b32 link_serve(void)
         for (;;)
         {
                 p64 now = link_now();
-                p64 wake = now + 1000000;
-                positive count = 0;
+                p64 wake;
+                p64 due;
 
                 if (signals >= 0)
                         link_signals_take(signals, address_of stop);
                 if (stop)
                         break;
 
-                //      Each session: its streams, its sends, its timers.
-                for (positive at = 0; at < LINK_SESSIONS; at++)
-                {
-                        struct link_session address_to s = link_self.session + at;
-                        p64 due;
-
-                        if (!s->used)
-                                continue;
-
-                        if (s->kind != LINK_KIND_NONE)
-                                link_session_streams(s, now);
-
-                        if (s->exit_sent && waterlink_idle(s->link))
-                                s->finished = true;
-                        if (now - s->heard > LINK_DEAD ||
-                            (s->now.live &&
-                             waterlink_session_spent(now - s->now.made,
-                                                     s->now.counter)))
-                                s->finished = true;
-
-                        if (s->finished)
-                        {
-                                if (s->now.live && s->exit_sent)
-                                        link_session_end(s, true);
-                                link_session_close(s);
-                                continue;
-                        }
-
-                        if (s->now.live)
-                        {
-                                link_session_flush(s, now);
-                                if (now - s->spoke > LINK_KEEPALIVE)
-                                        link_session_say(s,
-                                                         WATERLINK_KIND_CARRY);
-                        }
-
-                        due = waterlink_wake(s->link, now);
-                        if (due < wake)
-                                wake = due;
-                        if (s->exited && s->exited_at + 300000 < wake &&
-                            (!s->output_read || !s->error_read))
-                                wake = s->exited_at + 300000;
-                }
-
+                wake = link_sessions_turn(now);
                 link_state_write(now);
-                {
-                        p64 due = link_nearby_tick(now);
-
-                        if (due < wake)
-                                wake = due;
-                }
-
-                link_watch(watch, address_of count, link_self.socket,
-                           SYSTEM_POLL_READ);
-                link_watch(watch, address_of count, signals, SYSTEM_POLL_READ);
-                link_watch(watch, address_of count, link_nearby.socket,
-                           SYSTEM_POLL_READ);
-                for (positive at = 0; at < LINK_SESSIONS; at++)
-                {
-                        struct link_session address_to s = link_self.session + at;
-                        bool room;
-
-                        if (!s->used || s->kind == LINK_KIND_NONE)
-                                continue;
-                        room = link_room(s);
-                        link_watch(watch, address_of count, s->terminal,
-                                   (room && !s->output_read ? SYSTEM_POLL_READ
-                                                            : 0) |
-                                           (s->pending_length ? SYSTEM_POLL_WRITE
-                                                              : 0));
-                        link_watch(watch, address_of count, s->output,
-                                   room && !s->output_read ? SYSTEM_POLL_READ
-                                                           : 0);
-                        link_watch(watch, address_of count, s->error,
-                                   room && !s->error_read ? SYSTEM_POLL_READ
-                                                          : 0);
-                        link_watch(watch, address_of count, s->input,
-                                   s->pending_length ? SYSTEM_POLL_WRITE : 0);
-                        link_watch(watch, address_of count, s->pidfd,
-                                   s->exited ? 0 : SYSTEM_POLL_READ);
-                }
-
-                link_wait(watch, count, wake);
-
+                due = link_nearby_tick(now);
+                link_wait(watch, link_sessions_watch(watch, signals),
+                          due < wake ? due : wake);
                 now = link_now();
-                for (positive turn = 0; turn < 256; turn++)
-                {
-                        p8 address[16];
-                        p16 from_port;
-                        bipolar got = link_receive(datagram, address,
-                                                   address_of from_port);
-                        struct waterlink_datagram head;
-
-                        if (got < 0)
-                                break;
-                        if (got < 16)
-                                continue;
-                        memory_copy(address_of head, datagram, 16);
-                        if (head.kind == WATERLINK_KIND_INITIATE)
-                                link_server_initiation(datagram, (positive)got,
-                                                       address, from_port, now);
-                        else if (head.kind == WATERLINK_KIND_CARRY ||
-                                 head.kind == WATERLINK_KIND_CLOSE)
-                                (void)link_carried(datagram, (positive)got,
-                                                   address, from_port, now,
-                                                   link_server_hear);
-                        else if (head.kind >= WATERLINK_KIND_PAIR_1 &&
-                                 head.kind <= WATERLINK_KIND_PAIR_3)
-                                link_pair_datagram(datagram, (positive)got,
-                                                   address, from_port, now);
-                }
+                link_receive_all(now);
                 link_nearby_receive(now);
         }
 
@@ -2437,86 +2464,23 @@ static b32 link_serve(void)
 
 // The client ----------------------------------------------------------------------
 
+/*
+        The client is the same loop with one session, which it keys itself:
+        an initiation a second until one is answered, and again before the
+        keys run out, under the same conversation so the streams go on as
+        they were.
+*/
 typedef struct
 {
-        p8 kind;
-        bool answered;
-        bool refused;
-        bool output_done;
-        bool error_done;
-        b32 status;
-        p64 credit;
-        p64 sent;
-        bool input_done;
+        struct waterlink_noise noise;
+        p32 ours;      // an initiation waiting for its answer, or 0
+        p64 initiated; // when it went
+        positive attempts;
         bool raw;
         terminal_modes saved;
-        p8 refusal[128];
-        bipolar input;  // standard input, or the file a push sends
-        bipolar output; // standard output, or the file a pull fills
-        bool output_failed;
-        p8 output_part[4096];
 } link_client_state;
 
-static link_client_state link_client = {.input = 0, .output = 1};
-
-static fn link_client_hear(address_any context,
-                           struct waterlink_frame address_to head,
-                           p8 address_to payload)
-{
-        positive length = head->length;
-
-        (void)context;
-        if (!length)
-                return;
-
-        switch (head->key)
-        {
-        case LINK_KEY_ANSWER:
-                link_client.answered = true;
-                if (payload[0] == 'N')
-                {
-                        positive keep = length - 1 < sizeof link_client.refusal - 1
-                                                ? length - 1
-                                                : sizeof link_client.refusal - 1;
-
-                        //      Printed to a terminal: printable bytes only.
-                        for (positive at = 0; at < keep; at++)
-                                link_client.refusal[at] =
-                                        payload[1 + at] >= ' ' &&
-                                                        payload[1 + at] < 127
-                                                ? payload[1 + at]
-                                                : '?';
-                        link_client.refusal[keep] = 0;
-                        link_client.refused = true;
-                }
-                break;
-        case LINK_KEY_CREDIT:
-                if (length >= 9)
-                        memory_copy(address_of link_client.credit, payload + 1,
-                                    8);
-                break;
-        case LINK_KEY_OUTPUT:
-                if (payload[0] == LINK_DATA &&
-                    system_write_all((positive)link_client.output, payload + 1,
-                                     length - 1) != length - 1)
-                        link_client.output_failed = true;
-                else if (payload[0] == LINK_EXIT && length >= 5)
-                {
-                        memory_copy(address_of link_client.status, payload + 1,
-                                    4);
-                        link_client.output_done = true;
-                }
-                break;
-        case LINK_KEY_ERROR:
-                if (payload[0] == LINK_DATA)
-                        (void)system_write_all(2, payload + 1, length - 1);
-                else
-                        link_client.error_done = true;
-                break;
-        default:
-                break;
-        }
-}
+static link_client_state link_client;
 
 static fn link_client_restore(void)
 {
@@ -2548,38 +2512,37 @@ static bool link_client_raw(void)
         return true;
 }
 
-/*
-        The initiator's half of the handshake, for a new session or to key the
-        one it has again. Returns the answer's datagram once it verifies.
-*/
-static bool link_client_handshake(struct link_session address_to s,
-                                  struct waterlink_noise address_to noise,
-                                  p32 ours, p8 address_to datagram)
+// The initiator's half of the handshake, for a new session or a rekey.
+static bool link_client_initiate(struct link_session address_to s, p64 now)
 {
+        p8 datagram[WATERLINK_DATAGRAM];
         p8 hello[WATERLINK_HELLO_BYTES];
         p8 ephemeral[32];
         p64 wall = system_clock_ns(0);
+        bool sent;
 
+        link_client.ours = link_index_new();
+        link_client.initiated = now;
         waterlink_stamp(hello, wall / 1000000000ull,
                         (p32)(wall % 1000000000ull));
         memory_copy(hello + WATERLINK_STAMP_BYTES, address_of s->conversation, 8);
-        memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of ours, 4);
-        if (system_random_fill(ephemeral, 32, 0) < 0)
-        {
-                crypto_forget(ephemeral, sizeof ephemeral);
-                crypto_forget(noise, sizeof(address_to noise));
-                return false;
-        }
-        if (!waterlink_initiate(noise, address_of link_self.me, s->peer,
-                                ephemeral, hello, datagram))
-        {
-                crypto_forget(ephemeral, sizeof ephemeral);
-                crypto_forget(noise, sizeof(address_to noise));
-                return false;
-        }
-        crypto_forget(ephemeral, sizeof ephemeral);
-        return link_send_to(datagram, WATERLINK_DATAGRAM, s->address,
+        memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of link_client.ours,
+                    4);
+        sent = link_client.ours &&
+               system_random_fill(ephemeral, 32, 0) >= 0 &&
+               waterlink_initiate(address_of link_client.noise,
+                                  address_of link_self.me, s->peer, ephemeral,
+                                  hello, datagram) &&
+               link_send_to(datagram, WATERLINK_DATAGRAM, s->address,
                             s->port) >= 0;
+        crypto_forget(ephemeral, sizeof ephemeral);
+        if (!sent)
+        {
+                crypto_forget(address_of link_client.noise,
+                              sizeof link_client.noise);
+                link_client.ours = 0;
+        }
+        return sent;
 }
 
 static bool link_client_answer(struct link_session address_to s,
@@ -2618,6 +2581,14 @@ static bool link_client_answer(struct link_session address_to s,
         return true;
 }
 
+static fn link_client_answered(p8 address_to datagram, positive length)
+{
+        if (link_client.ours &&
+            link_client_answer(link_self.session, address_of link_client.noise,
+                               link_client.ours, datagram, length))
+                link_client.ours = 0;
+}
+
 static p64 link_rekey_after(void)
 {
         string_address text = file_environment(
@@ -2633,19 +2604,16 @@ static p64 link_rekey_after(void)
 static b32 link_client_run(string_address name, p8 kind,
                            string_address address_to words, positive count)
 {
+        system_poll_descriptor watch[3 + 5];
         link_peers peers;
         struct waterlink_peer address_to peer;
         struct link_session address_to s = link_self.session;
-        struct waterlink_noise noise;
-        struct waterlink_noise renoise;
-        p8 datagram[WATERLINK_DATAGRAM + 16];
         p8 request[LINK_REQUEST_MAX + 64];
         positive request_length = 0;
-        p32 ours;
-        p32 reours = 0;
+        bipolar input = kind == LINK_KIND_PULL || kind == LINK_KIND_LOG ? -1 : 0;
         p64 rekey_after = link_rekey_after();
-        p64 rekey_sent = 0;
-        bool keyed = false;
+        bool asked = false;
+        bool input_waiting = true;
         bipolar signals;
         b32 stopped = 0;
         b32 answer = LINK_FAILED;
@@ -2682,22 +2650,22 @@ static b32 link_client_run(string_address name, p8 kind,
                         file_facts facts;
                         p32 mode;
 
-                        link_client.input = system_open_at(AT_FDCWD, words[0],
-                                                           FILE_READ | O_CLOEXEC);
-                        if (link_client.input < 0)
-                                return host_fail(words[0], link_client.input);
-                        mode = file_look(link_client.input, (string_address) "",
+                        input = system_open_at(AT_FDCWD, words[0],
+                                               FILE_READ | O_CLOEXEC);
+                        if (input < 0)
+                                return host_fail(words[0], input);
+                        mode = file_look(input, (string_address) "",
                                          AT_EMPTY_PATH, address_of facts)
                                        ? facts.mode & 0777
                                        : 0644;
                         memory_copy(request + request_length, address_of mode, 4);
                         request_length += 4;
                 }
+                else if (string_length(words[1]) + 28 > sizeof s->part)
+                        return host_refuse("%s is too long a name\n", words[1]);
                 memory_copy(request + request_length, far, length);
                 request_length += length;
         }
-        else if (kind == LINK_KIND_LOG)
-                ;
         else if (kind == LINK_KIND_SHELL)
         {
                 string_address term = file_environment((string_address) "TERM");
@@ -2711,8 +2679,7 @@ static b32 link_client_run(string_address name, p8 kind,
                         request_length += string_length(term);
                 }
         }
-        else
-        {
+        else if (kind == LINK_KIND_RUN)
                 for (positive at = 0; at < count; at++)
                 {
                         positive length = string_length(words[at]);
@@ -2727,113 +2694,123 @@ static b32 link_client_run(string_address name, p8 kind,
                                     length);
                         request_length += length;
                 }
-        }
 
         link_self.socket = link_socket_open(0, false);
         if (link_self.socket < 0)
                 return host_fail("a socket", link_self.socket);
         link_self.gso = !file_environment((string_address) "WATERLINK_NO_SEGMENTS");
-
         if (!link_session_open(s))
                 return host_fail("memory", -ENOMEM);
         memory_copy(s->peer, peer->key, 32);
         memory_copy(s->name, peer->name, WATERLINK_NAME_MAX);
         memory_copy(s->address, peer->address, 16);
         s->port = peer->port;
+        s->kind = kind;
         if (system_random_fill(address_of s->conversation, 8, 0) < 0)
         {
                 link_session_close(s);
                 return host_fail("randomness", -EIO);
         }
 
-        //      The handshake: a new initiation a second until one is answered.
-        ours = link_index_new();
-        if (!ours)
+        //      Input is read once the machine has said yes to the request,
+        //      and never waited on: standard input is opened again as a
+        //      description of this process's own, which can be nonblocking
+        //      without changing it for whoever shares the terminal or pipe.
+        if (!input)
         {
-                link_session_close(s);
-                return host_fail("randomness", -EIO);
+                bipolar own = system_open_at(AT_FDCWD, "/proc/self/fd/0",
+                                             FILE_READ | O_NONBLOCK | O_CLOEXEC);
+
+                input = own >= 0 ? own : 0;
         }
-        for (positive attempt = 0; attempt < LINK_ATTEMPTS && !keyed; attempt++)
-        {
-                p64 until;
-
-                link_client_handshake(s, address_of noise, ours, datagram);
-                until = link_now() + LINK_ATTEMPT;
-                while (!keyed && link_now() < until)
-                {
-                        system_poll_descriptor wait = {(b32)link_self.socket,
-                                                       SYSTEM_POLL_READ, 0};
-                        p8 address[16];
-                        p16 port;
-                        bipolar got;
-
-                        link_wait(address_of wait, 1, until);
-                        while ((got = link_receive(datagram, address,
-                                                   address_of port)) > 0)
-                                if (link_client_answer(s, address_of noise,
-                                                       ours, datagram,
-                                                       (positive)got))
-                                {
-                                        keyed = true;
-                                        break;
-                                }
-                }
-        }
-
-        if (!keyed)
-        {
-                p8 place[64];
-
-                link_place_text(s->address, s->port, place);
-                string_format(log_error,
-                              host_label "%s did not answer at %s: it is off, "
-                                         "unreachable, or does not know this "
-                                         "machine's key\n",
-                              name, (string_address)place);
-                log_flush();
-                link_session_close(s);
-                return LINK_FAILED;
-        }
-
-        if (kind == LINK_KIND_PULL)
-        {
-                positive length = string_length(words[1]);
-
-                if (length + 28 > sizeof link_client.output_part)
-                        return host_refuse("%s is too long a name\n", words[1]);
-                link_client.output = link_part_open(
-                        words[1], length, link_client.output_part,
-                        sizeof link_client.output_part, 0644);
-                if (link_client.output < 0)
-                        return host_fail((string_address)link_client.output_part,
-                                         link_client.output);
-        }
-
-        link_client.kind = kind;
-        link_client.credit = kind == LINK_KIND_SHELL ? ~0ull : 0;
-        if (kind == LINK_KIND_PULL || kind == LINK_KIND_LOG)
-                link_client.input_done = true;
-        (void)waterlink_post(s->link, LINK_KEY_REQUEST,
-                             WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_URGENT |
-                                     WATERLINK_FRAME_LAST,
-                             0, request, (p16)request_length, link_now());
-
+        link_stream_set(s->reads, input, LINK_KEY_INPUT,
+                        WATERLINK_FRAME_DURABLE |
+                                (kind == LINK_KIND_SHELL ? WATERLINK_FRAME_URGENT
+                                                         : 0));
+        s->reads[0].done = true;
+        link_stream_set(s->writes, 1, LINK_KEY_OUTPUT, 0);
+        link_stream_set(s->writes + 1, 2, LINK_KEY_ERROR, 0);
         signals = link_signals_open();
-        if (kind == LINK_KIND_SHELL)
-                (void)link_client_raw();
 
         for (;;)
         {
-                system_poll_descriptor watch[3];
-                positive watching = 0;
                 p64 now = link_now();
                 p64 wake;
-                bool read_input;
 
                 if (signals >= 0)
                         link_signals_take(signals, address_of stopped);
 
-                //      A window's new size replaces the one not yet sent.
+                if (!s->now.live)
+                {
+                        if (!link_client.ours ||
+                            now - link_client.initiated >= LINK_ATTEMPT)
+                        {
+                                p8 place[64];
+
+                                if (link_client.attempts++ < LINK_ATTEMPTS &&
+                                    link_client_initiate(s, now))
+                                        ;
+                                else
+                                {
+                                        link_place_text(s->address, s->port,
+                                                        place);
+                                        string_format(log_error,
+                                                      host_label "%s did not "
+                                                                 "answer at %s: "
+                                                                 "it is off, "
+                                                                 "unreachable, or "
+                                                                 "does not know "
+                                                                 "this machine's "
+                                                                 "key\n",
+                                                      name,
+                                                      (string_address)place);
+                                        log_flush();
+                                        break;
+                                }
+                        }
+                }
+                else if (!asked)
+                {
+                        if (kind == LINK_KIND_PULL)
+                        {
+                                bipolar part = link_part_open(
+                                        words[1], string_length(words[1]),
+                                        s->part, sizeof s->part, 0644);
+
+                                if (part < 0)
+                                {
+                                        answer = host_fail((string_address)s->part,
+                                                           part);
+                                        s->part[0] = 0;
+                                        break;
+                                }
+                                string_copy((string_address)s->whole, words[1]);
+                                link_stream_set(s->writes, part,
+                                                LINK_KEY_OUTPUT, 0);
+                        }
+                        (void)waterlink_post(s->link, LINK_KEY_REQUEST,
+                                             WATERLINK_FRAME_DURABLE |
+                                                     WATERLINK_FRAME_URGENT |
+                                                     WATERLINK_FRAME_LAST,
+                                             request, (p16)request_length, now);
+                        if (kind == LINK_KIND_SHELL)
+                                (void)link_client_raw();
+                        asked = true;
+                }
+                else if (now - s->now.made >= rekey_after &&
+                         (!link_client.ours ||
+                          now - link_client.initiated > LINK_ATTEMPT) &&
+                         !link_client_initiate(s, now))
+                        break;
+
+                if (input_waiting && s->answered && !s->refused)
+                {
+                        s->reads[0].done = s->reads[0].fd < 0;
+                        input_waiting = false;
+                }
+
+                //      A window's new size replaces the one not yet sent; ^C
+                //      with no terminal goes to the command.
                 if (stopped == 28)
                 {
                         p8 packed[4];
@@ -2847,7 +2824,6 @@ static b32 link_client_run(string_address name, p8 kind,
                 }
                 else if (stopped == 2 && kind == LINK_KIND_RUN)
                 {
-                        //      ^C with no terminal: the command gets it.
                         p8 signal = 2;
 
                         stopped = 0;
@@ -2863,161 +2839,57 @@ static b32 link_client_run(string_address name, p8 kind,
                         break;
                 }
 
-                if (link_client.refused)
+                if (s->refused)
                 {
+                        link_session_end(s, true);
                         link_client_restore();
                         string_format(log_error, host_label "%s: %s\n", name,
-                                      (string_address)link_client.refusal);
+                                      (string_address)s->refusal);
                         log_flush();
-                        link_session_end(s, true);
-                        answer = LINK_FAILED;
                         break;
                 }
-
-                if (link_client.output_done &&
-                    (kind != LINK_KIND_RUN || link_client.error_done))
+                if (s->writes[0].done &&
+                    (kind != LINK_KIND_RUN || s->writes[1].done))
                 {
                         //      Acknowledge what ended it, then say goodbye.
                         link_session_flush(s, now);
                         link_session_end(s, true);
-                        link_session_say(s, WATERLINK_KIND_CLOSE);
-                        answer = link_client.status;
+                        answer = s->status;
                         break;
                 }
-
-                if (now - s->heard > LINK_DEAD || s->finished)
+                if (s->now.live && (now - s->heard > LINK_DEAD || s->finished))
                 {
                         link_client_restore();
                         string_format(log_error,
                                       s->finished
                                               ? host_label "%s closed the link\n"
-                                              : host_label "the link to %s "
-                                                           "was lost\n",
+                                              : host_label "the link to %s was "
+                                                           "lost\n",
                                       name);
                         log_flush();
-                        answer = LINK_FAILED;
                         break;
                 }
 
-                //      Keyed again before the session runs out, under the same
-                //      conversation, so the streams go on as they were.
-                if (!rekey_sent && now - s->now.made >= rekey_after)
-                {
-                        reours = link_index_new();
-                        if (!reours ||
-                            !link_client_handshake(s, address_of renoise,
-                                                   reours, datagram))
-                        {
-                                crypto_forget(address_of renoise,
-                                              sizeof renoise);
-                                answer = LINK_FAILED;
-                                break;
-                        }
-                        else
-                                rekey_sent = now;
-                }
-                else if (rekey_sent && now - rekey_sent > LINK_ATTEMPT)
-                        rekey_sent = 0;
-
-                link_session_flush(s, now);
-                if (now - s->spoke > LINK_KEEPALIVE)
-                        link_session_say(s, WATERLINK_KIND_CARRY);
-
-                wake = waterlink_wake(s->link, now);
-                if (wake > now + 1000000)
-                        wake = now + 1000000;
-
-                link_watch(watch, address_of watching, link_self.socket,
-                           SYSTEM_POLL_READ);
-                link_watch(watch, address_of watching, signals,
-                           SYSTEM_POLL_READ);
-                read_input = !link_client.input_done && link_room(s) &&
-                             link_client.answered &&
-                             link_client.sent < link_client.credit;
-                if (read_input)
-                        link_watch(watch, address_of watching,
-                                   link_client.input, SYSTEM_POLL_READ);
-
-                link_wait(watch, watching, wake);
-                now = link_now();
-
-                if (read_input && (watch[watching - 1].returned &
-                                   (SYSTEM_POLL_READ | SYSTEM_POLL_HANGUP |
-                                    SYSTEM_POLL_ERROR)))
-                {
-                        positive room = link_room_frames(s) * LINK_CHUNK;
-                        bipolar got;
-
-                        if (link_client.credit - link_client.sent < room)
-                                room = (positive)(link_client.credit -
-                                                  link_client.sent);
-                        got = system_read_once(link_client.input,
-                                               link_read_buffer, room);
-                        if (got > 0)
-                        {
-                                //      A keystroke leaves alone and at once.
-                                link_post_read(s, LINK_KEY_INPUT,
-                                               WATERLINK_FRAME_DURABLE |
-                                                       (kind == LINK_KIND_SHELL
-                                                                ? WATERLINK_FRAME_URGENT
-                                                                : 0),
-                                               (positive)got);
-                                link_client.sent += (positive)got;
-                                link_session_flush(s, now);
-                        }
-                        else if (got != -EAGAIN && got != -4)
-                        {
-                                link_client.input_done = true;
-                                (void)link_post(s, LINK_KEY_INPUT,
-                                                WATERLINK_FRAME_DURABLE |
-                                                        WATERLINK_FRAME_LAST,
-                                                LINK_END, null, 0);
-                        }
-                }
-
-                for (positive turn = 0; turn < 256; turn++)
-                {
-                        p8 address[16];
-                        p16 port;
-                        bipolar got = link_receive(datagram, address,
-                                                   address_of port);
-                        struct waterlink_datagram head;
-
-                        if (got < 16)
-                                break;
-                        memory_copy(address_of head, datagram, 16);
-                        if (head.kind == WATERLINK_KIND_RESPOND && rekey_sent)
-                        {
-                                if (link_client_answer(s, address_of renoise,
-                                                       reours, datagram,
-                                                       (positive)got))
-                                        rekey_sent = 0;
-                        }
-                        else if (head.kind == WATERLINK_KIND_CARRY ||
-                                 head.kind == WATERLINK_KIND_CLOSE)
-                                (void)link_carried(datagram, (positive)got,
-                                                   address, port, now,
-                                                   link_client_hear);
-                }
+                wake = link_sessions_turn(now);
+                if (link_client.ours &&
+                    link_client.initiated + LINK_ATTEMPT < wake)
+                        wake = link_client.initiated + LINK_ATTEMPT;
+                link_wait(watch, link_sessions_watch(watch, signals), wake);
+                link_receive_all(link_now());
         }
 
         link_client_restore();
+        crypto_forget(address_of link_client.noise, sizeof link_client.noise);
 
         //      A pulled file is only there under its name once it is whole.
-        if (kind == LINK_KIND_PULL && link_client.output >= 0)
+        if (kind == LINK_KIND_PULL && s->part[0])
         {
-                if (answer || link_client.output_failed ||
-                    system_call_1(syscall(fsync), (positive)link_client.output) < 0 ||
-                    !link_part_publish(link_client.output,
-                                       link_client.output_part,
-                                       (p8 address_to)words[1]))
-                {
-                        link_part_discard(link_client.output,
-                                          link_client.output_part);
-                        if (!answer)
-                                answer = 1;
-                }
-                system_close(link_client.output);
+                if (!answer && !s->failed &&
+                    system_call_1(syscall(fsync), (positive)s->writes[0].fd) >= 0 &&
+                    link_part_publish(s->writes[0].fd, s->part, s->whole))
+                        s->part[0] = 0;
+                else if (!answer)
+                        answer = 1;
         }
         //      What the link did, for whoever is measuring it.
         if (file_environment((string_address) "WATERLINK_STATS"))
