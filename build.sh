@@ -88,10 +88,15 @@ if [ "$(uname)" = "Linux" ]; then
         # future timestamp could be exec'd unchanged by an elevated invocation.
         if [ "$bootstrap_uid" = 0 ] || [ ! -x "$tool" ] ||
                 [ -n "$(find "$here/src" "$here/build.sh" -newer "$tool" -print -quit)" ]; then
+                # Built beside it and renamed over, so a second build.sh
+                # started meanwhile runs the old tool or the new one and
+                # never a half-written file.
                 "$compiler" -O2 -static -nostdlib -nostartfiles \
                         -fno-stack-protector -fno-builtin -w \
-                        -o "$tool" "$source" ||
+                        -o "$tool.$$" "$source" &&
+                        mv -f "$tool.$$" "$tool" ||
                         {
+                                rm -f "$tool.$$"
                                 echo "build.sh: could not build the build tool" >&2
                                 exit 1
                         }

@@ -4,6 +4,7 @@
 #
 #           sh test/run                 every lane this machine can run
 #           sh test/run shell text      only the lanes named
+#           sh test/run -j 16           the same, up to 16 lanes at once
 #           sh test/run --list          what the lanes are
 #
 #           sh test/run bench           every benchmark
@@ -47,8 +48,15 @@ riscv64)         host_arch=riscv64 ;;
 *)               host_arch=unknown ;;
 esac
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/dawning-test.XXXXXX") || exit 1
-trap 'rm -rf "$work"' EXIT INT TERM
+#       A lane started by `run -j` works in its parent's directory: the
+#       shell, the farms and the tally are built there once and shared, and
+#       the parent removes it.
+if [ -n "${TEST_SHARED_WORK:-}" ]; then
+        work=$TEST_SHARED_WORK
+else
+        work=$(mktemp -d "${TMPDIR:-/tmp}/dawning-test.XXXXXX") || exit 1
+        trap 'rm -rf "$work"' EXIT INT TERM
+fi
 
 #       Every lane makes its own directory with mktemp, and a lane that is
 #       killed never reaches its trap. Nested under this one, whatever a lane
@@ -59,7 +67,7 @@ export TMPDIR
 
 TEST_TALLY="$work/tally"
 export TEST_TALLY
-: > "$TEST_TALLY"
+[ -n "${TEST_SHARED_WORK:-}" ] || : > "$TEST_TALLY"
 
 #       Lanes run only when named, because they need something a plain run
 #       does not have: wifi wants an image built with kernel/profile/hwsim.
@@ -15664,6 +15672,28 @@ if [ "$#" -gt 0 ] && [ "$1" = "--list" ]; then
         exit 0
 fi
 
+#       One lane in a process of its own, for `run -j`: the parent has built
+#       what the lanes share, and reads the status back from the file.
+if [ "$#" -eq 2 ] && [ "$1" = "--lane" ]; then
+        "lane_$2"
+        exit $?
+fi
+
+#       -j N runs up to N lanes at once. The lanes that time a terminal or a
+#       guest, and the differential ones that already take every core, run
+#       one at a time after the rest, as they would without -j. A lane's
+#       output is printed whole, in the order the lanes were asked for.
+jobs=1
+case ${1:-} in
+-j) jobs=${2:-}; [ "$#" -ge 2 ] && shift 2 ;;
+-j*) jobs=${1#-j}; shift ;;
+esac
+case $jobs in
+'' | *[!0-9]* | 0) echo "run: -j wants a count" >&2; exit 2 ;;
+esac
+
+alone_lanes="text files misc util_linux shell builtins awk term edit differential_oracle boot install canvas wifi"
+
 if [ "$#" -gt 0 ]; then
         requested=$*
 
@@ -15690,17 +15720,59 @@ notrun=""
 #       counted it. It exits 2 now and this says so at the end, where the
 #       verdict is, rather than in one line thirty lines up that scrolls past.
 #
-for lane in $requested; do
-        printf '\n%s -- %s\n' "$lane" "$(describe "$lane")"
+if [ "$jobs" -gt 1 ]; then
+        #       Built here, once: a lane would otherwise build them itself,
+        #       and two lanes building one file at once is a torn binary.
+        need_shell || exit 1
+        need_policy_farm || exit 1
 
-        "lane_$lane"
-        outcome=$?
+        TEST_SHARED_WORK=$work
+        export TEST_SHARED_WORK
 
-        [ "$outcome" = 0 ] && continue
-        [ "$outcome" = 2 ] && { notrun="$notrun $lane"; continue; }
+        pooled=""
+        serial=""
+        for lane in $requested; do
+                case " $alone_lanes " in
+                *" $lane "*) serial="$serial $lane" ;;
+                *) pooled="$pooled $lane" ;;
+                esac
+        done
 
-        broken="$broken $lane"
-done
+        # shellcheck disable=SC2016
+        one_lane='sh "$0" --lane "$1" < /dev/null > "$TEST_SHARED_WORK/lane.$1.log" 2>&1
+echo $? > "$TEST_SHARED_WORK/lane.$1.status"'
+
+        [ -z "$pooled" ] ||
+                printf '%s\n' $pooled |
+                xargs -P "$jobs" -n 1 sh -c "$one_lane" "$here/run"
+
+        for lane in $serial; do
+                sh -c "$one_lane" "$here/run" "$lane"
+        done
+
+        for lane in $requested; do
+                printf '\n%s -- %s\n' "$lane" "$(describe "$lane")"
+                cat "$work/lane.$lane.log" 2>/dev/null
+                outcome=$(cat "$work/lane.$lane.status" 2>/dev/null || echo 1)
+
+                [ "$outcome" = 0 ] && continue
+                [ "$outcome" = 2 ] && { notrun="$notrun $lane"; continue; }
+
+                broken="$broken $lane"
+        done
+else
+        for lane in $requested; do
+                printf '\n%s -- %s\n' "$lane" "$(describe "$lane")"
+
+                "lane_$lane"
+                outcome=$?
+
+                [ "$outcome" = 0 ] && continue
+                [ "$outcome" = 2 ] && { notrun="$notrun $lane"; continue; }
+
+                broken="$broken $lane"
+        done
+fi
 
 echo
 echo "  ----"
