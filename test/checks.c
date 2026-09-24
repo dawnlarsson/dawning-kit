@@ -54169,6 +54169,816 @@ b32 main(void)
 }
 #endif /* CHECK_waterlink */
 
+#ifdef CHECK_waterlink_service
+/*
+        Waterlink's service half, driven directly: the admission, pairing,
+        authorization and transfer code in service.c, nearby.c and command.c
+        that CHECK_waterlink's pure transforms never reach, and the link lane
+        only reaches the way a well-behaved peer does.
+
+        The whole shell is compiled in, so the functions under test are the
+        ones that ship. Two things are arranged around them. The entropy
+        source is wrapped, so a failing getrandom can be switched on as the
+        kernel would fail it. And the run happens in a user and mount
+        namespace of its own, with tmpfs over /root and /run, so the
+        authorization files are root's and the test owns them. Datagrams go
+        over loopback to a socket the test reads, so "was answered" and "was
+        not answered" are what the kernel delivered.
+*/
+#define system_random_fill system_random_fill_kernel
+#include "../src/lib.util.c"
+#undef system_random_fill
+
+static bool entropy_down;
+
+static bipolar system_random_fill(address_any into, positive length,
+                                  positive flags)
+{
+        if (entropy_down)
+                return -5;
+        return system_random_fill_kernel(into, length, flags);
+}
+
+#include "../src/moonwater/spark.c"
+#define SHELL_UTILITY_PROGRAM
+#include "../src/sh/shell.c"
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+
+static bool wls_write(string_address path, address_any data, positive length,
+                      positive mode)
+{
+        bipolar handle;
+        bool good;
+
+        (void)system_remove_at(AT_FDCWD, path, 0);
+        handle = system_open_at_mode(AT_FDCWD, path,
+                                     FILE_WRITE | FILE_EXCLUSIVE | O_CLOEXEC,
+                                     mode);
+        if (handle < 0)
+                return false;
+        good = system_write_all((positive)handle, data, length) == length;
+        (void)system_call_2(syscall(fchmod), (positive)handle, mode);
+        system_close(handle);
+        return good;
+}
+
+static bool wls_text(string_address path, string_address text)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path, FILE_WRITE | O_CLOEXEC);
+        positive length = string_length(text);
+        bool good;
+
+        if (handle < 0)
+                return false;
+        good = system_write_all((positive)handle, text, length) == length;
+        system_close(handle);
+        return good;
+}
+
+//      A namespace where this process is root and /root and /run are its own.
+static bool wls_sandbox(void)
+{
+        p8 map[64];
+        bipolar uid = system_call_1(syscall(getuid), 0);
+        bipolar gid = system_call_1(syscall(getgid), 0);
+        positive at;
+
+        if (system_call_1(syscall(unshare), 0x10000000 | 0x00020000) < 0)
+                return false;
+        map[0] = '0';
+        map[1] = ' ';
+        at = 2 + positive_into(map + 2, (positive)uid);
+        memory_copy(map + at, " 1\n", 4);
+        if (!wls_text("/proc/self/uid_map", (string_address)map))
+                return false;
+        (void)wls_text("/proc/self/setgroups", "deny");
+        at = 2 + positive_into(map + 2, (positive)gid);
+        memory_copy(map + at, " 1\n", 4);
+        if (!wls_text("/proc/self/gid_map", (string_address)map))
+                return false;
+        if (system_call_5(syscall(mount), 0, (positive) "/", 0,
+                          0x4000 | (1 << 18), 0) < 0)
+                return false;
+        if (system_call_5(syscall(mount), (positive) "tmpfs", (positive) "/root",
+                          (positive) "tmpfs", 0, (positive) "mode=0700") < 0 ||
+            system_call_5(syscall(mount), (positive) "tmpfs", (positive) "/run",
+                          (positive) "tmpfs", 0, (positive) "mode=0755") < 0)
+                return false;
+        return system_make_directory_at(AT_FDCWD, HOST_STATE, 0755) >= 0;
+}
+
+//      A loopback socket the test reads what the service sent from.
+static bipolar wls_listener(p16 address_to port)
+{
+        socket_address_internet6 self;
+        b32 size = sizeof self;
+        bipolar handle = socket_new(AF_INET6, SOCK_DGRAM | SOCK_CLOEXEC |
+                                                  SOCK_NONBLOCK, 0);
+
+        if (handle < 0)
+                return handle;
+        memory_zero(address_of self, sizeof self);
+        self.family = AF_INET6;
+        self.host[15] = 1;
+        if (socket_bind((b32)handle, address_of self, sizeof self) < 0 ||
+            system_call_3(syscall(getsockname), (positive)handle,
+                          (positive)address_of self,
+                          (positive)address_of size) < 0)
+                return -1;
+        address_to port = network_order_16(self.port);
+        return handle;
+}
+
+//      What the service sent to that socket since the last look, if anything.
+static bipolar wls_heard(bipolar handle, p8 address_to datagram)
+{
+        socket_address_internet6 from;
+        b32 size = sizeof from;
+        timespec pause = {0, 20000000};
+        bipolar got;
+
+        (void)system_call_2(syscall(nanosleep), (positive)address_of pause, 0);
+        got = socket_receive((b32)handle, datagram, WATERLINK_DATAGRAM + 16,
+                             MSG_DONTWAIT, address_of from, address_of size);
+        return got;
+}
+
+static fn wls_drain(bipolar handle)
+{
+        p8 junk[WATERLINK_DATAGRAM + 16];
+
+        while (wls_heard(handle, junk) > 0)
+                ;
+}
+
+static fn wls_identity(struct waterlink_identity address_to identity, p8 seed)
+{
+        p8 secret[32];
+
+        for (positive i = 0; i < 32; i++)
+                secret[i] = (p8)(seed * 37 + i * 11 + 1);
+        waterlink_identity_from(identity, secret);
+}
+
+static fn wls_seeded(p8 address_to into, positive length, p8 seed)
+{
+        for (positive i = 0; i < length; i++)
+                into[i] = (p8)(seed * 91 + i * 17 + 5);
+}
+
+static fn wls_peers_with(p8 address_to key, p32 may)
+{
+        struct waterlink_peer peer;
+
+        memory_zero(address_of peer, sizeof peer);
+        memory_copy(peer.key, key, 32);
+        string_copy(peer.name, "client");
+        peer.may = may;
+        (void)wls_write(LINK_PEERS_PATH, address_of peer, sizeof peer, 0600);
+}
+
+static positive wls_peers_count(void)
+{
+        link_peers peers;
+
+        link_peers_load(address_of peers);
+        return peers.count;
+}
+
+static positive wls_sessions_used(void)
+{
+        positive used = 0;
+
+        for (positive at = 0; at < LINK_SESSIONS; at++)
+                used += link_self.session[at].used;
+        return used;
+}
+
+static p8 wls_loopback[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+
+/*
+        The authorization files are read only as root's own, private, whole
+        records -- and anything else grants nothing.
+*/
+static fn authorization_files(void)
+{
+        struct waterlink_peer two[2];
+        p8 key[32];
+
+        wls_seeded(key, 32, 3);
+        wls_peers_with(key, WATERLINK_MAY_DEFAULT);
+        check("sec: a private, whole peer file grants", wls_peers_count() == 1);
+
+        (void)system_call_4(syscall(fchmodat), (positive)(bipolar)AT_FDCWD,
+                            (positive)LINK_PEERS_PATH, 0644, 0);
+        check("sec: a peer file others can read grants nothing",
+              wls_peers_count() == 0);
+        (void)system_call_4(syscall(fchmodat), (positive)(bipolar)AT_FDCWD,
+                            (positive)LINK_PEERS_PATH, 0620, 0);
+        check("sec: a peer file its group can write grants nothing",
+              wls_peers_count() == 0);
+        (void)system_call_4(syscall(fchmodat), (positive)(bipolar)AT_FDCWD,
+                            (positive)LINK_PEERS_PATH, 0600, 0);
+        check("sec: made private again it grants again",
+              wls_peers_count() == 1);
+
+        memory_zero(two, sizeof two);
+        memory_copy(two[0].key, key, 32);
+        (void)wls_write(LINK_PEERS_PATH, two, sizeof(struct waterlink_peer) + 40,
+                        0600);
+        check("sec: a peer file with a partial record grants nothing",
+              wls_peers_count() == 0);
+
+        {
+                positive room = (LINK_PEERS_MAX + 1) *
+                                sizeof(struct waterlink_peer);
+                p8 address_to big = (p8 address_to)system_call_6(
+                        syscall(mmap), 0, room, 3, 0x22, (positive)(bipolar)-1, 0);
+
+                memory_zero(big, room);
+                memory_copy(big, key, 32);
+                (void)wls_write(LINK_PEERS_PATH, big, room, 0600);
+                check("sec: a peer file larger than the table grants nothing",
+                      wls_peers_count() == 0);
+                (void)system_call_2(syscall(munmap), (positive)big, room);
+        }
+
+        wls_peers_with(key, WATERLINK_MAY_DEFAULT);
+        (void)system_rename_at(AT_FDCWD, LINK_PEERS_PATH, AT_FDCWD,
+                               "/root/peers.elsewhere", 0);
+        (void)system_symbolic_link_at("/root/peers.elsewhere", AT_FDCWD,
+                                      LINK_PEERS_PATH);
+        check("sec: a peer file that is a symbolic link grants nothing",
+              wls_peers_count() == 0);
+        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
+        (void)system_make_directory_at(AT_FDCWD, LINK_PEERS_PATH, 0700);
+        check("sec: a peer file that is a directory grants nothing",
+              wls_peers_count() == 0);
+        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, AT_REMOVEDIR);
+
+        {
+                struct link_group_record group;
+                link_groups groups;
+
+                memory_zero(address_of group, sizeof group);
+                string_copy(group.namespace, "office");
+                (void)wls_write(LINK_GROUPS_PATH, address_of group,
+                                sizeof group, 0644);
+                link_groups_load(address_of groups);
+                check("sec: a group file others can read grants nothing",
+                      groups.count == 0);
+                (void)system_call_4(syscall(fchmodat),
+                                    (positive)(bipolar)AT_FDCWD,
+                                    (positive)LINK_GROUPS_PATH, 0600, 0);
+                link_groups_load(address_of groups);
+                check("sec: and made private it is read", groups.count == 1);
+                (void)system_remove_at(AT_FDCWD, LINK_GROUPS_PATH, 0);
+        }
+}
+
+/*
+        Staging: a fresh exclusive name beside the target, published only
+        while the name is still the inode the transfer holds open.
+*/
+static fn staging(void)
+{
+        p8 part[LINK_REQUEST_MAX + 32];
+        p8 other[LINK_REQUEST_MAX + 32];
+        p8 planted[] = "somebody else's";
+        p8 read[64];
+        bipolar handle;
+        bipolar second;
+
+        (void)wls_write("/root/target.link-part", planted, sizeof planted - 1,
+                        0600);
+        handle = link_part_open("/root/target", 12, part, sizeof part, 0640);
+        check("sec: a staging file opens beside a planted predictable one",
+              handle >= 0 &&
+                      !memory_compare(part, "/root/target.link-part.", 23) &&
+                      string_length((string_address)part) == 12 + 11 + 16);
+        {
+                bipolar planted_handle = system_open_at(
+                        AT_FDCWD, "/root/target.link-part", FILE_READ);
+                bipolar got = system_read_once(planted_handle, read, sizeof read);
+
+                system_close(planted_handle);
+                check("sec: and the planted file is left as it was",
+                      got == (bipolar)(sizeof planted - 1) &&
+                              !memory_compare(read, planted, sizeof planted - 1));
+        }
+        second = link_part_open("/root/target", 12, other, sizeof other, 0640);
+        check("sec: two transfers to one target stage under different names",
+              second >= 0 && !string_equals((string_address)part,
+                                            (string_address)other));
+        check("sec: a staging file is owned while its name is its inode",
+              link_part_owned(handle, part));
+
+        (void)system_rename_at(AT_FDCWD, part, AT_FDCWD, "/root/moved", 0);
+        (void)wls_write((string_address)part, planted, 4, 0600);
+        check("sec: a staging name replaced by another file is not owned",
+              !link_part_owned(handle, part));
+        (void)system_remove_at(AT_FDCWD, part, 0);
+        (void)system_symbolic_link_at("/root/moved", AT_FDCWD, part);
+        check("sec: nor one replaced by a link to the staging inode itself",
+              !link_part_owned(handle, part));
+        (void)system_remove_at(AT_FDCWD, part, 0);
+        check("sec: nor a name removed", !link_part_owned(handle, part));
+        system_close(handle);
+        system_close(second);
+        (void)system_remove_at(AT_FDCWD, (string_address)other, 0);
+        (void)system_remove_at(AT_FDCWD, "/root/moved", 0);
+
+        {
+                p8 small[24];
+
+                check("sec: a target too long to stage is refused",
+                      link_part_open("/root/target", 12, small, sizeof small,
+                                     0640) == -ERROR_NAME_TOO_LONG);
+        }
+
+        entropy_down = true;
+        check("sec: with no entropy nothing is staged",
+              link_part_open("/root/target", 12, part, sizeof part, 0640) ==
+                      -EIO);
+        entropy_down = false;
+}
+
+//      A push session whose part file is opened and filled as the server does.
+static bool wls_push(struct link_session address_to s, string_address target)
+{
+        p8 request[4 + 64];
+        p32 mode = 0640;
+        positive length = string_length(target);
+
+        if (!link_session_open(s))
+                return false;
+        memory_copy(request, address_of mode, 4);
+        memory_copy(request + 4, target, length);
+        if (!link_start_file(s, LINK_ASK_PUSH, request, 4 + length))
+                return false;
+        return system_write_all((positive)s->input, "whole", 5) == 5;
+}
+
+static fn publication(void)
+{
+        struct link_session address_to s = link_self.session;
+        p8 read[16];
+        p8 kept[LINK_REQUEST_MAX + 32];
+
+        (void)wls_write("/root/dest", "before", 6, 0644);
+        check("a push opens", wls_push(s, "/root/dest"));
+        link_push_done(s, 1);
+        {
+                bipolar handle = system_open_at(AT_FDCWD, "/root/dest", FILE_READ);
+                bipolar got = system_read_once(handle, read, sizeof read);
+
+                system_close(handle);
+                check("sec: a whole, still-owned push is published",
+                      !s->failed && got == 5 && !memory_compare(read, "whole", 5));
+        }
+        system_close(s->input);
+        s->input = -1;
+        link_session_close(s);
+
+        (void)wls_write("/root/dest", "before", 6, 0644);
+        check("a second push opens", wls_push(s, "/root/dest"));
+        string_copy((string_address)kept, (string_address)s->push_part);
+        (void)system_remove_at(AT_FDCWD, (string_address)kept, 0);
+        (void)wls_write((string_address)kept, "planted", 7, 0600);
+        link_push_done(s, 1);
+        {
+                bipolar handle = system_open_at(AT_FDCWD, "/root/dest", FILE_READ);
+                bipolar got = system_read_once(handle, read, sizeof read);
+                bipolar planted = system_open_at(AT_FDCWD, (string_address)kept,
+                                                 FILE_READ);
+
+                system_close(handle);
+                check("sec: a push whose staging name was replaced is not published",
+                      s->failed && got == 6 && !memory_compare(read, "before", 6));
+                check("sec: and the file put in its place is not removed",
+                      planted >= 0);
+                if (planted >= 0)
+                        system_close(planted);
+        }
+        system_close(s->input);
+        s->input = -1;
+        link_session_close(s);
+        (void)system_remove_at(AT_FDCWD, (string_address)kept, 0);
+
+        check("a third push opens", wls_push(s, "/root/dest"));
+        string_copy((string_address)kept, (string_address)s->push_part);
+        link_session_close(s);
+        check("sec: an interrupted push removes its own staging file",
+              system_open_at(AT_FDCWD, (string_address)kept, FILE_READ) < 0);
+
+        check("a fourth push opens", wls_push(s, "/root/dest"));
+        string_copy((string_address)kept, (string_address)s->push_part);
+        (void)system_remove_at(AT_FDCWD, (string_address)kept, 0);
+        (void)wls_write((string_address)kept, "planted", 7, 0600);
+        link_session_close(s);
+        {
+                bipolar planted = system_open_at(AT_FDCWD, (string_address)kept,
+                                                 FILE_READ);
+
+                check("sec: an interrupted push leaves a name that is no longer its own",
+                      planted >= 0);
+                if (planted >= 0)
+                        system_close(planted);
+        }
+        (void)system_remove_at(AT_FDCWD, (string_address)kept, 0);
+}
+
+/*
+        The responder: an initiation is answered, and one it cannot answer
+        does not hold a session.
+*/
+static struct waterlink_identity wls_server, wls_client, wls_b;
+
+static fn wls_initiation(p8 address_to datagram, p64 conversation,
+                         p64 stamp_seconds)
+{
+        struct waterlink_noise noise;
+        p8 hello[WATERLINK_HELLO_BYTES];
+        p8 ephemeral[32];
+        p32 ours = 0x01020304;
+
+        waterlink_stamp(hello, stamp_seconds, 0);
+        memory_copy(hello + WATERLINK_STAMP_BYTES, address_of conversation, 8);
+        memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of ours, 4);
+        wls_seeded(ephemeral, 32, (p8)conversation);
+        (void)waterlink_initiate(address_of noise, address_of wls_client,
+                                 wls_server.public, ephemeral, hello, datagram);
+}
+
+static fn responder(bipolar listener, p16 port)
+{
+        p8 datagram[WATERLINK_DATAGRAM];
+        p8 answer[WATERLINK_DATAGRAM + 16];
+
+        link_self.me = wls_server;
+        wls_peers_with(wls_client.public, WATERLINK_MAY_DEFAULT);
+        memory_zero(address_of link_self.admission, sizeof link_self.admission);
+        wls_drain(listener);
+
+        entropy_down = true;
+        wls_initiation(datagram, 11, 1000);
+        link_server_initiation(datagram, WATERLINK_DATAGRAM, wls_loopback, port,
+                               1000000);
+        entropy_down = false;
+        check("sec: with no entropy an initiation holds no session",
+              wls_sessions_used() == 0);
+        check("sec: and is not answered", wls_heard(listener, answer) <= 0);
+
+        wls_initiation(datagram, 12, 1001);
+        link_server_initiation(datagram, WATERLINK_DATAGRAM, wls_loopback, port,
+                               2000000);
+        check("an initiation from a paired peer is answered",
+              wls_heard(listener, answer) == WATERLINK_DATAGRAM &&
+                      wls_sessions_used() == 1);
+
+        for (positive at = 0; at < LINK_SESSIONS; at++)
+                if (link_self.session[at].used)
+                        link_session_close(link_self.session + at);
+}
+
+/*
+        The initiator: a forged answer is judged on a copy and leaves the
+        transcript for the real one.
+*/
+static fn initiator_answer(void)
+{
+        struct link_session address_to s = link_self.session;
+        struct waterlink_noise live, before, answering;
+        p8 first[WATERLINK_DATAGRAM], second[WATERLINK_DATAGRAM],
+                forged[WATERLINK_DATAGRAM];
+        p8 who[32], hello[WATERLINK_HELLO_BYTES], heard[WATERLINK_HELLO_BYTES];
+        p8 e1[32], e2[32], gate[32];
+        p32 ours = 0x0a0b0c0d;
+
+        link_self.me = wls_client;
+        check("a client session opens", link_session_open(s));
+        memory_copy(s->peer, wls_server.public, 32);
+        wls_seeded(e1, 32, 41);
+        wls_seeded(e2, 32, 42);
+        waterlink_stamp(hello, 5000, 0);
+        memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of ours, 4);
+        (void)waterlink_initiate(address_of live, address_of wls_client,
+                                 wls_server.public, e1, hello, first);
+        (void)waterlink_accept(address_of answering, address_of wls_server, first,
+                               who, heard);
+        (void)waterlink_respond(address_of answering, e2, ours, 0x55667788,
+                                second);
+
+        //      The forgery: a different ephemeral, gated correctly, so it
+        //      reaches the curve and fails there.
+        memory_copy(forged, second, WATERLINK_DATAGRAM);
+        forged[16] ^= 0x40;
+        waterlink_gate_of(wls_client.public, gate);
+        waterlink_mac1(gate, forged, 16 + WATERLINK_RESPOND_BYTES - 16,
+                       forged + 16 + WATERLINK_RESPOND_BYTES - 16);
+        check("the forged answer still passes the gate",
+              waterlink_gate_passes(address_of wls_client, forged,
+                                    WATERLINK_DATAGRAM));
+
+        before = live;
+        check("sec: a forged answer is refused",
+              !link_client_answer(s, address_of live, ours, forged,
+                                  WATERLINK_DATAGRAM));
+        check("sec: and leaves the live transcript as it was",
+              !memory_compare(address_of live, address_of before, sizeof live));
+        check("sec: so the real answer after it still keys the session",
+              link_client_answer(s, address_of live, ours, second,
+                                 WATERLINK_DATAGRAM) &&
+                      s->now.live);
+        link_session_close(s);
+}
+
+/*
+        Group pairing: the replay marker is spent last, follow-ups come only
+        from where the pairing began, and replies are judged on a copy.
+*/
+static struct waterlink_group_keys wls_office;
+
+static fn wls_group(void)
+{
+        p8 derived[32];
+
+        waterlink_group_derive("office", (p8 address_to) "sesame", 6, 1000,
+                               derived);
+        waterlink_group_keys_from(address_of wls_office, derived, "office");
+        memory_zero(address_of link_nearby, sizeof link_nearby);
+        link_nearby.socket = -1;
+        link_nearby.groups.count = 1;
+        string_copy(link_nearby.groups.record[0].namespace, "office");
+        memory_copy(link_nearby.groups.record[0].key, derived, 32);
+        link_nearby.keys[0] = wls_office;
+        string_copy((string_address)link_nearby.name, "machine");
+}
+
+static positive wls_pairings(void)
+{
+        positive used = 0;
+
+        for (positive at = 0; at < LINK_PAIRING; at++)
+                used += link_nearby.pairing[at].used;
+        return used;
+}
+
+static fn pairing_first(bipolar listener, p16 port)
+{
+        struct waterlink_noise starting;
+        p8 first[WATERLINK_DATAGRAM], heard[WATERLINK_DATAGRAM + 16];
+        p8 e1[32];
+
+        link_self.me = wls_b;
+        wls_group();
+        wls_drain(listener);
+        wls_seeded(e1, 32, 51);
+        waterlink_pair_first(address_of starting, wls_office.pair, e1, 77, first);
+
+        for (positive at = 0; at < LINK_PAIRING; at++)
+                link_nearby.pairing[at].used = true;
+        link_pair_datagram(first, WATERLINK_DATAGRAM, wls_loopback, port, 1000000);
+        check("sec: with the pairing table full a first message is not answered",
+              wls_heard(listener, heard) <= 0);
+        for (positive at = 0; at < LINK_PAIRING; at++)
+                link_nearby.pairing[at].used = false;
+        check("sec: and its replay marker is not spent",
+              link_nearby.seen.count == 0);
+
+        entropy_down = true;
+        link_pair_datagram(first, WATERLINK_DATAGRAM, wls_loopback, port, 1100000);
+        entropy_down = false;
+        check("sec: with no entropy a first message is not answered",
+              wls_heard(listener, heard) <= 0 && wls_pairings() == 0);
+        check("sec: and its replay marker is not spent either",
+              link_nearby.seen.count == 0);
+
+        link_pair_datagram(first, WATERLINK_DATAGRAM, wls_loopback, port, 1200000);
+        check("sec: so the same first message retried is answered",
+              wls_heard(listener, heard) == WATERLINK_DATAGRAM &&
+                      wls_pairings() == 1);
+        link_pair_datagram(first, WATERLINK_DATAGRAM, wls_loopback, port, 1300000);
+        check("and a replay of it after that is not",
+              wls_heard(listener, heard) <= 0 && wls_pairings() == 1);
+        wls_group();
+        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
+}
+
+//      The initiator's side: its pairing is begun by the service itself.
+static fn pairing_second(bipolar listener, p16 port)
+{
+        struct waterlink_noise answering, before;
+        struct link_pairing address_to pairing;
+        p8 first[WATERLINK_DATAGRAM + 16], second[WATERLINK_DATAGRAM],
+                forged[WATERLINK_DATAGRAM], third[WATERLINK_DATAGRAM + 16];
+        p8 e2[32];
+        p8 b_name[WATERLINK_PAIR_NAME] = "machine-b";
+        p32 ours, b_index = 0x0badcafe;
+
+        link_self.me = wls_client;
+        wls_group();
+        wls_drain(listener);
+        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
+
+        link_pair_begin(0, wls_loopback, port, 1000000);
+        check("a pairing begins and sends its first message",
+              wls_heard(listener, first) == WATERLINK_DATAGRAM &&
+                      wls_pairings() == 1);
+        pairing = link_nearby.pairing;
+        if (!pairing->used)
+                return;
+        ours = pairing->ours;
+
+        wls_seeded(e2, 32, 61);
+        (void)waterlink_pair_heard_first(address_of answering, wls_office.pair,
+                                         first);
+        (void)waterlink_pair_second(address_of answering, address_of wls_b, e2,
+                                    b_name, ours, second);
+        memory_copy(second + 8, address_of b_index, 4);
+
+        before = pairing->noise;
+        link_pair_datagram(second, WATERLINK_DATAGRAM, wls_loopback,
+                           (p16)(port + 1), 2000000);
+        check("sec: a second message from another port does not advance it",
+              pairing->used && wls_heard(listener, third) <= 0 &&
+                      !memory_compare(address_of pairing->noise,
+                                      address_of before, sizeof before) &&
+                      wls_peers_count() == 0);
+
+        memory_copy(forged, second, WATERLINK_DATAGRAM);
+        forged[16 + 32 + 4] ^= 1;
+        link_pair_datagram(forged, WATERLINK_DATAGRAM, wls_loopback, port,
+                           2100000);
+        check("sec: a forged second message from the right place is refused",
+              pairing->used && wls_heard(listener, third) <= 0 &&
+                      wls_peers_count() == 0);
+        check("sec: and leaves the pairing's transcript as it was",
+              !memory_compare(address_of pairing->noise, address_of before,
+                              sizeof before));
+
+        link_pair_datagram(second, WATERLINK_DATAGRAM, wls_loopback, port,
+                           2200000);
+        check("sec: so the real second message still completes the pairing",
+              !pairing->used &&
+                      wls_heard(listener, third) == WATERLINK_DATAGRAM &&
+                      wls_peers_count() == 1);
+        {
+                link_peers peers;
+
+                link_peers_load(address_of peers);
+                check("sec: and the peer is kept where the pairing began",
+                      peers.count == 1 &&
+                              !memory_compare(peers.peer[0].address,
+                                              wls_loopback, 16) &&
+                              peers.peer[0].port == port);
+        }
+        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
+}
+
+//      The responder's side: the third message is judged the same way.
+static fn pairing_third(bipolar listener, p16 port)
+{
+        struct waterlink_noise starting, before;
+        struct link_pairing address_to pairing = null;
+        p8 first[WATERLINK_DATAGRAM], second[WATERLINK_DATAGRAM + 16],
+                third[WATERLINK_DATAGRAM], forged[WATERLINK_DATAGRAM];
+        p8 e1[32], key[32], name[WATERLINK_PAIR_NAME];
+        p8 a_name[WATERLINK_PAIR_NAME] = "machine-a";
+        p32 theirs;
+
+        link_self.me = wls_b;
+        wls_group();
+        wls_drain(listener);
+        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
+
+        wls_seeded(e1, 32, 71);
+        waterlink_pair_first(address_of starting, wls_office.pair, e1, 88, first);
+        link_pair_datagram(first, WATERLINK_DATAGRAM, wls_loopback, port, 1000000);
+        check("the responder answers a first message",
+              wls_heard(listener, second) == WATERLINK_DATAGRAM &&
+                      wls_pairings() == 1);
+        for (positive at = 0; at < LINK_PAIRING; at++)
+                if (link_nearby.pairing[at].used)
+                        pairing = link_nearby.pairing + at;
+        if (!pairing)
+                return;
+        memory_copy(address_of theirs, second + 8, 4);
+        (void)waterlink_pair_heard_second(address_of starting, second, key, name);
+        (void)waterlink_pair_third(address_of starting, address_of wls_client,
+                                   a_name, theirs, third);
+
+        before = pairing->noise;
+        link_pair_datagram(third, WATERLINK_DATAGRAM, wls_loopback,
+                           (p16)(port + 1), 2000000);
+        check("sec: a third message from another port is not taken",
+              pairing->used && wls_peers_count() == 0);
+
+        memory_copy(forged, third, WATERLINK_DATAGRAM);
+        forged[16 + 4] ^= 1;
+        link_pair_datagram(forged, WATERLINK_DATAGRAM, wls_loopback, port,
+                           2100000);
+        check("sec: a forged third message is refused",
+              pairing->used && wls_peers_count() == 0);
+        check("sec: and leaves the responder's transcript as it was",
+              !memory_compare(address_of pairing->noise, address_of before,
+                              sizeof before));
+
+        link_pair_datagram(third, WATERLINK_DATAGRAM, wls_loopback, port,
+                           2200000);
+        check("sec: so the real third message still completes it",
+              !pairing->used && wls_peers_count() == 1);
+        (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
+}
+
+//      Discovery labels are published only when every one was drawn.
+static fn labels(void)
+{
+        wls_group();
+        entropy_down = true;
+        check("sec: with no entropy the labels are not made",
+              !link_nearby_labels(5) && !link_nearby.labels_ready);
+        entropy_down = false;
+        check("sec: and with it back they are",
+              link_nearby_labels(6) && link_nearby.labels_ready);
+}
+
+static fn indexes_and_commands(void)
+{
+        entropy_down = true;
+        check("sec: with no entropy no session index is handed out",
+              link_index_new() == 0);
+        entropy_down = false;
+        check("and with it one is", link_index_new() != 0);
+
+        {
+                p8 zero[33];
+                p8 text[48];
+
+                memory_zero(zero, sizeof zero);
+                link_key_text(zero, text);
+                (void)system_remove_at(AT_FDCWD, LINK_PEERS_PATH, 0);
+                check("sec: a low-order key is not paired",
+                      link_pair_locked("low", (string_address)text, null) != 0 &&
+                              wls_peers_count() == 0);
+        }
+
+        {
+                string_address words[] = {"office"};
+
+                (void)system_remove_at(AT_FDCWD, LINK_GROUPS_PATH, 0);
+                entropy_down = true;
+                check("sec: with no entropy no group secret is made up",
+                      link_join(words, 1) != 0 &&
+                              system_open_at(AT_FDCWD, LINK_GROUPS_PATH,
+                                             FILE_READ) < 0);
+                entropy_down = false;
+        }
+}
+
+b32 main(void)
+{
+        bipolar listener;
+        p16 port;
+
+        if (!wls_sandbox())
+        {
+                string_format(log, "waterlink service: NOT RUN -- no user "
+                                   "namespace here\n");
+                log_flush();
+                return 2;
+        }
+        wls_identity(address_of wls_server, 81);
+        wls_identity(address_of wls_client, 82);
+        wls_identity(address_of wls_b, 83);
+
+        listener = wls_listener(address_of port);
+        link_self.socket = socket_new(AF_INET6, SOCK_DGRAM | SOCK_CLOEXEC |
+                                                    SOCK_NONBLOCK, 0);
+        if (listener < 0 || link_self.socket < 0)
+        {
+                string_format(log, "waterlink service: NOT RUN -- no loopback "
+                                   "IPv6 socket here\n");
+                log_flush();
+                return 2;
+        }
+
+        authorization_files();
+        staging();
+        publication();
+        responder(listener, port);
+        initiator_answer();
+        pairing_first(listener, port);
+        pairing_second(listener, port);
+        pairing_third(listener, port);
+        labels();
+        indexes_and_commands();
+        return test_report(null);
+}
+#endif /* CHECK_waterlink_service */
+
 #ifdef CHECK_bowl
 //      Bowl's roots, for this check only, somewhere a user may write, so
 //      landing is tested on real directories; every spelling below is built

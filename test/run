@@ -2365,6 +2365,14 @@ lane_waterlink()
 {
         freestanding_checks_lane waterlink waterlink
         waterlink_outcome=$?
+        #       The service half -- admission, pairing, authorization files,
+        #       staging -- on this machine only: it runs in a user namespace
+        #       of its own, which qemu-user, being threaded, cannot enter.
+        target=$host_arch
+        if target_tools "$target"; then
+                freestanding_checks_one waterlink_service waterlink_service ||
+                        waterlink_outcome=1
+        fi
         #       dnspython and noiseprotocol are found through
         #       WATERLINK_NOISE_PATH where the system has neither; without
         #       dnspython the interop half says NOT RUN and the lane stands on
