@@ -125,10 +125,10 @@ static const link_grant link_grants[] = {
 // The grant a word names, or 0.
 static p32 link_grant_bit(string_address word)
 {
-        for (positive at = 0; at < array_count(link_grants); at++)
-                if (string_equals(word, link_grants[at].name))
-                        return link_grants[at].bit;
-        return 0;
+        positive at = string_table_find(word, link_grants, sizeof link_grants[0],
+                                        array_count(link_grants));
+
+        return at < array_count(link_grants) ? link_grants[at].bit : 0;
 }
 
 static p64 link_now(void)
@@ -1240,14 +1240,14 @@ static fn link_term_word(p8 address_to from, positive length,
         into[length] = 0;
 }
 
-static DEAD_END fn link_child_exec(string_address command, p8 address_to term)
+static DEAD_END fn link_child_exec(string_address address_to words,
+                                    positive count, p8 address_to term)
 {
         p8 term_line[48] = "TERM=";
         p8 path_line[512] = "PATH=/bin:/sbin:/usr/bin:/usr/sbin";
         string_address path = file_environment((string_address) "PATH");
         string_address environment[8];
-        string_address words[4];
-        positive count = 0;
+        positive at = 0;
         positive blocked = 0;
 
         (void)system_signal_mask(2, address_of blocked, null, 8);
@@ -1266,31 +1266,19 @@ static DEAD_END fn link_child_exec(string_address command, p8 address_to term)
         }
         string_copy((string_address)term_line + 5, (string_address)term);
 
-        environment[count++] = (string_address)path_line;
-        environment[count++] = (string_address)term_line;
-        environment[count++] = (string_address) "HOME=/root";
-        environment[count++] = (string_address) "USER=root";
-        environment[count++] = (string_address) "LOGNAME=root";
-        environment[count++] = (string_address) "SHELL=/bin/sh";
-        environment[count] = null;
+        environment[at++] = (string_address)path_line;
+        environment[at++] = (string_address)term_line;
+        environment[at++] = (string_address) "HOME=/root";
+        environment[at++] = (string_address) "USER=root";
+        environment[at++] = (string_address) "LOGNAME=root";
+        environment[at++] = (string_address) "SHELL=/bin/sh";
+        environment[at] = null;
 
         (void)system_call_1(syscall(chdir), (positive)(string_address) "/root");
 
-        words[0] = (string_address) "sh";
-        if (command)
-        {
-                words[1] = (string_address) "-c";
-                words[2] = command;
-                words[3] = null;
-        }
-        else
-        {
-                words[1] = (string_address) "-i";
-                words[2] = null;
-        }
-
-        (void)shell_exec_file((string_address) "/proc/self/exe", words,
-                              command ? 3 : 2, environment);
+        //      The machine's own binary, as whichever utility words[0] names.
+        (void)shell_exec_file((string_address) "/proc/self/exe", words, count,
+                              environment);
         system_call_1(syscall(exit), 127);
         __builtin_unreachable();
 }
@@ -1327,9 +1315,11 @@ static bool link_start_shell(struct link_session address_to s,
         }
         if (!child)
         {
+                string_address words[] = {"sh", "-i", null};
+
                 if (process_pty_child_setup(master, slave, -1, -1) < 0)
                         system_call_1(syscall(exit), 126);
-                link_child_exec(null, term);
+                link_child_exec(words, 2, term);
         }
 
         system_close(slave);
@@ -1339,23 +1329,14 @@ static bool link_start_shell(struct link_session address_to s,
         link_stream_set(s->reads, master, LINK_KEY_OUTPUT,
                         WATERLINK_FRAME_DURABLE);
         link_stream_set(s->writes, master, LINK_KEY_INPUT, 0);
-        s->kind = LINK_KIND_SHELL;
         return true;
 }
 
-static bool link_start_run(struct link_session address_to s,
-                           p8 address_to request, positive length)
+static bool link_start_command(struct link_session address_to s,
+                               string_address address_to words, positive count)
 {
         b32 in[2], out[2], err[2];
-        p8 command[LINK_REQUEST_MAX + 1];
         bipolar child;
-
-        if (!length || length > LINK_REQUEST_MAX)
-                return false;
-        memory_copy(command, request, length);
-        command[length] = 0;
-        if (string_length((string_address)command) != length)
-                return false;
 
         if (system_pipe(in, O_CLOEXEC) < 0)
                 return false;
@@ -1382,8 +1363,7 @@ static bool link_start_run(struct link_session address_to s,
                     system_descriptor_install(out[1], 1) < 0 ||
                     system_descriptor_install(err[1], 2) < 0)
                         system_call_1(syscall(exit), 126);
-                link_child_exec((string_address)command,
-                                (p8 address_to) "dumb");
+                link_child_exec(words, count, (p8 address_to) "dumb");
         }
 
         system_close(in[0]);
@@ -1407,7 +1387,6 @@ static bool link_start_run(struct link_session address_to s,
         link_stream_set(s->reads + 1, err[0], LINK_KEY_ERROR,
                         WATERLINK_FRAME_DURABLE);
         link_stream_set(s->writes, in[1], LINK_KEY_INPUT, 0);
-        s->kind = LINK_KIND_RUN;
         return true;
 }
 
@@ -1445,66 +1424,23 @@ static bipolar link_part_open(string_address target, positive length,
         return -ERROR_EXISTS;
 }
 
-static bool link_start_file(struct link_session address_to s, p8 ask,
-                            p8 address_to request, positive length)
+static bool link_start_push(struct link_session address_to s, p8 address_to path,
+                            positive length, p32 mode)
 {
-        p8 path[LINK_REQUEST_MAX + 32];
-        p32 mode = 0644;
+        p8 part[LINK_REQUEST_MAX + 32];
         bipolar handle;
-
-        if (ask == LINK_ASK_LOG)
-        {
-                handle = system_open_at(AT_FDCWD, "/dev/kmsg",
-                                        FILE_READ | O_NONBLOCK | O_CLOEXEC);
-                if (handle < 0)
-                        return false;
-                link_stream_set(s->reads, handle, LINK_KEY_OUTPUT,
-                                WATERLINK_FRAME_DURABLE);
-                s->kind = LINK_KIND_LOG;
-                return true;
-        }
-
-        if (ask == LINK_ASK_PUSH)
-        {
-                if (length < 4)
-                        return false;
-                memory_copy(address_of mode, request, 4);
-                mode &= 07777;
-                request += 4;
-                length -= 4;
-        }
-        if (!length || length > LINK_REQUEST_MAX)
-                return false;
-        memory_copy(path, request, length);
-        path[length] = 0;
-        if (string_length((string_address)path) != length)
-                return false;
-
-        if (ask == LINK_ASK_PULL)
-        {
-                handle = system_open_at(AT_FDCWD, path,
-                                        FILE_READ | O_CLOEXEC);
-                if (handle < 0)
-                        return false;
-                link_stream_set(s->reads, handle, LINK_KEY_OUTPUT,
-                                WATERLINK_FRAME_DURABLE);
-                s->kind = LINK_KIND_PULL;
-                return true;
-        }
 
         /* A fresh exclusive name prevents both collisions between concurrent
            transfers and a planted predictable name from denying every push.
            It remains beside the target so the final rename is atomic. */
-        handle = link_part_open((string_address)path, length, path,
-                                sizeof path, mode);
+        handle = link_part_open((string_address)path, length, part,
+                                sizeof part, mode);
         if (handle < 0)
                 return false;
         (void)system_call_2(syscall(fchmod), (positive)handle, mode);
-        memory_copy(s->whole, request, length);
-        s->whole[length] = 0;
-        string_copy((string_address)s->part, (string_address)path);
+        string_copy((string_address)s->whole, (string_address)path);
+        string_copy((string_address)s->part, (string_address)part);
         link_stream_set(s->writes, handle, LINK_KEY_INPUT, 0);
-        s->kind = LINK_KIND_PUSH;
         return true;
 }
 
@@ -1526,6 +1462,12 @@ static fn link_request(struct link_session address_to s, p8 address_to payload,
         p32 may = 0;
         bool started;
         p8 why[96];
+        p8 text[LINK_REQUEST_MAX + 1];
+        p32 mode = 0;
+        positive skip;
+        string_address run[] = {"sh", "-c", (string_address)text, null};
+        string_address pull[] = {"cat", "--", (string_address)text, null};
+        string_address log[] = {"dmesg", "--follow", null};
 
         if (s->kind != LINK_KIND_NONE || length < 1)
                 return;
@@ -1554,32 +1496,54 @@ static fn link_request(struct link_session address_to s, p8 address_to payload,
                         return;
                 }
 
-        if (payload[0] == LINK_ASK_SHELL)
-                started = link_start_shell(s, payload + 1, length - 1);
-        else if (payload[0] == LINK_ASK_RUN)
-                started = link_start_run(s, payload + 1, length - 1);
-        else if (payload[0] == LINK_ASK_PUSH || payload[0] == LINK_ASK_PULL ||
-                 payload[0] == LINK_ASK_LOG)
+        for (positive kind = 1; kind < array_count(link_kind_asks); kind++)
+                if (link_kind_asks[kind] == payload[0])
+                        s->kind = (p8)kind;
+
+        //      A command or a path is one string with no NUL in it, behind a
+        //      push's mode; a terminal's request is its size and TERM.
+        skip = s->kind == LINK_KIND_PUSH ? 5 : 1;
+        if (s->kind != LINK_KIND_SHELL &&
+            (length < skip || length - skip > LINK_REQUEST_MAX ||
+             memory_first_of(payload + skip, 0, length - skip)))
         {
-                started = link_start_file(s, payload[0], payload + 1,
-                                          length - 1);
-                if (!started)
-                {
-                        link_refuse(s, payload[0] == LINK_ASK_LOG
-                                               ? "the kernel log cannot be read"
-                                               : "that file cannot be opened there");
-                        return;
-                }
+                link_refuse(s, "that request is malformed");
+                return;
         }
-        else
+        memory_copy(text, payload + skip, length - skip);
+        text[length - skip] = 0;
+        memory_copy(address_of mode, payload + 1, 4);
+
+        //      Pull and log are commands the machine already has, named here
+        //      and never parsed by a shell.
+        switch (s->kind)
         {
+        case LINK_KIND_SHELL:
+                started = link_start_shell(s, payload + 1, length - 1);
+                break;
+        case LINK_KIND_RUN:
+                started = text[0] && link_start_command(s, run, 3);
+                break;
+        case LINK_KIND_PULL:
+                started = text[0] && link_start_command(s, pull, 3);
+                break;
+        case LINK_KIND_LOG:
+                started = link_start_command(s, log, 2);
+                break;
+        case LINK_KIND_PUSH:
+                started = text[0] && link_start_push(s, text, length - 5,
+                                                     mode & 07777);
+                break;
+        default:
                 link_refuse(s, "that is not something this machine offers");
                 return;
         }
 
         if (!started)
         {
-                link_refuse(s, "the command could not be started");
+                link_refuse(s, s->kind == LINK_KIND_PUSH
+                                       ? "that file cannot be written there"
+                                       : "that could not be started");
                 return;
         }
 
@@ -1618,81 +1582,12 @@ static fn link_wait(system_poll_descriptor address_to watch, positive count,
 }
 
 /*
-        The kernel log a record at a time, as /dev/kmsg hands it out, written
-        as dmesg writes it: the seconds since boot in brackets, then the text.
-        The record's continuation lines -- the dictionary -- are left out.
-*/
-static fn link_log_read(struct link_session address_to s)
-{
-        p8 record[8192];
-
-        while (link_room(s))
-        {
-                bipolar got = system_read_once(s->reads[0].fd, record,
-                                               sizeof record - 1);
-                p8 line[WATERLINK_FRAME_MAX];
-                positive used = 0;
-                positive at = 0;
-                p64 micro = 0;
-                positive field = 0;
-
-                if (got == -32)
-                        continue; // EPIPE: records were overwritten
-                if (got <= 0)
-                        break;
-
-                while (at < (positive)got && record[at] != ';')
-                {
-                        if (record[at] == ',')
-                                field++;
-                        else if (field == 2 && record[at] >= '0' &&
-                                 record[at] <= '9')
-                                micro = micro * 10 + (record[at] - '0');
-                        at++;
-                }
-                at++;
-
-                line[used++] = '[';
-                {
-                        p8 digits[24];
-                        positive count = positive_into(digits,
-                                                       (positive)(micro / 1000000));
-                        p64 fraction = micro % 1000000;
-
-                        for (positive pad = count; pad < 5; pad++)
-                                line[used++] = ' ';
-                        memory_copy(line + used, digits, count);
-                        used += count;
-                        line[used++] = '.';
-                        for (bipolar place = 5; place >= 0; place--)
-                        {
-                                p64 tenth = 1;
-
-                                for (bipolar k = 0; k < place; k++)
-                                        tenth *= 10;
-                                line[used++] = (p8)('0' + fraction / tenth % 10);
-                        }
-                }
-                line[used++] = ']';
-                line[used++] = ' ';
-
-                while (at < (positive)got && record[at] != '\n' &&
-                       used < sizeof line - 2)
-                        line[used++] = record[at++];
-                line[used++] = '\n';
-
-                (void)link_post(s, LINK_KEY_OUTPUT, WATERLINK_FRAME_DURABLE,
-                                LINK_DATA, line, used);
-        }
-}
-
-/*
         A descriptor read into frames on its key while the link has room.
-        Its end is the stream's end: the client says so on input, a pulled
-        file is the command's end, and the rest wait for the command.
+        Its end is the stream's end: the client says so on input, and the
+        machine waits for the command.
 */
 static fn link_stream_read(struct link_session address_to s,
-                           struct link_stream address_to stream, p64 now)
+                           struct link_stream address_to stream)
 {
         while (!stream->done && link_room(s))
         {
@@ -1711,8 +1606,6 @@ static fn link_stream_read(struct link_session address_to s,
                                                 WATERLINK_FRAME_DURABLE |
                                                         WATERLINK_FRAME_LAST,
                                                 LINK_END, null, 0);
-                        else if (s->kind == LINK_KIND_PULL)
-                                link_exited(s, got < 0, now);
                         return;
                 }
                 for (positive at = 0; at < (positive)got; at += LINK_CHUNK)
@@ -1853,11 +1746,8 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
                         waterlink_resume(s->link, s->writes[at].key, link_hear,
                                          s);
 
-        if (s->kind == LINK_KIND_LOG && link_self.server)
-                link_log_read(s);
-        else
-                for (positive at = 0; at < 2; at++)
-                        link_stream_read(s, s->reads + at, now);
+        for (positive at = 0; at < 2; at++)
+                link_stream_read(s, s->reads + at);
 
         if (!link_self.server || s->kind == LINK_KIND_NONE)
                 return;
@@ -2137,7 +2027,7 @@ static bool link_carried(p8 address_to datagram, positive length,
         if (head.kind != WATERLINK_KIND_CARRY)
                 return false;
 
-        return waterlink_deliver_at(s->link, datagram + 16, length - 32, now,
+        return waterlink_deliver(s->link, datagram + 16, length - 32, now,
                                     sink, s);
 }
 
@@ -2849,7 +2739,8 @@ static b32 link_client_run(string_address name, p8 kind,
                         break;
                 }
                 if (s->writes[0].done &&
-                    (kind != LINK_KIND_RUN || s->writes[1].done))
+                    (kind == LINK_KIND_SHELL || kind == LINK_KIND_PUSH ||
+                     s->writes[1].done))
                 {
                         //      Acknowledge what ended it, then say goodbye.
                         link_session_flush(s, now);

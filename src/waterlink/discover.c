@@ -192,7 +192,6 @@ static fn waterlink_dns_put32(waterlink_dns_writer address_to out, p32 value)
         waterlink_dns_put16(out, value);
 }
 
-static const char waterlink_hex[] = "0123456789abcdef";
 
 
 /*

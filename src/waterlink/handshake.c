@@ -238,9 +238,9 @@ bool waterlink_gate_passes(struct waterlink_identity address_to me,
         else
                 return false;
 
-        for (positive at = 16 + body; at < length; at++)
-                if (datagram[at])
-                        return false;
+        if (memory_span_byte(datagram + 16 + body, 0, length - 16 - body) !=
+            length - 16 - body)
+                return false;
 
         waterlink_mac1(me->gate, datagram, 16 + body - 16, mac);
         return crypto_same(mac, datagram + 16 + body - 16, 16);
@@ -439,10 +439,7 @@ fn waterlink_stamp(p8 address_to stamp, p64 seconds, p32 nanoseconds)
 
 bool waterlink_stamp_newer(p8 address_to stamp, p8 address_to last)
 {
-        for (positive at = 0; at < WATERLINK_STAMP_BYTES; at++)
-                if (stamp[at] != last[at])
-                        return stamp[at] > last[at];
-        return false;
+        return memory_compare(stamp, last, WATERLINK_STAMP_BYTES) > 0;
 }
 
 /*

@@ -1246,7 +1246,7 @@ bool waterlink_paused(struct waterlink_link address_to link, p8 key)
         than an attack -- and is still a refusal, because a link that guesses
         is a link with two opinions.
 */
-bool waterlink_deliver_at(struct waterlink_link address_to link,
+bool waterlink_deliver(struct waterlink_link address_to link,
                           address_any body, positive length, p64 now,
                           waterlink_sink sink, address_any context)
 {
@@ -1348,15 +1348,6 @@ bool waterlink_deliver_at(struct waterlink_link address_to link,
         if (good && framed)
                 link->owed_count++;
         return good;
-}
-
-// The form that takes the time from the last call that gave one.
-bool waterlink_deliver(struct waterlink_link address_to link,
-                       address_any body, positive length,
-                       waterlink_sink sink, address_any context)
-{
-        return waterlink_deliver_at(link, body, length, link->clock, sink,
-                                    context);
 }
 
 /*

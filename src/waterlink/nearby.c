@@ -178,12 +178,13 @@ static fn link_name_for(link_peers address_to peers, p8 address_to offered,
              width++)
         {
                 positive used = string_length((string_address)base);
+                p8 hex[8];
 
+                memory_into_hex(hex, key, 4);
                 memory_copy(name, base, used);
                 name[used++] = '-';
-                for (positive at = 0; at < width; at++)
-                        name[used++] = (p8)waterlink_hex[key[at] >> 4];
-                name[used] = 0;
+                memory_copy(name + used, hex, width);
+                name[used + width] = 0;
         }
 }
 

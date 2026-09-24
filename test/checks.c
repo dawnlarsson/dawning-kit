@@ -51749,7 +51749,7 @@ static positive carry(p64 now, bool address_to alone)
         heard = 0;
         if (used)
                 check("a filled body walks back out",
-                      waterlink_deliver(address_of one, body, used, hear,
+                      waterlink_deliver(address_of one, body, used, one.clock, hear,
                                         null));
         return used;
 }
@@ -51902,7 +51902,7 @@ static fn stale_arrivals(void)
         used = waterlink_fill(address_of one, body, 0, address_of alone);
 
         heard = 0;
-        waterlink_deliver(address_of one, body, used, hear, null);
+        waterlink_deliver(address_of one, body, used, one.clock, hear, null);
         check("the newer frame was delivered", heard == 1);
 
         //      The older frame arrives after the one that replaced it. This
@@ -51910,7 +51910,7 @@ static fn stale_arrivals(void)
         //      applied, or a window's damage lands after the window closed.
         heard = 0;
         check("a stale frame is still well formed",
-              waterlink_deliver(address_of one, first, kept, hear, null));
+              waterlink_deliver(address_of one, first, kept, one.clock, hear, null));
         check("but nothing was delivered from it", heard == 0);
         check("and it was counted stale", one.stale == 1);
 }
@@ -51939,10 +51939,10 @@ static fn durable_reordered(void)
 
         heard = 0;
         check("the later datagram is well formed",
-              waterlink_deliver(address_of one, late, late_used, hear, null));
+              waterlink_deliver(address_of one, late, late_used, one.clock, hear, null));
         before_early = heard;
         check("the earlier datagram is well formed",
-              waterlink_deliver(address_of one, early, early_used, hear,
+              waterlink_deliver(address_of one, early, early_used, one.clock, hear,
                                 null));
 
         check("the later keystroke waits for the earlier one",
@@ -51994,17 +51994,17 @@ static fn malformed_bodies(void)
               used == 4 + 4 && body[0] == WATERLINK_FRAME_DURABLE &&
                       body[1] == 7 && body[2] == 1 && body[3] == 4);
         check("a body longer than a datagram is refused",
-              !waterlink_deliver(address_of one, body, WATERLINK_PAYLOAD + 1,
+              !waterlink_deliver(address_of one, body, WATERLINK_PAYLOAD + 1, one.clock,
                                  null, null));
         check("a body cut inside its payload is refused",
-              !waterlink_deliver(address_of one, body, used - 1, null, null));
+              !waterlink_deliver(address_of one, body, used - 1, one.clock, null, null));
 
         for (positive at = 0; at < sizeof wrong / sizeof wrong[0]; at++)
         {
                 waterlink_link_reset(address_of one);
                 refused += !waterlink_deliver(address_of one,
                                               (p8 address_to)wrong[at].bytes,
-                                              wrong[at].length, null, null);
+                                              wrong[at].length, one.clock, null, null);
         }
         check("a second spelling, a sequence out of range, an unknown or mixed "
               "flag, a key past the last, a number past 64 bits, bytes after "
@@ -52016,7 +52016,7 @@ static fn malformed_bodies(void)
         heard = 0;
         check("and the last key and the widest sequence read back",
               waterlink_deliver(address_of one, (p8 address_to)widest,
-                                sizeof widest, hear, null) &&
+                                sizeof widest, one.clock, hear, null) &&
                       heard == 1 && heard_key[0] == WATERLINK_KEYS - 1 &&
                       heard_sequence[0] == 0xfffffffeu && heard_first[0] == 'z');
 }
@@ -52436,7 +52436,7 @@ static fn whole_path(void)
         heard = 0;
         check("its padded box delivers",
               waterlink_deliver(address_of one, datagram + 16,
-                                WATERLINK_PAYLOAD, hear, null));
+                                WATERLINK_PAYLOAD, one.clock, hear, null));
         check("both frames arrived, and the padding was not one", heard == 2);
         check("in order", heard_first[0] == 'w' && heard_first[1] == 'x');
 
@@ -52562,7 +52562,7 @@ static fn last_arrives_once(void)
 
         used = waterlink_fill(address_of one, body, 0, address_of alone);
         heard = 0;
-        waterlink_deliver_at(address_of one, body, used, 0, hear, null);
+        waterlink_deliver(address_of one, body, used, 0, hear, null);
         check("the key's frames arrive", heard == 2);
 
         //      The acknowledgement is lost, so the probe timer sends the
@@ -52574,7 +52574,7 @@ static fn last_arrives_once(void)
         check("an unacknowledged last frame is sent again", used > 0 &&
                                                             one.lost >= 1);
         heard = 0;
-        waterlink_deliver_at(address_of one, body, used, 10000000, hear, null);
+        waterlink_deliver(address_of one, body, used, 10000000, hear, null);
         check("and is not delivered twice", heard == 0);
 
         //      This time the acknowledgement arrives, and the key is gone.
@@ -52583,7 +52583,7 @@ static fn last_arrives_once(void)
                 used = waterlink_fill(address_of one, body, now,
                                       address_of alone);
                 if (used)
-                        waterlink_deliver_at(address_of one, body, used, now,
+                        waterlink_deliver(address_of one, body, used, now,
                                              hear, null);
         }
         check("and nothing on the key is delivered again", heard == 0);
@@ -52610,7 +52610,7 @@ static fn full_frame_beside_owed_ack(void)
         waterlink_link_reset(address_of one);
         post_one(3, WATERLINK_FRAME_REPLACEABLE, 'c', 0);
         used = waterlink_fill(address_of one, body, 0, address_of alone);
-        waterlink_deliver_at(address_of one, body, used, 0, null, null);
+        waterlink_deliver(address_of one, body, used, 0, null, null);
         check("one frame in is an acknowledgement owed, not yet due",
               one.acking == 1ull << 3 && waterlink_fill(address_of one, body, 10,
                                                address_of alone) == 0);
@@ -52651,7 +52651,7 @@ static fn pump(p64 from, p64 to)
                                                address_of alone);
 
                 if (used)
-                        waterlink_deliver_at(address_of one, body, used, now,
+                        waterlink_deliver(address_of one, body, used, now,
                                              hear_or_refuse, null);
         }
 }
@@ -52719,8 +52719,8 @@ static fn superseded_in_flight(void)
         used = waterlink_fill(address_of one, body, 0, address_of alone);
 
         heard = 0;
-        waterlink_deliver_at(address_of one, body, used, 0, hear, null);
-        waterlink_deliver_at(address_of one, old_body, old_used, 0, hear,
+        waterlink_deliver(address_of one, body, used, 0, hear, null);
+        waterlink_deliver(address_of one, old_body, old_used, 0, hear,
                              null);
         check("the new value arrives and the old one after it is dropped",
               heard == 1 && heard_first[0] == '2');
@@ -53208,7 +53208,7 @@ static fn sim_seed(positive seed)
                             !waterlink_replay_new(sim_window + to, d->counter))
                                 continue;
                         //      The oracle is the end that posted.
-                        if (!waterlink_deliver_at(sim_link + to, d->body,
+                        if (!waterlink_deliver(sim_link + to, d->body,
                                                   d->used, now, sim_hear,
                                                   (address_any)(1 - to)))
                                 sim_wrong_at(sim_ends + 1 - to);
@@ -54262,16 +54262,11 @@ static b32 mdns_modes(string_address mode)
                                               (positive)one->port);
                                 if (one->has_fields)
                                 {
-                                        string_format(log, ":");
-                                        for (positive k = 0; k < 16; k++)
-                                        {
-                                                p8 two[3] = {
-                                                        (p8)waterlink_hex[one->nonce[k] >> 4],
-                                                        (p8)waterlink_hex[one->nonce[k] & 15], 0};
+                                        p8 hex[33];
 
-                                                string_format(log, "%s",
-                                                              (string_address)two);
-                                        }
+                                        hex[memory_into_hex(hex, one->nonce, 16)] = 0;
+                                        string_format(log, ":%s",
+                                                      (string_address)hex);
                                 }
                         }
                         string_format(log, "\n");
@@ -54661,15 +54656,11 @@ static fn staging(void)
 //      A push session whose part file is opened and filled as the server does.
 static bool wls_push(struct link_session address_to s, string_address target)
 {
-        p8 request[4 + 64];
-        p32 mode = 0640;
-        positive length = string_length(target);
-
         if (!link_session_open(s))
                 return false;
-        memory_copy(request, address_of mode, 4);
-        memory_copy(request + 4, target, length);
-        if (!link_start_file(s, LINK_ASK_PUSH, request, 4 + length))
+        s->kind = LINK_KIND_PUSH;
+        if (!link_start_push(s, (p8 address_to)target, string_length(target),
+                             0640))
                 return false;
         return system_write_all((positive)s->writes[0].fd, "whole", 5) == 5;
 }
@@ -66313,14 +66304,14 @@ static fn frame_once(positive length, p16 flags, bool timed)
         t[4] = timed ? get_cpu_time() : 0;
         (void)waterlink_replay_new(address_of window, head.counter);
         t[5] = timed ? get_cpu_time() : 0;
-        (void)waterlink_deliver_at(address_of receiver, datagram + 16,
+        (void)waterlink_deliver(address_of receiver, datagram + 16,
                                    sealed - 32, stream_clock, null, null);
         t[6] = timed ? get_cpu_time() : 0;
         acked = waterlink_fill(address_of receiver, acks, stream_clock + 1,
                                address_of alone);
         t[7] = timed ? get_cpu_time() : 0;
         if (acked)
-                (void)waterlink_deliver_at(address_of sender, acks, acked,
+                (void)waterlink_deliver(address_of sender, acks, acked,
                                            stream_clock + 2, null, null);
         t[8] = timed ? get_cpu_time() : 0;
 

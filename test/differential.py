@@ -33687,11 +33687,11 @@ status, out, err = on("a", moon + " link push b /root/blob /root/planted", timeo
 say(open(top + "/b/root/target", "rb").read() == b"untouched",
     "a push onto a link replaces the link and never writes through it")
 status, out, err = on("a", moon + " link pull b /root/nothing-here /root/nothing", timeout=30)
-say(status == 255 and b"cannot be opened" in err and not os.path.exists(top + "/a/root/nothing"),
-    "pulling what is not there fails and leaves nothing here")
+say(status == 1 and b"No such file" in err and not os.path.exists(top + "/a/root/nothing"),
+    "pulling what is not there fails, says why, and leaves nothing here")
 status, out, err = on("a", "timeout 5 " + moon + " link log b", timeout=30)
-say(out.startswith(b"[") or b"kernel log cannot be read" in err,
-    "log follows the kernel log, or says it cannot be read")
+say(out.startswith(b"[") or b"read kernel buffer failed" in err,
+    "log follows the kernel log, or dmesg says it cannot be read")
 
 started = time.time()
 status, out, err = on("c", moon + " link run b echo no", timeout=30)

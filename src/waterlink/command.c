@@ -124,13 +124,11 @@ static bool link_script_names_secret(string_address script,
                 if (!host_starts(at, "link join "))
                         continue;
                 word = at + 10;
-                while (*word == ' ')
-                        word++;
+                word += string_span_of_set(word, " ");
                 if (memory_compare(word, namespace, length) || word[length] != ' ')
                         continue;
                 word += length;
-                while (*word == ' ')
-                        word++;
+                word += string_span_of_set(word, " ");
                 if (*word && *word != '\n' && *word != ';' && *word != '#' &&
                     !host_starts(word, "allow"))
                         return true;
@@ -805,20 +803,19 @@ static b32 link_main(string_address address_to arguments, positive count)
                 link_peers_unlock(lock);
                 return answer;
         }
-        if (string_equals(verb, "shell") && count == 4)
-                return link_client_run(arguments[3], LINK_KIND_SHELL, null, 0);
-        if (string_equals(verb, "run") && count >= 5)
-                return link_client_run(arguments[3], LINK_KIND_RUN,
-                                       arguments + 4, count - 4);
-        if (string_equals(verb, "push") && count == 6)
-                return link_client_run(arguments[3], LINK_KIND_PUSH,
-                                       arguments + 4, 2);
-        if (string_equals(verb, "pull") && count == 6)
-                return link_client_run(arguments[3], LINK_KIND_PULL,
-                                       arguments + 4, 2);
-        if (string_equals(verb, "log") && count == 4)
-                return link_client_run(arguments[3], LINK_KIND_LOG, null, 0);
+        //      shell, run, push, pull and log: a peer and what the kind takes.
+        {
+                static const positive least[] = {0, 4, 5, 6, 6, 4};
+                static const positive most[] = {0, 4, ~(positive)0, 6, 6, 4};
+                positive kind = string_table_find(verb, link_kind_names,
+                                                  sizeof link_kind_names[0],
+                                                  array_count(link_kind_names));
 
+                if (kind && kind < array_count(link_kind_names) &&
+                    count >= least[kind] && count <= most[kind])
+                        return link_client_run(arguments[3], (p8)kind,
+                                               arguments + 4, count - 4);
+        }
         return link_usage();
 }
 
