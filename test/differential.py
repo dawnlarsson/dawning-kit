@@ -33621,20 +33621,20 @@ say(not os.path.exists(top + "/b/root/got.link-part"), "and leaves no part file"
 with open(top + "/b/root/guarded.link-part", "wb") as f:
     f.write(b"somebody else's staging file")
 status, out, err = on("a", moon + " link push b /root/blob /root/guarded", timeout=30)
-say(status == 255 and b"cannot be opened" in err and
+say(status == 0 and
     open(top + "/b/root/guarded.link-part", "rb").read() == b"somebody else's staging file" and
-    not os.path.exists(top + "/b/root/guarded"),
-    "sec: a push refuses an existing staging file instead of truncating or publishing it")
+    open(top + "/b/root/guarded", "rb").read() == blob,
+    "sec: a planted predictable staging name cannot clobber or deny a push")
 status, out, err = on("a", moon + " link pull b /root/got /root/back", timeout=120)
 back = open(top + "/a/root/back", "rb").read() if os.path.exists(top + "/a/root/back") else b""
 say(status == 0 and back == blob, "pull brings it back whole")
 with open(top + "/a/root/guarded-pull.link-part", "wb") as f:
     f.write(b"local staging file")
 status, out, err = on("a", moon + " link pull b /root/got /root/guarded-pull", timeout=30)
-say(status != 0 and
+say(status == 0 and
     open(top + "/a/root/guarded-pull.link-part", "rb").read() == b"local staging file" and
-    not os.path.exists(top + "/a/root/guarded-pull"),
-    "sec: a pull refuses an existing local staging file instead of truncating it")
+    open(top + "/a/root/guarded-pull", "rb").read() == blob,
+    "sec: a planted predictable staging name cannot clobber or deny a pull")
 with open(top + "/b/root/target", "wb") as f:
     f.write(b"untouched")
 os.symlink(top + "/b/root/target", top + "/b/root/planted")
@@ -33656,6 +33656,15 @@ status, out, err = on("a", moon + " link run bwrong echo no", timeout=30)
 say(status == 255, "a peer paired under the wrong key is not answered")
 status, out, err = on("a", moon + " link run b echo still")
 say(status == 0 and out == b"still\n", "and the listener is still there for the right one")
+
+os.chmod(top + "/b/root/link.peers", 0o666)
+status, out, err = on("a", moon + " link run b echo no", timeout=30)
+say(status == 255 and b"did not answer" in err,
+    "sec: a publicly writable peer authorization database grants nothing")
+os.chmod(top + "/b/root/link.peers", 0o600)
+status, out, err = on("a", moon + " link run b echo restored")
+say(status == 0 and out == b"restored\n",
+    "sec: restoring private peer database permissions restores authorization")
 
 status, out, err = on("b", moon + " link")
 text = out.decode(errors="replace")

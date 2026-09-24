@@ -64,8 +64,11 @@ fn link_groups_load(link_groups address_to groups)
         positive got = 0;
 
         memory_zero(groups, sizeof(address_to groups));
-        if (link_read_exact(LINK_GROUPS_PATH, (p8 address_to)groups->record,
-                            sizeof(groups->record), address_of got) < 0)
+        if (link_read_private_records(LINK_GROUPS_PATH,
+                                      (p8 address_to)groups->record,
+                                      sizeof(groups->record),
+                                      sizeof(struct link_group_record),
+                                      address_of got) < 0)
                 return;
         groups->count = got / sizeof(struct link_group_record);
         for (positive at = 0; at < groups->count; at++)

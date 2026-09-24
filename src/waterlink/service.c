@@ -271,6 +271,49 @@ static bipolar link_read_exact(string_address path, p8 address_to into,
         return 0;
 }
 
+/* Authorization databases are not ordinary state text. Refuse a partial,
+   oversized, linked, non-root-owned or publicly writable set rather than
+   interpreting the valid-looking prefix of a replaced file. */
+static bipolar link_read_private_records(string_address path,
+                                         p8 address_to into, positive room,
+                                         positive record,
+                                         positive address_to got)
+{
+        file_facts facts;
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        positive have = 0;
+
+        address_to got = 0;
+        if (handle < 0)
+                return handle;
+        if (!file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_FILE || facts.owner != 0 ||
+            (facts.mode & 077) || facts.size > room || facts.size % record)
+        {
+                system_close(handle);
+                return -EPERM;
+        }
+
+        while (have < (positive)facts.size)
+        {
+                bipolar read = system_read_once(handle, into + have,
+                                                (positive)facts.size - have);
+
+                if (read == -4)
+                        continue;
+                if (read <= 0)
+                        break;
+                have += (positive)read;
+        }
+        system_close(handle);
+        if (have != (positive)facts.size)
+                return -EIO;
+        address_to got = have;
+        return 0;
+}
+
 /*
         The machine's own key, made on first use.
 
@@ -295,7 +338,11 @@ static bipolar link_secret(p8 address_to secret, bool make)
 
                 if (system_random_fill(fresh, 32, 0) < 0 ||
                     system_random_fill(tail, 8, 0) < 0)
+                {
+                        crypto_forget(fresh, sizeof fresh);
+                        crypto_forget(tail, sizeof tail);
                         return -EIO;
+                }
                 for (positive at = 0; at < 8; at++)
                 {
                         name[used++] = (p8)link_alphabet[tail[at] >> 4 & 15];
@@ -308,16 +355,23 @@ static bipolar link_secret(p8 address_to secret, bool make)
                                                    O_NOFOLLOW | O_CLOEXEC,
                                            0600);
                 if (made < 0)
+                {
+                        crypto_forget(fresh, sizeof fresh);
+                        crypto_forget(tail, sizeof tail);
                         return made;
+                }
                 if (system_write_all((positive)made, fresh, 32) != 32 ||
                     system_call_1(syscall(fsync), (positive)made) < 0)
                 {
                         system_close(made);
                         system_remove_at(AT_FDCWD, name, 0);
+                        crypto_forget(fresh, sizeof fresh);
+                        crypto_forget(tail, sizeof tail);
                         return -EIO;
                 }
                 system_close(made);
                 crypto_forget(fresh, sizeof fresh);
+                crypto_forget(tail, sizeof tail);
 
                 //      linkat does not replace: whoever got there first wins,
                 //      and both read what won.
@@ -387,8 +441,11 @@ static fn link_peers_load(link_peers address_to peers)
         positive got = 0;
 
         memory_zero(peers, sizeof(address_to peers));
-        if (link_read_exact(LINK_PEERS_PATH, (p8 address_to)peers->peer,
-                            sizeof(peers->peer), address_of got) < 0)
+        if (link_read_private_records(LINK_PEERS_PATH,
+                                      (p8 address_to)peers->peer,
+                                      sizeof(peers->peer),
+                                      sizeof(struct waterlink_peer),
+                                      address_of got) < 0)
                 return;
 
         peers->count = got / sizeof(struct waterlink_peer);
@@ -825,6 +882,7 @@ struct link_session {
         bool exit_sent;
         bool failed;
         p8 push_name[LINK_REQUEST_MAX + 1];
+        p8 push_part[LINK_REQUEST_MAX + 32];
         p8 address_to pending;
         positive pending_at;
         positive pending_length;
@@ -901,20 +959,10 @@ static bool link_session_open(struct link_session address_to s)
 
 static fn link_session_close(struct link_session address_to s)
 {
-        /* An interrupted push must not leave a predictable staging name for
-           a later privileged listener to open.  Apart from filling the
-           directory, that stale file could be replaced with a hard link and
-           would have been truncated by the next push: O_NOFOLLOW only
-           rejects symbolic links. */
-        if (s->kind == LINK_KIND_PUSH && s->push_name[0])
-        {
-                p8 part[LINK_REQUEST_MAX + 16];
-                positive length = string_length((string_address)s->push_name);
-
-                memory_copy(part, s->push_name, length);
-                memory_copy(part + length, ".link-part", 11);
-                system_remove_at(AT_FDCWD, part, 0);
-        }
+        /* An interrupted push does not publish or retain its private staging
+           inode. */
+        if (s->kind == LINK_KIND_PUSH && s->push_part[0])
+                system_remove_at(AT_FDCWD, s->push_part, 0);
         if (s->pidfd >= 0)
         {
                 (void)system_call_4(syscall(pidfd_send_signal),
@@ -1394,10 +1442,39 @@ static bool link_start_run(struct link_session address_to s,
         standing at that name, and is only there under its name once it is
         whole; a pulled file is read as it is.
 */
+static bipolar link_part_open(string_address target, positive length,
+                              p8 address_to part, positive room, p32 mode)
+{
+        if (length + 28 > room)
+                return -ERROR_NAME_TOO_LONG;
+
+        memory_copy(part, target, length);
+        memory_copy(part + length, ".link-part.", 11);
+        for (positive attempt = 0; attempt < 8; attempt++)
+        {
+                p64 random;
+                bipolar handle;
+
+                if (system_random_fill(address_of random, sizeof random, 0) < 0)
+                        return -EIO;
+                for (positive at = 0; at < 16; at++)
+                        part[length + 11 + at] =
+                                (p8)link_alphabet[(random >> (at * 4)) & 15];
+                part[length + 27] = 0;
+                handle = system_open_at_mode(
+                        AT_FDCWD, part,
+                        FILE_WRITE | FILE_EXCLUSIVE | O_NOFOLLOW | O_CLOEXEC,
+                        mode);
+                if (handle >= 0 || handle != -ERROR_EXISTS)
+                        return handle;
+        }
+        return -ERROR_EXISTS;
+}
+
 static bool link_start_file(struct link_session address_to s, p8 ask,
                             p8 address_to request, positive length)
 {
-        p8 path[LINK_REQUEST_MAX + 16];
+        p8 path[LINK_REQUEST_MAX + 32];
         p32 mode = 0644;
         bipolar handle;
 
@@ -1442,22 +1519,17 @@ static bool link_start_file(struct link_session address_to s, p8 ask,
                 return true;
         }
 
-        //      Beside its name, then renamed over it: a push cut short leaves
-        //      the name as it was.
-        memory_copy(path + length, ".link-part", 11);
-        /* The fixed staging name is intentionally visible beside the target,
-           but it must be ours.  Opening an existing regular file would
-           truncate it despite O_NOFOLLOW, and two pushes could otherwise
-           write the same file and each publish a mixture as complete. */
-        handle = system_open_at_mode(AT_FDCWD, path,
-                                     FILE_WRITE | FILE_EXCLUSIVE | O_NOFOLLOW |
-                                             O_CLOEXEC,
-                                     mode);
+        /* A fresh exclusive name prevents both collisions between concurrent
+           transfers and a planted predictable name from denying every push.
+           It remains beside the target so the final rename is atomic. */
+        handle = link_part_open((string_address)path, length, path,
+                                sizeof path, mode);
         if (handle < 0)
                 return false;
         (void)system_call_2(syscall(fchmod), (positive)handle, mode);
         memory_copy(s->push_name, path, length);
         s->push_name[length] = 0;
+        string_copy((string_address)s->push_part, (string_address)path);
         s->input = handle;
         s->kind = LINK_KIND_PUSH;
         s->output_read = true;
@@ -1660,15 +1732,30 @@ static fn link_push_done(struct link_session address_to s, p64 now)
         //      The part file becomes the name only whole.
         if (!s->failed)
         {
-                p8 part[LINK_REQUEST_MAX + 16];
+                file_facts opened;
+                file_facts named;
                 p8 whole[LINK_REQUEST_MAX + 16];
                 positive length = string_length((string_address)s->push_name);
+                bool owned;
 
                 memory_copy(whole, s->push_name, length + 1);
-                memory_copy(part, s->push_name, length);
-                memory_copy(part + length, ".link-part", 11);
-                if (system_rename_at(AT_FDCWD, part, AT_FDCWD, whole, 0) < 0)
+                owned = file_look(s->input, (string_address)"", AT_EMPTY_PATH,
+                                  address_of opened) &&
+                        file_look(AT_FDCWD, (string_address)s->push_part,
+                                  AT_SYMLINK_NOFOLLOW, address_of named) &&
+                        file_same_identity(address_of opened,
+                                           address_of named);
+                if (!owned)
+                {
                         s->failed = true;
+                        /* The name no longer belongs to this transfer. */
+                        s->push_part[0] = 0;
+                }
+                else if (system_rename_at(AT_FDCWD, s->push_part, AT_FDCWD,
+                                          whole, 0) < 0)
+                        s->failed = true;
+                else
+                        s->push_part[0] = 0;
         }
         s->exited = true;
         s->exited_at = now;
@@ -1780,10 +1867,10 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
                 if (s->kind == LINK_KIND_PUSH &&
                     system_call_1(syscall(fsync), (positive)s->input) < 0)
                         s->failed = true;
-                system_close(s->input);
-                s->input = -1;
                 if (s->kind == LINK_KIND_PUSH)
                         link_push_done(s, now);
+                system_close(s->input);
+                s->input = -1;
         }
         if (s->consumed + LINK_INPUT_ROOM >= s->credited + LINK_INPUT_ROOM / 4)
         {
@@ -2548,6 +2635,7 @@ typedef struct
         bipolar input;  // standard input, or the file a push sends
         bipolar output; // standard output, or the file a pull fills
         bool output_failed;
+        p8 output_part[4096];
 } link_client_state;
 
 static link_client_state link_client = {.input = 0, .output = 1};
@@ -2871,19 +2959,16 @@ static b32 link_client_run(string_address name, p8 kind,
 
         if (kind == LINK_KIND_PULL)
         {
-                p8 part[4096];
                 positive length = string_length(words[1]);
 
-                if (length + 11 > sizeof part)
+                if (length + 28 > sizeof link_client.output_part)
                         return host_refuse("%s is too long a name\n", words[1]);
-                memory_copy(part, words[1], length);
-                memory_copy(part + length, ".link-part", 11);
-                link_client.output = system_open_at_mode(
-                        AT_FDCWD, part,
-                        FILE_WRITE | FILE_EXCLUSIVE | O_NOFOLLOW | O_CLOEXEC,
-                        0644);
+                link_client.output = link_part_open(
+                        words[1], length, link_client.output_part,
+                        sizeof link_client.output_part, 0644);
                 if (link_client.output < 0)
-                        return host_fail((string_address)part, link_client.output);
+                        return host_fail((string_address)link_client.output_part,
+                                         link_client.output);
         }
 
         link_client.kind = kind;
@@ -3104,18 +3189,27 @@ static b32 link_client_run(string_address name, p8 kind,
         //      A pulled file is only there under its name once it is whole.
         if (kind == LINK_KIND_PULL && link_client.output >= 0)
         {
-                p8 part[4096];
-                positive length = string_length(words[1]);
+                file_facts opened;
+                file_facts named;
+                bool owned = file_look(link_client.output, (string_address)"",
+                                       AT_EMPTY_PATH, address_of opened) &&
+                             file_look(AT_FDCWD,
+                                       (string_address)link_client.output_part,
+                                       AT_SYMLINK_NOFOLLOW, address_of named) &&
+                             file_same_identity(address_of opened,
+                                                address_of named);
 
-                memory_copy(part, words[1], length);
-                memory_copy(part + length, ".link-part", 11);
                 if (!answer && !link_client.output_failed &&
+                    owned &&
                     system_call_1(syscall(fsync), (positive)link_client.output) >= 0 &&
-                    system_rename_at(AT_FDCWD, part, AT_FDCWD, words[1], 0) >= 0)
+                    system_rename_at(AT_FDCWD, link_client.output_part,
+                                     AT_FDCWD, words[1], 0) >= 0)
                         ;
                 else
                 {
-                        system_remove_at(AT_FDCWD, part, 0);
+                        if (owned)
+                                system_remove_at(AT_FDCWD,
+                                                 link_client.output_part, 0);
                         if (!answer)
                                 answer = 1;
                 }
