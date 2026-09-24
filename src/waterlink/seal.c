@@ -769,7 +769,7 @@ __asm__(
 */
 positive waterlink_box(positive used)
 {
-        if (used + WATERLINK_HEADER > WATERLINK_PAYLOAD)
+        if (used + WATERLINK_HEADER_MOST > WATERLINK_PAYLOAD)
                 return WATERLINK_PAYLOAD;
         return used ? (used + 15) & ~(positive)15 : 16;
 }

@@ -33179,7 +33179,7 @@ def harness_waterlink_noise(argv):
     checks = Checks()
     checks(ran.returncode == 0 and len(lines) == 64, "the binary printed 64 handshakes")
     name = b"Noise_IK_25519_AES128GCM_SHA256"
-    prologue = b"waterlink 1"
+    prologue = b"waterlink 2"
 
     def public_of(secret):
         from cryptography.hazmat.primitives import serialization

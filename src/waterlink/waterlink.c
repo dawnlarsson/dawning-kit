@@ -154,11 +154,13 @@
 
         EVERY SETTING IS PER SEND
 
-        There are no stream types and no stored per-channel settings. A caller
-        names the packing and the urgency on each send, because a terminal
-        carrying a file for a moment is the ordinary case, not the exception.
-        Only the packing method crosses the wire, and only because unpacking
-        needs it.
+        There are no stream types and no stored per-key settings. A caller
+        names the class, the urgency and the deadline on each send, because a
+        terminal carrying a file for a moment is the ordinary case, not the
+        exception. Only what the receiver acts on crosses the wire: the class
+        and the end, because delivery depends on them, and urgency, because
+        it asks for an acknowledgement at once. A deadline is the sender's
+        alone -- it decides what is still worth sending -- and never leaves.
 
         This file is the contract and nothing else, included where lib.c's
         types are already in scope.
@@ -166,9 +168,6 @@
 
 #ifndef WATERLINK_INCLUDED
 #define WATERLINK_INCLUDED
-
-#define WATERLINK_MAGIC 0x4b4e4c57u // "WLNK", little endian
-#define WATERLINK_VERSION 1
 
 /*      1200 bytes clears the common 1280 minimum with room for an outer
         header and asks nothing of path discovery. A larger frame is the
@@ -211,50 +210,58 @@ _Static_assert(sizeof(struct waterlink_datagram) == 16,
 /*      A frame, inside the box, so the code that parses attacker-shaped bytes
         only ever runs on bytes that were already authenticated.
 
-        deadline is milliseconds from the sender's own clock reading, not a
-        timestamp: the ends never agree on what time it is, only on how long a
-        thing is worth waiting for. inflated is what the payload unpacks to,
-        declared so the receiver can refuse it before unpacking anything.
-        follows is the rule above; zero for a key's first frame, or for a
-        frame nothing on its key has to come before.
+        On the wire a frame is its flags byte and then numbers, each seven
+        bits a byte, low first, with the top bit saying another follows
+        (LEB128): the key, the sequence, how far back the frame it follows
+        is, and the payload's length, then the payload. How far back and not
+        which: a durable stream follows the frame before it, so that is one
+        byte, and zero is never a distance, since a frame follows only
+        something before it. A keystroke's frame is five bytes of header
+        where a fixed layout took twenty eight, and a key or a sequence costs
+        its size and not its width. Each number has one spelling -- no
+        trailing zero byte, nothing past sixty four bits -- so a body means
+        one thing. A zero flags byte is where the frames stop: every frame
+        has a class or is an acknowledgement, and the rest of the box is
+        zeros.
 
-        Packed, because frames sit back to back in the box at any offset and
-        are only ever copied in and out whole. */
+        In memory it is this, whole: what a receiver hands on, and what it
+        holds back for the frame it follows. */
 struct waterlink_frame {
-        unsigned long key;     // opaque to the link; the sender's meaning
-        unsigned int sequence; // per key, from one, increasing
-        unsigned int follows;  // the sequence this frame is delivered after
-        unsigned short channel;
-        unsigned short length;   // packed bytes following this header
-        unsigned short deadline; // milliseconds, 0 for none
-        unsigned short flags;    // WATERLINK_FRAME_*
-        unsigned short inflated; // 0 when not packed
-        unsigned short reserved; // must be 0
-} __attribute__((packed));
+        p64 key;      // opaque to the link; the sender's meaning
+        p32 sequence; // per key, from one, increasing
+        p32 follows;  // the sequence this frame is delivered after, or 0
+        p16 length;   // the payload's bytes
+        p8 flags;     // WATERLINK_FRAME_*
+};
 
-#define WATERLINK_HEADER 28
-
-_Static_assert(sizeof(struct waterlink_frame) == WATERLINK_HEADER,
-               "waterlink frame header must be exactly 28 bytes");
+// The most a frame's header takes: flags, a 64-bit key, two 32-bit numbers
+// and a length.
+#define WATERLINK_HEADER_MOST (1 + 10 + 5 + 5 + 2)
 
 // A frame with neither of these is refused rather than guessed at.
-#define WATERLINK_FRAME_REPLACEABLE 0x0001u
-#define WATERLINK_FRAME_DURABLE 0x0002u
-#define WATERLINK_FRAME_LAST 0x0004u // the key ends with this frame
+#define WATERLINK_FRAME_REPLACEABLE 0x01u
+#define WATERLINK_FRAME_DURABLE 0x02u
+#define WATERLINK_FRAME_LAST 0x04u // the key ends with this frame
 
-/*      The link's own frame, and the only one with neither class: records
-        of twenty four bytes -- key, delivered through, highest seen, and a
-        mask of which of the sixty four sequences after the first missing one
-        are held -- with every other header field zero. A caller cannot post
+/*      The link's own frame, and the only one with neither class: the flags
+        byte and three numbers -- the key, what it is delivered through, and
+        a mask of which of the sixty four sequences after the first missing
+        one are held. One per key, back to back with the frames, so the
+        acknowledgement of a keystroke is four bytes. A caller cannot post
         one. */
-#define WATERLINK_FRAME_ACK 0x0200u
+#define WATERLINK_FRAME_ACK 0x08u
+#define WATERLINK_ACK_MOST (1 + 10 + 5 + 10)
 
 /*      Urgency, and only the tiebreak: deadline says when a frame is worth
         sending, this says which one goes first when two are both about to
         miss. Without it a desktop that is always late starves a keystroke
         that is merely late. */
-#define WATERLINK_FRAME_URGENT 0x0040u // a keystroke; nothing waits behind it
-#define WATERLINK_FRAME_BULK 0x0080u   // a file; throughput, not latency
+#define WATERLINK_FRAME_URGENT 0x10u // a keystroke; nothing waits behind it
+#define WATERLINK_FRAME_BULK 0x20u   // a file; the sender's alone
+
+#define WATERLINK_FRAME_WIRE                                                   \
+        (WATERLINK_FRAME_REPLACEABLE | WATERLINK_FRAME_DURABLE |              \
+         WATERLINK_FRAME_LAST | WATERLINK_FRAME_URGENT)
 
 /*      Which is why sending is two paths and not one. Segments only go out
         in a run, and a run is built by waiting for the next frame -- so an
@@ -264,53 +271,6 @@ _Static_assert(sizeof(struct waterlink_frame) == WATERLINK_HEADER,
         it has nothing to do with, which is the thing this link exists to
         refuse. The price of being right here is known and small: an urgent
         frame costs 2516 cycles where a bulk one costs 461. */
-
-/*      How the payload is packed. Three bits, so a method is a small number
-        and not a negotiation: a receiver that does not know one refuses the
-        frame, and a sender only packs with what the version says the far side
-        has. A list would be a negotiation, and a negotiation is a downgrade.
-
-        THE RULE THAT MAKES PACKING CORRECT
-
-        A packed replaceable frame must be self contained.
-
-        These coders earn their ratio from history, but a replaceable frame
-        may be dropped -- that is what supersession is for -- and a dropped
-        frame takes the decoder's window with it, so every later frame on that
-        key unpacks into garbage the tag still calls authentic. History across
-        frames is therefore legal only where every frame is durable, and the
-        sender refuses the first replaceable frame that would break it.
-
-        Which says what packing is worth: 1168 bytes with a fresh window is
-        not much of a corpus. It pays on files, on the log, and on a terminal's
-        own output, which is mostly spaces and repeated escapes. It does not
-        pay on a desktop frame, already coded, or on a keystroke. */
-#define WATERLINK_FRAME_PACK_SHIFT 3
-#define WATERLINK_FRAME_PACK_MASK 0x0038u
-#define WATERLINK_FRAME_HISTORY 0x0100u // durable-only streams; see above
-
-#define WATERLINK_PACK_NONE 0u
-#define WATERLINK_PACK_DEFLATE 1u
-#define WATERLINK_PACK_ZSTD 2u
-#define WATERLINK_PACK_LZMA 3u
-
-/*      What a frame may unpack to: one scratch buffer taken at startup, and
-        nothing may claim more. A paired peer is authenticated, not benign, so
-        without a ceiling the datapath allocates nothing only until somebody
-        sends a well formed frame claiming a gigabyte.
-
-        The ceiling is the width of the field that declares it. Sixteen bits
-        cannot ask for more than this, so there is no bound to check and no
-        check to get wrong -- the only such rule in this file that a reader
-        can confirm by looking at the struct. */
-#define WATERLINK_INFLATED 65535
-
-/*      Effort is a level on the method's own scale, not a time budget: no
-        coder here takes microseconds as input, and a cost table per method
-        per architecture does not exist. The deadline does that work instead
-        -- when it is closer than packing last cost, send the frame raw. */
-#define WATERLINK_EFFORT_CHEAP 1
-#define WATERLINK_EFFORT_HARD 6
 
 /*      What a peer may do, granted one at a time and starting at none. VERBS
         is the moonwater vocabulary the machine already answers to and is what
@@ -325,13 +285,6 @@ _Static_assert(sizeof(struct waterlink_frame) == WATERLINK_HEADER,
 #define WATERLINK_MAY_CHANNELS 0x0040u // open channels of its own
 
 #define WATERLINK_MAY_DEFAULT WATERLINK_MAY_VERBS
-
-#define WATERLINK_CHANNEL_CONTROL 0u // verbs, and their answers
-#define WATERLINK_CHANNEL_SHELL 1u
-#define WATERLINK_CHANNEL_SCREEN 2u
-#define WATERLINK_CHANNEL_LOG 3u
-#define WATERLINK_CHANNEL_FILES 4u
-#define WATERLINK_CHANNEL_OPEN 16u // the first an application may take
 
 /*      AES-128-GCM, and not 256: it is the key size lib.c carries in assembly
         on all three machines, with a bitsliced floor that a kernel build

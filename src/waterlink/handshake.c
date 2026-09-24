@@ -50,7 +50,7 @@
 #include "waterlink.c"
 
 #define WATERLINK_PROTOCOL "Noise_IK_25519_AES128GCM_SHA256"
-#define WATERLINK_PROLOGUE "waterlink 1"
+#define WATERLINK_PROLOGUE "waterlink 2"
 
 /*
         What the first message carries, sealed: when it was made (TAI64N, so

@@ -1102,7 +1102,7 @@ static fn link_session_say(struct link_session address_to s, p32 kind)
         s->spoke = link_now();
 }
 
-static bool link_post(struct link_session address_to s, p64 key, p16 flags,
+static bool link_post(struct link_session address_to s, p64 key, p8 flags,
                       p8 type, p8 address_to data, positive length)
 {
         p8 payload[WATERLINK_FRAME_MAX];
@@ -1112,7 +1112,7 @@ static bool link_post(struct link_session address_to s, p64 key, p16 flags,
         payload[0] = type;
         if (length)
                 memory_copy(payload + 1, data, length);
-        return waterlink_post(s->link, key, 0, flags, 0, 0, payload,
+        return waterlink_post(s->link, key, flags, 0, payload,
                               (p16)(length + 1), link_now());
 }
 
@@ -1146,7 +1146,7 @@ static positive link_room_frames(struct link_session address_to s)
 static p8 link_read_buffer[LINK_READ_FRAMES * LINK_CHUNK];
 
 // What was read into the buffer, as frames on one key.
-static fn link_post_read(struct link_session address_to s, p64 key, p16 flags,
+static fn link_post_read(struct link_session address_to s, p64 key, p8 flags,
                          positive length)
 {
         for (positive at = 0; at < length; at += LINK_CHUNK)
@@ -2813,10 +2813,10 @@ static b32 link_client_run(string_address name, p8 kind,
         link_client.credit = kind == LINK_KIND_SHELL ? ~0ull : 0;
         if (kind == LINK_KIND_PULL || kind == LINK_KIND_LOG)
                 link_client.input_done = true;
-        (void)waterlink_post(s->link, LINK_KEY_REQUEST, 0,
+        (void)waterlink_post(s->link, LINK_KEY_REQUEST,
                              WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_URGENT |
                                      WATERLINK_FRAME_LAST,
-                             0, 0, request, (p16)request_length, link_now());
+                             0, request, (p16)request_length, link_now());
 
         signals = link_signals_open();
         if (kind == LINK_KIND_SHELL)

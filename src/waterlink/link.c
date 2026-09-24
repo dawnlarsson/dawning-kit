@@ -26,7 +26,7 @@
 #include "waterlink.c"
 
 // The largest frame that can share a datagram with nothing else.
-#define WATERLINK_FRAME_MAX (WATERLINK_PAYLOAD - WATERLINK_HEADER)
+#define WATERLINK_FRAME_MAX (WATERLINK_PAYLOAD - WATERLINK_HEADER_MOST)
 
 /*
         Ceilings, not guesses at a working set. A fixed count is what buys no
@@ -35,12 +35,14 @@
         is the whole intent of naming it.
 
         SLOTS is what may be queued or unacknowledged at once, so it is also
-        the most a link can have in flight: 256 frames of 1140 bytes is 285 KB
+        the most a link can have in flight: 256 frames of 1145 bytes is 286 KB
         a round trip, 14 MB/s at 20 ms and far past a gigabyte a second over a
         loopback's tens of microseconds. HELD is what the receiver keeps of
         frames that arrived before the frame they follow; a key may have no
         more than KEY_WINDOW frames in flight, so one lost frame on a key
-        never strands more behind it than the pool can hold.
+        never strands more behind it than the pool can hold. Several keys
+        can, and that is why a key's first frame goes back first when it is
+        lost (waterlink_band_requeue).
 */
 #define WATERLINK_SLOTS 256 // frames queued or awaiting acknowledgement
 #define WATERLINK_KEYS 512  // live keys tracked in each direction
@@ -81,11 +83,9 @@ struct waterlink_slot {
         p32 next;  // the next slot in its band or in the flight
         p32 prior; // the one before it in the flight
         p32 chain; // the next slot on the same key, by sequence
-        p16 channel;
         p16 length;
-        p16 deadline;
-        p16 flags;
-        p16 inflated;
+        p16 deadline; // milliseconds, 0 for none; the sender's alone
+        p8 flags;
         p8 state;
         p8 tries;
         p8 required; // replaceable, and a durable frame follows it
@@ -100,9 +100,8 @@ struct waterlink_slot {
         frame must follow, and the chain of this key's slots from oldest to
         newest -- the newest is the only one supersession ever asks about.
 
-        Receiving, it holds how far the key has been delivered, the highest
-        sequence seen at all, and the frames held back for the one they
-        follow. A key that ended stays here, remembered as ended, until the
+        Receiving, it holds how far the key has been delivered and the
+        frames held back for the one they follow. A key that ended stays here, remembered as ended, until the
         table needs the entry: that memory is what tells a late copy of the
         last frame from something new.
 */
@@ -110,7 +109,7 @@ struct waterlink_live {
         p64 key;
         p64 ended;     // receiving: when the last frame was delivered
         p32 sequence;  // sending: the next to assign; receiving: delivered
-        p32 floor;     // sending: what the next frame follows; receiving: seen
+        p32 floor;     // sending: what the next frame follows
         p32 first;     // sending: the oldest slot; receiving: the first held
         p32 last;      // sending: the newest slot
         p16 flying;    // sending: slots of this key in flight
@@ -346,46 +345,88 @@ static p32 waterlink_band_of(p16 flags)
         return WATERLINK_BAND_TIMED;
 }
 
+/*
+        The wire's numbers: seven bits a byte, low first, the top bit saying
+        another follows. Reading takes one spelling only -- a last byte of
+        zero after the first, or a bit past sixty four, is refused -- so two
+        bodies that differ never mean the same frames.
+*/
+static positive waterlink_number_size(p64 value)
+{
+        positive size = 1;
+
+        for (; value >= 0x80; value >>= 7)
+                size++;
+        return size;
+}
+
+static positive waterlink_number_put(p8 address_to at, p64 value)
+{
+        positive used = 0;
+
+        for (; value >= 0x80; value >>= 7)
+                at[used++] = (p8)(value | 0x80);
+        at[used++] = (p8)value;
+        return used;
+}
+
+static bool waterlink_number_get(p8 address_to bytes, positive length,
+                                 positive address_to at, p64 address_to value)
+{
+        p64 got = 0;
+
+        for (positive shift = 0; shift < 64 && address_to at < length;
+             shift += 7)
+        {
+                p8 byte = bytes[(address_to at)++];
+
+                if (shift == 63 && byte > 1)
+                        return false;
+                got |= (p64)(byte & 0x7f) << shift;
+                if (!(byte & 0x80))
+                {
+                        address_to value = got;
+                        return byte || !shift;
+                }
+        }
+        return false;
+}
+
+// A slot's frame header as it goes out, and what it costs the window.
+static positive waterlink_head_put(p8 address_to at,
+                                   struct waterlink_slot address_to slot)
+{
+        positive used = 1;
+
+        at[0] = slot->flags & WATERLINK_FRAME_WIRE;
+        used += waterlink_number_put(at + used, slot->key);
+        used += waterlink_number_put(at + used, slot->sequence);
+        used += waterlink_number_put(at + used, slot->sequence - slot->follows);
+        used += waterlink_number_put(at + used, slot->length);
+        return used;
+}
+
 static p64 waterlink_bytes(struct waterlink_slot address_to slot)
 {
-        return WATERLINK_HEADER + slot->length;
+        return 1 + waterlink_number_size(slot->key) +
+               waterlink_number_size(slot->sequence) +
+               waterlink_number_size(slot->sequence - slot->follows) +
+               waterlink_number_size(slot->length) + slot->length;
 }
 
 /*
-        Whether a caller's frame is one this link will carry at all.
-
-        Every one of these is a refusal and not a correction, because each
-        names a way the far side could be made to unpack something the sender
-        did not mean. A frame that is both replaceable and durable has no
-        answer to "may this be dropped"; a replaceable frame carrying a coder's
-        history makes every later frame on its key undecodable the moment it is
-        dropped, which is the rule spelled out at WATERLINK_PACK_NONE; and an
-        inflated length is a promise about somebody else's scratch buffer.
-        The acknowledgement flag is the link's own and no caller may set it.
+        Whether a frame's flags are ones this link will carry at all: one
+        class, since a frame that is both replaceable and durable has no
+        answer to "may this be dropped", and no bit it does not know. The
+        acknowledgement flag is the link's own and no caller may set it;
+        bulk is the sender's own and never arrives.
 */
-static bool waterlink_frame_sane(p16 flags, p16 length, p16 inflated)
+static bool waterlink_frame_sane(p8 flags, p8 known)
 {
         bool replaceable = (flags & WATERLINK_FRAME_REPLACEABLE) != 0;
         bool durable = (flags & WATERLINK_FRAME_DURABLE) != 0;
 
-        if (replaceable == durable)
-                return false;
-
-        if (flags & WATERLINK_FRAME_ACK)
-                return false;
-
-        if (length > WATERLINK_FRAME_MAX)
-                return false;
-
-        if ((flags & WATERLINK_FRAME_HISTORY) && replaceable)
-                return false;
-
-        //      No bound on inflated: the field is sixteen bits and so is
-        //      WATERLINK_INFLATED, which is the point of choosing it.
-        if (!inflated != !(flags & WATERLINK_FRAME_PACK_MASK))
-                return false;
-
-        return true;
+        return replaceable != durable && !(flags & ~known);
 }
 
 // The flight is a list in the order things were sent.
@@ -597,9 +638,8 @@ static bool waterlink_slot_late(struct waterlink_slot address_to slot,
         frame was already posted. A full queue is the caller's signal to stop
         producing, not this file's to start choosing.
 */
-bool waterlink_post(struct waterlink_link address_to link, p64 key, p16 channel,
-                    p16 flags, p16 deadline, p16 inflated,
-                    address_any payload, p16 length, p64 now)
+bool waterlink_post(struct waterlink_link address_to link, p64 key, p8 flags,
+                    p16 deadline, address_any payload, p16 length, p64 now)
 {
         struct waterlink_slot address_to slot;
         struct waterlink_live address_to live;
@@ -610,7 +650,9 @@ bool waterlink_post(struct waterlink_link address_to link, p64 key, p16 channel,
         if (now > link->clock)
                 link->clock = now;
 
-        if (!waterlink_frame_sane(flags, length, inflated))
+        if (!waterlink_frame_sane(flags, WATERLINK_FRAME_WIRE |
+                                                  WATERLINK_FRAME_BULK) ||
+            length > WATERLINK_FRAME_MAX)
         {
                 link->refused++;
                 return false;
@@ -663,11 +705,9 @@ bool waterlink_post(struct waterlink_link address_to link, p64 key, p16 channel,
                                 slot->posted = now;
                                 slot->sent = 0;
                                 slot->tries = 0;
-                                slot->channel = channel;
                                 slot->length = length;
                                 slot->deadline = deadline;
                                 slot->flags = flags;
-                                slot->inflated = inflated;
                                 if (length)
                                         memory_copy(slot->payload, payload,
                                                     length);
@@ -702,11 +742,9 @@ bool waterlink_post(struct waterlink_link address_to link, p64 key, p16 channel,
         slot->serial = 0;
         slot->prior = WATERLINK_NONE;
         slot->chain = WATERLINK_NONE;
-        slot->channel = channel;
         slot->length = length;
         slot->deadline = deadline;
         slot->flags = flags;
-        slot->inflated = inflated;
         slot->state = WATERLINK_SLOT_QUEUED;
         slot->tries = 0;
         slot->required = 0;
@@ -913,17 +951,16 @@ static p32 waterlink_band_take(struct waterlink_link address_to link, p32 band,
 }
 
 /*
-        The acknowledgement a receiver owes, as one record per key: how far
-        the key is delivered, the highest sequence seen at all, and which of
-        the sixty four sequences after the first missing one are held back
-        waiting for it. The first frees everything up to it at the sender.
-        The third tells the sender those frames arrived and are only waiting,
-        so they leave the flight -- they are no longer on the path -- and
-        what is left in flight on that key is what really went missing. Without
-        it a lost frame at the head of one key's stream sits behind a full
-        window of its own successors, and only the timer finds it.
+        The acknowledgement a receiver owes, as one frame per key: how far
+        the key is delivered, and which of the sixty four sequences after the
+        first missing one are held back waiting for it. The first frees
+        everything up to it at the sender. The second tells the sender those
+        frames arrived and are only waiting, so they leave the flight -- they
+        are no longer on the path -- and what is left in flight on that key is
+        what really went missing. Without it a lost frame at the head of one
+        key's stream sits behind a full window of its own successors, and only
+        the timer finds it.
 */
-#define WATERLINK_ACK_RECORD 24
 #define WATERLINK_ACK_MASK 64
 
 static fn waterlink_ack_owe(struct waterlink_link address_to link, p32 key_at)
@@ -942,66 +979,47 @@ static fn waterlink_ack_owe(struct waterlink_link address_to link, p32 key_at)
 static positive waterlink_ack_write(struct waterlink_link address_to link,
                                     p8 address_to bytes, positive room)
 {
-        struct waterlink_frame head;
-        positive fits;
-        positive written = 0;
+        positive used = 0;
         positive taken = 0;
 
-        if (!link->acks || room < WATERLINK_HEADER + WATERLINK_ACK_RECORD)
-                return 0;
-
-        fits = (room - WATERLINK_HEADER) / WATERLINK_ACK_RECORD;
-
-        while (taken < link->acks && written < fits)
+        for (; taken < link->acks; taken++)
         {
-                p64 key = link->acking[taken++];
+                p64 key = link->acking[taken];
                 p32 key_at = waterlink_key_find(link->receiving, key);
-                p8 address_to record;
+                struct waterlink_live address_to live;
+                p64 mask = 0;
 
                 if (key_at == WATERLINK_NONE)
                         continue;
-
-                record = bytes + WATERLINK_HEADER +
-                         written * WATERLINK_ACK_RECORD;
+                live = link->receiving + key_at;
+                for (p32 held = live->first; held != WATERLINK_NONE;
+                     held = link->held[held].next)
                 {
-                        struct waterlink_live address_to live =
-                                link->receiving + key_at;
-                        p64 mask = 0;
+                        p32 gap = link->held[held].head.sequence -
+                                  live->sequence - 2;
 
-                        for (p32 held = live->first; held != WATERLINK_NONE;
-                             held = link->held[held].next)
-                        {
-                                p32 gap = link->held[held].head.sequence -
-                                          live->sequence - 2;
-
-                                if (link->held[held].head.sequence >
-                                            live->sequence + 1 &&
-                                    gap < WATERLINK_ACK_MASK)
-                                        mask |= 1ull << gap;
-                        }
-
-                        memory_copy(record, address_of key, 8);
-                        memory_copy(record + 8, address_of live->sequence, 4);
-                        memory_copy(record + 12, address_of live->floor, 4);
-                        memory_copy(record + 16, address_of mask, 8);
-                        live->acking = 0;
+                        if (link->held[held].head.sequence > live->sequence + 1 &&
+                            gap < WATERLINK_ACK_MASK)
+                                mask |= 1ull << gap;
                 }
-                written++;
+
+                if (used + 1 + waterlink_number_size(key) +
+                            waterlink_number_size(live->sequence) +
+                            waterlink_number_size(mask) >
+                    room)
+                        break;
+                bytes[used++] = WATERLINK_FRAME_ACK;
+                used += waterlink_number_put(bytes + used, key);
+                used += waterlink_number_put(bytes + used, live->sequence);
+                used += waterlink_number_put(bytes + used, mask);
+                live->acking = 0;
         }
 
         link->acks -= (p32)taken;
         if (link->acks)
                 memory_copy(link->acking, link->acking + taken,
                             link->acks * sizeof(p64));
-
-        if (!written)
-                return 0;
-
-        memory_zero(address_of head, sizeof head);
-        head.flags = WATERLINK_FRAME_ACK;
-        head.length = (p16)(written * WATERLINK_ACK_RECORD);
-        memory_copy(bytes, address_of head, WATERLINK_HEADER);
-        return WATERLINK_HEADER + written * WATERLINK_ACK_RECORD;
+        return used;
 }
 
 /*
@@ -1052,19 +1070,17 @@ positive waterlink_fill(struct waterlink_link address_to link,
         //      Room is kept at the end for the acknowledgements owed, so a
         //      full run of frames still carries them.
         if (link->acks)
-                room -= WATERLINK_HEADER +
-                        WATERLINK_ACK_RECORD *
-                                (link->acks < 8 ? link->acks : 8);
+                room -= WATERLINK_ACK_MOST * (link->acks < 8 ? link->acks : 8);
 
         for (p32 band = 0; band < WATERLINK_BANDS && !full; band++)
         {
                 for (;;)
                 {
-                        struct waterlink_frame head;
                         struct waterlink_slot address_to slot;
                         p32 prior = WATERLINK_NONE;
                         p32 key_at;
                         p32 at;
+                        positive size;
 
                         if (band != WATERLINK_BAND_URGENT && !link->probes &&
                             (link->in_flight >= link->window ||
@@ -1077,7 +1093,8 @@ positive waterlink_fill(struct waterlink_link address_to link,
                                 break;
 
                         slot = link->slot + at;
-                        if (used + WATERLINK_HEADER + slot->length > room)
+                        size = (positive)waterlink_bytes(slot);
+                        if (used + size > room)
                         {
                                 //      Only the acknowledgements' room stands
                                 //      in a full frame's way: the frame goes
@@ -1086,8 +1103,7 @@ positive waterlink_fill(struct waterlink_link address_to link,
                                 //      the acknowledgement to fall due -- a
                                 //      millisecond of a stream stopped, with
                                 //      wake saying now the whole time.
-                                if (!used && WATERLINK_HEADER + slot->length <=
-                                                     WATERLINK_PAYLOAD)
+                                if (!used && size <= WATERLINK_PAYLOAD)
                                         room = WATERLINK_PAYLOAD;
                                 else
                                 {
@@ -1096,19 +1112,7 @@ positive waterlink_fill(struct waterlink_link address_to link,
                                 }
                         }
 
-                        head.key = slot->key;
-                        head.sequence = slot->sequence;
-                        head.follows = slot->follows;
-                        head.channel = slot->channel;
-                        head.length = slot->length;
-                        head.deadline = slot->deadline;
-                        head.flags = slot->flags;
-                        head.inflated = slot->inflated;
-                        head.reserved = 0;
-
-                        memory_copy(bytes + used, address_of head,
-                                    WATERLINK_HEADER);
-                        used += WATERLINK_HEADER;
+                        used += waterlink_head_put(bytes + used, slot);
                         if (slot->length)
                                 memory_copy(bytes + used, slot->payload,
                                             slot->length);
@@ -1119,7 +1123,7 @@ positive waterlink_fill(struct waterlink_link address_to link,
                         else if (link->probes)
                                 probed = true;
                         else
-                                paced += WATERLINK_HEADER + slot->length;
+                                paced += size;
 
                         waterlink_band_unlink(link, band, at, prior);
                         slot->state = WATERLINK_SLOT_FLIGHT;
@@ -1246,10 +1250,10 @@ bool waterlink_idle(struct waterlink_link address_to link)
 /*
         One acknowledgement record, at the sender.
 
-        Everything on the key up to what was delivered is done and freed. The
-        highest seen marks one frame as arrived but waiting, which moves the
-        latest known arrival forward without freeing anything -- the far side
-        may yet drop it if its hold-back fills, and the timer still covers it.
+        Everything on the key up to what was delivered is done and freed. A
+        frame the mask says is held has arrived but is waiting, which moves
+        the latest known arrival forward without freeing anything -- the far
+        side still has to deliver it, and the slot stays until it does.
 */
 static fn waterlink_acknowledge(struct waterlink_link address_to link,
                                 p64 key, p32 delivered, p64 mask,
@@ -1354,28 +1358,14 @@ static fn waterlink_estimate(struct waterlink_link address_to link,
         }
 }
 
-static fn waterlink_acks_take(struct waterlink_link address_to link,
-                              p8 address_to records, positive length, p64 now)
+/*
+        What a body's acknowledgements add up to, applied once for the body:
+        the latest arrival and a round trip from it, the window grown by what
+        was newly delivered, and the losses that makes visible.
+*/
+static fn waterlink_acks_settle(struct waterlink_link address_to link,
+                                p64 newly, p64 latest, p64 sample, p64 now)
 {
-        p64 newly = 0;
-        p64 latest = 0;
-        p64 sample = 0;
-
-        for (positive at = 0; at + WATERLINK_ACK_RECORD <= length;
-             at += WATERLINK_ACK_RECORD)
-        {
-                p64 key;
-                p32 delivered;
-                p64 mask;
-
-                memory_copy(address_of key, records + at, 8);
-                memory_copy(address_of delivered, records + at + 8, 4);
-                memory_copy(address_of mask, records + at + 16, 8);
-                waterlink_acknowledge(link, key, delivered, mask,
-                                      address_of newly, address_of latest,
-                                      address_of sample);
-        }
-
         if (latest)
         {
                 if (latest > link->largest)
@@ -1589,6 +1579,8 @@ bool waterlink_deliver_at(struct waterlink_link address_to link,
         p8 address_to bytes = (p8 address_to)body;
         positive at = 0;
         bool framed = false;
+        bool acked = false;
+        p64 newly = 0, latest = 0, sample = 0;
         bool good;
 
         if (length > WATERLINK_PAYLOAD)
@@ -1598,47 +1590,57 @@ bool waterlink_deliver_at(struct waterlink_link address_to link,
                 link->clock = now;
         now = link->clock;
 
-        while (at + WATERLINK_HEADER <= length)
+        //      A zero flags byte is where the frames stop: every frame has a
+        //      class or is an acknowledgement, and the box is zeros after the
+        //      last. The padding is inside the tag, so this is the sender's
+        //      statement and not a guess.
+        while (at < length && bytes[at])
         {
+                p8 flags = bytes[at++];
                 struct waterlink_frame head;
                 struct waterlink_live address_to live;
+                p64 key, sequence, back, size;
                 p32 key_at;
 
-                memory_copy(address_of head, bytes + at, WATERLINK_HEADER);
-
-                //      A sealed box is padded with zeros to its whole blocks,
-                //      and no real frame has zero flags, so a zero header is
-                //      where the frames stop. The padding is inside the tag,
-                //      so this is the sender's statement and not a guess.
-                if (!head.flags && !head.key && !head.length)
+                if (flags == WATERLINK_FRAME_ACK)
                 {
-                        at = length;
-                        break;
-                }
+                        p64 delivered, mask;
 
-                at += WATERLINK_HEADER;
-
-                if (head.reserved)
-                        return false;
-
-                if (at + head.length > length)
-                        return false;
-
-                if (head.flags == WATERLINK_FRAME_ACK)
-                {
-                        if (head.key || head.sequence || head.follows ||
-                            head.channel || head.deadline || head.inflated ||
-                            head.length % WATERLINK_ACK_RECORD)
+                        if (!waterlink_number_get(bytes, length, address_of at,
+                                                  address_of key) ||
+                            !waterlink_number_get(bytes, length, address_of at,
+                                                  address_of delivered) ||
+                            !waterlink_number_get(bytes, length, address_of at,
+                                                  address_of mask) ||
+                            delivered >= WATERLINK_NONE)
                                 return false;
-                        waterlink_acks_take(link, bytes + at, head.length, now);
-                        at += head.length;
+                        waterlink_acknowledge(link, key, (p32)delivered, mask,
+                                              address_of newly,
+                                              address_of latest,
+                                              address_of sample);
+                        acked = true;
                         continue;
                 }
 
-                if (!waterlink_frame_sane(head.flags, head.length,
-                                          head.inflated) ||
-                    !head.sequence || head.follows >= head.sequence)
+                if (!waterlink_frame_sane(flags, WATERLINK_FRAME_WIRE) ||
+                    !waterlink_number_get(bytes, length, address_of at,
+                                          address_of key) ||
+                    !waterlink_number_get(bytes, length, address_of at,
+                                          address_of sequence) ||
+                    !waterlink_number_get(bytes, length, address_of at,
+                                          address_of back) ||
+                    !waterlink_number_get(bytes, length, address_of at,
+                                          address_of size) ||
+                    !sequence || sequence >= WATERLINK_NONE || !back ||
+                    back > sequence || size > WATERLINK_FRAME_MAX ||
+                    size > length - at)
                         return false;
+
+                head.key = key;
+                head.sequence = (p32)sequence;
+                head.follows = (p32)(sequence - back);
+                head.length = (p16)size;
+                head.flags = flags;
 
                 key_at = waterlink_receiving_make(link, head.key);
                 if (key_at == WATERLINK_NONE)
@@ -1666,16 +1668,11 @@ bool waterlink_deliver_at(struct waterlink_link address_to link,
                 if (head.follows > live->sequence)
                 {
                         link->owed_now = 1;
-                        if (waterlink_hold(link, live, address_of head,
-                                           bytes + at) &&
-                            head.sequence > live->floor)
-                                live->floor = head.sequence;
+                        (void)waterlink_hold(link, live, address_of head,
+                                             bytes + at);
                         at += head.length;
                         continue;
                 }
-
-                if (head.sequence > live->floor)
-                        live->floor = head.sequence;
 
                 waterlink_hand(link, live, address_of head, bytes + at, now,
                                sink, context);
@@ -1683,12 +1680,10 @@ bool waterlink_deliver_at(struct waterlink_link address_to link,
                 at += head.length;
         }
 
-        //      A tail too short for a header is the seal's padding too, and
-        //      zeros: every box of acknowledgements alone has one, cut to
-        //      whole blocks, and so does a box whose last frame left one to
-        //      twenty seven bytes.
-        good = at == length ||
-               memory_span_byte(bytes + at, 0, length - at) == length - at;
+        if (acked)
+                waterlink_acks_settle(link, newly, latest, sample, now);
+
+        good = memory_span_byte(bytes + at, 0, length - at) == length - at;
         if (good && framed)
                 link->owed_count++;
         return good;
