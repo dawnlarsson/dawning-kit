@@ -346,10 +346,11 @@ positive waterlink_mdns_query(p8 address_to packet, positive room)
 
 /*
         A name at offset at, flattened into labels as lengths and bytes the
-        way it sits on the wire uncompressed. Pointers are followed only to
-        somewhere before the label that points, which makes a loop impossible,
-        and at most sixteen times. Returns the offset just past the name as it
-        sits in the packet, or 0 for anything that is not a name.
+        way it sits on the wire uncompressed -- net.c's reader, the one the
+        resolver trusts: a pointer only ever goes back past where it stands,
+        and nothing after it may read up to it again, so no loop is possible.
+        Returns the offset just past the name as it sits in the packet, or 0
+        for anything that is not a name.
 */
 #define WATERLINK_NAME_BYTES 256
 
@@ -357,57 +358,14 @@ static positive waterlink_dns_name(const p8 address_to packet, positive length,
                                    positive at, p8 address_to into,
                                    positive address_to into_length)
 {
-        positive after = 0;
-        positive used = 0;
-        positive jumps = 0;
-        positive floor = at;
+        positive ended;
+        bipolar used = dns_copy_name((p8 address_to)packet, length, at, into,
+                                     WATERLINK_NAME_BYTES - 1, address_of ended);
 
-        for (;;)
-        {
-                p8 first;
-
-                if (at >= length)
-                        return 0;
-                first = packet[at];
-
-                if ((first & 0xc0) == 0xc0)
-                {
-                        positive target;
-
-                        if (at + 1 >= length || ++jumps > 16)
-                                return 0;
-                        target = ((positive)(first & 0x3f) << 8) | packet[at + 1];
-                        if (!after)
-                                after = at + 2;
-                        //      Strictly backwards, and before every label
-                        //      already read: nothing can be read twice.
-                        if (target >= floor)
-                                return 0;
-                        at = target;
-                        floor = target;
-                        continue;
-                }
-
-                //      0x40 and 0x80 are extended and reserved label types.
-                if (first & 0xc0)
-                        return 0;
-
-                if (!first)
-                {
-                        if (used + 1 > WATERLINK_NAME_BYTES - 1)
-                                return 0;
-                        into[used++] = 0;
-                        address_to into_length = used;
-                        return after ? after : at + 1;
-                }
-
-                if (at + 1 + first > length ||
-                    used + 1 + first + 1 > WATERLINK_NAME_BYTES - 1)
-                        return 0;
-                memory_copy(into + used, packet + at, 1 + (positive)first);
-                used += 1 + (positive)first;
-                at += 1 + (positive)first;
-        }
+        if (used < 0)
+                return 0;
+        address_to into_length = (positive)used;
+        return ended;
 }
 
 static p8 waterlink_ascii_lower(p8 c)
