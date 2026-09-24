@@ -5300,11 +5300,12 @@ COLD fn shell_cd(writer write, string_address input)
         if (index < shell_argc)
                 name = shell_argv[index++];
 
-        //      Bash counts the operands and refuses a second with status 1;
-        //      dash reads the first and pays no attention to what follows it.
+        //      Bash counts the operands and refuses a second, with status 2
+        //      since 5.3.20 (1 before); dash reads the first and pays no
+        //      attention to what follows it.
         if (index < shell_argc && shell_bash_compat)
         {
-                return shell_refuse(1, "cd: too many arguments\n");
+                return shell_refuse(2, "cd: too many arguments\n");
         }
 
         if (!name)
@@ -5931,6 +5932,16 @@ COLD fn shell_popd(writer write, string_address input)
                         if (at + 1 < shell_argc)
                                 named = shell_argv[++at];
                         continue;
+                }
+
+                //      A word with no sign is no attempt at a number, and
+                //      bash 5.3.20 calls it an invalid argument; a sign with
+                //      no digits after it is still an invalid number.
+                if (!string_is(word, '+') && !string_is(word, '-'))
+                {
+                        shell_reported(2, "popd: %s: invalid argument\n", word);
+                        return shell_answer(string_report(
+                            log_error, 2, "popd: usage: %s\n", "popd [-n] [+N | -N]"));
                 }
 
                 if (!shell_dirstack_spec(word))
@@ -9343,6 +9354,7 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                      ((state->attributes_set | state->attributes_clear) &
                       SHELL_ARRAY_NAMEREF)))
                 {
+                        shell_diagnostic_where();
                         string_format(log_error,
                                       "%s: %s: readonly variable\n",
                                       shell_argv[0], word);
@@ -9423,6 +9435,7 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                 if (saved_scalar && ((state->set & DECLARE_READONLY) ||
                     ((state->clear & DECLARE_READONLY) && readonly) || (mark && readonly)))
                 {
+                        shell_diagnostic_where();
                         string_format(log_error, "%s: %s: readonly variable\n",
                                       shell_argv[0], word);
                         failed = true;
@@ -9628,6 +9641,7 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                 {
                         if (!saved_global && !global_element && (state->set & DECLARE_READONLY))
                         {
+                                shell_diagnostic_where();
                                 string_format(log_error, "%s: readonly variable\n", word);
                                 stored = true;
                         }
@@ -10079,11 +10093,11 @@ static COLD fn shell_marked(writer write, p8 mark)
                 {
                         shell_name_refused(command, word, length);
                         //      Dash aborts: export is a special builtin.
-                        //      Bash --posix reports the identifier and
-                        //      continues, in a function and at the top of
-                        //      -c alike; invalid options are the class
-                        //      that still takes the script.
-                        if (!shell_bash_compat)
+                        //      So does bash --posix since 5.3.20, in a
+                        //      function and at the top of -c alike, with
+                        //      status 1 (5.3.15 reported and went on).
+                        //      Bash outside posix mode still goes on.
+                        if (!shell_bash_compat || shell_posix_on())
                                 exec_special_error_note();
 
                         //      Under posix the next word is not tried, so
