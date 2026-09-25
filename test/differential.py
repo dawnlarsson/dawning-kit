@@ -34962,6 +34962,1690 @@ def harness_waterlink_mdns(argv):
     return checks.verdict("waterlink mdns:", "waterlink-mdns")
 
 
+def harness_waterlink_sanitized(argv):
+    """waterlink's parsers and link core, hosted under ASan and UBSan.
+
+    The in-tree checks compile freestanding with -fno-stack-protector, so a
+    stack overrun in a parser they drive is invisible to them: main once had
+    one -- a LINK_KIND_SHELL request copied length-1 bytes, length up to the
+    frame maximum, into a 1025-byte stack buffer, a >100-byte overflow by an
+    authenticated peer (fixed by link_request_well_formed). This harness cuts
+    the real parsers out of the tree by their source text, stitches them with
+    a hosted libc and cryptography stand-in the generator can drive, compiles
+    them under -fsanitize=address,undefined -fno-sanitize-recover=all and
+    walks them with seeded generators, every attacker-shaped buffer allocated
+    at exactly its length so a read or write past it is a report.
+
+    Four targets:
+      request  post-auth: link_request's parse (link_request_well_formed and
+               the text/mode copies), with link_size_unpack and link_term_word
+               the real code and the start callees recording stubs. The proof:
+               the same driver built with 266535d8's link_request fires an
+               ASan stack-buffer-overflow, and the fixed tree passes.
+      mdns     pre-auth: waterlink_mdns_read and net.c's dns_copy_name over
+               structured DNS-SD, mutations and random bytes, with a round trip
+               through waterlink_mdns_announce.
+      gate     pre-auth: waterlink_gate_passes and waterlink_mac1 over every
+               length and kind, and waterlink_admit's token buckets.
+      core     the link core: waterlink_judge against test/checks.c's
+               judge_model with the body flush against a guard page (the tri-
+               arch asm is compiled and run on an x86_64 ELF host, the model
+               stands in elsewhere), then post/fill/deliver/resume over a
+               loopback with the free list, held pool and flight walked after
+               every step. On a box with clang's libFuzzer, a bounded,
+               fixed-seed coverage run of the judge as well.
+
+        waterlink_sanitized [SCALE [SEED]]
+    """
+    import subprocess
+    import tempfile
+    import platform
+    root = HARNESS_ROOT
+    scale = float(argv[0]) if argv else 1.0
+    seed = int(argv[1], 0) if len(argv) > 1 else 0
+
+    clang = shutil.which("clang")
+    cc = clang or shutil.which(os.environ.get("CC", "cc")) or shutil.which("cc")
+    if not cc:
+        print("waterlink sanitized: NOT RUN -- no C compiler")
+        return 2
+
+    def read(path):
+        return (root / path).read_text()
+
+    def sec(text, first, following):
+        i = text.index(first)
+        return text[i:text.index(following, i)]
+
+    #   The pre-fix link_request, from 266535d8 (before link_request_well_formed
+    #   and the gated copies): the "fires on main" reference, embedded so the
+    #   proof stands where .git is not synced (the box). Where git is present
+    #   it is checked against `git show 266535d8` so it cannot drift.
+    REGION_MAIN = r'''static fn link_refuse(struct link_session address_to s, string_address why)
+{
+        (void)link_post(s, LINK_KEY_ANSWER,
+                        WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_LAST, 'N',
+                        (p8 address_to)why, string_length(why));
+        //      Ends once the far side has the answer.
+        s->exit_sent = true;
+        s->kind = LINK_KIND_NONE;
+}
+
+static fn link_request(struct link_session address_to s, p8 address_to payload,
+                       positive length)
+{
+        link_peers peers;
+        struct waterlink_peer address_to peer;
+        p32 may = 0;
+        bool started;
+        p8 why[96];
+        p8 text[LINK_REQUEST_MAX + 1];
+        p32 mode = 0;
+        positive skip;
+        string_address run[] = {"sh", "-c", (string_address)text, null};
+        string_address pull[] = {"cat", "--", (string_address)text, null};
+        string_address log[] = {"dmesg", "--follow", null};
+
+        if (s->kind != LINK_KIND_NONE || length < 1)
+                return;
+
+        //      Grants as they are now, not as they were at the handshake.
+        link_peers_load(address_of peers);
+        peer = link_peer_keyed(address_of peers, s->peer);
+        if (peer)
+                may = peer->may;
+        s->may = may;
+
+        for (positive at = 0; at < array_count(link_grants); at++)
+                if (link_grants[at].ask &&
+                    (payload[0] == link_grants[at].ask ||
+                     payload[0] == link_grants[at].ask_too) &&
+                    !(may & link_grants[at].bit))
+                {
+                        string_copy_bounded((string_address)why,
+                                            link_grants[at].name, sizeof why);
+                        string_append_bounded((string_address)why,
+                                              " is not granted to ", sizeof why);
+                        string_append_bounded((string_address)why,
+                                              (string_address)s->name,
+                                              sizeof why);
+                        link_refuse(s, (string_address)why);
+                        return;
+                }
+
+        for (positive kind = 1; kind < array_count(link_kind_asks); kind++)
+                if (link_kind_asks[kind] == payload[0])
+                        s->kind = (p8)kind;
+
+        //      A command or a path is one string with no NUL in it, behind a
+        //      push's mode; a terminal's request is its size and TERM.
+        skip = s->kind == LINK_KIND_PUSH ? 5 : 1;
+        if (s->kind != LINK_KIND_SHELL &&
+            (length < skip || length - skip > LINK_REQUEST_MAX ||
+             memory_first_of(payload + skip, 0, length - skip)))
+        {
+                link_refuse(s, "that request is malformed");
+                return;
+        }
+        memory_copy(text, payload + skip, length - skip);
+        text[length - skip] = 0;
+        memory_copy(address_of mode, payload + 1, 4);
+
+        //      Pull and log are commands the machine already has, named here
+        //      and never parsed by a shell.
+        switch (s->kind)
+        {
+        case LINK_KIND_SHELL:
+                started = link_start_shell(s, payload + 1, length - 1);
+                break;
+        case LINK_KIND_RUN:
+                started = text[0] && link_start_command(s, run, 3);
+                break;
+        case LINK_KIND_PULL:
+                started = text[0] && link_start_command(s, pull, 3);
+                break;
+        case LINK_KIND_LOG:
+                started = link_start_command(s, log, 2);
+                break;
+        case LINK_KIND_PUSH:
+                started = text[0] && link_start_push(s, text, length - 5,
+                                                     mode & 07777);
+                break;
+        default:
+                link_refuse(s, "that is not something this machine offers");
+                return;
+        }
+
+        if (!started)
+        {
+                link_refuse(s, s->kind == LINK_KIND_PUSH
+                                       ? "that file cannot be written there"
+                                       : "that could not be started");
+                return;
+        }
+
+        (void)link_post(s, LINK_KEY_ANSWER,
+                        WATERLINK_FRAME_DURABLE | WATERLINK_FRAME_LAST, 'O',
+                        null, 0);
+        link_self.state_dirty = true;
+}
+
+'''
+
+    def region_from_git():
+        got = subprocess.run(["git", "-C", str(root), "show",
+                              "266535d8:src/waterlink/service.c"],
+                             capture_output=True, text=True)
+        if got.returncode:
+            return None
+        text = got.stdout
+        a = "static fn link_refuse("
+        b = "/*\n        One descriptor to wait on"
+        return text[text.index(a):text.index(b, text.index(a))]
+
+    SHIM = r'''#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdarg.h>
+#include <signal.h>
+#include <unistd.h>
+#include <sys/mman.h>
+
+/*      The tree's words for its types, as lib.c spells them. */
+typedef uint8_t p8;
+typedef uint16_t p16;
+typedef uint32_t p32;
+typedef unsigned long long p64;
+typedef int8_t b8;
+typedef int32_t b32;
+typedef long long b64;
+typedef p64 positive;
+typedef b64 bipolar;
+typedef p8 *string_address;
+#define address_to *
+#define address_of &
+#define address_any void *
+#define null ((void *)0)
+#define fn void
+#define COLD
+#define HOT
+#define PURE
+#define CONST
+#define KEEP
+#define DEAD_END __attribute__((noreturn))
+#define array_count(a) (sizeof(a) / sizeof((a)[0]))
+#define TIOCGWINSZ 0x5413u
+#define TIOCSWINSZ 0x5414u
+typedef struct { p16 rows, columns, x_pixels, y_pixels; } winsize;
+#define WL_EAGAIN 11
+#undef EAGAIN
+#define EAGAIN WL_EAGAIN
+#undef EIO
+#define EIO 5
+#undef ENOENT
+#define ENOENT 2
+#define ERROR_EXISTS 17
+#define ERROR_NAME_TOO_LONG 36
+#undef AT_FDCWD
+#define AT_FDCWD (-100)
+#define FILE_WRITE (01 | 0100 | 01000)
+#define FILE_READ_WRITE 02
+#define FILE_EXCLUSIVE 0200
+#undef O_NOFOLLOW
+#define O_NOFOLLOW 0400000
+#undef O_CLOEXEC
+#define O_CLOEXEC 02000000
+#undef O_NONBLOCK
+#define O_NONBLOCK 04000
+#undef AF_INET
+#define AF_INET 2
+#undef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0x4000
+#define HOST_STATE "/run/moonwater"
+#define DNS_MALFORMED (-3)
+typedef struct { p16 family; p16 port; p32 host; p8 padding[8]; } socket_address_internet;
+
+/*      lib.c's routines by what they promise: plain C, so every byte they
+        touch is one the sanitizers see. A copy of nothing may name no
+        address, as lib.c's may; libc's may not, so these say so first. */
+static void *memory_copy(void *into, const void *from, positive size)
+{
+        if (size)
+                memcpy(into, from, size);
+        return into;
+}
+#define memory_copy_apart memory_copy
+static void memory_zero(void *into, positive size)
+{
+        if (size)
+                memset(into, 0, size);
+}
+static b32 memory_compare(const void *one, const void *two, positive size)
+{
+        return size ? memcmp(one, two, size) : 0;
+}
+positive memory_span_byte(const void *block, p8 value, positive size)
+        __attribute__((used, noinline));
+positive memory_span_byte(const void *block, p8 value, positive size)
+{
+        const p8 *bytes = block;
+        positive at = 0;
+
+        while (at < size && bytes[at] == value)
+                at++;
+        return at;
+}
+static void *memory_first_of(const void *block, int value, positive size)
+{
+        return size ? memchr(block, value, size) : 0;
+}
+static b32 memory_compare_ascii_case(const void *one, const void *two, positive size)
+{
+        const p8 *a = one, *b = two;
+
+        for (positive at = 0; at < size; at++)
+        {
+                p8 x = a[at] >= 'A' && a[at] <= 'Z' ? a[at] + 32 : a[at];
+                p8 y = b[at] >= 'A' && b[at] <= 'Z' ? b[at] + 32 : b[at];
+
+                if (x != y)
+                        return x < y ? -1 : 1;
+        }
+        return 0;
+}
+static positive memory_into_hex(void *into, const void *from, positive size)
+{
+        static const char digits[] = "0123456789abcdef";
+        p8 *out = into;
+        const p8 *in = from;
+
+        for (positive at = 0; at < size; at++)
+        {
+                out[2 * at] = digits[in[at] >> 4];
+                out[2 * at + 1] = digits[in[at] & 15];
+        }
+        return 2 * size;
+}
+static positive string_length(const void *text) { return strlen(text); }
+static void *string_copy(void *into, const void *from) { return strcpy(into, from); }
+static positive string_copy_bounded(void *into, const void *from, positive room)
+{
+        positive length = strlen(from);
+
+        if (room)
+        {
+                positive take = length < room - 1 ? length : room - 1;
+
+                memcpy(into, from, take);
+                ((p8 *)into)[take] = 0;
+        }
+        return length;
+}
+static positive string_append_bounded(void *into, const void *from, positive room)
+{
+        positive have = strnlen(into, room);
+
+        if (have == room)
+                return room + strlen(from);
+        return have + string_copy_bounded((p8 *)into + have, from, room - have);
+}
+static b32 byte_is_alnum(b32 c)
+{
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+static bool crypto_same(const void *one, const void *two, positive size)
+{
+        const p8 *a = one, *b = two;
+        p8 differ = 0;
+
+        for (positive at = 0; at < size; at++)
+                differ |= a[at] ^ b[at];
+        return !differ;
+}
+static void crypto_forget(void *into, positive size) { memory_zero(into, size); }
+static void network_store_16(p8 *at, p16 value) { at[0] = value >> 8; at[1] = (p8)value; }
+static void network_store_32(p8 *at, p32 value)
+{
+        at[0] = value >> 24; at[1] = value >> 16; at[2] = value >> 8; at[3] = (p8)value;
+}
+static p16 network_load_16(const p8 *at) { return (p16)(at[0] << 8 | at[1]); }
+static p32 network_load_32(const p8 *at)
+{
+        return (p32)at[0] << 24 | (p32)at[1] << 16 | (p32)at[2] << 8 | at[3];
+}
+static void crypto_put_be64(p8 *at, p64 value)
+{
+        for (int i = 0; i < 8; i++)
+                at[i] = (p8)(value >> (56 - 8 * i));
+}
+#define network_order_16(v) ((p16)((((p16)(v)) >> 8) | (((p16)(v)) << 8)))
+#define network_order_32(v) __builtin_bswap32((p32)(v))
+static b32 bits_trailing_zeros(positive value) { return __builtin_ctzll(value); }
+static b32 bits_counted(positive value) { return __builtin_popcountll(value); }
+
+/*      The cryptography stands in: a keyed mixing function in place of
+        SHA-256, HMAC and X25519, and a tag the generator can make or spoil
+        in place of AES-GCM. None of it is what is under test -- lib.c's
+        primitives are assembly the sanitizers cannot see into, and
+        CHECK_waterlink and the Noise reference hold them to the spec --
+        and a rule the generator can satisfy is what lets a datagram past
+        each gate to the code behind it. */
+typedef struct { p64 lane[4]; p64 length; } crypto_sha256;
+static p64 wl_mix(p64 x)
+{
+        x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ull;
+        x ^= x >> 27; x *= 0x94d049bb133111ebull;
+        return x ^ (x >> 31);
+}
+static void crypto_sha256_open(crypto_sha256 *hash)
+{
+        for (int i = 0; i < 4; i++)
+                hash->lane[i] = 0x6a09e667f3bcc908ull * (i + 1);
+        hash->length = 0;
+}
+static void crypto_sha256_write(crypto_sha256 *hash, const void *data, positive size)
+{
+        const p8 *bytes = data;
+
+        for (positive at = 0; at < size; at++, hash->length++)
+                hash->lane[hash->length & 3] =
+                        wl_mix(hash->lane[hash->length & 3] ^ bytes[at] ^ hash->length << 8);
+}
+static void crypto_sha256_close(crypto_sha256 *hash, p8 *out)
+{
+        for (int i = 0; i < 4; i++)
+        {
+                p64 word = wl_mix(hash->lane[i] ^ hash->lane[(i + 1) & 3] ^ hash->length);
+
+                memcpy(out + 8 * i, &word, 8);
+        }
+}
+static void crypto_sha256_of(const void *data, positive size, p8 *out)
+{
+        crypto_sha256 hash;
+
+        crypto_sha256_open(&hash);
+        crypto_sha256_write(&hash, data, size);
+        crypto_sha256_close(&hash, out);
+}
+static void crypto_hmac_sha256(const p8 *key, positive key_size, const void *message,
+                               positive size, p8 *out)
+{
+        crypto_sha256 hash;
+
+        crypto_sha256_open(&hash);
+        crypto_sha256_write(&hash, key, key_size);
+        crypto_sha256_write(&hash, "\x36", 1);
+        crypto_sha256_write(&hash, message, size);
+        crypto_sha256_close(&hash, out);
+}
+static bool crypto_x25519(p8 *out, const p8 *secret, const p8 *point)
+{
+        crypto_sha256 hash;
+
+        crypto_sha256_open(&hash);
+        crypto_sha256_write(&hash, secret, 32);
+        crypto_sha256_write(&hash, point, 32);
+        crypto_sha256_close(&hash, out);
+        return true;
+}
+typedef struct { p8 round[176]; p8 table[256]; } crypto_aesgcm_key;
+static void crypto_aesgcm_prepare(crypto_aesgcm_key *key, const p8 *raw)
+{
+        memset(key, 0, sizeof *key);
+        memcpy(key->round, raw, 16);
+}
+'''
+    ASM_MACROS = r'''
+#define ASM_ENDBR ""
+#define ASM_RET "ret\n"
+#define ASM_TYPE "@function"
+#define ASM_FUNC(name) ".text\n.balign 16\n.globl " #name "\n.type " #name ", @function\n" #name ":\n" ASM_ENDBR
+#define ASM_END(name) ".size " #name ", .-" #name "\n"
+'''
+
+    #   The slices every target shares.
+    wl = sec(read("src/waterlink/waterlink.c"), "#ifndef WATERLINK_INCLUDED",
+             "#endif // WATERLINK_INCLUDED") + "\n#endif\n"
+    util = read("src/lib.util.c")
+    vli = sec(util, "static inline positive memory_vli_size(p64 value)",
+              "/* GNU ld repairs")
+
+    svc = read("src/waterlink/service.c")
+    net = read("src/net/net.c")
+    disc = read("src/waterlink/discover.c")
+    hs = read("src/waterlink/handshake.c")
+    link = read("src/waterlink/link.c")
+    checks = read("test/checks.c")
+
+    DRIVER_REQUEST = r'''/*      The post-authentication request parser, driven directly.
+
+        A peer that has finished the handshake sends a request frame; the
+        machine parses it in link_request before it starts anything. This
+        target is that parse, from link_refuse through link_request, sliced
+        from the tree and compiled hosted under the sanitizers, with the
+        callees it starts things through -- link_start_shell, _command,
+        _push, link_post -- recording stubs, and the two small parsers a
+        shell request drives, link_size_unpack and link_term_word, the real
+        sliced code. Every payload sits in a malloc block of exactly its
+        length, so a read or a write past the frame is a sanitizer report.
+*/
+
+#define WATERLINK_FRAME_MAX (WATERLINK_PAYLOAD - WATERLINK_HEADER_MOST)
+static struct { bool state_dirty; } link_self;
+
+/*      What link_request needs of a session, and no more. */
+struct link_session {
+        p8 kind;
+        p8 name[WATERLINK_NAME_MAX];
+        p8 peer[32];
+        p32 may;
+        bool exit_sent;
+        /*      What the stubs record for the model to check. */
+        int started;      // 1 shell, 2 command, 3 push, 0 none
+        int refused;
+        p8 refusal[128];
+        p8 term[32];
+        winsize size;
+        int post_calls;
+        p8 last_argv0[8];
+        p32 push_mode;
+        positive push_length;
+        p8 shell_request[WATERLINK_FRAME_MAX + 1];
+        positive shell_length;
+        p8 text_seen[LINK_REQUEST_MAX + 1];
+        positive text_length;
+};
+
+/*      The grants a peer holds, handed to link_request through the peer
+        table. The generator sets link_may so a request can be granted or
+        refused; a granted peer reaches the copies, a refused one does not. */
+static p32 link_may = 0xffffffffu;
+
+typedef struct { struct waterlink_peer peer[64]; positive count; } link_peers;
+static void link_peers_load(link_peers *peers) { peers->count = 0; }
+static struct waterlink_peer *link_peer_keyed(link_peers *peers, p8 *key)
+{
+        static struct waterlink_peer one;
+
+        (void)peers; (void)key;
+        one.may = link_may;
+        return &one;
+}
+
+static bool link_post(struct link_session *s, p8 key, p8 flags, p8 type,
+                      p8 *data, positive length)
+{
+        (void)key; (void)flags;
+        s->post_calls++;
+        if (type == 'N')
+        {
+                positive keep = length < sizeof s->refusal - 1
+                                        ? length : sizeof s->refusal - 1;
+
+                if (length && data)
+                        memory_copy(s->refusal, data, keep);
+                s->refusal[keep] = 0;
+                s->refused = 1;
+        }
+        return true;
+}
+
+/*      The size and TERM a shell request drives, from the real sliced
+        link_size_unpack and link_term_word, arranged as link_start_shell
+        arranges them -- so the shell path exercises exactly what ships. */
+static bool link_start_shell(struct link_session *s, p8 *request, positive length)
+{
+        s->started = 1;
+        s->shell_length = length;
+        if (length)
+                memory_copy(s->shell_request, request, length);
+        if (length >= 4)
+                s->size = link_size_unpack(request);
+        link_term_word(request + 4, length > 4 ? length - 4 : 0, s->term);
+        return true;
+}
+static bool link_start_command(struct link_session *s, string_address *words, positive count)
+{
+        s->started = 2;
+        (void)count;
+        string_copy_bounded(s->last_argv0, words[0], sizeof s->last_argv0);
+        /*      words[2] is the text buffer; record what a shell would run. */
+        if (count >= 3 && words[2])
+                s->text_length = string_copy_bounded(s->text_seen, words[2],
+                                                     sizeof s->text_seen);
+        return true;
+}
+static bool link_start_push(struct link_session *s, p8 *path, positive length, p32 mode)
+{
+        s->started = 3;
+        s->push_length = length;
+        s->push_mode = mode;
+        return true;
+}
+
+/*      A reference reading of the fixed rules, spelled as numbers, so the
+        model and the sliced code are two readings and not one. */
+static bool ref_alnum_word(const p8 *from, positive length)
+{
+        if (!length || length >= 32)
+                return false;
+        for (positive at = 0; at < length; at++)
+        {
+                p8 c = from[at];
+
+                if (!(byte_is_alnum(c) || c == '-' || c == '.' || c == '+' || c == '_'))
+                        return false;
+        }
+        return true;
+}
+
+static uint64_t rng_state;
+static p32 draw(p32 below)
+{
+        rng_state ^= rng_state << 13;
+        rng_state ^= rng_state >> 7;
+        rng_state ^= rng_state << 17;
+        return below ? (p32)(rng_state % below) : (p32)rng_state;
+}
+
+static const p8 ask_bytes[] = {LINK_ASK_SHELL, LINK_ASK_RUN, LINK_ASK_PUSH,
+                               LINK_ASK_PULL, LINK_ASK_LOG};
+
+int main(int argc, char **argv)
+{
+        long count = argc > 1 ? atol(argv[1]) : 400000;
+        rng_state = (argc > 2 ? strtoull(argv[2], 0, 0) : 0x51ac9d) | 1;
+        unsigned long fired = 0, refused = 0, started = 0, empty = 0, model_bad = 0;
+
+        for (long n = 0; n < count; n++)
+        {
+                struct link_session s;
+                positive length;
+                p8 ask;
+                p8 *payload;
+
+                memory_zero(&s, sizeof s);
+                s.kind = LINK_KIND_NONE;
+                memory_copy(s.name, "peer", 5);
+                link_may = draw(4) ? 0xffffffffu : draw(0);
+
+                /*      The first case is a granted shell request of the whole
+                        frame: the one that overruns text[LINK_REQUEST_MAX + 1]
+                        on 266535d8. It fires the proof on the first iteration
+                        for any seed; the fixed tree refuses it as malformed.
+                        Case one is a granted one-byte request, the mode read
+                        past a short frame that 266535d8 also makes. */
+                if (n == 0)
+                {
+                        link_may = 0xffffffffu;
+                        length = WATERLINK_FRAME_MAX;
+                        payload = malloc(length);
+                        for (positive at = 0; at < length; at++)
+                                payload[at] = 'x';
+                        ask = LINK_ASK_SHELL;
+                        payload[0] = ask;
+                        link_request(&s, payload, length);
+                        if (s.started) started++; else if (s.refused) refused++;
+                        free(payload);
+                        continue;
+                }
+                if (n == 1)
+                {
+                        link_may = 0xffffffffu;
+                        length = 1;
+                        payload = malloc(length);
+                        payload[0] = LINK_ASK_RUN;
+                        link_request(&s, payload, length);
+                        if (s.started) started++; else if (s.refused) refused++;
+                        free(payload);
+                        continue;
+                }
+
+                /*      A length across the whole frame, weighted to the
+                        boundaries a copy would run past. */
+                switch (draw(6))
+                {
+                case 0: length = draw(8); break;
+                case 1: length = draw(40); break;
+                case 2: length = 30 + draw(12); break;
+                case 3: length = 1020 + draw(16); break;
+                case 4: length = WATERLINK_FRAME_MAX - draw(8); break;
+                default: length = draw(WATERLINK_FRAME_MAX + 1); break;
+                }
+                if (length > WATERLINK_FRAME_MAX)
+                        length = WATERLINK_FRAME_MAX;
+
+                payload = malloc(length ? length : 1);
+                for (positive at = 0; at < length; at++)
+                        payload[at] = (p8)draw(256);
+
+                /*      The first byte is the ask, usually a real one so the
+                        kind paths are reached; now and then random. */
+                if (length)
+                {
+                        if (draw(5))
+                                ask = ask_bytes[draw(array_count(ask_bytes))];
+                        else
+                                ask = (p8)draw(256);
+                        payload[0] = ask;
+                }
+                else
+                        ask = 0;
+
+                /*      A NUL now and then in the body, since a NUL is what a
+                        run, pull or push request may not carry. */
+                if (length > 1 && draw(3) == 0)
+                        payload[1 + draw(length - 1)] = 0;
+
+                link_request(&s, payload, length);
+
+                if (length < 1)
+                {
+                        empty++;
+                        if (s.started || s.refused)
+                                model_bad++;
+                        free(payload);
+                        continue;
+                }
+                if (s.refused)
+                        refused++;
+                if (s.started)
+                        started++;
+
+                /*      The model, on the fixed tree only (the proof build
+                        aborts before here). A shell request is well formed
+                        at 5..36 bytes, and then started with the bytes sent;
+                        outside that it is refused malformed. */
+#ifndef WL_MAIN_REQUEST
+                {
+                        bool granted = true;
+                        p32 need = 0;
+
+                        for (positive g = 0; g < array_count(link_grants); g++)
+                                if (link_grants[g].ask &&
+                                    (ask == link_grants[g].ask || ask == link_grants[g].ask_too))
+                                        need = link_grants[g].bit;
+                        if (need && !(link_may & need))
+                                granted = false;
+
+                        if (!granted)
+                        {
+                                if (!s.refused || s.started)
+                                        model_bad++;
+                        }
+                        else if (ask == LINK_ASK_SHELL)
+                        {
+                                bool well = length >= 5 && length <= 36;
+
+                                if (well)
+                                {
+                                        winsize want = link_size_unpack(payload + 1);
+                                        p8 term[32] = {0};
+
+                                        link_term_word(payload + 5, length - 5, term);
+                                        if (s.started != 1 ||
+                                            s.shell_length != length - 1 ||
+                                            (s.shell_length &&
+                                             memory_compare(s.shell_request, payload + 1, length - 1)) ||
+                                            s.size.rows != want.rows || s.size.columns != want.columns ||
+                                            memory_compare(s.term, term, 32))
+                                                model_bad++;
+                                        /*      term is either the spelled word or "xterm". */
+                                        if (!ref_alnum_word(payload + 5, length > 5 ? length - 5 : 0) &&
+                                            memory_compare(s.term, "xterm", 6))
+                                                model_bad++;
+                                }
+                                else if (!s.refused || s.started)
+                                        model_bad++;
+                        }
+                }
+#endif
+                free(payload);
+        }
+        (void)fired;
+        printf("request: %ld cases, %lu refused, %lu started, %lu empty, %lu model failures\n",
+               count, refused, started, empty, model_bad);
+        printf("waterlink-request %lu/%lu\n", count - model_bad, (unsigned long)count);
+        return model_bad != 0;
+}
+'''
+    DRIVER_MDNS = r'''/*      The mDNS / DNS-SD reader, driven directly.
+
+        waterlink_mdns_read is the most exposed parser on the machine: any
+        host on the local link sends it a datagram and it runs before any
+        key is in hand. This target compiles it and the name walker it stands
+        on (net.c's dns_copy_name) hosted under the sanitizers and feeds it
+        three kinds of input, each in a malloc block of exactly its length:
+        well-formed response and question packets whose contents a model
+        knows; those same packets mutated in the ways a wire parser must
+        survive -- truncation at every offset, lying counts, compression
+        pointers backward, forward, to self and into a label, label type
+        bytes, rdlength past the end, an SRV shorter than a port; and pure
+        random bytes of every length. A well-formed packet must read out the
+        instances and ports the model put in it; every input at all must be
+        read without a sanitizer saying a word, and a round trip through
+        waterlink_mdns_announce must come back the same.
+*/
+
+
+
+static uint64_t rng_state;
+static p32 draw(p32 below)
+{
+        rng_state ^= rng_state << 13;
+        rng_state ^= rng_state >> 7;
+        rng_state ^= rng_state << 17;
+        return below ? (p32)(rng_state % below) : (p32)rng_state;
+}
+
+/*      A DNS name written uncompressed: length-prefixed labels then a zero.
+        Answers the bytes used. */
+static positive put_name(p8 *at, const char **labels, int n)
+{
+        positive used = 0;
+
+        for (int i = 0; i < n; i++)
+        {
+                positive length = strlen(labels[i]);
+
+                at[used++] = (p8)length;
+                memcpy(at + used, labels[i], length);
+                used += length;
+        }
+        at[used++] = 0;
+        return used;
+}
+
+static const char *service_labels[] = {"_waterlink", "_udp", "local"};
+
+static positive put_service(p8 *at) { return put_name(at, service_labels, 3); }
+static positive put_instance(p8 *at, const char *label)
+{
+        const char *labels[4] = {label, "_waterlink", "_udp", "local"};
+
+        return put_name(at, labels, 4);
+}
+
+struct model_instance { char label[64]; positive label_length; p16 port; };
+
+/*      A well-formed response carrying `k` SRV records for labels drawn from
+        a small pool, so labels repeat (found_at dedups, last port wins) and
+        overflow past WATERLINK_FOUND_MAX. Fills the model with the instances
+        the reader must find, in the order it will find them. */
+static positive build_response(p8 *packet, struct model_instance *model,
+                               positive *model_count)
+{
+        static const char *pool[] = {"wl-a", "wl-bb", "wl-ccc", "wl-d",
+                                     "wl-ee", "wl-fff", "wl-g", "wl-hh",
+                                     "wl-iii", "wl-jjj", "wl-k", "wl-ll"};
+        positive at = 12;
+        p32 k = 1 + draw(11);
+        p16 ancount = 0;
+        struct model_instance found[16];
+        positive found_count = 0;
+
+        packet[0] = (p8)draw(256);
+        packet[1] = (p8)draw(256);
+        packet[2] = 0x80; // response, opcode 0
+        packet[3] = 0;    // rcode 0
+        memset(packet + 4, 0, 8);
+
+        for (p32 i = 0; i < k; i++)
+        {
+                const char *label = pool[draw(sizeof pool / sizeof pool[0])];
+                p16 port = (p16)(1 + draw(65534));
+                p32 type = draw(4) ? 33 : 16; // usually SRV, sometimes TXT
+                positive name_at = at;
+                positive rdlength;
+
+                at += put_instance(packet + at, label);
+                network_store_16(packet + at, (p16)type);
+                network_store_16(packet + at + 2, 0x8001);
+                network_store_32(packet + at + 4, 4500);
+                if (type == 33)
+                        rdlength = 6 + (draw(3) ? 1 + draw(8) : 0);
+                else
+                        rdlength = draw(6);
+                network_store_16(packet + at + 8, (p16)rdlength);
+                at += 10;
+                for (positive b = 0; b < rdlength; b++)
+                        packet[at + b] = (p8)draw(256);
+                if (type == 33 && rdlength >= 7)
+                {
+                        packet[at + 4] = (p8)(port >> 8);
+                        packet[at + 5] = (p8)port;
+                        /*      Model: found_at dedups by label; the last SRV
+                                on a label sets its port. */
+                        positive m;
+                        for (m = 0; m < found_count; m++)
+                                if (found[m].label_length == strlen(label) &&
+                                    !memcmp(found[m].label, label, strlen(label)))
+                                        break;
+                        if (m == found_count && found_count < 8)
+                        {
+                                strcpy(found[found_count].label, label);
+                                found[found_count].label_length = strlen(label);
+                                found_count++;
+                        }
+                        if (m < 8)
+                                found[m < found_count ? m : found_count - 1].port = port;
+                        (void)name_at;
+                }
+                at += rdlength;
+                ancount++;
+        }
+        network_store_16(packet + 6, ancount);
+        *model_count = found_count;
+        for (positive m = 0; m < found_count; m++)
+                model[m] = found[m];
+        return at;
+}
+
+/*      A question for the service: the reader must set `asked`. */
+static positive build_question(p8 *packet, int for_service)
+{
+        positive at = 12;
+
+        packet[0] = (p8)draw(256);
+        packet[1] = (p8)draw(256);
+        packet[2] = 0; // query, opcode 0
+        packet[3] = 0;
+        memset(packet + 4, 0, 8);
+        network_store_16(packet + 4, 1); // qdcount
+        if (for_service)
+                at += put_service(packet + at);
+        else
+                at += put_instance(packet + at, "wl-x");
+        network_store_16(packet + at, draw(2) ? 12 : 255); // PTR or ANY
+        network_store_16(packet + at + 2, 1);
+        return at + 4;
+}
+
+int main(int argc, char **argv)
+{
+        long count = argc > 1 ? atol(argv[1]) : 300000;
+        rng_state = (argc > 2 ? strtoull(argv[2], 0, 0) : 0x5353ab) | 1;
+        unsigned long read_ok = 0, found_total = 0, asked_total = 0,
+                      model_bad = 0, roundtrip_bad = 0, malformed = 0;
+
+        /*      Round trip: our own announcement and query, read back. */
+        for (int r = 0; r < 2000; r++)
+        {
+                p8 packet[WATERLINK_MDNS_MAX];
+                p8 instance[10], host[6];
+                struct waterlink_found found;
+                positive length;
+
+                for (int i = 0; i < 10; i++) instance[i] = (p8)draw(256);
+                for (int i = 0; i < 6; i++) host[i] = (p8)draw(256);
+                length = waterlink_mdns_announce(packet, sizeof packet, instance,
+                                                 host, (p16)(1 + draw(65534)),
+                                                 draw(2) ? 0x0a4d0002u : 0, 4500,
+                                                 (p16)draw(65536), null, 0);
+                if (length)
+                {
+                        p8 *exact = malloc(length);
+
+                        memcpy(exact, packet, length);
+                        if (!waterlink_mdns_read(exact, length, &found))
+                                roundtrip_bad++;
+                        else if (found.count != 1)
+                                roundtrip_bad++;
+                        free(exact);
+                }
+                length = waterlink_mdns_query(packet, sizeof packet);
+                if (length)
+                {
+                        p8 *exact = malloc(length);
+
+                        memcpy(exact, packet, length);
+                        /*      Our own query is a query, not a response; the
+                                reader answers asked only when it is not us
+                                on our own socket, but reads it well formed. */
+                        (void)waterlink_mdns_read(exact, length, &found);
+                        free(exact);
+                }
+        }
+
+        for (long n = 0; n < count; n++)
+        {
+                p8 scratch[WATERLINK_MDNS_MAX + 64];
+                struct model_instance model[16];
+                positive model_count = 0;
+                positive length;
+                int kind = draw(10);
+                int expect_asked = 0, check_model = 0;
+                p8 *packet;
+                struct waterlink_found found;
+
+                if (kind < 4)
+                {
+                        length = build_response(scratch, model, &model_count);
+                        check_model = 1;
+                }
+                else if (kind < 6)
+                {
+                        int svc = draw(2);
+                        length = build_question(scratch, svc);
+                        expect_asked = svc;
+                        check_model = 1;
+                }
+                else if (kind < 8)
+                {
+                        /*      A well-formed packet, then broken: truncated,
+                                a lying count, or a byte flipped. */
+                        length = draw(2) ? build_response(scratch, model, &model_count)
+                                         : build_question(scratch, 1);
+                        switch (draw(5))
+                        {
+                        case 0: if (length) length = draw(length + 1); break;
+                        case 1: scratch[4] = (p8)draw(256); scratch[5] = (p8)draw(256); break;
+                        case 2: scratch[6] = (p8)draw(256); scratch[7] = (p8)draw(256); break;
+                        case 3: if (length > 12) scratch[12 + draw(length - 12)] = 0xc0; break;
+                        default: if (length) scratch[draw(length)] ^= (p8)(1 << draw(8)); break;
+                        }
+                }
+                else
+                {
+                        /*      Pure noise, every length. A compression byte
+                                is common so pointer handling is exercised. */
+                        length = draw(WATERLINK_MDNS_MAX + 2);
+                        for (positive at = 0; at < length && at < sizeof scratch; at++)
+                                scratch[at] = draw(6) ? (p8)draw(256)
+                                                      : (p8)(0xc0 | draw(64));
+                        if (length > sizeof scratch) length = sizeof scratch;
+                }
+
+                packet = malloc(length ? length : 1);
+                memcpy(packet, scratch, length);
+                if (waterlink_mdns_read(packet, length, &found))
+                {
+                        read_ok++;
+                        found_total += found.count;
+                        if (found.asked) asked_total++;
+                        if (check_model)
+                        {
+                                if (expect_asked && !found.asked)
+                                        model_bad++;
+                                if (model_count)
+                                {
+                                        if (found.count != model_count)
+                                                model_bad++;
+                                        for (positive m = 0; m < model_count &&
+                                                             m < found.count; m++)
+                                        {
+                                                struct waterlink_found_instance *fi =
+                                                        &found.instance[m];
+                                                if (fi->label_length != model[m].label_length ||
+                                                    memcmp(fi->label, model[m].label,
+                                                           model[m].label_length) ||
+                                                    !fi->has_port ||
+                                                    fi->port != model[m].port)
+                                                        model_bad++;
+                                        }
+                                }
+                        }
+                }
+                else
+                {
+                        malformed++;
+                        if (check_model && model_count)
+                                model_bad++; // a well-formed packet must read
+                }
+                free(packet);
+        }
+        printf("mdns: %ld cases, %lu read, %lu malformed, %lu instances, %lu asked, "
+               "%lu roundtrip failures, %lu model failures\n",
+               count, read_ok, malformed, found_total, asked_total, roundtrip_bad, model_bad);
+        printf("waterlink-mdns %lu/%lu\n",
+               (unsigned long)count - model_bad - roundtrip_bad, (unsigned long)count);
+        return (model_bad || roundtrip_bad) != 0;
+}
+'''
+    DRIVER_GATE = r'''/*      The pre-authentication gate, driven directly.
+
+        waterlink_gate_passes is the first thing an initiation datagram meets
+        at the listener: before any Diffie-Hellman it checks the datagram is
+        exactly a handshake's size, names a handshake kind, has zero padding
+        after its body, and carries a mac1 keyed by this machine's public
+        key. Anyone on the network can send it any bytes. This target
+        compiles it, waterlink_mac1 under it and waterlink_admit beside it
+        hosted under the sanitizers, with the HMAC and the curve stood in by
+        a deterministic mixing function so the generator can make a mac1 that
+        passes or one that does not and a model can say which. Every datagram
+        is a malloc block of exactly its length, across every length 0..1216
+        and every kind; a well-formed one must pass, a wrong padding byte or a
+        wrong mac must not, and no input at all may read out of bounds.
+*/
+
+static uint64_t rng_state;
+static p32 draw(p32 below)
+{
+        rng_state ^= rng_state << 13;
+        rng_state ^= rng_state >> 7;
+        rng_state ^= rng_state << 17;
+        return below ? (p32)(rng_state % below) : (p32)rng_state;
+}
+
+/*      The model's own reading of the gate, spelled as numbers. */
+static bool ref_gate(struct waterlink_identity *me, const p8 *datagram, positive length)
+{
+        p32 kind;
+        positive body;
+        p8 mac[16];
+
+        if (length != WATERLINK_DATAGRAM)
+                return false;
+        kind = datagram[0] | (p32)datagram[1] << 8 | (p32)datagram[2] << 16 |
+               (p32)datagram[3] << 24;
+        if (kind == WATERLINK_KIND_INITIATE)
+                body = WATERLINK_INITIATE_BYTES;
+        else if (kind == WATERLINK_KIND_RESPOND)
+                body = WATERLINK_RESPOND_BYTES;
+        else
+                return false;
+        for (positive at = 16 + body; at < length; at++)
+                if (datagram[at])
+                        return false;
+        waterlink_mac1(me->gate, (p8 *)datagram, 16 + body - 16, mac);
+        return !memcmp(mac, datagram + 16 + body - 16, 16);
+}
+
+int main(int argc, char **argv)
+{
+        long count = argc > 1 ? atol(argv[1]) : 400000;
+        rng_state = (argc > 2 ? strtoull(argv[2], 0, 0) : 0x9ac1) | 1;
+        struct waterlink_identity me;
+        p8 secret[32];
+        unsigned long passed = 0, model_bad = 0;
+
+        for (int i = 0; i < 32; i++) secret[i] = (p8)draw(256);
+        waterlink_identity_from(&me, secret);
+
+        for (long n = 0; n < count; n++)
+        {
+                positive length;
+                p8 *datagram;
+                p32 kind;
+                int want_valid = draw(2);
+
+                /*      Lengths weighted to the datagram size and the two
+                        handshake bodies' boundaries. */
+                switch (draw(5))
+                {
+                case 0: length = draw(64); break;
+                case 1: length = WATERLINK_DATAGRAM; break;
+                case 2: length = WATERLINK_DATAGRAM - 4 + draw(9); break;
+                case 3: length = 1200 - draw(200); break;
+                default: length = draw(1217); break;
+                }
+                if (length > 1216) length = 1216;
+
+                datagram = malloc(length ? length : 1);
+                for (positive at = 0; at < length; at++)
+                        datagram[at] = (p8)draw(256);
+
+                kind = draw(4) ? (draw(2) ? WATERLINK_KIND_INITIATE
+                                          : WATERLINK_KIND_RESPOND)
+                               : draw(6);
+                if (length >= 4)
+                {
+                        datagram[0] = (p8)kind; datagram[1] = (p8)(kind >> 8);
+                        datagram[2] = (p8)(kind >> 16); datagram[3] = (p8)(kind >> 24);
+                }
+
+                /*      Make it well formed now and then: exact size, zero
+                        padding, a real mac1. */
+                if (want_valid && length == WATERLINK_DATAGRAM &&
+                    (kind == WATERLINK_KIND_INITIATE || kind == WATERLINK_KIND_RESPOND))
+                {
+                        positive body = kind == WATERLINK_KIND_INITIATE
+                                                ? WATERLINK_INITIATE_BYTES
+                                                : WATERLINK_RESPOND_BYTES;
+
+                        memset(datagram + 16 + body, 0, length - 16 - body);
+                        waterlink_mac1(me.gate, datagram, 16 + body - 16,
+                                       datagram + 16 + body - 16);
+                        /*      Now and then spoil one byte of the mac or the
+                                padding, so "valid" is not a foregone yes. */
+                        if (draw(4) == 0)
+                                datagram[16 + body - 16 + draw(16)] ^= (p8)(1 + draw(255));
+                        else if (draw(4) == 0 && length > 16 + body)
+                                datagram[16 + body + draw(length - 16 - body)] = (p8)(1 + draw(255));
+                }
+
+                bool got = waterlink_gate_passes(&me, datagram, length);
+                bool want = ref_gate(&me, datagram, length);
+
+                if (got != want)
+                        model_bad++;
+                if (got)
+                        passed++;
+                free(datagram);
+        }
+
+        /*      Admission: a bucket a source spends and refills. Fuzz the
+                address table and clock for out-of-bounds, and check the
+                first burst from a fresh address is admitted then refused. */
+        struct waterlink_admission table;
+        memset(&table, 0, sizeof table);
+        unsigned long admit_bad = 0;
+        {
+                p8 fresh[16];
+                for (int i = 0; i < 16; i++) fresh[i] = (p8)draw(256);
+                int ok = 0;
+                for (int i = 0; i < WATERLINK_ADMIT_BURST; i++)
+                        ok += waterlink_admit(&table, fresh, 1000);
+                if (ok != WATERLINK_ADMIT_BURST) admit_bad++;
+                if (waterlink_admit(&table, fresh, 1000)) admit_bad++; // dry now
+        }
+        for (long n = 0; n < 200000; n++)
+        {
+                p8 address[16];
+                p64 now = (p64)n * (draw(4000));
+
+                for (int i = 0; i < 16; i++)
+                        address[i] = draw(3) ? (p8)draw(4) : (p8)draw(256);
+                (void)waterlink_admit(&table, address, now);
+        }
+
+        printf("gate: %ld cases, %lu passed, %lu model failures; admit %lu failures\n",
+               count, passed, model_bad, admit_bad);
+        printf("waterlink-gate %lu/%lu\n",
+               (unsigned long)count - model_bad - admit_bad, (unsigned long)count);
+        return (model_bad || admit_bad) != 0;
+}
+'''
+    DRIVER_CORE = r'''/*      The link core and the judge, driven directly.
+
+        waterlink_judge reads an authenticated body -- frames and
+        acknowledgements as LEB128 numbers, then zero padding -- and says
+        what it holds. It is tri-arch assembly (link.c, under #if X64 /
+        ARM64 / RISCV64). On an x86_64 ELF host its own body is compiled and
+        run; the sanitizers cannot see inside it, so every body is placed so
+        that its last byte is flush against a PROT_NONE page and any read one
+        byte past what the body says is a fault, and every judgement is
+        checked against judge_model, the independent C reading test/checks.c
+        carries. Where the asm cannot be compiled (this Mac, or a non-x86
+        host) the model stands in for it, and the verdict says which ran. The
+        bodies come from the tree's own judge_body generator.
+
+        Then the core itself: frames posted, filled into datagrams and
+        delivered back over a loopback, hostile bodies delivered straight to
+        the receiver, and a paused reader resumed, with the free list, the
+        held pool and the flight walked for consistency after every step and
+        an alarm standing guard against a loop the sanitizers cannot see.
+*/
+
+#include <sys/mman.h>
+#include <unistd.h>
+#include <signal.h>
+
+#ifndef WL_JUDGE_ASM
+/*      No asm here: the model is the judge, so apply and deliver run against
+        the reading checks.c trusts, and the agreement check is the asm's on
+        a host that has it. */
+bipolar waterlink_judge(address_any body, positive length,
+                        struct waterlink_part address_to parts)
+{
+        return judge_model((p8 *)body, length, parts);
+}
+#endif
+
+/*      A region of `usable` writable bytes whose end is flush against a
+        PROT_NONE page: a read or write one byte past faults. */
+static long wl_page;
+static p8 *guard_region(positive usable)
+{
+        positive pages = (usable + wl_page - 1) / wl_page + 1;
+        p8 *base = mmap(0, pages * wl_page, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+        if (base == MAP_FAILED)
+        {
+                perror("mmap");
+                exit(2);
+        }
+        mprotect(base + (pages - 1) * wl_page, wl_page, PROT_NONE);
+        return base + (pages - 1) * wl_page - usable;
+}
+
+static void wl_alarm(int sig) { (void)sig; _exit(3); }
+
+static struct waterlink_link link_a, link_b;
+static positive heard_count;
+static bool sink_pause;
+static bool sink_hear(address_any context, struct waterlink_frame *head, p8 *payload)
+{
+        (void)context; (void)head; (void)payload;
+        heard_count++;
+        return !sink_pause;
+}
+
+/*      The free list is exactly free_count slots, each free; the held pool's
+        free chain plus what the keys hold is every held entry; the flight is
+        a doubly linked list with no cycle. A corruption of any list shows
+        here before it is a wild read. */
+static bool invariants(struct waterlink_link *link, const char *where)
+{
+        p32 seen = 0;
+        p32 at = link->free;
+
+        while (at != WATERLINK_NONE)
+        {
+                if (at >= WATERLINK_SLOTS || link->slot[at].state != WATERLINK_SLOT_FREE ||
+                    ++seen > WATERLINK_SLOTS)
+                {
+                        printf("  FAIL %s: free list broken at %u\n", where, at);
+                        return false;
+                }
+                at = link->slot[at].next;
+        }
+        if (seen != link->free_count)
+        {
+                printf("  FAIL %s: free list %u, free_count %u\n", where, seen, link->free_count);
+                return false;
+        }
+        seen = 0;
+        for (at = link->held_free; at != WATERLINK_NONE; at = link->held[at].next)
+                if (at >= WATERLINK_HELD || ++seen > WATERLINK_HELD)
+                {
+                        printf("  FAIL %s: held free list broken\n", where);
+                        return false;
+                }
+        for (p32 key = 0; key < WATERLINK_KEYS; key++)
+                for (at = link->receiving[key].first; at != WATERLINK_NONE;
+                     at = link->held[at].next)
+                        if (at >= WATERLINK_HELD || ++seen > WATERLINK_HELD)
+                        {
+                                printf("  FAIL %s: held key list broken\n", where);
+                                return false;
+                        }
+        if (seen != WATERLINK_HELD)
+        {
+                printf("  FAIL %s: held pool accounts for %u of %u\n", where, seen, WATERLINK_HELD);
+                return false;
+        }
+        {
+                p32 prior = WATERLINK_NONE, count = 0;
+
+                for (at = link->flight_head; at != WATERLINK_NONE; at = link->slot[at].next)
+                {
+                        if (at >= WATERLINK_SLOTS || link->slot[at].prior != prior ||
+                            ++count > WATERLINK_SLOTS)
+                        {
+                                printf("  FAIL %s: flight list broken\n", where);
+                                return false;
+                        }
+                        prior = at;
+                }
+                if (link->flight_tail != prior)
+                {
+                        printf("  FAIL %s: flight tail wrong\n", where);
+                        return false;
+                }
+        }
+        return true;
+}
+
+#ifdef WL_FUZZER
+/*      libFuzzer's entry: coverage-guided over the same two readings, with a
+        guard page behind the body, and the input delivered into a link.
+        Deterministic under a fixed -seed; statics are reset each call. */
+static struct waterlink_link fuzz_link;
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
+{
+        struct waterlink_part model[WATERLINK_PARTS];
+
+        if (!wl_page)
+                wl_page = sysconf(_SC_PAGESIZE);
+        if (size > WATERLINK_PAYLOAD + 1)
+                size = WATERLINK_PAYLOAD + 1;
+        {
+                struct waterlink_part *parts = (struct waterlink_part *)
+                        guard_region(WATERLINK_PARTS * sizeof(struct waterlink_part));
+                p8 *body = guard_region(size ? size : 1);
+                bipolar want, got;
+                positive pages = ((size ? size : 1) + wl_page - 1) / wl_page + 1;
+
+                if (size)
+                        memcpy(body, data, size);
+                want = judge_model(body, size, model);
+                got = waterlink_judge(body, size, parts);
+                if (want != got)
+                        abort();
+                if (want >= 0 && memcmp(parts, model, (positive)want * sizeof *parts))
+                        abort();
+                waterlink_link_reset(&fuzz_link);
+                waterlink_deliver(&fuzz_link, body, size, 1, sink_hear, 0);
+                munmap(body + (size ? size : 1) - (pages - 1) * wl_page, pages * wl_page);
+                {
+                        positive ppages = (WATERLINK_PARTS * sizeof(struct waterlink_part)
+                                           + wl_page - 1) / wl_page + 1;
+                        munmap((p8 *)parts + WATERLINK_PARTS * sizeof(struct waterlink_part)
+                               - (ppages - 1) * wl_page, ppages * wl_page);
+                }
+        }
+        return 0;
+}
+#else
+int main(int argc, char **argv)
+{
+        long judged = atol(argc > 1 ? argv[1] : "300000");
+        long looped = atol(argc > 2 ? argv[2] : "40000");
+        judge_state = (argc > 3 ? strtoull(argv[3], 0, 0) : 0x6a09e667f3bcc909ull) | 1;
+        unsigned long wrong = 0, valid = 0, parted = 0, part_mismatch = 0;
+        unsigned long inv_bad = 0;
+
+        wl_page = sysconf(_SC_PAGESIZE);
+        signal(SIGALRM, wl_alarm);
+        alarm(50);
+
+        struct waterlink_part *parts = (struct waterlink_part *)
+                guard_region(WATERLINK_PARTS * sizeof(struct waterlink_part));
+        struct waterlink_part model[WATERLINK_PARTS];
+        p8 scratch[WATERLINK_PAYLOAD + 4];
+
+        for (long round = 0; round < judged; round++)
+        {
+                positive length = judge_body(scratch, false);
+                p8 *body;
+                bipolar want, got;
+
+                if (length > WATERLINK_PAYLOAD + 1)
+                        length = WATERLINK_PAYLOAD + 1;
+                body = guard_region(length ? length : 1);
+                if (length)
+                        memcpy(body, scratch, length);
+
+                want = judge_model(body, length, model);
+                got = waterlink_judge(body, length, parts);
+                if (want != got)
+                        wrong++;
+                else if (want >= 0)
+                {
+                        valid++;
+                        parted += (positive)want;
+                        if (memcmp(parts, model, (positive)want * sizeof *parts))
+                                part_mismatch++;
+                }
+                /*      Unmap the body's region, guard page and all. */
+                {
+                        positive usable = length ? length : 1;
+                        positive pages = (usable + wl_page - 1) / wl_page + 1;
+                        p8 *guard = body + usable;
+                        p8 *base = guard - (pages - 1) * wl_page;
+
+                        munmap(base, pages * wl_page);
+                }
+        }
+
+        /*      The core over a loopback: A posts and fills, B hears, B
+                resumes; hostile bodies go straight to B. Invariants after
+                every step. */
+        waterlink_link_reset(&link_a);
+        waterlink_link_reset(&link_b);
+        p64 clock = 1;
+        long next_reset = 200 + judge_next() % 400;
+        for (long round = 0; round < looped && !inv_bad; round++)
+        {
+                clock += 1 + judge_next() % 5000;
+
+                /*      Start over now and then, so the loop keeps exercising
+                        fresh post/fill/deliver states instead of sitting on
+                        saturated tables. */
+                if (round >= next_reset)
+                {
+                        waterlink_link_reset(&link_a);
+                        waterlink_link_reset(&link_b);
+                        next_reset = round + 200 + judge_next() % 400;
+                }
+
+                /*      A posts a few frames on small keys. */
+                for (int i = 0; i < 1 + (int)(judge_next() % 6); i++)
+                {
+                        p8 key = judge_next() % 6;
+                        p8 flags = (judge_next() & 1 ? WATERLINK_FRAME_REPLACEABLE
+                                                     : WATERLINK_FRAME_DURABLE) |
+                                   (judge_next() % 3 ? 0 : WATERLINK_FRAME_URGENT) |
+                                   (judge_next() % 9 ? 0 : WATERLINK_FRAME_LAST);
+                        p8 payload[64];
+                        p16 length = (p16)(judge_next() % 48);
+
+                        for (p16 b = 0; b < length; b++) payload[b] = (p8)judge_next();
+                        waterlink_post(&link_a, key, flags, payload, length, clock);
+                }
+                if (!invariants(&link_a, "A post")) { inv_bad++; break; }
+
+                /*      A fills datagrams; each goes to B, or now and then a
+                        hostile body does instead. */
+                for (int d = 0; d < 8; d++)
+                {
+                        p8 body[WATERLINK_PAYLOAD];
+                        bool alone = false;
+                        positive used = waterlink_fill(&link_a, body, clock, &alone);
+
+                        if (!used)
+                                break;
+                        if (judge_next() % 5 == 0)
+                        {
+                                p8 hostile[WATERLINK_PAYLOAD + 4];
+                                positive hl = judge_body(hostile, false);
+
+                                if (hl > WATERLINK_PAYLOAD) hl = WATERLINK_PAYLOAD;
+                                waterlink_deliver(&link_b, hostile, hl, clock, sink_hear, 0);
+                        }
+                        else
+                                waterlink_deliver(&link_b, body, used, clock, sink_hear, 0);
+                        if (!invariants(&link_b, "B deliver")) { inv_bad++; break; }
+                }
+                if (inv_bad) break;
+
+                /*      B answers A, so A's flight settles. */
+                sink_pause = judge_next() % 7 == 0;
+                for (int k = 0; k < 6; k++)
+                        if (waterlink_paused(&link_b, k))
+                                waterlink_resume(&link_b, k, sink_hear, 0);
+                {
+                        p8 back[WATERLINK_PAYLOAD];
+                        bool alone = false;
+                        positive used = waterlink_fill(&link_b, back, clock, &alone);
+
+                        if (used)
+                                waterlink_deliver(&link_a, back, used, clock, sink_hear, 0);
+                }
+                if (!invariants(&link_a, "A settle")) { inv_bad++; break; }
+        }
+
+        printf("core: judge %ld cases, %lu disagreements, %lu valid, %lu parts, "
+               "%lu part mismatches; loop %lu invariant failures; heard %lu\n",
+               judged, wrong, valid, parted, part_mismatch, inv_bad, (unsigned long)heard_count);
+#ifdef WL_JUDGE_ASM
+        printf("core: judge ran the x86_64 assembly against the model\n");
+#else
+        printf("core: judge ran the C model (no asm on this host)\n");
+#endif
+        printf("waterlink-core %lu/%lu\n",
+               (unsigned long)judged - wrong - part_mismatch - inv_bad,
+               (unsigned long)judged);
+        return (wrong || part_mismatch || inv_bad) != 0;
+}
+#endif
+'''
+
+    def request_source(region):
+        head, tail = DRIVER_REQUEST.split("/*      A reference reading", 1)
+        tail = "/*      A reference reading" + tail
+        return "\n".join([
+            SHIM, wl,
+            sec(svc, "#define LINK_PORT 22348", "/*      A grant by name"),
+            sec(svc, "typedef struct\n{\n        string_address name;",
+                "// The grant a word names, or 0."),
+            sec(svc, "static const p8 link_kind_asks[] = {0, LINK_ASK_SHELL",
+                "typedef struct"),
+            sec(svc, "static winsize link_size_unpack(", "// The streams"),
+            sec(svc, "static fn link_term_word(", "static DEAD_END fn link_child_exec("),
+            head, region, tail])
+
+    mdns_source = "\n".join([
+        SHIM, wl,
+        sec(net, "static COLD bipolar dns_copy_name(",
+            "//      Where a name ends, for a caller"),
+        sec(disc, "#define WATERLINK_MDNS_PORT 5353", "struct waterlink_group_keys {"),
+        sec(disc, "// Writing ----", "// Reading ----"),
+        sec(disc, "// Reading ----", "#endif // WATERLINK_DISCOVER_INCLUDED"),
+        DRIVER_MDNS])
+
+    gate_source = "\n".join([
+        SHIM, wl,
+        sec(hs, "#define WATERLINK_PROTOCOL", "static fn waterlink_mix_hash("),
+        sec(hs, "static p8 waterlink_base[32] = {9};",
+            "// A datagram's head, with the rest"),
+        sec(hs, "fn waterlink_stamp(p8 address_to stamp",
+            "#endif // WATERLINK_HANDSHAKE_INCLUDED"),
+        DRIVER_GATE])
+
+    core_head = sec(link, "// The largest frame that can share", "#if X64")
+    core_asm = sec(link, "#if X64", "/*\n        Apply a judged body")
+    core_tail = sec(link, "fn waterlink_apply(struct waterlink_link",
+                    "#endif // WATERLINK_LINK_INCLUDED")
+    jmodel = sec(checks, "static bool judge_model_number(",
+                 "/*\n        Delivery as it was before the judge")
+    jgen = sec(checks, "static p64 judge_state = 0x6a09e667f3bcc909ull;",
+               "static struct waterlink_link judge_one, judge_two;")
+
+    def core_source(with_asm, fuzzer):
+        parts = [SHIM, wl, vli, core_head]
+        driver = DRIVER_CORE
+        if with_asm:
+            parts += ["#define X64 1\n#define ARM64 0\n#define RISCV64 0\n" + ASM_MACROS,
+                      core_asm]
+            driver = "#define WL_JUDGE_ASM 1\n" + driver
+        if fuzzer:
+            driver = "#define WL_FUZZER 1\n" + driver
+        parts += [core_tail, jmodel, jgen, driver]
+        return "\n".join(parts)
+
+    is_elf_x86 = (platform.system() != "Darwin" and
+                  platform.machine() in ("x86_64", "amd64"))
+    checks_run = Checks()
+    environment = dict(os.environ, ASAN_OPTIONS="detect_leaks=0:halt_on_error=1",
+                       UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=0")
+
+    with tempfile.TemporaryDirectory(prefix="wl-sanitized-") as temporary:
+        work = Path(temporary)
+
+        def build(name, source, defines=(), fuzzer=False):
+            path = work / (name + ".c")
+            path.write_text(source)
+            command = [cc, "-O1", "-g", "-w", "-fno-sanitize-recover=all"]
+            if fuzzer:
+                command.append("-fsanitize=fuzzer,address,undefined")
+            else:
+                command.append("-fsanitize=address,undefined")
+            command += list(defines) + ["-o", str(work / name), str(path)]
+            built = subprocess.run(command, capture_output=True, text=True)
+            if built.returncode:
+                (work / (name + ".log")).write_text(built.stderr)
+                return None, built.stderr
+            return work / name, ""
+
+        def run(binary, args, want_fire=False, budget=120):
+            try:
+                got = subprocess.run([str(binary), *[str(a) for a in args]],
+                                     capture_output=True, text=True,
+                                     env=environment, timeout=budget)
+            except subprocess.TimeoutExpired:
+                return None, "timed out"
+            fired = got.returncode != 0 or "runtime error" in got.stderr or \
+                "Sanitizer" in got.stderr
+            if want_fire:
+                return got, got.stderr
+            for line in got.stdout.splitlines():
+                if not line.startswith("waterlink-"):
+                    print("  " + line)
+            if fired:
+                print("  FAIL sanitizer or model fired:\n" +
+                      (got.stderr or got.stdout)[-2500:])
+            return (None if fired else got), got.stderr
+
+        #   The proof: 266535d8's link_request must fire; the fix must not.
+        from_git = region_from_git()
+        if from_git is not None:
+            checks_run(from_git == REGION_MAIN, "the embedded pre-fix link_request "
+                       "still matches 266535d8 (git present)")
+        proof, err = build("request_main", request_source(REGION_MAIN),
+                           defines=["-DWL_MAIN_REQUEST=1"])
+        checks_run(proof is not None, "the proof driver (main's link_request) builds")
+        if proof is not None:
+            got, err = run(proof, [int(120000 * scale), hex(seed or 0x51ac9d)],
+                           want_fire=True, budget=120)
+            fired = got is not None and got.returncode != 0 and \
+                "stack-buffer-overflow" in got.stderr
+            checks_run(fired, "266535d8's link_request fires an ASan "
+                       "stack-buffer-overflow (the proof)")
+            if fired:
+                summary = [l for l in got.stderr.splitlines() if "SUMMARY" in l]
+                print("  proof: " + (summary[0].strip() if summary else "fired"))
+
+        region_fixed = sec(svc, "static fn link_refuse(",
+                           "/*\n        One descriptor to wait on")
+        fixed, err = build("request", request_source(region_fixed))
+        checks_run(fixed is not None, "the fixed link_request parser builds")
+        if fixed is not None:
+            got, _ = run(fixed, [int(200000 * scale), hex(seed or 0x51ac9d)])
+            checks_run(got is not None, "the fixed link_request passes ASan and the model")
+
+        mdns, err = build("mdns", mdns_source)
+        checks_run(mdns is not None, "the mDNS reader builds")
+        if mdns is not None:
+            got, _ = run(mdns, [int(150000 * scale), hex(seed or 0x5353ab)])
+            checks_run(got is not None, "waterlink_mdns_read passes ASan and the model")
+
+        gate, err = build("gate", gate_source)
+        checks_run(gate is not None, "the handshake gate builds")
+        if gate is not None:
+            got, _ = run(gate, [int(200000 * scale), hex(seed or 0x9ac1)])
+            checks_run(got is not None, "waterlink_gate_passes and admit pass ASan and the model")
+
+        core, err = build("core", core_source(is_elf_x86, False))
+        checks_run(core is not None, "the link core builds%s" %
+                   (" with the x86_64 judge asm" if is_elf_x86 else ""))
+        if core is not None:
+            got, _ = run(core, [int(150000 * scale), int(20000 * scale),
+                                hex(seed or 0x6a09e667f3bcc909)], budget=120)
+            checks_run(got is not None, "the judge agrees with the model and the "
+                       "core keeps its invariants%s" %
+                       (" (x86_64 asm)" if is_elf_x86 else " (C model)"))
+
+        #   libFuzzer, where clang carries it: a bounded, fixed-seed run.
+        if clang:
+            fuzzer, err = build("core_fuzz", core_source(is_elf_x86, True), fuzzer=True)
+            if fuzzer is None:
+                print("  waterlink sanitized: libFuzzer not available, skipped "
+                      "(the seeded generators stand)")
+            else:
+                corpus = work / "corpus"
+                corpus.mkdir()
+                runs = int(60000 * scale)
+                got = subprocess.run([str(fuzzer), str(corpus), "-seed=1",
+                                      "-runs=%d" % runs, "-max_total_time=15",
+                                      "-max_len=1200",
+                                      "-artifact_prefix=" + str(work) + "/",
+                                      "-print_final_stats=0"],
+                                     capture_output=True, text=True, env=environment,
+                                     timeout=60)
+                ok = got.returncode == 0 and "ERROR" not in got.stderr
+                checks_run(ok, "libFuzzer's coverage run of the judge finds nothing")
+                if not ok:
+                    print("  FAIL libFuzzer:\n" + got.stderr[-2500:])
+
+    return checks_run.verdict("waterlink sanitized:", "waterlink-sanitized")
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -35003,6 +36687,7 @@ HARNESS_CHECKS = {
     "machine_scan": harness_machine_scan,
     "waterlink_noise": harness_waterlink_noise,
     "waterlink_mdns": harness_waterlink_mdns,
+    "waterlink_sanitized": harness_waterlink_sanitized,
     "waterlink_link": harness_waterlink_link,
 }
 

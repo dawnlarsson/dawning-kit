@@ -2387,6 +2387,12 @@ lane_waterlink()
                         --binary "$work/waterlink.$host_arch"
                 case $? in 0|2) ;; *) waterlink_outcome=1 ;; esac
         fi
+        #       The parsers and the link core hosted under the sanitizers,
+        #       which the freestanding checks (-fno-stack-protector) cannot
+        #       see a memory-safety bug in. It builds itself, so it stands
+        #       outside the native-binary gate above.
+        python3 test/differential.py --harness waterlink_sanitized
+        case $? in 0|2) ;; *) waterlink_outcome=1 ;; esac
         return "$waterlink_outcome"
 }
 
