@@ -342,6 +342,18 @@ exec "$@"'
                 shell_quote sh -c "$remote_stage" sh "$remote" "$@"
         }
 
+        # What a remote build produced is on the remote, and root owns its
+        # kernel tree, since that build runs under sudo: cleaning here would
+        # remove this side's output and leave the tree that needed it. So the
+        # remote cleans itself, the same way it builds.
+        if [ "$do_clean" -eq 1 ]; then
+                say "Cleaning $host:$remote"
+                # shellcheck disable=SC2029
+                ssh -n "$host" "$(remote_command sudo sh build.sh --clean)" ||
+                        die "cleaning failed on $host"
+                return 0
+        fi
+
         say "Copying the tree to $host:$remote"
 
         # Prepare the stage over ssh first. macOS openrsync splits
@@ -534,6 +546,10 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
 #       purpose: throwing it away means fetching a hundred and fifty megabytes
 #       again to get back where you were.
 #
+if [ "$do_clean" -eq 1 ] && [ -n "$host" ]; then
+        build_remote
+        exit 0
+fi
 if [ "$do_clean" -eq 1 ]; then
         say "Removing build output"
         rm -rf dist fs linux \

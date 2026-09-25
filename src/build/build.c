@@ -5045,7 +5045,8 @@ static b32 build_remote_fetch(string_address host, string_address remote,
 
 static b32 build_remote(string_address host, string_address remote,
                         string_address address_to profiles, positive count,
-                        string_address target, string_address profile_arch)
+                        string_address target, string_address profile_arch,
+                        bool clean)
 {
         string_address arguments;
         string_address stock = string_get_environment(environ, "MOONWATER_STOCK");
@@ -5119,6 +5120,26 @@ static b32 build_remote(string_address host, string_address remote,
         profiles = (string_address address_to)sent;
         count = many;
         arguments = build_quote(profiles, count);
+
+        /*
+                What a remote build produced is on the remote, and root owns
+                its kernel tree, since that build runs under sudo: cleaning
+                here would remove this side's output and leave the tree that
+                needed it. So the remote cleans itself, the same way it builds.
+        */
+        if (clean)
+        {
+                string_address request[] = {"sudo", "sh", "build.sh", "--clean"};
+
+                build_say(build_join("Cleaning ", host, ":", remote, null));
+                if (build_run("ssh", "-n", host,
+                              build_remote_command(
+                                  remote, (string_address address_to)request, 4),
+                              null))
+                        return build_die(build_join("cleaning failed on ", host,
+                                                    null));
+                return 0;
+        }
 
         build_say(build_join("Copying the tree to ", host, ":", remote, null));
 
@@ -5832,7 +5853,11 @@ b32 main()
                         target = build_arch_here();
 
                 if (clean)
-                        return build_clean();
+                        return host && *host
+                                   ? build_remote(host, remote,
+                                                  (string_address address_to)profiles,
+                                                  chosen, target, profile_arch, true)
+                                   : build_clean();
 
                 build_config_load();
 
@@ -5842,7 +5867,7 @@ b32 main()
                         {
                                 if (build_remote(host, remote,
                                                  (string_address address_to)profiles,
-                                                 chosen, target, profile_arch))
+                                                 chosen, target, profile_arch, false))
                                         return 1;
 
                                 image = build_remote_image;
