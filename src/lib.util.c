@@ -6867,13 +6867,29 @@ static inline INLINE address_any copy_until_known(address_any destination,
         These must come after the prototypes, which are the same names
         followed by an open bracket and would expand.
 */
+/*
+        Each table is checked before it is used, on one entry the set must
+        have: the terminator for a stopping set, the first member for a
+        holding one. Folded as it should be, the entry is a constant 1 and
+        the check goes away. But set_known is folded by the optimiser and the
+        static table by the front end, and when the optimiser can read a set
+        the front end could not -- a parameter that whole-program analysis
+        proves is always one literal, lsfd's ", " in ps_list_next -- the table
+        was built all zeros: it stopped nothing and held nothing, and lsfd
+        -p read an empty list. The routine answers instead.
+*/
 #define string_span_of_set(source, accept)                                    \
         (!LIBRARY_INLINE_STRING || !set_known(accept)                         \
                  ? string_span_of_set((source), (accept))                     \
          : set_known_length(accept) == 0                                      \
                  ? ((void)(source), (positive)0)                              \
-                 : string_span((source),                                      \
-                               set_known_table(accept, set_known_holds)))
+                 : ({                                                         \
+                           const b8 address_to _held =                        \
+                               set_known_table(accept, set_known_holds);      \
+                           _held[(p8)(accept)[0]]                             \
+                               ? string_span((source), _held)                 \
+                               : string_span_of_set((source), (accept));      \
+                   }))
 
 #define string_span_without_set(source, reject)                               \
         (!LIBRARY_INLINE_STRING || !set_known(reject)                         \
@@ -6882,8 +6898,13 @@ static inline INLINE address_any copy_until_known(address_any destination,
                  ? string_length(source)                                      \
          : set_known_length(reject) == 1                                      \
                  ? span_without_byte_known((source), (p8)(reject)[0])         \
-                 : string_span((source),                                      \
-                               set_known_table(reject, set_known_stops)))
+                 : ({                                                         \
+                           const b8 address_to _stops =                       \
+                               set_known_table(reject, set_known_stops);      \
+                           _stops[0]                                          \
+                               ? string_span((source), _stops)                \
+                               : string_span_without_set((source), (reject)); \
+                   }))
 
 #define string_first_of_set(source, accept)                                   \
         (!LIBRARY_INLINE_STRING || !set_known(accept)                         \
@@ -6892,8 +6913,13 @@ static inline INLINE address_any copy_until_known(address_any destination,
                  ? ((void)(source), (string_address)null)                     \
          : set_known_length(accept) == 1                                      \
                  ? string_first_of((source), (p8)(accept)[0])                 \
-                 : first_of_set_known((source),                                   \
-                                  set_known_table(accept, set_known_stops)))
+                 : ({                                                         \
+                           const b8 address_to _stops =                       \
+                               set_known_table(accept, set_known_stops);      \
+                           _stops[0]                                          \
+                               ? first_of_set_known((source), _stops)         \
+                               : string_first_of_set((source), (accept));     \
+                   }))
 
 //      needle-length
 #define memory_search(block, size, needle, needle_size)                       \
@@ -23975,7 +24001,7 @@ static bool signal_number_bad(b32 number)
         bytes of it. Zeroing costs nothing measurable and removes a whole
         class of confusing comparison.
 */
-b32 signal_set_empty(signal_set address_to set)
+KEEP b32 signal_set_empty(signal_set address_to set)
 {
         memory_zero(set, sizeof(signal_set));
 
@@ -23993,7 +24019,7 @@ b32 signal_set_empty(signal_set address_to set)
         byte and it is deliberate: copying a reservation this library does not
         have would be a lie in the one direction that is hard to find later.
 */
-b32 signal_set_fill(signal_set address_to set)
+KEEP b32 signal_set_fill(signal_set address_to set)
 {
         memory_zero(set, sizeof(signal_set));
 
@@ -24003,7 +24029,7 @@ b32 signal_set_fill(signal_set address_to set)
 }
 
 #define SIGNAL_SET_CHANGE(name, operation, mask)                             \
-b32 name(signal_set address_to set, b32 number)                             \
+KEEP b32 name(signal_set address_to set, b32 number)                        \
 {                                                                           \
         if (signal_number_bad(number))                                      \
         {                                                                   \
@@ -24017,7 +24043,7 @@ SIGNAL_SET_CHANGE(signal_set_add, |=, (positive)1 << (number - 1))
 SIGNAL_SET_CHANGE(signal_set_remove, &=, ~((positive)1 << (number - 1)))
 #undef SIGNAL_SET_CHANGE
 
-b32 signal_set_has(const signal_set address_to set, b32 number)
+KEEP b32 signal_set_has(const signal_set address_to set, b32 number)
 {
         if (signal_number_bad(number))
                 errno_refuse(EINVAL, -1);
@@ -24153,7 +24179,7 @@ typedef char signal_action_is_the_size_a_caller_believes
         straight through as null so the kernel does the deciding, and neither
         structure is copied when it is not going to be looked at.
 */
-b32 signal_action_change(b32 number, const signal_action address_to wanted,
+KEEP b32 signal_action_change(b32 number, const signal_action address_to wanted,
                          signal_action address_to previous)
 {
         signal_kernel_action asked;
@@ -24217,7 +24243,7 @@ b32 signal_action_change(b32 number, const signal_action address_to wanted,
         The previous handler is read back in the same call and returned, which
         is the one thing signal does that a caller usually keeps.
 */
-signal_handler signal_handle(b32 number, signal_handler handler)
+KEEP signal_handler signal_handle(b32 number, signal_handler handler)
 {
         signal_action wanted;
         signal_action had;
@@ -24249,7 +24275,7 @@ signal_handler signal_handle(b32 number, signal_handler handler)
         Neither getpid nor gettid can fail, so both are unwrapped, exactly as
         the error family's getpid is.
 */
-b32 signal_raise(b32 number)
+KEEP b32 signal_raise(b32 number)
 {
         b32 process = (b32)system_call(syscall(getpid));
         b32 thread = (b32)system_call(syscall(gettid));
@@ -24273,7 +24299,7 @@ b32 signal_raise(b32 number)
         values are legal that could drift from the kernel's. Confirmed against
         glibc: an out of range how gives -1 and EINVAL from both.
 */
-b32 signal_mask_change(b32 how, const signal_set address_to wanted,
+KEEP b32 signal_mask_change(b32 how, const signal_set address_to wanted,
                        signal_set address_to previous)
 {
         positive asked = wanted ? wanted->words[0] : 0;
@@ -24317,7 +24343,7 @@ b32 signal_mask_change(b32 how, const signal_set address_to wanted,
         is not more useful. Written down because it is the only pointer in
         this file whose contract is not the one the others have.
 */
-b32 signal_mask_suspend(const signal_set address_to mask)
+KEEP b32 signal_mask_suspend(const signal_set address_to mask)
 {
         positive asked = mask ? mask->words[0] : 0;
 
@@ -24327,7 +24353,7 @@ b32 signal_mask_suspend(const signal_set address_to mask)
 }
 
 //      What has arrived and is being held back because it is blocked.
-b32 signal_mask_pending(signal_set address_to into)
+KEEP b32 signal_mask_pending(signal_set address_to into)
 {
         positive had = 0;
         b32 outcome;
@@ -24379,7 +24405,7 @@ typedef struct signal_interval
         bipolar first_microseconds;
 } signal_interval;
 
-p32 signal_alarm(p32 seconds)
+KEEP p32 signal_alarm(p32 seconds)
 {
         signal_interval wanted;
         signal_interval had;
@@ -24413,7 +24439,7 @@ p32 signal_alarm(p32 seconds)
         and suspending runs its handler and then this waits forever, and a
         signal that arrives just before the real pause does the same.
 */
-b32 signal_wait(void)
+KEEP b32 signal_wait(void)
 {
         positive mask = 0;
 
@@ -24436,6 +24462,9 @@ b32 signal_wait(void)
         seen in this translation unit. sigsetjmp, __sigsetjmp and siglongjmp
         are attached in lib.c, beside the instructions they name.
 */
+/* Each target is KEEP: the alias is top-level assembly, which the compiler
+   cannot see, so a whole-program build with no C caller of it would drop
+   the function and leave the name pointing at nothing. */
 __asm__(
     ASM_ALIAS(signal,      signal_handle)
     ASM_ALIAS(raise,       signal_raise)

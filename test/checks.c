@@ -26158,7 +26158,7 @@ static string_address shell_asm_subscript_end(string_address at)
         return null;
 }
 
-p8 shell_assignment_subscript(string_address word, positive length,
+KEEP p8 shell_assignment_subscript(string_address word, positive length,
                               positive address_to name_length)
 {
         string_address stop = shell_asm_subscript_end(word + length + 1);
@@ -26209,7 +26209,7 @@ static bool shell_asm_literal_former(string_address word, positive length)
                (length == 1 && string_is(word, '['));
 }
 
-p8 parse_word_kind_subscript(string_address text, positive length, positive address_to name_length)
+KEEP p8 parse_word_kind_subscript(string_address text, positive length, positive address_to name_length)
 {
         return shell_assignment_kind(text, name_length) | (shell_asm_literal_former(text, length) ? 4 : 0);
 }
