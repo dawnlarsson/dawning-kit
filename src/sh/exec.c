@@ -12228,8 +12228,11 @@ static bipolar exec_spawn_node(b32 index, bool background)
                 if (background && parse_nodes[index].kind == NODE_SUBSHELL)
                         parse_nodes[index].kind = NODE_GROUP;
 
-                shell_tail_command = background &&
-                                     parse_nodes[index].kind == NODE_SIMPLE;
+                /* A child made for one simple command -- `cmd &`, or a
+                   subshell `( cmd )` whose whole body it is -- becomes that
+                   command, rather than making a second process to run it and
+                   waiting there to pass on its status. */
+                shell_tail_command = parse_nodes[index].kind == NODE_SIMPLE;
 
                 status = exec_node(index);
                 exec_child_leave(status);
