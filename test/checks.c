@@ -29217,9 +29217,231 @@ static fn codec_check(p8 address_to source, p8 address_to output,
         }
 }
 
+/*
+        The varints against a model written another way round: it finds the
+        last byte first and only then adds the groups up, where the routines
+        stop at the first byte without a continuation bit. Every one and two
+        byte input under every cut; every three byte input whole; every last
+        byte after every run of continuations from none to ten, which holds
+        every tenth byte and every second spelling, under every cut; random
+        continuation-heavy bytes under every cut; every width's edges written,
+        read back, and read cut one short; and numbers ending at a guard page,
+        read with exactly the bytes to the page's end and written exactly up
+        to it.
+*/
+static positive vli_model_size(p64 value)
+{
+        positive size = 1;
+
+        while (size < 10 && value >> (7 * size))
+                size++;
+        return size;
+}
+
+static positive vli_model_get(const p8 address_to bytes, positive length,
+                              positive most, p64 address_to value)
+{
+        positive limit = length < most ? length : most;
+        positive last = 0;
+        p64 got = 0;
+
+        if (limit > 10)
+                limit = 10;
+        while (last < limit && bytes[last] & 0x80)
+                last++;
+        if (last == limit || (last && !bytes[last]) || (last == 9 && bytes[9] != 1))
+                return 0;
+        for (positive at = 0; at <= last; at++)
+                got |= (p64)(bytes[at] & 0x7f) << (7 * at);
+        address_to value = got;
+        return last + 1;
+}
+
+static p64 vli_seed = 0x9e3779b97f4a7c15ull;
+
+static p64 vli_random(void)
+{
+        vli_seed ^= vli_seed << 13;
+        vli_seed ^= vli_seed >> 7;
+        vli_seed ^= vli_seed << 17;
+        return vli_seed;
+}
+
+//      Every cut of one input, length and most from 0 to 12, against the
+//      model; a refusal must leave the value where it was.
+static bool vli_cuts_agree(const p8 address_to bytes)
+{
+        for (positive length = 0; length <= 12; length++)
+                for (positive most = 0; most <= 12; most++)
+                {
+                        p64 mine = 0x5a5a5a5a5a5a5a5aull, theirs = mine;
+                        positive a = memory_vli_get(bytes, length, most,
+                                                    address_of mine);
+                        positive b = vli_model_get(bytes, length, most,
+                                                   address_of theirs);
+
+                        if (a != b || mine != theirs)
+                                return false;
+                }
+        return true;
+}
+
+static fn vli_checks(void)
+{
+        p8 bytes[16];
+        bool agree = true;
+
+        for (positive first = 0; first < 256; first++)
+                for (positive second = 0; second < 256; second++)
+                {
+                        memory_fill(bytes, 0xff, sizeof bytes);
+                        bytes[0] = (p8)first;
+                        bytes[1] = (p8)second;
+                        agree = agree && vli_cuts_agree(bytes);
+                        bytes[2] = 0x01;
+                        agree = agree && vli_cuts_agree(bytes);
+                }
+        check("vli every one and two byte input, under every cut", agree);
+
+        for (p32 word = 0; word < 1u << 24 && agree; word++)
+        {
+                p64 mine = 7, theirs = 7;
+
+                bytes[0] = (p8)word;
+                bytes[1] = (p8)(word >> 8);
+                bytes[2] = (p8)(word >> 16);
+                bytes[3] = 0xff;
+                agree = memory_vli_get(bytes, 3, 10, address_of mine) ==
+                                vli_model_get(bytes, 3, 10, address_of theirs) &&
+                        mine == theirs &&
+                        memory_vli_get(bytes, 4, 3, address_of mine) ==
+                                vli_model_get(bytes, 4, 3, address_of theirs) &&
+                        mine == theirs;
+        }
+        check("vli every three byte input", agree);
+
+        for (positive run = 0; run <= 10; run++)
+                for (positive last = 0; last < 256; last++)
+                        for (positive fill = 0; fill < 3; fill++)
+                        {
+                                for (positive at = 0; at < run; at++)
+                                        bytes[at] = fill == 0 ? 0x80
+                                                    : fill == 1 ? 0xff
+                                                                : (p8)(vli_random() | 0x80);
+                                bytes[run] = (p8)last;
+                                for (positive at = run + 1; at < sizeof bytes; at++)
+                                        bytes[at] = (p8)vli_random();
+                                agree = agree && vli_cuts_agree(bytes);
+                        }
+        check("vli every last byte after every run of continuations, under "
+              "every cut", agree);
+
+        for (positive round = 0; round < 200000; round++)
+        {
+                for (positive at = 0; at < sizeof bytes; at++)
+                {
+                        p64 roll = vli_random();
+
+                        bytes[at] = (p8)(roll >> 8);
+                        if (roll % 5)
+                                bytes[at] |= 0x80;
+                }
+                agree = agree && vli_cuts_agree(bytes);
+        }
+        check("vli random continuation-heavy bytes, under every cut", agree);
+
+        bool written = true, read = true;
+        for (positive bit = 0; bit <= 64 + 20000; bit++)
+                for (positive edge = 0; edge < 4; edge++)
+                {
+                        p64 value = bit < 64 ? ((p64)1 << bit) + edge - 2
+                                    : bit == 64 ? ~0ull - edge
+                                                : vli_random() >> (vli_random() % 64);
+                        positive size = vli_model_size(value);
+                        p8 model[16];
+                        p64 back = ~value;
+
+                        for (positive at = 0; at < size; at++)
+                                model[at] = (p8)(((value >> (7 * at)) & 0x7f) |
+                                                 (at + 1 < size ? 0x80 : 0));
+                        memory_fill(bytes, 0xee, sizeof bytes);
+                        written = written && memory_vli_size(value) == size &&
+                                  memory_vli_put(bytes, value) == size &&
+                                  !memory_compare(bytes, model, size);
+                        for (positive at = size; at < sizeof bytes; at++)
+                                written = written && bytes[at] == 0xee;
+                        read = read &&
+                               memory_vli_get(bytes, sizeof bytes, 10,
+                                              address_of back) == size &&
+                               back == value &&
+                               memory_vli_get(bytes, size, size,
+                                              address_of back) == size &&
+                               back == value &&
+                               !memory_vli_get(bytes, size - 1, 10,
+                                               address_of back) &&
+                               !memory_vli_get(bytes, sizeof bytes, size - 1,
+                                               address_of back) &&
+                               back == value;
+                }
+        check("vli every width's edges written exactly, byte for byte as "
+              "the model writes them", written);
+        check("vli and read back, and refused one byte short", read);
+
+        const positive quantum = 65536;
+        p8 address_to guarded = memory(quantum * 2);
+        bool mapped = guarded && (positive)guarded < positive_max - 4095;
+        check("vli guard mapping", mapped);
+        if (mapped)
+        {
+                check("vli guard", system_call_3(syscall(mprotect),
+                      (positive)(guarded + quantum), quantum, 0) == 0);
+                bool edge = true;
+                for (positive run = 0; run <= 10; run++)
+                        for (positive last = 0; last < 256; last += 3)
+                                for (positive length = 0; length <= 12; length++)
+                                {
+                                        p8 address_to at = guarded + quantum - length;
+                                        p8 copy[16];
+
+                                        for (positive k = 0; k < sizeof copy; k++)
+                                                copy[k] = (p8)(k < run ? vli_random() | 0x80
+                                                               : k == run ? last
+                                                                          : vli_random());
+                                        memory_copy(at, copy, length);
+                                        for (positive most = 0; most <= 12; most++)
+                                        {
+                                                p64 mine = 1, theirs = 1;
+
+                                                edge = edge &&
+                                                       memory_vli_get(at, length, most,
+                                                                      address_of mine) ==
+                                                               vli_model_get(copy, length, most,
+                                                                             address_of theirs) &&
+                                                       mine == theirs;
+                                        }
+                                }
+                for (positive bit = 0; bit < 64; bit++)
+                {
+                        p64 value = ((p64)1 << bit) | (vli_random() >> (63 - bit) >> 1);
+                        positive size = vli_model_size(value);
+                        p64 back = 0;
+
+                        edge = edge &&
+                               memory_vli_put(guarded + quantum - size, value) == size &&
+                               memory_vli_get(guarded + quantum - size, size, 10,
+                                              address_of back) == size &&
+                               back == value;
+                }
+                check("vli ends at a guard page: read to its edge, written up "
+                      "to it", edge);
+                memory_free(guarded, quantum * 2);
+        }
+}
+
 b32 main(void)
 {
         p8 source[400], output[640], decoded[400];
+        vli_checks();
         for (positive at = 0; at < sizeof(high_alphabet); at++)
                 high_alphabet[at] = (char)(192 + at);
 #if X64
