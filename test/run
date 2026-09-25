@@ -2281,7 +2281,8 @@ lane_text_asm() { target_lane text_asm_one; }
 shell_asm_one()
 {
         { python3 test/differential.py --harness native_extract --source \
-                src/sh/builtin.c floodlight_status_clear env_find_hashed_span_probe &&
+                src/sh/builtin.c floodlight_status_clear env_find_hashed_span_probe \
+                test_operator_kind &&
           python3 test/differential.py --harness native_extract --source \
                 src/sh/parse.c parse_keyword_of parse_word_kind &&
           python3 test/differential.py --harness native_extract --source \

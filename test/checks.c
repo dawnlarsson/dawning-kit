@@ -26471,6 +26471,227 @@ static fn shell_asm_arguments(p8 address_to pages)
         }
 }
 
+/*
+        test_operator_kind from src/sh/builtin.c against the letter-pair walk it
+        replaced, read the way that walk read it but never past a terminator.
+        Every word of up to four bytes over the bytes an operator is made of
+        and a few that are not, at every alignment, with the bytes after the
+        terminator set and cleared; then each one ending on the last byte
+        before a page nobody may read, where a four-byte read would fault.
+*/
+positive test_operator_kind(string_address word);
+
+static positive shell_asm_binary_former(const p8 address_to word)
+{
+        p8 first, second = 0, third = 0, fourth = 0;
+
+        if (!word)
+                return 0;
+        first = word[0];
+        if (first)
+                second = word[1];
+        if (second)
+                third = word[2];
+        if (third)
+                fourth = word[3];
+        if (first == '-' && second && third && !fourth)
+        {
+                p16 pair = (p16)(second << 8 | third);
+
+                if (pair == ('e' << 8 | 'q')) return 3;
+                if (pair == ('n' << 8 | 'e')) return 4;
+                if (pair == ('l' << 8 | 't')) return 5;
+                if (pair == ('l' << 8 | 'e')) return 6;
+                if (pair == ('g' << 8 | 't')) return 7;
+                if (pair == ('g' << 8 | 'e')) return 8;
+                if (pair == ('n' << 8 | 't')) return 9;
+                if (pair == ('o' << 8 | 't')) return 10;
+                if (pair == ('e' << 8 | 'f')) return 11;
+        }
+        if (!second)
+                return first == '=' ? 1 : first == '<' ? 12 : first == '>' ? 13 : 0;
+        if (!third)
+        {
+                if (first == '!' && second == '=')
+                        return 2;
+                if (first == '=' && second == '=')
+                        return 1;
+        }
+        return 0;
+}
+
+/*
+        The shell calls it from inline assembly that names the registers it
+        may change, so the ones it does not name have to come back as they
+        went in: this call fills every one of those with a marker first and
+        says whether any came back different.
+*/
+positive shell_asm_kind_kept(string_address word, positive address_to changed);
+
+#if X64
+__asm__(
+    ".text\n.globl shell_asm_kind_kept\n.type shell_asm_kind_kept, @function\n"
+    "shell_asm_kind_kept:\n"
+    "push %rbx\n   push %r12\n   push %r13\n"
+    "mov %rsi, %r12\n   mov %rdi, %r13\n"
+    "movabs $0x5151515151515151, %rsi\n   movabs $0x0808080808080808, %r8\n"
+    "movabs $0x0909090909090909, %r9\n   movabs $0x1010101010101010, %r10\n"
+    "movabs $0x1111111111111111, %r11\n"
+    "call test_operator_kind\n"
+    "xor %ebx, %ebx\n"
+    "cmp %r13, %rdi\n   setne %cl\n   or %cl, %bl\n"
+    "movabs $0x5151515151515151, %rdx\n   cmp %rdx, %rsi\n   setne %cl\n   or %cl, %bl\n"
+    "movabs $0x0808080808080808, %rdx\n   cmp %rdx, %r8\n   setne %cl\n   or %cl, %bl\n"
+    "movabs $0x0909090909090909, %rdx\n   cmp %rdx, %r9\n   setne %cl\n   or %cl, %bl\n"
+    "movabs $0x1010101010101010, %rdx\n   cmp %rdx, %r10\n   setne %cl\n   or %cl, %bl\n"
+    "movabs $0x1111111111111111, %rdx\n   cmp %rdx, %r11\n   setne %cl\n   or %cl, %bl\n"
+    "mov %rbx, (%r12)\n"
+    "pop %r13\n   pop %r12\n   pop %rbx\n   ret\n"
+);
+#elif ARM64
+__asm__(
+    ".text\n.globl shell_asm_kind_kept\n.type shell_asm_kind_kept, %function\n"
+    "shell_asm_kind_kept:\n"
+    "stp x29, x30, [sp, #-48]!\n   stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
+    "mov x19, x1\n"
+    "mov x4, #0x404\n   mov x5, #0x505\n   mov x6, #0x606\n   mov x7, #0x707\n"
+    "mov x8, #0x808\n   mov x12, #0x1212\n   mov x13, #0x1313\n   mov x14, #0x1414\n"
+    "mov x15, #0x1515\n"
+    "bl test_operator_kind\n"
+    "mov x20, #0\n"
+    "mov x21, #0x404\n   cmp x4, x21\n   cset x21, ne\n   orr x20, x20, x21\n"
+    "mov x21, #0x505\n   cmp x5, x21\n   cset x21, ne\n   orr x20, x20, x21\n"
+    "mov x21, #0x606\n   cmp x6, x21\n   cset x21, ne\n   orr x20, x20, x21\n"
+    "mov x21, #0x707\n   cmp x7, x21\n   cset x21, ne\n   orr x20, x20, x21\n"
+    "mov x21, #0x808\n   cmp x8, x21\n   cset x21, ne\n   orr x20, x20, x21\n"
+    "mov x21, #0x1212\n   cmp x12, x21\n   cset x21, ne\n   orr x20, x20, x21\n"
+    "mov x21, #0x1313\n   cmp x13, x21\n   cset x21, ne\n   orr x20, x20, x21\n"
+    "mov x21, #0x1414\n   cmp x14, x21\n   cset x21, ne\n   orr x20, x20, x21\n"
+    "mov x21, #0x1515\n   cmp x15, x21\n   cset x21, ne\n   orr x20, x20, x21\n"
+    "str x20, [x19]\n"
+    "ldr x21, [sp, #32]\n   ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #48\n   ret\n"
+);
+#elif RISCV64
+__asm__(
+    ".text\n.globl shell_asm_kind_kept\n.type shell_asm_kind_kept, %function\n"
+    "shell_asm_kind_kept:\n"
+    "addi sp, sp, -32\n   sd ra, 0(sp)\n   sd s1, 8(sp)\n   sd s2, 16(sp)\n"
+    "mv s1, a1\n"
+    "li a1, 0x101\n   li a2, 0x202\n   li a3, 0x303\n   li a4, 0x404\n"
+    "li a5, 0x505\n   li a6, 0x606\n   li a7, 0x707\n"
+    "call test_operator_kind\n"
+    "li s2, 0\n"
+    "addi a1, a1, -0x101\n   or s2, s2, a1\n"
+    "addi a2, a2, -0x202\n   or s2, s2, a2\n"
+    "addi a3, a3, -0x303\n   or s2, s2, a3\n"
+    "addi a4, a4, -0x404\n   or s2, s2, a4\n"
+    "addi a5, a5, -0x505\n   or s2, s2, a5\n"
+    "addi a6, a6, -0x606\n   or s2, s2, a6\n"
+    "addi a7, a7, -0x707\n   or s2, s2, a7\n"
+    "sd s2, 0(s1)\n"
+    "ld ra, 0(sp)\n   ld s1, 8(sp)\n   ld s2, 16(sp)\n   addi sp, sp, 32\n   ret\n"
+);
+#endif
+
+static fn shell_asm_binary_one(const p8 address_to word)
+{
+        positive want = shell_asm_binary_former(word);
+        positive changed = 0;
+        positive got = shell_asm_kind_kept((string_address)word, address_of changed);
+
+        checks++;
+        if (want != got || changed)
+        {
+                failures++;
+                if (failures < 10)
+                        string_format(log, "FAIL test_operator_kind \"%s\": %p want %p%s\n",
+                                      word ? (string_address)word : (string_address)"(null)", got, want,
+                                      changed ? " (a register it may not change changed)" : "");
+        }
+}
+
+static fn shell_asm_binaries(p8 address_to pages)
+{
+        static const p8 alphabet[] = {'-', '=', '!', '<', '>', 'e', 'q', 'n', 'l', 't',
+                                      'g', 'o', 'f', 'x', 'E', 0x80, 0xed, 0xad};
+        static p8 room[64];
+        positive count = array_count(alphabet);
+
+        shell_asm_binary_one(null);
+        for (positive length = 0; length <= 4; length++)
+        {
+                positive total = 1;
+
+                for (positive i = 0; i < length; i++)
+                        total *= count;
+                for (positive code = 0; code < total; code++)
+                {
+                        p8 word[5];
+                        positive rest = code;
+
+                        for (positive i = 0; i < length; i++)
+                        {
+                                word[i] = alphabet[rest % count];
+                                rest /= count;
+                        }
+                        word[length] = 0;
+                        for (positive offset = 0; offset < 8; offset += (code & 7) ? 7 : 1)
+                                for (positive after = 0; after < 2; after++)
+                                {
+                                        memory_fill(room, after ? 0 : 'e', sizeof(room));
+                                        memory_copy_apart(room + offset, word, length + 1);
+                                        shell_asm_binary_one(room + offset);
+                                }
+                        if (pages && length < 4)
+                        {
+                                p8 address_to at = pages + 8192 - length - 1;
+
+                                memory_copy_apart(at, word, length + 1);
+                                shell_asm_binary_one(at);
+                        }
+                }
+        }
+
+        // Every operator, and a byte more, against the unreadable page.
+        if (pages)
+        {
+                static const char address_to const operators[] = {
+                    "-eq", "-ne", "-lt", "-le", "-gt", "-ge", "-nt", "-ot", "-ef",
+                    "=", "==", "!=", "<", ">", "-", "", "-lte", "-l", "!", "=!"};
+
+                for (positive i = 0; i < array_count(operators); i++)
+                {
+                        positive length = string_length((string_address)operators[i]);
+
+                        for (positive back = length + 1; back <= length + 5; back++)
+                        {
+                                p8 address_to at = pages + 8192 - back;
+
+                                memory_fill(at, 'q', back);
+                                memory_copy_apart(at, operators[i], length + 1);
+                                shell_asm_binary_one(at);
+                        }
+                }
+        }
+
+        // Random words of every length up to six, over all bytes.
+        for (positive round = 0; round < 200000; round++)
+        {
+                positive length = shell_asm_next() % 7;
+                positive offset = shell_asm_next() % 32;
+
+                for (positive i = 0; i < length; i++)
+                {
+                        p8 byte = (p8)shell_asm_next();
+
+                        room[offset + i] = byte ? byte : '-';
+                }
+                room[offset + length] = 0;
+                room[offset + length + 1] = (p8)shell_asm_next();
+                shell_asm_binary_one(room + offset);
+        }
+}
+
 b32 main(void)
 {
         static p8 built[4096];
@@ -26525,6 +26746,7 @@ b32 main(void)
         shell_asm_functions((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_assignments((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_arguments((bipolar)(positive)pages > 0 ? pages : null);
+        shell_asm_binaries((bipolar)(positive)pages > 0 ? pages : null);
 
         string_format(log, "shell assembly: %p checks, %p failures\n", checks, failures);
         log_flush();

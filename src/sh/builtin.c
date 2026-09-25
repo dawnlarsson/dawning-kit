@@ -10377,71 +10377,216 @@ PURE bool test_is_unary(string_address word)
                letter == 'O' || letter == 'S';
 }
 
-PURE positive test_is_binary(string_address word)
+/*
+        Which binary operator a word is, or zero.
+
+        Every binary operator is one, two or three bytes: -eq, -ne, -lt, -le,
+        -gt, -ge, -nt, -ot and -ef, and =, ==, !=, < and >. The first four
+        bytes of the word are read at once and are the key, terminator and
+        all. = and != are asked first, from the low two. Then the nine with a
+        dash: a multiply spreads their keys over sixteen slots in which no two
+        collide, and the slot holds the whole key to compare against and the
+        answer. Anything else is ==, <, > or nothing, and its bytes are
+        already in hand. Four bytes that could run into the next
+        page are read one at a time instead, never past the terminator. arm64
+        hashes with two shifts and an add, and riscv64, which promises nothing
+        about an unaligned word, reads bytes and keys the slot on the letters.
+
+        The C compared the letter pair against each operator in turn and read
+        the third byte of a one-byte word, past its terminator: -lt was 22
+        instructions, -ef 33, = 12 and != 18; here they are 17, 17, 10 and 14.
+*/
+positive test_operator_kind(string_address word);
+
+#if X64
+__asm__(
+    ASM_FUNC(test_operator_kind)
+    "test %rdi, %rdi\n   jz 9f\n"
+    // Offsets 4092 to 4095 of a page: the four bytes may not all be there.
+    "lea 4(%rdi), %eax\n   test $0xffc, %eax\n   jz 5f\n"
+    "mov (%rdi), %eax\n"
+    "cmp $0x3d, %ax\n   je 7f\n"
+    "cmp $0x3d21, %ax\n   je 8f\n"
+    "1: imul $0x1e2feb89, %eax, %ecx\n   shr $28, %ecx\n"
+    "lea .Ltest_operator_keys(%rip), %rdx\n"
+    "cmp (%rdx,%rcx,8), %eax\n   jne 3f\n"
+    "mov 4(%rdx,%rcx,8), %eax\n"
+    ASM_RET
+    // Not =, != or a dash operator: ==, < or >.
+    "3: mov %eax, %ecx\n   and $0xffffff, %ecx\n"
+    "cmp $0x3d3d, %ecx\n   je 7f\n"
+    "test $0xff00, %eax\n   jnz 9f\n"
+    "2: cmp $0x3c, %al\n   je 6f\n"
+    "cmp $0x3e, %al\n   jne 9f\n"
+    "mov $13, %eax\n"
+    ASM_RET
+    "6: mov $12, %eax\n"
+    ASM_RET
+    "7: mov $1, %eax\n"
+    ASM_RET
+    "8: test $0xff0000, %eax\n   jnz 9f\n"
+    "mov $2, %eax\n"
+    ASM_RET
+    "9: xor %eax, %eax\n"
+    ASM_RET
+    // The end of a page: a byte at a time, each only once the last was not
+    // the terminator, into the same four-byte key.
+    "5: movzbl (%rdi), %eax\n   test %eax, %eax\n   jz 9b\n"
+    "movzbl 1(%rdi), %ecx\n   test %ecx, %ecx\n   jz 4f\n"
+    "shl $8, %ecx\n   or %ecx, %eax\n"
+    "movzbl 2(%rdi), %ecx\n   test %ecx, %ecx\n   jz 10f\n"
+    "cmpb $0, 3(%rdi)\n   jne 9b\n"
+    "shl $16, %ecx\n   or %ecx, %eax\n   jmp 1b\n"
+    "10: cmp $0x3d21, %ax\n   je 8b\n   jmp 3b\n"
+    "4: cmp $0x3d, %al\n   je 7b\n   jmp 2b\n"
+    ".pushsection .rodata\n   .balign 8\n"
+    ".Ltest_operator_keys:\n"
+    ".long 0x0066652d, 11, 0, 0, 0x0071652d, 3, 0x00746c2d, 5\n"
+    ".long 0, 0, 0x0074672d, 7, 0, 0, 0x00656c2d, 6\n"
+    ".long 0x0065672d, 8, 0x00746e2d, 9, 0, 0, 0, 0\n"
+    ".long 0x00746f2d, 10, 0x00656e2d, 4, 0, 0, 0, 0\n"
+    ".popsection\n"
+    ASM_END(test_operator_kind)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(test_operator_kind)
+    "cbz x0, 9f\n"
+    "add w9, w0, #4\n   tst w9, #0xffc\n   b.eq 5f\n"
+    "ldr w1, [x0]\n"
+    "and w9, w1, #0xffff\n   cmp w9, #0x3d\n   b.eq 7f\n"
+    "mov w3, #0x3d21\n   cmp w9, w3\n   b.eq 8f\n"
+    "1: lsr w9, w1, #8\n   add w9, w9, w1, lsr #14\n   and w9, w9, #15\n"
+    "adrp x10, .Ltest_operator_keys\n   add x10, x10, :lo12:.Ltest_operator_keys\n"
+    "ldr x11, [x10, x9, lsl #3]\n"
+    "cmp w11, w1\n   b.ne 3f\n"
+    "lsr x0, x11, #32\n"
+    ASM_RET
+    // Not =, != or a dash operator: ==, < or >.
+    "3: and w2, w1, #0xffffff\n"
+    "mov w3, #0x3d3d\n   cmp w2, w3\n   b.eq 7f\n"
+    "tst w1, #0xff00\n   b.ne 9f\n"
+    "2: and w2, w1, #0xff\n"
+    "cmp w2, #0x3c\n   b.eq 6f\n"
+    "cmp w2, #0x3e\n   b.ne 9f\n"
+    "mov x0, #13\n"
+    ASM_RET
+    "6: mov x0, #12\n"
+    ASM_RET
+    "7: mov x0, #1\n"
+    ASM_RET
+    // != and a terminator after it.
+    "8: tst w1, #0xff0000\n   b.ne 9f\n"
+    "mov x0, #2\n"
+    ASM_RET
+    "9: mov x0, #0\n"
+    ASM_RET
+    // The end of a page: a byte at a time, into the same four-byte key.
+    "5: ldrb w1, [x0]\n   cbz w1, 9b\n"
+    "ldrb w2, [x0, #1]\n   cbz w2, 4f\n"
+    "orr w1, w1, w2, lsl #8\n"
+    "ldrb w2, [x0, #2]\n   cbz w2, 10f\n"
+    "ldrb w3, [x0, #3]\n   cbnz w3, 9b\n"
+    "orr w1, w1, w2, lsl #16\n   b 1b\n"
+    "10: mov w3, #0x3d21\n   cmp w1, w3\n   b.eq 8b\n   b 3b\n"
+    "4: cmp w1, #0x3d\n   b.eq 7b\n   b 2b\n"
+    ".pushsection .rodata\n   .balign 8\n"
+    ".Ltest_operator_keys:\n"
+    ".long 0x00746f2d, 10, 0x00656c2d, 6, 0, 0, 0x00656e2d, 4\n"
+    ".long 0, 0, 0, 0, 0, 0, 0, 0\n"
+    ".long 0x0074672d, 7, 0, 0, 0x0071652d, 3, 0, 0\n"
+    ".long 0x0065672d, 8, 0x00746c2d, 5, 0x0066652d, 11, 0x00746e2d, 9\n"
+    ".popsection\n"
+    ASM_END(test_operator_kind)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(test_operator_kind)
+    "beqz a0, 9f\n"
+    "lbu t0, 0(a0)\n   li t3, 45\n   bne t0, t3, 3f\n"
+    "lbu t1, 1(a0)\n   beqz t1, 9f\n"
+    "lbu t2, 2(a0)\n   beqz t2, 9f\n"
+    "lbu t4, 3(a0)\n   bnez t4, 9f\n"
+    // The two letters are the key; two shifts and an add spread them.
+    "slli t2, t2, 8\n   or t1, t1, t2\n"
+    "srli t4, t1, 6\n   add t4, t4, t1\n   andi t4, t4, 15\n   slli t4, t4, 2\n"
+    "lla t5, .Ltest_operator_keys\n   add t5, t5, t4\n"
+    "lhu t6, 0(t5)\n   bne t6, t1, 9f\n"
+    "lhu a0, 2(t5)\n"
+    ASM_RET
+    // Not a dash operator. One byte: =, < or >.
+    "3: beqz t0, 9f\n   lbu t1, 1(a0)\n   bnez t1, 4f\n"
+    "li t3, 61\n   beq t0, t3, 7f\n"
+    "li t3, 60\n   beq t0, t3, 6f\n"
+    "li t3, 62\n   bne t0, t3, 9f\n"
+    "li a0, 13\n"
+    ASM_RET
+    "6: li a0, 12\n"
+    ASM_RET
+    // Two bytes: != or ==.
+    "4: lbu t2, 2(a0)\n   bnez t2, 9f\n"
+    "li t3, 61\n   bne t1, t3, 9f\n   beq t0, t3, 7f\n"
+    "li t3, 33\n   bne t0, t3, 9f\n"
+    "li a0, 2\n"
+    ASM_RET
+    "7: li a0, 1\n"
+    ASM_RET
+    "9: li a0, 0\n"
+    ASM_RET
+    ".pushsection .rodata\n   .balign 4\n"
+    ".Ltest_operator_keys:\n"
+    ".short 0x746f, 10, 0x656c, 6, 0, 0, 0x656e, 4\n"
+    ".short 0, 0, 0, 0, 0, 0, 0, 0\n"
+    ".short 0x7467, 7, 0, 0, 0x7165, 3, 0, 0\n"
+    ".short 0x6567, 8, 0x746c, 5, 0x6665, 11, 0x746e, 9\n"
+    ".popsection\n"
+    ASM_END(test_operator_kind)
+);
+#endif
+
+/*
+        The call to it, spelled so the compiler knows what the call touches.
+
+        A call to a C function compiled beside its caller lets the compiler
+        see which registers the callee really uses and keep its own values in
+        the rest; a call to assembly it cannot see costs every caller-saved
+        register, and test's own walk spilled four of them around it, seven
+        instructions that gave back most of what the assembly saved. Called
+        from inline assembly with its registers named, the caller keeps them.
+        x86_64 steps over the red zone first, which a caller that makes no
+        other call may be using.
+*/
+static inline INLINE PURE positive test_is_binary(string_address word)
 {
-        p8 first;
-        p8 second;
-        p8 third;
+#if X64
+        positive kind;
 
-        if (!word)
-                return 0;
+        __asm__("lea -128(%%rsp), %%rsp\n   call test_operator_kind\n   lea 128(%%rsp), %%rsp"
+                : "=a"(kind)
+                : "D"(word), "m"(*(const p8 (address_to)[4])word)
+                : "rcx", "rdx", "cc");
+        return kind;
+#elif ARM64
+        register string_address in __asm__("x0") = word;
+        register positive kind __asm__("x0");
 
-        first = string_get(word);
-        second = string_get(word + 1);
-        third = string_get(word + 2);
+        __asm__("bl test_operator_kind"
+                : "=r"(kind)
+                : "0"(in), "m"(*(const p8 (address_to)[4])word)
+                : "x1", "x2", "x3", "x9", "x10", "x11", "x16", "x17", "x30", "cc");
+        return kind;
+#elif RISCV64
+        register string_address in __asm__("a0") = word;
+        register positive kind __asm__("a0");
 
-        /* Every binary operator is one or three bytes. A loop condition is
-           -lt/-le/-gt/-ge/-eq/-ne, so the three-byte dash operators are
-           first: walking =, != and == ahead of them made every `while [ "$i"
-           -lt N ]` pay three misses before the pair that actually matched. */
-        if (first == '-' && second && third && !string_get(word + 3))
-        {
-                p16 pair = ((p16)second << 8) | third;
-
-                if (pair == ((p16)'e' << 8 | 'q'))
-                        return TEST_EQUAL;
-                if (pair == ((p16)'n' << 8 | 'e'))
-                        return TEST_UNEQUAL;
-                if (pair == ((p16)'l' << 8 | 't'))
-                        return TEST_LESS;
-                if (pair == ((p16)'l' << 8 | 'e'))
-                        return TEST_LESS_EQUAL;
-                if (pair == ((p16)'g' << 8 | 't'))
-                        return TEST_GREATER;
-                if (pair == ((p16)'g' << 8 | 'e'))
-                        return TEST_GREATER_EQUAL;
-                if (pair == ((p16)'n' << 8 | 't'))
-                        return TEST_NEWER;
-                if (pair == ((p16)'o' << 8 | 't'))
-                        return TEST_OLDER;
-                if (pair == ((p16)'e' << 8 | 'f'))
-                        return TEST_SAME_FILE;
-        }
-
-        if (!second)
-        {
-                if (first == '=')
-                        return TEST_SAME;
-                if (first == '<')
-                        return TEST_BEFORE;
-                if (first == '>')
-                        return TEST_AFTER;
-
-                return 0;
-        }
-
-        if (!third)
-        {
-                if (first == '!' && second == '=')
-                        return TEST_DIFFERENT;
-
-                // Bash's second spelling of =, and the one scripts reach for
-                // because [[ ]] wants it. POSIX has only the single one.
-                if (first == '=' && second == '=')
-                        return TEST_SAME;
-        }
-
-        return 0;
+        __asm__("call test_operator_kind"
+                : "=r"(kind)
+                : "0"(in), "m"(*(const p8 (address_to)[4])word)
+                : "ra", "t0", "t1", "t2", "t3", "t4", "t5", "t6");
+        return kind;
+#else
+        return test_operator_kind(word);
+#endif
 }
 
 /*
