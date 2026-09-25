@@ -58790,6 +58790,55 @@ static fn segment_runs(bipolar listener, p16 port)
 }
 
 /*
+        Datagrams leave in the order they are numbered: full ones wait in the
+        batch for a run, and a short one after them waited for nothing, so it
+        reached the far side first and its acknowledgement named the run's
+        frames lost -- some thousand spurious resends a gigabyte sent.
+*/
+static fn in_order_sends(bipolar listener, p16 port)
+{
+        struct link_session address_to s = link_self.session;
+        p8 raw[16];
+        p8 frame[LINK_CHUNK];
+        p8 datagram[WATERLINK_DATAGRAM + 16];
+        positive heard = 0, ordered = 0, short_ones = 0;
+        p64 last = 0;
+        timespec pause = {0, 20000000};
+        bipolar got;
+
+        check("a session for in-order sends opens", link_session_open(s));
+        wls_seeded(raw, sizeof raw, 94);
+        link_keys_install(address_of s->now, raw, raw, 0x11223344, 0x55667788);
+        memory_copy(s->address, wls_loopback, 16);
+        s->port = port;
+        s->link->window = WATERLINK_WINDOW_MOST;
+        link_self.gso = true;
+        wls_drain(listener);
+        wls_seeded(frame, sizeof frame, 6);
+        for (positive at = 0; at < 10; at++)
+                (void)link_post(s, 9, WATERLINK_FRAME_DURABLE, LINK_DATA, frame,
+                                sizeof frame);
+        (void)link_post(s, 9, WATERLINK_FRAME_DURABLE, LINK_DATA, frame, 40);
+        link_session_flush(s, link_now());
+        (void)system_call_2(syscall(nanosleep), (positive)address_of pause, 0);
+        while ((got = socket_receive((b32)listener, datagram, sizeof datagram,
+                                     MSG_DONTWAIT, null, null)) > 0)
+        {
+                struct waterlink_datagram head;
+
+                memory_copy(address_of head, datagram, 16);
+                ordered += !heard || head.counter > last;
+                short_ones += got < WATERLINK_DATAGRAM;
+                last = head.counter;
+                heard++;
+        }
+        check("sec: datagrams arrive in the order they are numbered, a short "
+              "one after a run as well",
+              heard >= 11 && short_ones >= 1 && ordered == heard);
+        link_session_close(s);
+}
+
+/*
         Runs read coalesced: the link's own socket takes a run of full
         datagrams with a short one last as one read and the size of each,
         and a run the link sends itself is taken frame by frame, in order.
@@ -59485,6 +59534,7 @@ b32 main(void)
         initiator_answer();
         carried_is_atomic();
         segment_runs(listener, port);
+        in_order_sends(listener, port);
         coalesced_runs();
         quiet_streams();
         control_records_are_canonical();

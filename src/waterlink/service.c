@@ -1116,6 +1116,12 @@ static fn link_session_flush(struct link_session address_to s, p64 now)
                 length = waterlink_seal(address_of s->now.send, datagram, used);
                 if (alone || length < WATERLINK_DATAGRAM)
                 {
+                        //      What was filled before it leaves before it: a
+                        //      datagram sent past the run still in the batch
+                        //      reached the far side first, and its
+                        //      acknowledgement made the run's frames look
+                        //      three transmissions late, lost.
+                        link_batch_flush();
                         (void)link_send_to(datagram, length, s->address,
                                            s->port);
                         continue;
