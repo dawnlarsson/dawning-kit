@@ -53195,6 +53195,115 @@ static fn sealed_generated(void)
         crypto_forget(address_of sealing_generated, sizeof sealing_generated);
 }
 
+/*
+        The short boxes a keystroke seals -- one to four blocks, which x86
+        seals and opens in registers, and the first box past them -- under
+        every length of text each can hold, with the short body and without
+        it: the datagram net.c's AES-GCM makes, nothing written past the tag,
+        an open that gives the text back and leaves header and tag as they
+        were, and every one-bit change anywhere in header, box or tag
+        refused, the box wiped and nothing else touched.
+*/
+static crypto_aesgcm_key sealing_small;
+
+static fn sealed_small(void)
+{
+        positive cases = 0, agreed = 0, opened = 0, kept = 0;
+        positive flips = 0, refused = 0, wiped = 0, untouched = 0;
+        p64 seed = 0x13198a2e03707344ull;
+        p8 pclmul = cpu_has_pclmul;
+
+        for (positive pass = 0; pass < 2; pass++)
+        for (positive box = 16; box <= 80; box += 16)
+        for (positive used = box == 16 ? 0 : box - 15; used <= box; used++)
+        for (positive draw = 0; draw < 2; draw++)
+        {
+                p8 raw[16], text[80], plain[80], tag[16], iv[12];
+                p8 datagram[WATERLINK_DATAGRAM], copy[WATERLINK_DATAGRAM];
+                p8 before[WATERLINK_DATAGRAM];
+                struct waterlink_datagram head;
+                positive length = 32 + box;
+                bool clean;
+
+                for (positive i = 0; i < 16; i++)
+                {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 7;
+                        seed ^= seed << 17;
+                        raw[i] = (p8)seed;
+                }
+                cpu_has_pclmul = pass ? 0 : pclmul;
+                crypto_aesgcm_prepare(address_of sealing_small, raw);
+                head.kind = WATERLINK_KIND_CARRY;
+                head.receiver = (unsigned int)(seed >> 32);
+                head.counter = seed * 0x9e3779b97f4a7c15ull;
+                memory_zero(plain, sizeof plain);
+                for (positive i = 0; i < used; i++)
+                        plain[i] = (p8)(seed >> (i % 56) ^ (i * 7));
+                memory_copy(text, plain, sizeof text);
+                for (positive i = 16; i < sizeof datagram; i++)
+                        datagram[i] = (p8)(i * 29 + used);
+                memory_copy(datagram, address_of head, 16);
+                memory_copy(datagram + 16, plain, used);
+                memory_copy(before, datagram, sizeof before);
+
+                waterlink_seal_box(address_of sealing_small, datagram, used,
+                                   box);
+                memory_zero(iv, 4);
+                for (positive i = 0; i < 8; i++)
+                        iv[4 + i] = (p8)(head.counter >> (8 * i));
+                crypto_aesgcm_seal(address_of sealing_small, iv, datagram, 16,
+                                   text, box, tag);
+                cases++;
+                agreed += !memory_compare(datagram, before, 16) &&
+                          !memory_compare(datagram + 16, text, box) &&
+                          !memory_compare(datagram + 16 + box, tag, 16) &&
+                          !memory_compare(datagram + length, before + length,
+                                          sizeof datagram - length);
+
+                for (positive bit = 0; bit < length * 8; bit++)
+                {
+                        memory_copy(copy, datagram, sizeof copy);
+                        copy[bit / 8] ^= (p8)(1u << (bit % 8));
+                        memory_copy(before, copy, sizeof before);
+                        flips++;
+                        refused += !waterlink_open(address_of sealing_small,
+                                                   copy, length);
+                        clean = true;
+                        for (positive i = 0; i < box; i++)
+                                if (copy[16 + i])
+                                        clean = false;
+                        wiped += clean;
+                        untouched += !memory_compare(copy, before, 16) &&
+                                     !memory_compare(copy + 16 + box,
+                                                     before + 16 + box,
+                                                     sizeof copy - 16 - box);
+                }
+
+                memory_copy(before, datagram, sizeof before);
+                opened += waterlink_open(address_of sealing_small, datagram,
+                                         length) &&
+                          !memory_compare(datagram + 16, plain, box);
+                kept += !memory_compare(datagram, before, 16) &&
+                        !memory_compare(datagram + 16 + box, before + 16 + box,
+                                        sizeof datagram - 16 - box);
+        }
+
+        cpu_has_pclmul = pclmul;
+        string_format(log, "  short boxes: %p sealed, %p one-bit changes\n",
+                      cases, flips);
+        check("every short box, at every length of text, seals to net.c's "
+              "AES-GCM and writes nothing past its tag",
+              cases == 2 * (17 + 16 * 4) * 2 && agreed == cases);
+        check("and opens to its text, header and tag as they were",
+              opened == cases && kept == cases);
+        check("and every one-bit change is refused, the box wiped, nothing "
+              "else touched",
+              flips > 0 && refused == flips && wiped == flips &&
+                      untouched == flips);
+        crypto_forget(address_of sealing_small, sizeof sealing_small);
+}
+
 //      The whole path with no network: post, fill, seal, open, replay,
 //      deliver. This is the datapath the shim will drive, minus the socket.
 static fn whole_path(void)
@@ -55074,6 +55183,7 @@ b32 main(void)
         sealed();
         sealed_short();
         sealed_generated();
+        sealed_small();
         whole_path();
         refusals();
         supersession();

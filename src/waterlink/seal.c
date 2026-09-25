@@ -82,8 +82,97 @@ bool waterlink_open_box(crypto_aesgcm_key address_to key,
                         p8 address_to datagram, positive box);
 
 #if X64
+/*
+        The small bodies' pieces. xmm0 to xmm4 are the key stream from J0,
+        xmm11 the header, xmm15 the byte reversal GHASH works in; the hash
+        sums its products into xmm8 (low), xmm9 (high) and xmm10 (middle),
+        against the power %r8 points at, and folds them once at the end.
+*/
+#define WATERLINK_SMALL_ROUND(op, at)                                         \
+    "movdqu " at "(%rdi), %xmm5\n"                                            \
+    op " %xmm5, %xmm0\n   " op " %xmm5, %xmm1\n   " op " %xmm5, %xmm2\n"      \
+    op " %xmm5, %xmm3\n   " op " %xmm5, %xmm4\n"
+//  The header is read as the two words a caller writes it as -- a block
+//  loaded across two stores is not forwarded and waits for both to reach
+//  the cache -- and J0 needs only the counter's word.
+#define WATERLINK_SMALL_COUNTERS                                              \
+    "movq 8(%rsi), %xmm0\n   pslldq $4, %xmm0\n"                              \
+    "movdqa .Lwaterlink_small_one(%rip), %xmm5\n   por %xmm5, %xmm0\n"         \
+    "movdqa %xmm0, %xmm1\n   paddd %xmm5, %xmm1\n"                            \
+    "movdqa %xmm1, %xmm2\n   paddd %xmm5, %xmm2\n"                            \
+    "movdqa %xmm2, %xmm3\n   paddd %xmm5, %xmm3\n"                            \
+    "movdqa %xmm3, %xmm4\n   paddd %xmm5, %xmm4\n"                            \
+    "movq (%rsi), %xmm11\n   movhps 8(%rsi), %xmm11\n"
+#define WATERLINK_SMALL_AES                                                   \
+    WATERLINK_SMALL_ROUND("pxor", "0")                                        \
+    WATERLINK_SMALL_ROUND("aesenc", "16")                                     \
+    WATERLINK_SMALL_ROUND("aesenc", "32")                                     \
+    WATERLINK_SMALL_ROUND("aesenc", "48")                                     \
+    WATERLINK_SMALL_ROUND("aesenc", "64")                                     \
+    WATERLINK_SMALL_ROUND("aesenc", "80")                                     \
+    WATERLINK_SMALL_ROUND("aesenc", "96")                                     \
+    WATERLINK_SMALL_ROUND("aesenc", "112")                                    \
+    WATERLINK_SMALL_ROUND("aesenc", "128")                                    \
+    WATERLINK_SMALL_ROUND("aesenc", "144")                                    \
+    WATERLINK_SMALL_ROUND("aesenclast", "160")
+#define WATERLINK_SMALL_PRODUCT(x)                                            \
+    "movdqa " x ", %xmm7\n   pclmulqdq $0x00, (%r8), %xmm7\n"                 \
+    "pxor %xmm7, %xmm8\n"                                                     \
+    "movdqa " x ", %xmm7\n   pclmulqdq $0x11, (%r8), %xmm7\n"                 \
+    "pxor %xmm7, %xmm9\n"                                                     \
+    "movdqa " x ", %xmm7\n   psrldq $8, %xmm7\n   pxor " x ", %xmm7\n"         \
+    "pclmulqdq $0x00, 768(%r8), %xmm7\n   pxor %xmm7, %xmm10\n"                \
+    "add $16, %r8\n"
+//  The header against H^(n+2), from 768 - 16 (n + 2) in the table at 192.
+#define WATERLINK_SMALL_HASH_BEGIN(box)                                       \
+    "movdqa .Lwaterlink_bswap(%rip), %xmm15\n"                                \
+    "pxor %xmm8, %xmm8\n   pxor %xmm9, %xmm9\n   pxor %xmm10, %xmm10\n"       \
+    "lea 928(%rdi), %r8\n   sub " box ", %r8\n"                               \
+    "pshufb %xmm15, %xmm11\n"                                                 \
+    WATERLINK_SMALL_PRODUCT("%xmm11")
+#define WATERLINK_SMALL_HASH_START WATERLINK_SMALL_HASH_BEGIN("%rcx")
+#define WATERLINK_SMALL_HASH_START_OPEN WATERLINK_SMALL_HASH_BEGIN("%rdx")
+//  A block sealed: the text to used, xored with its key stream, stored,
+//  and hashed.
+#define WATERLINK_SMALL_SEAL_BLOCK(stream, at, index)                         \
+    "movdqu " at "(%rsi), %xmm6\n   movdqa %xmm13, %xmm12\n"                  \
+    "pcmpgtb " index "(%r9), %xmm12\n   pand %xmm12, %xmm6\n"                 \
+    "pxor %xmm6, " stream "\n   movdqu " stream ", " at "(%rsi)\n"             \
+    "movdqa " stream ", %xmm6\n   pshufb %xmm15, %xmm6\n"                     \
+    WATERLINK_SMALL_PRODUCT("%xmm6")
+//  A block as it came, hashed.
+#define WATERLINK_SMALL_OPEN_BLOCK(at)                                        \
+    "movdqu " at "(%rsi), %xmm6\n   pshufb %xmm15, %xmm6\n"                   \
+    WATERLINK_SMALL_PRODUCT("%xmm6")
+//  The lengths block against H^1 -- 128 bits of header, the box's bits of
+//  text, reversed -- then the fold, and the hash xored with E(J0) in xmm9.
+#define WATERLINK_SMALL_HASH_END(box)                                         \
+    "lea (," box ",8), %rax\n   movq %rax, %xmm6\n"                           \
+    "por .Lwaterlink_small_lengths(%rip), %xmm6\n"                            \
+    WATERLINK_SMALL_PRODUCT("%xmm6")                                          \
+    "pxor %xmm8, %xmm10\n   pxor %xmm9, %xmm10\n"                             \
+    "movdqa %xmm10, %xmm7\n   pslldq $8, %xmm7\n   psrldq $8, %xmm10\n"        \
+    "pxor %xmm7, %xmm8\n   pxor %xmm10, %xmm9\n"                              \
+    "movdqa %xmm8, %xmm7\n   pclmulqdq $0x00, .Lwaterlink_poly(%rip), %xmm7\n" \
+    "pshufd $0x4e, %xmm8, %xmm8\n   pxor %xmm7, %xmm8\n"                      \
+    "movdqa %xmm8, %xmm7\n   pclmulqdq $0x00, .Lwaterlink_poly(%rip), %xmm7\n" \
+    "pshufd $0x4e, %xmm8, %xmm8\n   pxor %xmm7, %xmm9\n   pxor %xmm8, %xmm9\n" \
+    "pshufb %xmm15, %xmm9\n   pxor %xmm0, %xmm9\n"
+//  Key stream, text and hash leave no register behind.
+#define WATERLINK_SMALL_WIPE                                                  \
+    "pxor %xmm0, %xmm0\n   pxor %xmm1, %xmm1\n   pxor %xmm2, %xmm2\n"         \
+    "pxor %xmm3, %xmm3\n   pxor %xmm4, %xmm4\n   pxor %xmm5, %xmm5\n"         \
+    "pxor %xmm6, %xmm6\n   pxor %xmm7, %xmm7\n   pxor %xmm8, %xmm8\n"         \
+    "pxor %xmm9, %xmm9\n   pxor %xmm10, %xmm10\n   pxor %xmm11, %xmm11\n"     \
+    "pxor %xmm12, %xmm12\n   pxor %xmm13, %xmm13\n"
+
 __asm__(
     ASM_FUNC(waterlink_seal_box)
+    "cmp $64, %rcx\n   ja .Lwaterlink_seal_box_general\n"
+    "cmpb $0, cpu_has_aes(%rip)\n   je .Lwaterlink_seal_box_general\n"
+    "cmpb $0, cpu_has_pclmul(%rip)\n   je .Lwaterlink_seal_box_general\n"
+    "jmp waterlink_seal_small\n"
+    ".Lwaterlink_seal_box_general:\n"
     "push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
     "sub $48, %rsp\n"
     "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rcx, %r13\n"
@@ -557,6 +646,72 @@ __asm__(
     "vpxorq %xmm26, %xmm26, %xmm26\n   vpxorq %xmm27, %xmm27, %xmm27\n   vpxorq %xmm28, %xmm28, %xmm28\n"
     "vpxorq %xmm29, %xmm29, %xmm29\n   vpxorq %xmm30, %xmm30, %xmm30\n   vpxorq %xmm31, %xmm31, %xmm31\n"
     "kxorw %k1, %k1, %k1\n   vzeroupper\n   ret\n"
+    //  A box of one to four blocks, in registers from end to end: the five
+    //  counter blocks from J0 go through AES-NI side by side -- one more
+    //  than a short box needs costs no time beside the rounds' latency --,
+    //  the hash takes header, box and lengths against H^(n+2) ... H^1 with
+    //  one reduction, and nothing is written but the box and the tag. The
+    //  round keys come with movdqu: the schedule is the caller's, and a
+    //  legacy memory operand would have to be aligned.
+    ASM_LOCAL_FUNC(waterlink_seal_small)
+    WATERLINK_SMALL_COUNTERS
+    WATERLINK_SMALL_AES
+    WATERLINK_SMALL_HASH_START
+    //  used, as a byte in every lane, against each block's byte offsets:
+    //  what is past it is sealed as zeros, as the general body zeroes it.
+    "movd %edx, %xmm13\n   pxor %xmm12, %xmm12\n   pshufb %xmm12, %xmm13\n"
+    "lea .Lwaterlink_small_index(%rip), %r9\n"
+    WATERLINK_SMALL_SEAL_BLOCK("%xmm1", "16", "0")
+    "cmp $16, %rcx\n   je 1f\n"
+    WATERLINK_SMALL_SEAL_BLOCK("%xmm2", "32", "16")
+    "cmp $32, %rcx\n   je 1f\n"
+    WATERLINK_SMALL_SEAL_BLOCK("%xmm3", "48", "32")
+    "cmp $48, %rcx\n   je 1f\n"
+    WATERLINK_SMALL_SEAL_BLOCK("%xmm4", "64", "48")
+    "1:\n"
+    WATERLINK_SMALL_HASH_END("%rcx")
+    "movdqu %xmm9, 16(%rsi,%rcx)\n"
+    WATERLINK_SMALL_WIPE
+    ASM_RET
+    ASM_LOCAL_END(waterlink_seal_small)
+
+    //  Opening hashes the box as it came, beside the rounds, so the tag is
+    //  known as soon as the key stream is; the text goes back only when all
+    //  sixteen bytes of hash, mask and tag agree, and a box that does not
+    //  open is wiped instead.
+    ASM_LOCAL_FUNC(waterlink_open_small)
+    WATERLINK_SMALL_COUNTERS
+    WATERLINK_SMALL_AES
+    WATERLINK_SMALL_HASH_START_OPEN
+    WATERLINK_SMALL_OPEN_BLOCK("16")
+    "cmp $16, %rdx\n   je 1f\n"
+    WATERLINK_SMALL_OPEN_BLOCK("32")
+    "cmp $32, %rdx\n   je 1f\n"
+    WATERLINK_SMALL_OPEN_BLOCK("48")
+    "cmp $48, %rdx\n   je 1f\n"
+    WATERLINK_SMALL_OPEN_BLOCK("64")
+    "1:\n"
+    WATERLINK_SMALL_HASH_END("%rdx")
+    "movdqu 16(%rsi,%rdx), %xmm6\n   pxor %xmm6, %xmm9\n"
+    "pxor %xmm12, %xmm12\n   pcmpeqb %xmm9, %xmm12\n   pmovmskb %xmm12, %eax\n"
+    "cmp $0xffff, %eax\n   jne 3f\n"
+    "movdqu 16(%rsi), %xmm6\n   pxor %xmm6, %xmm1\n   movdqu %xmm1, 16(%rsi)\n"
+    "cmp $16, %rdx\n   je 2f\n"
+    "movdqu 32(%rsi), %xmm6\n   pxor %xmm6, %xmm2\n   movdqu %xmm2, 32(%rsi)\n"
+    "cmp $32, %rdx\n   je 2f\n"
+    "movdqu 48(%rsi), %xmm6\n   pxor %xmm6, %xmm3\n   movdqu %xmm3, 48(%rsi)\n"
+    "cmp $48, %rdx\n   je 2f\n"
+    "movdqu 64(%rsi), %xmm6\n   pxor %xmm6, %xmm4\n   movdqu %xmm4, 64(%rsi)\n"
+    "2:  mov $1, %eax\n"
+    WATERLINK_SMALL_WIPE
+    ASM_RET
+    "3:  pxor %xmm6, %xmm6\n   xor %eax, %eax\n"
+    "4:  movdqu %xmm6, 16(%rsi,%rax)\n   add $16, %rax\n   cmp %rdx, %rax\n   jb 4b\n"
+    "xor %eax, %eax\n"
+    WATERLINK_SMALL_WIPE
+    ASM_RET
+    ASM_LOCAL_END(waterlink_open_small)
+
     ".pushsection .rodata\n   .balign 64\n"
     ".Lwaterlink_steps:\n   .long 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0\n"
     ".Lwaterlink_bswap:\n   .byte 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0\n"
@@ -565,9 +720,22 @@ __asm__(
     //  GCM's lengths block for a whole datagram: 128 bits of header, 9,344
     //  of box.
     ".Lwaterlink_lengths:\n   .byte 0, 0, 0, 0, 0, 0, 0, 0x80, 0, 0, 0, 0, 0, 0, 0x24, 0x80\n"
+    ".balign 16\n"
+    ".Lwaterlink_small_one:\n   .long 0, 0, 0, 0x01000000\n"
+    ".Lwaterlink_small_lengths:\n   .quad 0, 0x80\n"
+    ".Lwaterlink_small_index:\n"
+    ".byte 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15\n"
+    ".byte 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31\n"
+    ".byte 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47\n"
+    ".byte 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63\n"
     ".popsection\n"
     ASM_END(waterlink_seal_box)
     ASM_FUNC(waterlink_open_box)
+    "cmp $64, %rdx\n   ja .Lwaterlink_open_box_general\n"
+    "cmpb $0, cpu_has_aes(%rip)\n   je .Lwaterlink_open_box_general\n"
+    "cmpb $0, cpu_has_pclmul(%rip)\n   je .Lwaterlink_open_box_general\n"
+    "jmp waterlink_open_small\n"
+    ".Lwaterlink_open_box_general:\n"
     "push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
     "sub $64, %rsp\n"
     "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n"
@@ -616,8 +784,98 @@ __asm__(
     ASM_END(waterlink_open_box)
 );
 #elif ARM64
+/*
+        The small bodies on arm64, the x86 ones' shape: v0 to v4 the key
+        stream from J0, v16 to v26 the round keys; then the hash, blocks
+        in rev64's order against the table's high-word-first powers, into
+        v17 (the pmull2 half), v18 (the pmull half) and v19 (the middle),
+        with v30 zero and v31 0xc2 << 56 for the fold.
+*/
+#define WATERLINK_SMALL_ROUND(key)                                            \
+    "aese v0.16b, " key ".16b\n   aesmc v0.16b, v0.16b\n"                     \
+    "aese v1.16b, " key ".16b\n   aesmc v1.16b, v1.16b\n"                     \
+    "aese v2.16b, " key ".16b\n   aesmc v2.16b, v2.16b\n"                     \
+    "aese v3.16b, " key ".16b\n   aesmc v3.16b, v3.16b\n"                     \
+    "aese v4.16b, " key ".16b\n   aesmc v4.16b, v4.16b\n"
+//  J0 is four zero bytes, the header's counter word and 00 00 00 01; the
+//  counter word is all it needs of the header.
+#define WATERLINK_SMALL_STREAM                                                \
+    "ldr d29, [x1, #8]\n   movi v30.16b, #0\n"                                \
+    "ext v29.16b, v30.16b, v29.16b, #12\n"                                    \
+    "movz w10, #0x0100, lsl #16\n   mov v0.16b, v29.16b\n   mov v0.s[3], w10\n" \
+    "movz w10, #0x0200, lsl #16\n   mov v1.16b, v29.16b\n   mov v1.s[3], w10\n" \
+    "movz w10, #0x0300, lsl #16\n   mov v2.16b, v29.16b\n   mov v2.s[3], w10\n" \
+    "movz w10, #0x0400, lsl #16\n   mov v3.16b, v29.16b\n   mov v3.s[3], w10\n" \
+    "movz w10, #0x0500, lsl #16\n   mov v4.16b, v29.16b\n   mov v4.s[3], w10\n" \
+    "ldp q16, q17, [x0]\n   ldp q18, q19, [x0, #32]\n   ldp q20, q21, [x0, #64]\n" \
+    "ldp q22, q23, [x0, #96]\n   ldp q24, q25, [x0, #128]\n   ldr q26, [x0, #160]\n" \
+    WATERLINK_SMALL_ROUND("v16") WATERLINK_SMALL_ROUND("v17")                 \
+    WATERLINK_SMALL_ROUND("v18") WATERLINK_SMALL_ROUND("v19")                 \
+    WATERLINK_SMALL_ROUND("v20") WATERLINK_SMALL_ROUND("v21")                 \
+    WATERLINK_SMALL_ROUND("v22") WATERLINK_SMALL_ROUND("v23")                 \
+    WATERLINK_SMALL_ROUND("v24")                                              \
+    "aese v0.16b, v25.16b\n   aese v1.16b, v25.16b\n   aese v2.16b, v25.16b\n" \
+    "aese v3.16b, v25.16b\n   aese v4.16b, v25.16b\n"                         \
+    "eor v0.16b, v0.16b, v26.16b\n   eor v1.16b, v1.16b, v26.16b\n"           \
+    "eor v2.16b, v2.16b, v26.16b\n   eor v3.16b, v3.16b, v26.16b\n"           \
+    "eor v4.16b, v4.16b, v26.16b\n"
+#define WATERLINK_SMALL_PRODUCT(x)                                            \
+    "ldr q23, [x9]\n"                                                         \
+    "pmull2 v20.1q, " x ".2d, v23.2d\n   eor v17.16b, v17.16b, v20.16b\n"     \
+    "pmull v20.1q, " x ".1d, v23.1d\n   eor v18.16b, v18.16b, v20.16b\n"      \
+    "ext v21.16b, " x ".16b, " x ".16b, #8\n   eor v21.16b, v21.16b, " x ".16b\n" \
+    "ldr q23, [x9, #768]\n   add x9, x9, #16\n"                               \
+    "pmull v20.1q, v21.1d, v23.1d\n   eor v19.16b, v19.16b, v20.16b\n"
+//  The header against H^(n+2), from 768 - 16 (n + 2) in the table at 192.
+#define WATERLINK_SMALL_HASH_BEGIN(box)                                       \
+    "movz x9, #0xc200, lsl #48\n   fmov d31, x9\n"                            \
+    "movi v17.16b, #0\n   movi v18.16b, #0\n   movi v19.16b, #0\n"            \
+    "add x9, x0, #928\n   sub x9, x9, " box "\n"                              \
+    "ldp d27, d28, [x1]\n   mov v27.d[1], v28.d[0]\n   rev64 v27.16b, v27.16b\n" \
+    WATERLINK_SMALL_PRODUCT("v27")
+//  The lengths block against H^1, the fold, and hash with E(J0) in v22.
+#define WATERLINK_SMALL_HASH_END(box)                                         \
+    "lsl x10, " box ", #3\n   movz x11, #0x80\n   fmov d24, x11\n"            \
+    "mov v24.d[1], x10\n"                                                     \
+    WATERLINK_SMALL_PRODUCT("v24")                                            \
+    "eor v19.16b, v19.16b, v17.16b\n   eor v19.16b, v19.16b, v18.16b\n"       \
+    "ext v20.16b, v30.16b, v19.16b, #8\n   eor v17.16b, v17.16b, v20.16b\n"  \
+    "ext v20.16b, v19.16b, v30.16b, #8\n   eor v18.16b, v18.16b, v20.16b\n"  \
+    "pmull v20.1q, v17.1d, v31.1d\n   ext v17.16b, v17.16b, v17.16b, #8\n"   \
+    "eor v17.16b, v17.16b, v20.16b\n"                                         \
+    "pmull v20.1q, v17.1d, v31.1d\n   ext v17.16b, v17.16b, v17.16b, #8\n"   \
+    "eor v18.16b, v18.16b, v20.16b\n   eor v18.16b, v18.16b, v17.16b\n"       \
+    "ext v22.16b, v18.16b, v18.16b, #8\n   rev64 v22.16b, v22.16b\n"          \
+    "eor v22.16b, v22.16b, v0.16b\n"
+//  A block sealed: the text to used (v28, in every lane) against the
+//  block's byte offsets from x10, xored with its key stream, stored and
+//  hashed.
+#define WATERLINK_SMALL_SEAL_BLOCK(n, at, index)                              \
+    "ldr q24, [x1, #" at "]\n   ldr q25, [x10, #" index "]\n"                 \
+    "cmhi v25.16b, v28.16b, v25.16b\n   and v24.16b, v24.16b, v25.16b\n"      \
+    "eor v" n ".16b, v" n ".16b, v24.16b\n   str q" n ", [x1, #" at "]\n"     \
+    "rev64 v24.16b, v" n ".16b\n"                                            \
+    WATERLINK_SMALL_PRODUCT("v24")
+//  A block as it came, hashed.
+#define WATERLINK_SMALL_OPEN_BLOCK(at)                                        \
+    "ldr q24, [x1, #" at "]\n   rev64 v24.16b, v24.16b\n"                    \
+    WATERLINK_SMALL_PRODUCT("v24")
+#define WATERLINK_SMALL_WIPE                                                  \
+    "movi v0.16b, #0\n   movi v1.16b, #0\n   movi v2.16b, #0\n   movi v3.16b, #0\n"  \
+    "movi v4.16b, #0\n   movi v16.16b, #0\n   movi v17.16b, #0\n   movi v18.16b, #0\n" \
+    "movi v19.16b, #0\n   movi v20.16b, #0\n   movi v21.16b, #0\n   movi v22.16b, #0\n" \
+    "movi v23.16b, #0\n   movi v24.16b, #0\n   movi v25.16b, #0\n   movi v26.16b, #0\n" \
+    "movi v27.16b, #0\n   movi v28.16b, #0\n   movi v29.16b, #0\n"
+
 __asm__(
     ASM_FUNC(waterlink_seal_box)
+    "cmp x3, #64\n   b.hi .Lwaterlink_seal_box_general\n"
+    "adrp x9, cpu_has_aes\n   ldrb w9, [x9, :lo12:cpu_has_aes]\n"
+    "cbz w9, .Lwaterlink_seal_box_general\n"
+    "adrp x9, cpu_has_pclmul\n   ldrb w9, [x9, :lo12:cpu_has_pclmul]\n"
+    "cbz w9, .Lwaterlink_seal_box_general\n"
+    "b waterlink_seal_small\n"
+    ".Lwaterlink_seal_box_general:\n"
     "stp x29, x30, [sp, #-112]!\n   mov x29, sp\n"
     "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
     "mov x19, x0\n   mov x20, x1\n   mov x21, x3\n"
@@ -649,6 +907,13 @@ __asm__(
     ASM_RET
     ASM_END(waterlink_seal_box)
     ASM_FUNC(waterlink_open_box)
+    "cmp x2, #64\n   b.hi .Lwaterlink_open_box_general\n"
+    "adrp x9, cpu_has_aes\n   ldrb w9, [x9, :lo12:cpu_has_aes]\n"
+    "cbz w9, .Lwaterlink_open_box_general\n"
+    "adrp x9, cpu_has_pclmul\n   ldrb w9, [x9, :lo12:cpu_has_pclmul]\n"
+    "cbz w9, .Lwaterlink_open_box_general\n"
+    "b waterlink_open_small\n"
+    ".Lwaterlink_open_box_general:\n"
     "stp x29, x30, [sp, #-112]!\n   mov x29, sp\n"
     "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
     "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n"
@@ -682,6 +947,72 @@ __asm__(
     "ldp x29, x30, [sp], #112\n"
     ASM_RET
     ASM_END(waterlink_open_box)
+
+    //  x0 the key, x1 the datagram, x2 used, x3 the box.
+    ASM_LOCAL_FUNC(waterlink_seal_small)
+    ".arch_extension crypto\n"
+    WATERLINK_SMALL_STREAM
+    WATERLINK_SMALL_HASH_BEGIN("x3")
+    "dup v28.16b, w2\n"
+    "adrp x10, .Lwaterlink_small_index\n"
+    "add x10, x10, :lo12:.Lwaterlink_small_index\n"
+    WATERLINK_SMALL_SEAL_BLOCK("1", "16", "0")
+    "cmp x3, #16\n   b.eq 1f\n"
+    WATERLINK_SMALL_SEAL_BLOCK("2", "32", "16")
+    "cmp x3, #32\n   b.eq 1f\n"
+    WATERLINK_SMALL_SEAL_BLOCK("3", "48", "32")
+    "cmp x3, #48\n   b.eq 1f\n"
+    WATERLINK_SMALL_SEAL_BLOCK("4", "64", "48")
+    "1:\n"
+    WATERLINK_SMALL_HASH_END("x3")
+    "add x10, x1, #16\n   str q22, [x10, x3]\n"
+    WATERLINK_SMALL_WIPE
+    ASM_RET
+    ".arch_extension nocrypto\n"
+    ASM_LOCAL_END(waterlink_seal_small)
+
+    //  x0 the key, x1 the datagram, x2 the box.
+    ASM_LOCAL_FUNC(waterlink_open_small)
+    ".arch_extension crypto\n"
+    WATERLINK_SMALL_STREAM
+    WATERLINK_SMALL_HASH_BEGIN("x2")
+    WATERLINK_SMALL_OPEN_BLOCK("16")
+    "cmp x2, #16\n   b.eq 1f\n"
+    WATERLINK_SMALL_OPEN_BLOCK("32")
+    "cmp x2, #32\n   b.eq 1f\n"
+    WATERLINK_SMALL_OPEN_BLOCK("48")
+    "cmp x2, #48\n   b.eq 1f\n"
+    WATERLINK_SMALL_OPEN_BLOCK("64")
+    "1:\n"
+    WATERLINK_SMALL_HASH_END("x2")
+    "add x10, x1, #16\n   ldr q24, [x10, x2]\n   eor v22.16b, v22.16b, v24.16b\n"
+    "mov x10, v22.d[0]\n   mov x11, v22.d[1]\n   orr x10, x10, x11\n"
+    "cbnz x10, 3f\n"
+    "ldr q24, [x1, #16]\n   eor v1.16b, v1.16b, v24.16b\n   str q1, [x1, #16]\n"
+    "cmp x2, #16\n   b.eq 2f\n"
+    "ldr q24, [x1, #32]\n   eor v2.16b, v2.16b, v24.16b\n   str q2, [x1, #32]\n"
+    "cmp x2, #32\n   b.eq 2f\n"
+    "ldr q24, [x1, #48]\n   eor v3.16b, v3.16b, v24.16b\n   str q3, [x1, #48]\n"
+    "cmp x2, #48\n   b.eq 2f\n"
+    "ldr q24, [x1, #64]\n   eor v4.16b, v4.16b, v24.16b\n   str q4, [x1, #64]\n"
+    "2:  mov w0, #1\n"
+    WATERLINK_SMALL_WIPE
+    ASM_RET
+    "3:  add x10, x1, #16\n   add x11, x10, x2\n"
+    "4:  stp xzr, xzr, [x10], #16\n   cmp x10, x11\n   b.lo 4b\n"
+    "mov w0, #0\n"
+    WATERLINK_SMALL_WIPE
+    ASM_RET
+    ".arch_extension nocrypto\n"
+    ASM_LOCAL_END(waterlink_open_small)
+
+    ".pushsection .rodata\n   .balign 16\n"
+    ".Lwaterlink_small_index:\n"
+    ".byte 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15\n"
+    ".byte 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31\n"
+    ".byte 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47\n"
+    ".byte 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63\n"
+    ".popsection\n"
 );
 #elif RISCV64
 __asm__(
