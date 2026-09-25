@@ -24453,6 +24453,12 @@ int main(void)
 
 
 
+def shell_source_plain(text):
+    """A shell source as a slice compiled on its own sees it: HOT_STATE is a
+    section attribute from lib.c for the spark link, and no slice brings it."""
+    return text.replace(' HOT_STATE;', ';')
+
+
 def harness_floodlight(argv):
     """floodlight.c is the whole policy, and this is what keeps it the whole policy.
 
@@ -24692,7 +24698,7 @@ def harness_floodlight(argv):
     #   register cannot be read -- so that removing the device is not a way of
     #   removing the policy. Two copies is two things that can drift, and this
     #   is what stops them.
-    shell = (ROOT / 'src/sh/builtin.c').read_text()
+    shell = shell_source_plain((ROOT / 'src/sh/builtin.c').read_text())
     tool_run = shell[shell.index('static bool shell_tool_run_hashed('):
                      shell.index('// The next signal that arrived',
                                  shell.index('static bool shell_tool_run_hashed('))]
@@ -24707,7 +24713,7 @@ def harness_floodlight(argv):
           bool(re.search(r'external_failed\s*==\s*-ERROR_ACCESS', tool_run)),
           'a PATH image whose basename is an applet keeps authenticated '
           'external identity, while fallback-confined applets stay resident')
-    execution = (ROOT / 'src/sh/exec.c').read_text()
+    execution = shell_source_plain((ROOT / 'src/sh/exec.c').read_text())
     stage = execution[execution.index('static bipolar exec_stage_spawn('):
                       execution.index('static b32 coproc_kept(',
                                       execution.index('static bipolar exec_stage_spawn('))]
@@ -24750,8 +24756,8 @@ def harness_floodlight(argv):
     #   Against the lexed source, not the text: commenting a call out leaves it
     #   in the file for a regex to find, and a check that a comment satisfies
     #   is worse than no check because it reads as a passing one.
-    exec_source = (ROOT / 'src/sh/exec.c').read_text()
-    shell_main_source = (ROOT / 'src/sh/shell.c').read_text()
+    exec_source = shell_source_plain((ROOT / 'src/sh/exec.c').read_text())
+    shell_main_source = shell_source_plain((ROOT / 'src/sh/shell.c').read_text())
     tools_source = (ROOT / 'src/sh/tools.c').read_text()
     monitor_source = (ROOT / 'src/sh/monitor.c').read_text()
     shell_tokens = [token.value for token in lex(shell)[0]]
@@ -27452,7 +27458,7 @@ int main(void)
     #   same pool as any other applet. So none of those calls may be in the
     #   refused list, and the filter must stay a deny list whose fall-through
     #   is ALLOW -- an allow list would refuse them all by omission.
-    builtin_text = (ROOT / 'src/sh/builtin.c').read_text()
+    builtin_text = shell_source_plain((ROOT / 'src/sh/builtin.c').read_text())
     apply_at = builtin_text.index('static bool floodlight_apply(')
     apply_body = builtin_text[apply_at:builtin_text.index('\n}\n', apply_at)]
     refused_calls = set(re.findall(r'refused\[count\+\+\]\s*=\s*\(p32\)syscall\((\w+)\)',

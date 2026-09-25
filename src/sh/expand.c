@@ -331,7 +331,7 @@ static bool expand_quoted_seen;
 // How many of the bytes in the buffer are empty marks and not bytes of the
 // word, so that "the word expanded to nothing" can still be asked.
 static positive expand_empty_count;
-static bool expand_failed;
+static bool expand_failed HOT_STATE;
 // A here-document expanded in this process (dash) turns ${x?} into the
 // command's status rather than ending the script, so ${x:=} can still stick.
 static bool expand_redirect_error;
@@ -2157,7 +2157,7 @@ static string_address expand_capture(string_address text, bool quoted, b32 mode)
         level. Recursive variable values and indexed subscripts retain and
         restore it explicitly before entering the same evaluator again.
 */
-static string_address arith_at;
+static string_address arith_at HOT_STATE;
 
 /*
         What the expression could not answer.
@@ -2168,29 +2168,29 @@ static string_address arith_at;
         that the script never computed. dash stops on each of them and leaves
         2 behind, and so does this.
 */
-static bool arith_bad;
-static string_address arith_why;
-static p8 arith_token_buf[32];
-static string_address arith_origin;
-static bool arith_said;
+static bool arith_bad HOT_STATE;
+static string_address arith_why HOT_STATE;
+static p8 arith_token_buf[32] HOT_STATE;
+static string_address arith_origin HOT_STATE;
+static bool arith_said HOT_STATE;
 
 // Parsing always reaches the far end of a logical or conditional expression,
 // but an untaken arm is grammar only: it must not read or write variables or
 // raise evaluation errors such as division by zero.
-static bool arith_active;
-static bool arith_bash_mode;
-static bool arith_nounset;
-static bool arith_unset;
+static bool arith_active HOT_STATE;
+static bool arith_bash_mode HOT_STATE;
+static bool arith_nounset HOT_STATE;
+static bool arith_unset HOT_STATE;
 
 // The last primary that is still a variable, so assignment can refuse
 // `1 + x = 2` and `y >= z |= 1` while still taking `x = 1` and a
 // ternary's middle `x = 1`. The name is copied out of the primary's
 // frame: the right-hand side may parse another lvalue on top of it.
-static bool arith_is_lvalue;
-static expand_reference arith_held;
-static bipolar arith_held_value;
-static p8 arith_held_name[EXPAND_LOCAL_NAME];
-static p8 arith_held_key[32];
+static bool arith_is_lvalue HOT_STATE;
+static expand_reference arith_held HOT_STATE;
+static bipolar arith_held_value HOT_STATE;
+static p8 arith_held_name[EXPAND_LOCAL_NAME] HOT_STATE;
+static p8 arith_held_key[32] HOT_STATE;
 
 /*
         A persistent `name=$((...))` whose whole right-hand side is one
@@ -2199,10 +2199,10 @@ static p8 arith_held_key[32];
         assignments leave this empty so a restored `i=$((i+1)) true`
         still puts `i` back.
 */
-static string_address arith_assign_target;
-static positive arith_assign_target_length;
-static bool arith_assign_stored;
-static bool expand_assignment_commit;
+static string_address arith_assign_target HOT_STATE;
+static positive arith_assign_target_length HOT_STATE;
+static bool arith_assign_stored HOT_STATE;
+static bool expand_assignment_commit HOT_STATE;
 
 static PURE inline INLINE string_address arith_skip_space(string_address at)
 {
@@ -2502,7 +2502,7 @@ static bipolar arith_number_of(expand_reference reference, p8 address_to scratch
 */
 #define ARITH_NAMES 32
 
-static positive arith_names;
+static positive arith_names HOT_STATE;
 
 static COLD bipolar arith_named_expression(string_address value)
 {
@@ -2848,7 +2848,7 @@ done:
         answers. Past it the expression is refused and the stack is whole.
 */
 #define ARITH_NESTING 1024
-static positive arith_nesting;
+static positive arith_nesting HOT_STATE;
 static bipolar arith_primary_step();
 
 static bipolar arith_primary()
@@ -4233,7 +4233,7 @@ typedef struct
 
 static expand_substitution address_to expand_substitutions;
 static positive expand_substitutions_room;
-static positive expand_substitutions_count;
+static positive expand_substitutions_count HOT_STATE;
 /* Whether this shell has ever made one. Almost no script does, and the
    executor asks after every command it runs, so one byte in the common case
    is worth having instead of the two the mark and its comparison cost. */

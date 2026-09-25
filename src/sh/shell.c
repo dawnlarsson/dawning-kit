@@ -563,7 +563,7 @@ static fn shell_words_bind(shell_words address_to list,
 /* Set only in a process created solely to run one simple command. Utilities
    can then use that process directly instead of cloning a disposable wrapper
    around another disposable child. */
-static bool shell_tail_command;
+static bool shell_tail_command HOT_STATE;
 // The substitution child grants that privilege after parsing proves the line
 // is one simple command; functions decline it later in exec_dispatch.
 static bool shell_tail_line_requested;
@@ -1178,11 +1178,11 @@ positive shell_argc;
 /* The executor supplies these only when argv[0] came unchanged from a parsed
    literal. They let repeated loop commands reuse dispatch work without ever
    trusting the address of lexer storage, which is reused between lines. */
-static bool shell_command_name_stable;
-static string_address shell_command_name_address;
+static bool shell_command_name_stable HOT_STATE;
+static string_address shell_command_name_address HOT_STATE;
 /* parse_program reuses word slots. A remembered builtin is only the same
    command while this generation is unchanged -- a kept loop tree. */
-static positive shell_parse_generation;
+static positive shell_parse_generation HOT_STATE;
 
 p8 address_to argument_line;
 positive argument_line_room;

@@ -587,6 +587,14 @@
 #define CONST __attribute__((const))
 #define HOT __attribute__((hot))
 #define COLD __attribute__((cold))
+//      State every command writes, gathered where spark.ld puts .bss.hot: at
+//      the start of .bss, so a fork's child and parent each copy one page of
+//      it rather than one page for each variable a large table sits beside.
+#if defined(KERNEL_MODE) || defined(__APPLE__)
+#define HOT_STATE
+#else
+#define HOT_STATE __attribute__((section(".bss.hot")))
+#endif
 #define INLINE __attribute__((always_inline))
 #define NO_FRAME __attribute__((noframe))
 #define KEEP __attribute__((used))
@@ -51074,7 +51082,9 @@ __asm__(
     ASM_END(log_flush)
 
     ASM_FUNC(log_failure_reset)
-    "movb $0, log_writer_failed(%rip)\n" ASM_RET
+    "cmpb $0, log_writer_failed(%rip)\n   je .Llog_failure_reset_x64_clear\n"
+    "movb $0, log_writer_failed(%rip)\n"
+    ".Llog_failure_reset_x64_clear:\n" ASM_RET
     ASM_END(log_failure_reset)
 
     ASM_FUNC(log_failed)
@@ -51234,7 +51244,9 @@ __asm__(
 
     ASM_FUNC(log_failure_reset)
     "adrp x0, log_writer_failed\n   add x0, x0, :lo12:log_writer_failed\n"
-    "strb wzr, [x0]\n" ASM_RET
+    "ldrb w1, [x0]\n   cbz w1, .Llog_failure_reset_arm64_clear\n"
+    "strb wzr, [x0]\n"
+    ".Llog_failure_reset_arm64_clear:\n" ASM_RET
     ASM_END(log_failure_reset)
 
     ASM_FUNC(log_failed)
@@ -51397,7 +51409,9 @@ __asm__(
     ASM_END(log_flush)
 
     ASM_FUNC(log_failure_reset)
-    "lla a0, log_writer_failed\n   sb zero, 0(a0)\n" ASM_RET
+    "lla a0, log_writer_failed\n   lbu a1, 0(a0)\n"
+    "beqz a1, .Llog_failure_reset_rv_clear\n   sb zero, 0(a0)\n"
+    ".Llog_failure_reset_rv_clear:\n" ASM_RET
     ASM_END(log_failure_reset)
 
     ASM_FUNC(log_failed)

@@ -73,6 +73,9 @@ SECTIONS
 
         .bss : {
                 __bss_start = .;
+                /* What every command writes, on the first page and no
+                   other, so a fork copies the one page (HOT_STATE). */
+                *(.bss.hot)
                 *(.bss .bss.*)
                 *(.sbss .sbss.*)
                 *(COMMON)

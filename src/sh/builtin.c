@@ -19,7 +19,7 @@ const positive page_size = 4096;
 
 
 // The status the last thing to run answered with, which $? reads.
-b32 shell_status;
+b32 shell_status HOT_STATE;
 
 // What it held when the builtin now running was reached. Only exit wants it:
 // leaving with no number given means leaving with the last status.
@@ -404,13 +404,13 @@ static fn shell_child_default(b32 number);
 static bool job_any_stopped();
 static bool exec_inplace_ready(bool restricted);
 static bool floodlight_parent_prepare(bool supervise);
-static bool floodlight_parent_protected;
-static bool floodlight_parent_subreaper;
-static bool floodlight_parent_supervised;
-static bool floodlight_inplace_requested;
-static bool floodlight_inplace_final;
-static bool floodlight_inplace_descendants_checked;
-static bool floodlight_inplace_terminal;
+static bool floodlight_parent_protected HOT_STATE;
+static bool floodlight_parent_subreaper HOT_STATE;
+static bool floodlight_parent_supervised HOT_STATE;
+static bool floodlight_inplace_requested HOT_STATE;
+static bool floodlight_inplace_final HOT_STATE;
+static bool floodlight_inplace_descendants_checked HOT_STATE;
+static bool floodlight_inplace_terminal HOT_STATE;
 static DEAD_END fn floodlight_silent_stop();
 #define FLOODLIGHT_LAUNCH_ALLOW 0
 #define FLOODLIGHT_LAUNCH_PROCESS 1
@@ -418,8 +418,8 @@ static DEAD_END fn floodlight_silent_stop();
 /* Whether the builtin before this one was exit, which is how both references
    decide that a second exit past a refused one may leave. The dispatcher
    maintains it, because it is a fact about what ran before. */
-static bool shell_exit_was_previous;
-static bool shell_exit_is_current;
+static bool shell_exit_was_previous HOT_STATE;
+static bool shell_exit_is_current HOT_STATE;
 static fn exec_command_reader_finish();
 static fn exec_input_finish();
 static positive shell_command_reader_depth;
@@ -4398,7 +4398,7 @@ static COLD string_address shell_machine_name()
         says b. The bytes are copied because the words they came out of are
         the token store, and the next command writes over it.
 */
-static p8 shell_last_argument[256] = "";
+static p8 shell_last_argument[256] HOT_STATE;
 
 fn shell_last_argument_set(string_address word)
 {
@@ -4545,7 +4545,7 @@ static COLD bool shell_reference_element_forget(env_reference resolved)
                           true);
 }
 
-positive shell_subshell_depth;
+positive shell_subshell_depth HOT_STATE;
 
 COLD string_address shell_dynamic_value(const_string name, positive length,
                                         positive address_to value_length)
@@ -13506,7 +13506,7 @@ typedef struct
 
 static shell_trap_entry address_to trap_table;
 static positive trap_room;
-static positive trap_count;
+static positive trap_count HOT_STATE;
 
 static string_address trap_names[] = {
     "EXIT", "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS",
@@ -13617,25 +13617,25 @@ bipolar trap_number(string_address word)
 */
 #define TRAP_SIGNAL_MAX 64
 
-static volatile p8 trap_pending[TRAP_SIGNAL_MAX + 1];
-static volatile bool trap_caught;
-static bool trap_inside;
+static volatile p8 trap_pending[TRAP_SIGNAL_MAX + 1] HOT_STATE;
+static volatile bool trap_caught HOT_STATE;
+static bool trap_inside HOT_STATE;
 /* A fork sees the parent's trap table, and `trap -p EXIT` in that child must
    still print it, but the inherited action must not run when the child ends.
    Keep that distinction beside the shared table instead of copying or
    deleting the action. A child which replaces EXIT clears the marker below. */
-static bool trap_child_context;
-static bool trap_exit_inherited;
+static bool trap_child_context HOT_STATE;
+static bool trap_exit_inherited HOT_STATE;
 /* Catch strings stay in the table so a bare `trap` can still list what the
    parent had, while the handlers themselves are already default. The first
    trap that changes a condition throws those inherited catches away, so
    only ignores and what this process has set remain. lima 5.2 does the
    same in a ( ) and in a pipeline child. */
-static bool trap_inherited_pending;
+static bool trap_inherited_pending HOT_STATE;
 /* Bash finishes a pipeline while/for/if with _exit, so an EXIT trap set
    in that stage must not run. A group, a function, and an explicit ( )
    still run one. dash runs the trap in every pipeline child. */
-static bool trap_omit_exit;
+static bool trap_omit_exit HOT_STATE;
 
 fn trap_signal_caught(b32 number)
 {
@@ -15001,7 +15001,7 @@ typedef struct
 } floodlight_row;
 
 static floodlight_row floodlight_rows[FLOODLIGHT_ROWS];
-static positive floodlight_row_count;
+static positive floodlight_row_count HOT_STATE;
 
 /* A missing device means something different on a stock kernel and in an
    image the Spark loader started.  The latter promises both Moonwater devices
@@ -15012,32 +15012,32 @@ static positive floodlight_row_count;
 #define FLOODLIGHT_REPORT_VALID 2
 #define FLOODLIGHT_REPORT_REFUSED 3
 
-static p8 floodlight_report_state;
-static bool floodlight_report_promised;
-static bool floodlight_inherited_seccomp;
+static p8 floodlight_report_state HOT_STATE;
+static bool floodlight_report_promised HOT_STATE;
+static bool floodlight_inherited_seccomp HOT_STATE;
 /* Only a shell process may establish the protected-launcher contract.  A
    directly invoked applet is somebody else's child: making that applet
    nondumpable cannot protect the external shell which may still be parsing
    an inherited pipe.  Forked shell children inherit both this role and the
    protection bit; a fresh exec or Spark image starts with neither. */
-static bool floodlight_parent_role;
-static bool floodlight_parent_protected;
-static bool floodlight_parent_subreaper;
-static bool floodlight_parent_subreaper_owned;
-static bool floodlight_parent_supervised;
-static bool floodlight_parent_dumpable_owned;
-static bipolar floodlight_parent_dumpable_prior;
+static bool floodlight_parent_role HOT_STATE;
+static bool floodlight_parent_protected HOT_STATE;
+static bool floodlight_parent_subreaper HOT_STATE;
+static bool floodlight_parent_subreaper_owned HOT_STATE;
+static bool floodlight_parent_supervised HOT_STATE;
+static bool floodlight_parent_dumpable_owned HOT_STATE;
+static bipolar floodlight_parent_dumpable_prior HOT_STATE;
 /* An authenticated no-descendant transition may replace this shell directly.
    Once final confinement starts changing descriptors or process policy, a
    failed exec is terminal: continuing the broader shell would retain those
    irreversible changes. Fork children clear both inherited markers. */
-static bool floodlight_inplace_requested;
-static bool floodlight_inplace_final;
-static bool floodlight_inplace_descendants_checked;
-static bool floodlight_inplace_terminal;
+static bool floodlight_inplace_requested HOT_STATE;
+static bool floodlight_inplace_final HOT_STATE;
+static bool floodlight_inplace_descendants_checked HOT_STATE;
+static bool floodlight_inplace_terminal HOT_STATE;
 /* Set only after this image installs its own verified filter.  Forks inherit
    both the bit and the filter; exec starts a fresh image with the bit clear. */
-static bool floodlight_own_seccomp;
+static bool floodlight_own_seccomp HOT_STATE;
 
 #define FLOODLIGHT_PR_SET_DUMPABLE 4
 #define FLOODLIGHT_PR_GET_DUMPABLE 3
@@ -17731,7 +17731,7 @@ typedef struct
 
 static shell_wait_entry address_to shell_wait_table;
 static positive shell_wait_room;
-static positive shell_wait_count;
+static positive shell_wait_count HOT_STATE;
 
 #define SHELL_WAIT_DONE 1
 #define SHELL_WAIT_LAST 2

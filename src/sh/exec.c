@@ -25,7 +25,7 @@
 
 static b32 exec_signal;
 static b32 exec_signal_level;
-static b32 exec_loop_depth;
+static b32 exec_loop_depth HOT_STATE;
 static b32 exec_function_depth;
 static PURE p8 exec_special_kind(string_address name);
 
@@ -45,16 +45,16 @@ static PURE p8 exec_special_kind(string_address name);
 #define SHELL_ERREXIT ((positive)1 << ('e' - 'a'))
 #define SHELL_NOEXEC ((positive)1 << ('n' - 'a'))
 
-static bool exec_tested;
-static bool exec_forked;
-static bool exec_asynchronous;
-static bool exec_pipe_status_pending;
-static b32 exec_pipe_status_value;
-static b32 exec_return_previous;
+static bool exec_tested HOT_STATE;
+static bool exec_forked HOT_STATE;
+static bool exec_asynchronous HOT_STATE;
+static bool exec_pipe_status_pending HOT_STATE;
+static b32 exec_pipe_status_value HOT_STATE;
+static b32 exec_return_previous HOT_STATE;
 /* Set only by a builtin path that diagnosed an invocation error. A nonzero
    status alone is not enough: eval, return, dot and trap can all answer
    nonzero without the POSIX special-builtin fatality applying. */
-static bool exec_special_error;
+static bool exec_special_error HOT_STATE;
 
 static fn exec_special_error_note()
 {
@@ -76,10 +76,10 @@ static bool exec_child_process()
         is running now, and both a call frame and $LINENO want the line it was
         written on rather than the line that called it.
 */
-static b32 exec_line;
-static b32 exec_wait_node;
-static bool exec_lastpipe_live;
-static positive exec_compound_depth;
+static b32 exec_line HOT_STATE;
+static b32 exec_wait_node HOT_STATE;
+static bool exec_lastpipe_live HOT_STATE;
+static positive exec_compound_depth HOT_STATE;
 
 fn shell_trap_exit();
 fn exec_traps();
@@ -95,7 +95,7 @@ static fn exec_coproc_reaped(bipolar pid);
 static fn exec_coproc_drop_finished();
 static fn exec_unknown_children_reap();
 static fn exec_parent_supervision_relax();
-static positive exec_coproc_count;
+static positive exec_coproc_count HOT_STATE;
 
 /* A wait builtin in a parent-run lastpipe stage may hear that an upstream
    foreground stage exited.  That pid is not a background job, but its status
@@ -473,7 +473,7 @@ static fn exec_errexit(b32 status)
 //      What a command keeps while it is being built. argv and the saved
 //      assignments point in here, so like the expansion store these bytes may
 //      never move once handed out.
-static shell_store exec_store;
+static shell_store exec_store HOT_STATE;
 static p8 exec_nothing[1];
 
 /*
@@ -549,7 +549,7 @@ typedef struct
 } exec_disowned_child;
 static exec_disowned_child address_to exec_disowned_children;
 static positive exec_disowned_children_room;
-static positive exec_disowned_children_count;
+static positive exec_disowned_children_count HOT_STATE;
 
 /* Keep the exact direct children removed from the public job/wait tables.
    Reserve the whole transfer first: a failed `disown` can leave the public
@@ -681,8 +681,8 @@ static bool exec_inplace_ready(bool restricted)
         floodlight_inplace_descendants_checked = true;
         return true;
 }
-static positive job_current;
-static positive job_previous;
+static positive job_current HOT_STATE;
+static positive job_previous HOT_STATE;
 
 // The line the executor is running, for the jobs a rendering of the words
 // cannot describe. Set by the reader, because that is the only place the
