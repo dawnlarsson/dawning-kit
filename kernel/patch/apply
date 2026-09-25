@@ -481,8 +481,17 @@ settings_insert() {
         where=$4
         text=$5
 
-        [ -f "$file" ] || die "settings: no $file"
-        grep -q -F -- "$marker" "$file" && return 0
+        [ -f "$file" ] || die "${6:-settings}: no $file"
+
+        #       A marker already there is this edit, applied before -- or an
+        #       older text of it, and then the tree is a kernel nobody chose.
+        if grep -q -F -- "$marker" "$file"; then
+                awk 'BEGIN { RS = "\001" }
+                        FNR == NR { sub(/\n+$/, ""); block = $0; next }
+                        index($0, block) { found = 1 }
+                        END { exit !found }' "$text" "$file" && return 0
+                die "${6:-settings}: $file carries another text of $marker; build --clean unpacks the kernel again"
+        fi
 
         awk -v anchor="$anchor" -v where="$where" -v add="$text" '
                 index($0, anchor) == 1 && !placed {
@@ -500,8 +509,8 @@ settings_insert() {
                 END { if (!placed) exit 3 }
         ' "$file" > "$settings_work/edit" &&
                 sudo cp "$settings_work/edit" "$file" ||
-                die "settings: $file no longer has the line this edit is placed by"
-        echo "  settings: $(basename "$file") gains $marker"
+                die "${6:-settings}: $file no longer has the line this edit is placed by"
+        echo "  ${6:-settings}: $(basename "$file") gains $marker"
 }
 
 cat > "$settings_work/guid" <<EOF
@@ -775,6 +784,79 @@ EOF
         fi
         ;;
 esac
+
+#
+#       WHERE A NEW PROCESS STARTS
+#
+#       A command is a process made and gone in a few dozen microseconds,
+#       and its parent waits for it. Linux sends every new task, forked or
+#       exec'd, to the idlest CPU it can find, so a short command lands on
+#       an idle CPU that has to be woken, and its exit wakes the parent back
+#       on the CPU it left: two cross-CPU wakeups for a program that is
+#       often done before either lands. Measured on a two-CPU guest, that is
+#       55-65% of a command -- 120-140 us a spawn against 50 on one CPU --
+#       and about a fifth of a fork on bare metal.
+#
+#       So a new task starts where it was made while nothing else is
+#       runnable there. The parent is about to sleep in wait4 and the CPU is
+#       as good as idle. A CPU with anything else on it still spreads the
+#       work -- the second stage of a pipeline, the second job make starts --
+#       and a child that keeps running is the load balancer's to move. Exec
+#       keeps the CPU fork chose, rather than migrating a task that fork
+#       placed with the same knowledge, and a parent woken by its child's
+#       exit stays on the CPU both last ran on instead of hopping to the
+#       idle one, as a task woken by a finished per-CPU kthread already does
+#       -- and does not preempt the exiting child, which would otherwise sit
+#       on the runqueue while the parent starts its next command and send
+#       that one to the other CPU after all.
+#
+cat > "$settings_work/start" <<EOF
+${tab}/*
+${tab} * Moonwater: a new task starts on the CPU that made it while nothing
+${tab} * else is runnable there, since its parent is about to wait for it,
+${tab} * and exec keeps the CPU fork chose; see kernel/patch/apply, where a
+${tab} * new process starts.
+${tab} */
+${tab}if (((wake_flags & WF_EXEC) ||
+${tab}     ((wake_flags & WF_FORK) && this_rq()->nr_running <= 1)) &&
+${tab}    cpumask_test_cpu(cpu, p->cpus_ptr))
+${tab}${tab}return cpu;
+
+EOF
+settings_insert linux/kernel/sched/fair.c "Moonwater: a new task starts on the CPU" \
+        "${tab}lockdep_assert_held(&p->pi_lock);" after "$settings_work/start" scheduler
+
+cat > "$settings_work/exiting" <<EOF
+${tab}/*
+${tab} * Moonwater: a task woken by one that is exiting and has already let
+${tab} * its memory go -- a parent woken by its child's exit -- stacks on the
+${tab} * exiting task's CPU when it last ran there and nothing else is
+${tab} * runnable, for the reason the per-CPU kthread case above does: the
+${tab} * waker is about to be gone.
+${tab} */
+${tab}if ((current->flags & PF_EXITING) && !current->mm && in_task() &&
+${tab}    prev == smp_processor_id() && this_rq()->nr_running <= 1 &&
+${tab}    asym_fits_cpu(task_util, util_min, util_max, prev))
+${tab}${tab}return prev;
+
+EOF
+settings_insert linux/kernel/sched/fair.c "Moonwater: a task woken by one that is exiting" \
+        "${tab}/* Check a recently used CPU as a potential idle candidate: */" before "$settings_work/exiting" scheduler
+
+cat > "$settings_work/yield" <<EOF
+${tab}/*
+${tab} * Moonwater: nor does it preempt that task, which is about to schedule
+${tab} * away for good; preempted, it lingers on the runqueue and sends the
+${tab} * parent's next new task to another CPU. An interrupt, or a task still
+${tab} * tearing its memory down, preempts as ever.
+${tab} */
+${tab}if (rq->curr == current && (current->flags & PF_EXITING) &&
+${tab}    !current->mm && in_task())
+${tab}${tab}return;
+
+EOF
+settings_insert linux/kernel/sched/fair.c "Moonwater: nor does it preempt that task" \
+        "${tab}if (test_tsk_need_resched(rq->curr))" before "$settings_work/yield" scheduler
 
 rm -rf "$settings_work"
 

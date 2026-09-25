@@ -21533,6 +21533,14 @@ int main(void) {
                 "#else\n\t.set\ttextsize, ZO__data\n#endif\n\n\t.ascii\t\".data\\0\\0\\0\"\n",
             "linux/arch/x86/boot/Makefile":
                 "sed-zoffset := -e 's/^\\([0-9a-fA-F]*\\) [a-zA-Z] \\(startup_32\\|_e\\?data\\|_e\\?sbat\\|z_.*\\)$$/\\#define ZO_\\2 0x\\1/p'\n",
+            "linux/kernel/sched/fair.c":
+                "static int\nselect_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)\n{\n"
+                "\tlockdep_assert_held(&p->pi_lock);\n\tif (wake_flags & WF_TTWU) {\n\t}\n}\n"
+                "static int select_idle_sibling(struct task_struct *p, int prev, int target)\n{\n"
+                "\t/* Check a recently used CPU as a potential idle candidate: */\n"
+                "\trecent_used_cpu = p->recent_used_cpu;\n}\n"
+                "static void wakeup_preempt_fair(struct rq *rq, struct task_struct *p, int wake_flags)\n{\n"
+                "\tif (test_tsk_need_resched(rq->curr))\n\t\treturn;\n}\n",
         }
 
         def settings_placed(tree):
@@ -21547,7 +21555,21 @@ int main(void) {
                     lds.index("_mwset") < lds.index(".data :") and
                     header.index('".mwset') < header.index('".data') and
                     "textsize, ZO__mwset" in header and "textsize, ZO__data" not in header and
-                    "_e\\?mwset" in read("linux/arch/x86/boot/Makefile"))
+                    "_e\\?mwset" in read("linux/arch/x86/boot/Makefile") and
+                    scheduler_placed(read("linux/kernel/sched/fair.c")))
+
+        # Where a new process starts: each scheduler edit inside the function
+        # it belongs to, ahead of the line it is placed by.
+        def scheduler_placed(fair):
+            start = fair.index("Moonwater: a new task starts on the CPU")
+            exiting = fair.index("Moonwater: a task woken by one that is exiting")
+            preempt = fair.index("Moonwater: nor does it preempt that task")
+            return (fair.index("lockdep_assert_held(&p->pi_lock);") < start <
+                    fair.index("if (wake_flags & WF_TTWU)") <
+                    exiting < fair.index("/* Check a recently used CPU") <
+                    preempt < fair.index("if (test_tsk_need_resched(rq->curr))") and
+                    "(wake_flags & WF_EXEC) ||" in fair and
+                    fair.count("!current->mm && in_task()") == 2)
 
         def patch_tree(tree, makefile):
             for directory in ("src/build", "kernel", "linux/kernel", "linux/arch/x86/include/asm",
@@ -21626,8 +21648,30 @@ line_add_padded() { line_add "$@"; }
                                 env={**os.environ, "MOONWATER_STOCK": ""},
                                 text=True, capture_output=True)
         assert result.returncode != 0 and "x86-stub.c" in result.stderr, result.stderr
-        print("  kernel-glue 10 of 10", flush=True)
-        write_tally("kernel-glue", 10, 10)
+        # The same for a scheduler line, and for a tree that already carries
+        # another text of an edit -- an older one, say: skipping it because its
+        # marker is there would build a kernel with the old edit in it.
+        tree = Path(work) / "patch-moved-scheduler"
+        patch_tree(tree, makefile_lines)
+        fair = tree / "linux/kernel/sched/fair.c"
+        fair.write_text(fair.read_text().replace("\tif (test_tsk_need_resched(rq->curr))\n", ""))
+        result = subprocess.run(["sh", str(patch)], cwd=tree,
+                                env={**os.environ, "MOONWATER_STOCK": ""},
+                                text=True, capture_output=True)
+        assert result.returncode != 0 and "fair.c" in result.stderr, result.stderr
+        tree = Path(work) / "patch-stale-scheduler"
+        patch_tree(tree, makefile_lines)
+        fair = tree / "linux/kernel/sched/fair.c"
+        fair.write_text(fair.read_text().replace(
+            "\tlockdep_assert_held(&p->pi_lock);\n",
+            "\tlockdep_assert_held(&p->pi_lock);\n\t/* Moonwater: a new task starts on the CPU, once */\n"))
+        result = subprocess.run(["sh", str(patch)], cwd=tree,
+                                env={**os.environ, "MOONWATER_STOCK": ""},
+                                text=True, capture_output=True)
+        assert (result.returncode != 0 and "fair.c" in result.stderr and
+                "another text" in result.stderr), result.stderr
+        print("  kernel-glue 12 of 12", flush=True)
+        write_tally("kernel-glue", 12, 12)
         binary, _ = build_c(Path(work) / "core-state.c", source,
                             ("-std=c11", "-O2", "-Wall", "-Wextra"), sanitize=False)
         subprocess.run([str(binary)], check=True)
