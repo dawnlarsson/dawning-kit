@@ -537,6 +537,27 @@ bool shell_expand_literal(string_address word, positive length)
                (length == 1 && string_is(word, '['));
 }
 
+/*
+        How long the name at at runs and its DJB2 hash, in one pass: x the
+        hash string_hash_33_length and memory_hash_33 give the same bytes,
+        y the length. A name read out of a word used to be spanned, copied
+        out to be terminated and hashed again from the copy.
+*/
+static PURE positive2 expand_name_hash(string_address at)
+{
+        positive hash = 5381;
+        positive length = 0;
+        p8 seen;
+
+        while (string_set_name[seen = string_get(at + length)])
+        {
+                hash = hash * 33 + seen;
+                length++;
+        }
+
+        return (positive2){{hash, length}};
+}
+
 #define expand_name_character(value) (byte_is_alnum(value) || (value) == '_')
 #define expand_assignable_name(name)                                        \
         (byte_is_alpha(string_get(name)) || string_is((name), '_'))
@@ -7997,6 +8018,7 @@ static string_address expand_simple(string_address step, bool quoted)
         p8 name_local[EXPAND_LOCAL_NAME];
         string_address name;
         positive length = 0;
+        positive2 named;
         p8 seen;
 
         step++;
@@ -8016,7 +8038,8 @@ static string_address expand_simple(string_address step, bool quoted)
                 return step + 1;
         }
 
-        length = string_span(step, string_set_name);
+        named = expand_name_hash(step);
+        length = named.y;
         step += length;
 
         // A dollar in front of nothing that could be a name is a dollar.
@@ -8024,6 +8047,23 @@ static string_address expand_simple(string_address step, bool quoted)
         {
                 expand_push('$', MARK_PLAIN);
                 return step;
+        }
+
+        /* A scalar the table holds is the value's bytes, found by the span
+           in the word. Anything else -- unset, an array, a dynamic name,
+           Bash's deferred PIPESTATUS -- is asked by name below. */
+        if (!shell_bash_compat || !memory_is_word(start, length, "PIPESTATUS"))
+        {
+                positive value_length;
+                string_address value = env_get_hashed_span(
+                    start, length, named.x, address_of value_length);
+
+                if (value)
+                {
+                        expand_push_run(value, value_length,
+                                        quoted ? MARK_QUOTED : MARK_FIELD);
+                        return step;
+                }
         }
 
         name = expand_hold(start, length, name_local,
@@ -9694,8 +9734,10 @@ static positive shell_expand_braces(string_address word,
         still diagnoses.
 */
 static inline INLINE positive expand_simple_dollar_shape(string_address word,
-                                           bool address_to quoted)
+                                           bool address_to quoted,
+                                           positive address_to hash)
 {
+        positive2 named;
         string_address name;
         positive length;
         p8 first;
@@ -9720,9 +9762,9 @@ static inline INLINE positive expand_simple_dollar_shape(string_address word,
         if (!byte_is_alpha(first) && first != '_')
                 return 0;
 
-        length = string_span(name, string_set_name);
-        if (!length)
-                return 0;
+        named = expand_name_hash(name);
+        length = named.y;
+        address_to hash = named.x;
 
         if (address_to quoted)
         {
@@ -9739,17 +9781,17 @@ static inline INLINE bool expand_simple_dollar_word(string_address word,
                                       shell_words address_to out, bool borrow)
 {
         bool quoted;
-        positive length = expand_simple_dollar_shape(word, address_of quoted);
+        positive hash;
+        positive length = expand_simple_dollar_shape(word, address_of quoted,
+                                                     address_of hash);
         string_address name;
         string_address value;
         positive value_length;
-        positive hash;
 
         if (!length)
                 return false;
 
         name = word + (quoted ? 2 : 1);
-        hash = memory_hash_33((address_any)name, length);
         value = env_get_hashed_span(name, length, hash, address_of value_length);
 
         /* Absent includes nameref-to-element, associative $name and the
@@ -9975,6 +10017,58 @@ static string_address expand_assignment_arithmetic(string_address word,
 }
 
 /*
+        An assignment whose whole right-hand side is $name or "$name".
+
+        An assignment neither splits nor globs, so the answer is the name=
+        prefix and the value's bytes, and the quotes change nothing. The
+        general walk copied the name out to terminate it, hashed it a second
+        time, pushed prefix and value into the expansion buffer with their
+        marks and then copied the buffer out again. A name the table does not
+        hold as a scalar -- unset, an array, a nameref to an element, a
+        dynamic name such as RANDOM that is published only when asked -- and
+        Bash's deferred PIPESTATUS are left to that walk, which also owns
+        nounset.
+*/
+static string_address expand_assignment_parameter(string_address word,
+                                                  positive value_at)
+{
+        bool quoted;
+        string_address rhs = word + value_at;
+        positive hash;
+        positive length = expand_simple_dollar_shape(rhs, address_of quoted,
+                                                     address_of hash);
+        string_address name;
+        string_address value;
+        positive value_length;
+        p8 address_to made;
+
+        if (!length)
+                return null;
+
+        name = rhs + (quoted ? 2 : 1);
+        if (shell_bash_compat && memory_is_word(name, length, "PIPESTATUS"))
+                return null;
+
+        value = env_get_hashed_span(name, length,
+                                    hash,
+                                    address_of value_length);
+        if (!value)
+                return null;
+
+        made = shell_store_take(address_of expand_store,
+                                value_at + value_length + 1);
+        if (!made)
+        {
+                expand_fail_state();
+                return (string_address) "";
+        }
+
+        memory_copy_apart(made, word, value_at);
+        memory_copy_end(made + value_at, value, value_length);
+        return made;
+}
+
+/*
         A declaration operand is an assignment even though it follows the
         command name. Keep it whole like a leading assignment, and recognize
         the additional tilde-prefix positions after '=' and unquoted ':'.
@@ -9992,6 +10086,10 @@ RETURNS_NONNULL string_address shell_expand_assignment(string_address word, posi
         }
 
         expand_begin();
+
+        if ((result = expand_assignment_parameter(word, value_at)))
+                return result;
+
         expand_push_run(word, value_at, MARK_PLAIN);
         expand_into(word + value_at, false, MARK_PLAIN, true);
 
