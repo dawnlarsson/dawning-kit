@@ -36188,10 +36188,10 @@ int main(int argc, char **argv)
         the receiver, and a paused reader resumed, with the free list, the
         held pool and the flight walked for consistency after every step and
         an alarm standing guard against a loop the sanitizers cannot see.
-        waterlink_fill is assembly too wherever the judge's is compiled, and
-        fills into a body flush against a PROT_NONE page; where no machine's
-        fill is compiled and none is C, the reference fill test/checks.c
-        keeps stands in.
+        waterlink_fill and waterlink_apply are assembly too wherever the
+        judge's is compiled, and fill writes into a body flush against a
+        PROT_NONE page; where no machine's are compiled and none is C, the
+        references test/checks.c keeps stand in.
 */
 
 #include <sys/mman.h>
@@ -36501,8 +36501,8 @@ int main(int argc, char **argv)
                "%lu part mismatches; loop %lu invariant failures; heard %lu\n",
                judged, wrong, valid, parted, part_mismatch, inv_bad, (unsigned long)heard_count);
 #ifdef WL_JUDGE_ASM
-        printf("core: judge ran the x86_64 assembly against the model, and "
-               "fill its assembly into guarded bodies\n");
+        printf("core: judge ran the x86_64 assembly against the model, fill "
+               "its assembly into guarded bodies, and apply its assembly\n");
 #else
         printf("core: judge ran the C model (no asm on this host)\n");
 #endif
@@ -36554,6 +36554,7 @@ int main(int argc, char **argv)
     core_text = sec(link, "// The largest frame that can share",
                     "#endif // WATERLINK_LINK_INCLUDED")
     fill_c = "#else\npositive waterlink_fill(" in core_text
+    apply_c = "#else\nfn waterlink_apply(" in core_text
     jmodel = sec(checks, "static bool judge_model_number(",
                  "/*\n        Delivery as it was before the judge")
     jgen = sec(checks, "static p64 judge_state = 0x6a09e667f3bcc909ull;",
@@ -36567,8 +36568,16 @@ positive waterlink_fill(struct waterlink_link *link, address_any out, p64 now,
         return fill_walk(link, out, now, alone);
 }
 '''
-    #   What the assembly calls, as symbols it can reach: the losses walk is
-    #   KEEP in link.c, and the copy is lib.c's routine by name.
+    APPLY_MODEL = r'''
+fn waterlink_apply(struct waterlink_link *link, address_any body,
+                   struct waterlink_part *parts, positive count, p64 now,
+                   waterlink_sink sink, address_any context)
+{
+        apply_walk(link, body, parts, count, now, sink, context);
+}
+'''
+    #   What the assembly calls, as symbols it can reach: the C beside it in
+    #   link.c is KEEP, and the copy is lib.c's routine by name.
     ASM_CALLEES = r'''
 #undef KEEP
 #define KEEP __attribute__((used))
@@ -36593,6 +36602,8 @@ static void *memory_copy_apart(void *into, const void *from, positive size)
         parts += [jmodel, jgen, fmodel]
         if not with_asm and not fill_c:
             parts.append(FILL_MODEL)
+        if not with_asm and not apply_c:
+            parts.append(APPLY_MODEL)
         parts.append(driver)
         return "\n".join(parts)
 

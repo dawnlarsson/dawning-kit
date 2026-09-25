@@ -318,7 +318,7 @@ static fn waterlink_band_unlink(struct waterlink_link address_to link,
         link->slot[at].next = WATERLINK_NONE;
 }
 
-static fn waterlink_band_remove(struct waterlink_link address_to link, p32 at)
+static KEEP fn waterlink_band_remove(struct waterlink_link address_to link, p32 at)
 {
         p32 band = waterlink_band_of(link->slot[at].flags);
         p32 prior = WATERLINK_NONE;
@@ -392,7 +392,7 @@ static fn waterlink_band_requeue(struct waterlink_link address_to link, p32 at)
 }
 
 // A slot leaves its key's chain, already off the band and the flight.
-static fn waterlink_slot_free(struct waterlink_link address_to link, p32 at)
+static KEEP fn waterlink_slot_free(struct waterlink_link address_to link, p32 at)
 {
         struct waterlink_slot address_to slot = link->slot + at;
         struct waterlink_sending address_to live = link->sending + slot->key;
@@ -1372,120 +1372,14 @@ bool waterlink_idle(struct waterlink_link address_to link)
 }
 
 /*
-        One acknowledgement, at the sender. Everything on the key up to what
-        was taken is done and freed. A frame the mask says is held has
-        arrived and is waiting, which moves the latest known arrival forward
-        without freeing anything -- the far side still has to take it, and
-        the slot stays until it does.
-*/
-static fn waterlink_acknowledge(struct waterlink_link address_to link, p8 key,
-                                p32 delivered, p64 mask, p64 address_to newly,
-                                p64 address_to latest, p64 address_to sample)
-{
-        p32 at = link->sending[key].first;
-
-        while (at != WATERLINK_NONE)
-        {
-                struct waterlink_slot address_to slot = link->slot + at;
-                p32 next = slot->chain;
-                p32 gap = slot->sequence - delivered - 1;
-                bool taken = slot->sequence <= delivered;
-
-                if (!taken && (gap >= WATERLINK_ACK_MASK ||
-                               !(mask & (1ull << gap))))
-                {
-                        at = next;
-                        continue;
-                }
-                if (slot->state == WATERLINK_SLOT_FLIGHT)
-                {
-                        address_to newly += waterlink_bytes(slot);
-                        if (slot->serial > address_to latest)
-                        {
-                                address_to latest = slot->serial;
-                                address_to sample = slot->tries == 1
-                                                            ? link->clock - slot->sent
-                                                            : 0;
-                        }
-                }
-                waterlink_slot_unqueue(link, at);
-                if (taken)
-                {
-                        link->acked++;
-                        waterlink_slot_free(link, at);
-                }
-                else
-                        slot->state = WATERLINK_SLOT_HELD;
-                at = next;
-        }
-}
-
-static fn waterlink_estimate(struct waterlink_link address_to link,
-                             p64 sample)
-{
-        if (!sample)
-                sample = 1;
-        link->recent = sample;
-
-        if (!link->smoothed)
-        {
-                link->smoothed = sample;
-                link->variance = sample / 2;
-                return;
-        }
-
-        {
-                p64 gap = sample > link->smoothed ? sample - link->smoothed
-                                                  : link->smoothed - sample;
-
-                link->variance = (3 * link->variance + gap) / 4;
-                link->smoothed = (7 * link->smoothed + sample) / 8;
-        }
-}
-
-/*
-        What a body's acknowledgements add up to, applied once for the body:
-        the latest arrival and a round trip from it, the window grown by what
-        was newly delivered, and the losses that makes visible.
-*/
-static fn waterlink_acks_settle(struct waterlink_link address_to link,
-                                p64 newly, p64 latest, p64 sample, p64 now)
-{
-        if (latest)
-        {
-                if (latest > link->largest)
-                        link->largest = latest;
-                if (sample)
-                        waterlink_estimate(link, sample);
-                link->backoff = 0;
-                link->probes = 0;
-        }
-
-        //      Growth only for what was sent after the last halving.
-        if (newly && latest > link->recovery)
-        {
-                if (link->window < link->threshold)
-                        link->window += newly;
-                else
-                        link->window += WATERLINK_DATAGRAM * newly /
-                                        link->window + 1;
-                if (link->window > WATERLINK_WINDOW_MOST)
-                        link->window = WATERLINK_WINDOW_MOST;
-        }
-
-        if (link->flight_head != WATERLINK_NONE)
-                waterlink_losses(link, now);
-}
-
-/*
         Hold a frame for its key: in the key's chain by sequence, once. With
         the pool full it is dropped unheld, and the sender, which never heard
         of it arriving, sends it again.
 */
-static fn waterlink_hold(struct waterlink_link address_to link,
-                         struct waterlink_receiving address_to live,
-                         struct waterlink_frame address_to head,
-                         p8 address_to payload)
+static KEEP fn waterlink_hold(struct waterlink_link address_to link,
+                              struct waterlink_receiving address_to live,
+                              struct waterlink_frame address_to head,
+                              p8 address_to payload)
 {
         p32 prior = WATERLINK_NONE;
         p32 look = live->first;
@@ -1555,8 +1449,8 @@ static fn waterlink_held_drop(struct waterlink_link address_to link,
         application will not take one the key pauses there, held, until
         waterlink_resume. An ended key keeps nothing.
 */
-static fn waterlink_release(struct waterlink_link address_to link, p8 key,
-                            waterlink_sink sink, address_any context)
+static KEEP fn waterlink_release(struct waterlink_link address_to link, p8 key,
+                                 waterlink_sink sink, address_any context)
 {
         struct waterlink_receiving address_to live = link->receiving + key;
 
@@ -1873,78 +1767,463 @@ __asm__(
         Every part comes from waterlink_judge, which has checked each bound
         against what the body says it is; nothing here reads the body but a
         frame's payload where the judge found it.
+
+        An acknowledgement is taken at the sender here: everything on the
+        key up to what was taken is done and freed, and a frame the mask
+        says is held has arrived and is waiting, which moves the latest
+        known arrival forward without freeing anything -- the far side still
+        has to take it, and the slot stays until it does. What a body's
+        acknowledgements add up to is applied once, after its last part: the
+        latest arrival and a round trip from it, the window grown by what was
+        newly delivered, and the losses that makes visible.
+
+        In each machine's registers: a part is read once, a frame taken in
+        order with nothing held behind it touches no function, and nothing
+        of the link is kept in a register across a call, since the sink may
+        post into it. The held pool, a key's release once it holds
+        something, a slot freed from the middle of its key's chain and a
+        queued slot's unlinking are the C beside this.
 */
 fn waterlink_apply(struct waterlink_link address_to link, address_any body,
                    struct waterlink_part address_to parts, positive count,
-                   p64 now, waterlink_sink sink, address_any context)
-{
-        p8 address_to bytes = (p8 address_to)body;
-        bool framed = false;
-        bool acked = false;
-        p64 newly = 0, latest = 0, sample = 0;
+                   p64 now, waterlink_sink sink, address_any context);
 
-        if (now > link->clock)
-                link->clock = now;
-        now = link->clock;
+_Static_assert(__builtin_offsetof(struct waterlink_slot, chain) == 28 &&
+                       __builtin_offsetof(struct waterlink_receiving, over) == 8 &&
+                       __builtin_offsetof(struct waterlink_receiving, paused) == 9 &&
+                       __builtin_offsetof(struct waterlink_sending, last) == 8 &&
+                       sizeof(struct waterlink_frame) == 8 &&
+                       __builtin_offsetof(struct waterlink_frame, length) == 4 &&
+                       __builtin_offsetof(struct waterlink_frame, key) == 6 &&
+                       __builtin_offsetof(struct waterlink_frame, flags) == 7,
+               "apply reads these at these places");
+_Static_assert(__builtin_offsetof(struct waterlink_link, free) == 0x70230 &&
+                       __builtin_offsetof(struct waterlink_link, free_count) == 0x70234 &&
+                       __builtin_offsetof(struct waterlink_link, largest) == 0x70258 &&
+                       __builtin_offsetof(struct waterlink_link, recovery) == 0x70260 &&
+                       __builtin_offsetof(struct waterlink_link, threshold) == 0x70278 &&
+                       __builtin_offsetof(struct waterlink_link, variance) == 0x70288 &&
+                       __builtin_offsetof(struct waterlink_link, recent) == 0x70298 &&
+                       __builtin_offsetof(struct waterlink_link, backoff) == 0x702b0 &&
+                       __builtin_offsetof(struct waterlink_link, delivered) == 0x702d0 &&
+                       __builtin_offsetof(struct waterlink_link, stale) == 0x702d8 &&
+                       __builtin_offsetof(struct waterlink_link, acked) == 0x70300 &&
+                       WATERLINK_SLOT_QUEUED == 1 && WATERLINK_SLOT_HELD == 3 &&
+                       WATERLINK_SLOT_FREE == 0 && WATERLINK_FRAME_LAST == 4 &&
+                       WATERLINK_FRAME_URGENT == 0x10 &&
+                       WATERLINK_WINDOW_MOST == 307200,
+               "apply's link is laid out so");
 
-        for (struct waterlink_part address_to part = parts; part < parts + count;
-             part++)
-        {
-                p8 flags = part->flags;
-                p8 key = part->key;
-                p8 address_to payload = bytes + part->at;
-                struct waterlink_frame head;
-                struct waterlink_receiving address_to live;
-
-                if (flags == WATERLINK_FRAME_ACK)
-                {
-                        waterlink_acknowledge(link, key, part->number, part->more,
-                                              address_of newly,
-                                              address_of latest,
-                                              address_of sample);
-                        acked = true;
-                        continue;
-                }
-
-                head.key = key;
-                head.sequence = part->number;
-                head.length = (p16)part->more;
-                head.flags = flags;
-                live = link->receiving + key;
-
-                waterlink_ack_owe(link, key);
-                framed = true;
-                if (flags & (WATERLINK_FRAME_URGENT | WATERLINK_FRAME_LAST))
-                        link->owed_now = 1;
-
-                if (head.sequence <= live->delivered || live->over)
-                {
-                        link->stale++;
-                        link->owed_now = 1;
-                }
-                else if (live->paused ||
-                         ((flags & WATERLINK_FRAME_DURABLE) &&
-                          head.sequence != live->delivered + 1))
-                {
-                        link->owed_now = 1;
-                        waterlink_hold(link, live, address_of head, payload);
-                }
-                else if (!waterlink_hand(link, live, address_of head, payload,
-                                         sink, context))
-                {
-                        waterlink_hold(link, live, address_of head, payload);
-                        live->paused = 1;
-                }
-                else
-                        waterlink_release(link, key, sink, context);
-        }
-
-        if (acked)
-                waterlink_acks_settle(link, newly, latest, sample, now);
-
-        if (framed)
-                link->owed_count++;
-}
+#if X64
+/*
+        rbx the link, rbp the part, r12 past the last, r13 the bytes newly
+        delivered, r14 the latest transmission known to have arrived, r15 its
+        round trip. On the stack: a frame's head for the sink and the held
+        pool, the body, the sink, its context, now, whether frames came and
+        whether acknowledgements did, and an acknowledgement's walk across
+        the C it calls.
+*/
+__asm__(
+    ASM_FUNC(waterlink_apply)
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "sub $88, %rsp\n"
+    "mov %rdi, %rbx\n   mov %rdx, %rbp\n   shl $4, %rcx\n   lea (%rdx,%rcx), %r12\n"
+    "mov %rsi, 8(%rsp)\n   mov %r9, 16(%rsp)\n   mov 144(%rsp), %rax\n   mov %rax, 24(%rsp)\n"
+    "cmp %r8, 0x70248(%rbx)\n   jae 1f\n   mov %r8, 0x70248(%rbx)\n"
+    "1:  mov 0x70248(%rbx), %rax\n   mov %rax, 32(%rsp)\n   movq $0, 40(%rsp)\n"
+    "xor %r13d, %r13d\n   xor %r14d, %r14d\n   xor %r15d, %r15d\n"
+    "cmp %r12, %rbp\n   jae 90f\n"
+    //  A part: eax its flags, ecx its key, edx its first number.
+    "10: movzbl (%rbp), %eax\n   movzbl 1(%rbp), %ecx\n   mov 4(%rbp), %edx\n"
+    "cmp $8, %eax\n   je 40f\n"
+    //  A frame is owed an acknowledgement whatever becomes of it.
+    "lea (%rcx,%rcx,2), %rsi\n   lea 0x6fe00(%rbx,%rsi,4), %rsi\n"
+    "mov 0x70210(%rbx), %rdi\n   test %rdi, %rdi\n   jnz 11f\n"
+    "mov 0x70248(%rbx), %r8\n   mov %r8, 0x702a0(%rbx)\n"
+    "11: bts %rcx, %rdi\n   mov %rdi, 0x70210(%rbx)\n   orb $1, 40(%rsp)\n"
+    "test $0x14, %al\n   jz 12f\n   movb $1, 0x702ac(%rbx)\n"
+    "12: mov (%rsi), %edi\n   cmp %edi, %edx\n   jbe 13f\n   cmpb $0, 8(%rsi)\n   jne 13f\n"
+    "cmpb $0, 9(%rsi)\n   jne 14f\n   test $2, %al\n   jz 15f\n"
+    "lea 1(%rdi), %r8d\n   cmp %r8d, %edx\n   jne 14f\n"
+    "15: mov 16(%rsp), %r8\n   test %r8, %r8\n   jnz 16f\n"
+    //  Taken: the key moves on, and whatever it holds follows.
+    "17: mov %edx, (%rsi)\n   incq 0x702d0(%rbx)\n   test $4, %al\n   jz 18f\n"
+    "movb $1, 8(%rsi)\n"
+    "18: cmpl $-1, 4(%rsi)\n   jne 19f\n   movb $0, 9(%rsi)\n"
+    "20: add $16, %rbp\n   cmp %r12, %rbp\n   jb 10b\n   jmp 90f\n"
+    "19: mov %rbx, %rdi\n   mov %ecx, %esi\n   mov 16(%rsp), %rdx\n   mov 24(%rsp), %rcx\n"
+    "call waterlink_release\n   jmp 20b\n"
+    //  At or behind what was taken, or after its last: a copy, answered.
+    "13: incq 0x702d8(%rbx)\n   movb $1, 0x702ac(%rbx)\n   jmp 20b\n"
+    //  Ahead, or its key paused: held.
+    "14: movb $1, 0x702ac(%rbx)\n"
+    "21: movzwl 8(%rbp), %r8d\n   shl $32, %r8\n   or %rdx, %r8\n   shl $48, %rcx\n"
+    "or %rcx, %r8\n   shl $56, %rax\n   or %rax, %r8\n   mov %r8, (%rsp)\n"
+    "movzwl 2(%rbp), %ecx\n   add 8(%rsp), %rcx\n   mov %rbx, %rdi\n   mov %rsp, %rdx\n"
+    "call waterlink_hold\n   jmp 20b\n"
+    //  The application's say: the head goes by address, and nothing held
+    //  in a register survives the call.
+    "16: movzwl 8(%rbp), %r9d\n   shl $32, %r9\n   or %rdx, %r9\n   mov %rcx, %r10\n"
+    "shl $48, %r10\n   or %r10, %r9\n   mov %rax, %r10\n   shl $56, %r10\n   or %r10, %r9\n"
+    "mov %r9, (%rsp)\n   movzwl 2(%rbp), %edx\n   add 8(%rsp), %rdx\n   mov 24(%rsp), %rdi\n"
+    "mov %rsp, %rsi\n   call *%r8\n"
+    "movzbl 7(%rsp), %r8d\n   movzbl 1(%rbp), %ecx\n   mov (%rsp), %edx\n"
+    "lea (%rcx,%rcx,2), %rsi\n   lea 0x6fe00(%rbx,%rsi,4), %rsi\n"
+    "test %al, %al\n   mov %r8d, %eax\n   jnz 17b\n"
+    "movzwl 2(%rbp), %ecx\n   add 8(%rsp), %rcx\n   mov %rbx, %rdi\n   mov %rsp, %rdx\n"
+    "mov %rsi, 80(%rsp)\n   call waterlink_hold\n   mov 80(%rsp), %rsi\n"
+    "movb $1, 9(%rsi)\n   jmp 20b\n"
+    //  An acknowledgement: edx what was taken, r8 the mask, r9 the key's
+    //  sending entry, eax the slot, rsi its address, r10d the next on the
+    //  key, r11d its sequence.
+    "40: orb $2, 40(%rsp)\n   mov 8(%rbp), %r8\n   shl $4, %ecx\n"
+    "lea 0x6fa00(%rbx,%rcx), %r9\n   mov 4(%r9), %eax\n"
+    "41: cmp $-1, %eax\n   je 20b\n"
+    "imul $1200, %rax, %rsi\n   add %rbx, %rsi\n   mov 28(%rsi), %r10d\n   mov 16(%rsi), %r11d\n"
+    "cmp %edx, %r11d\n   jbe 42f\n"
+    "mov %r11d, %ecx\n   sub %edx, %ecx\n   dec %ecx\n   cmp $63, %ecx\n   ja 49f\n"
+    "bt %rcx, %r8\n   jnc 49f\n"
+    "42: movzbl 36(%rsi), %ecx\n   cmp $2, %ecx\n   jne 43f\n"
+    //  In flight: what it carried is delivered and leaves the flight, and
+    //  the newest transmission among them is the round trip's sample.
+    "movzwl 32(%rsi), %ecx\n   lea 4(%rcx), %edi\n   cmp $127, %ecx\n   jbe 44f\n   inc %edi\n"
+    "44: mov %edi, %ecx\n   cmp $127, %r11d\n   jbe 45f\n"
+    "bsr %r11d, %edi\n   lea (%rdi,%rdi,8), %edi\n   add $9, %edi\n   shr $6, %edi\n"
+    "add %rdi, %rcx\n"
+    "45: add %rcx, %r13\n   sub %rcx, 0x70268(%rbx)\n"
+    "mov 8(%rsi), %r11\n   cmp %r14, %r11\n   jbe 46f\n   mov %r11, %r14\n   xor %r15d, %r15d\n"
+    "cmpb $1, 37(%rsi)\n   jne 46f\n   mov 0x70248(%rbx), %r15\n   sub (%rsi), %r15\n"
+    "46: mov 24(%rsi), %ecx\n   mov 20(%rsi), %edi\n   cmp $-1, %ecx\n   je 47f\n"
+    "imul $1200, %rcx, %r11\n   mov %edi, 20(%rbx,%r11)\n   jmp 48f\n"
+    "47: mov %edi, 0x7023c(%rbx)\n"
+    "48: cmp $-1, %edi\n   je 50f\n   imul $1200, %rdi, %r11\n   mov %ecx, 24(%rbx,%r11)\n"
+    "jmp 51f\n"
+    "50: mov %ecx, 0x70240(%rbx)\n"
+    "51: movzbl 34(%rsi), %ecx\n   shl $4, %ecx\n   decw 0x6fa0c(%rbx,%rcx)\n"
+    "movq $-1, 20(%rsi)\n"
+    //  Taken is freed; past what was taken, held.
+    "52: cmp %edx, 16(%rsi)\n   ja 53f\n   incq 0x70300(%rbx)\n"
+    "cmp %eax, 4(%r9)\n   jne 54f\n   mov %r10d, 4(%r9)\n   cmp %eax, 8(%r9)\n   jne 55f\n"
+    "movl $-1, 8(%r9)\n"
+    "55: movb $0, 36(%rsi)\n   movl $-1, 28(%rsi)\n   mov 0x70230(%rbx), %ecx\n"
+    "mov %ecx, 20(%rsi)\n   mov %eax, 0x70230(%rbx)\n   incl 0x70234(%rbx)\n   jmp 49f\n"
+    "53: movb $3, 36(%rsi)\n"
+    "49: mov %r10d, %eax\n   jmp 41b\n"
+    //  Queued, lost and not sent again yet: off its band. A slot freed from
+    //  the middle of its chain: the C walks to it.
+    "43: cmp $1, %ecx\n   jne 52b\n   mov %eax, 64(%rsp)\n   mov %r10d, 72(%rsp)\n"
+    "mov %edx, 48(%rsp)\n   mov %r8, 56(%rsp)\n   mov %rbx, %rdi\n   mov %eax, %esi\n"
+    "call waterlink_band_remove\n   mov 64(%rsp), %eax\n   imul $1200, %rax, %rsi\n"
+    "add %rbx, %rsi\n   mov 48(%rsp), %edx\n   mov 56(%rsp), %r8\n   mov 72(%rsp), %r10d\n"
+    "movzbl 1(%rbp), %ecx\n   shl $4, %ecx\n   lea 0x6fa00(%rbx,%rcx), %r9\n   jmp 52b\n"
+    "54: mov %r10d, 72(%rsp)\n   mov %edx, 48(%rsp)\n   mov %r8, 56(%rsp)\n"
+    "mov %rbx, %rdi\n   mov %eax, %esi\n   call waterlink_slot_free\n"
+    "mov 48(%rsp), %edx\n   mov 56(%rsp), %r8\n   mov 72(%rsp), %r10d\n"
+    "movzbl 1(%rbp), %ecx\n   shl $4, %ecx\n   lea 0x6fa00(%rbx,%rcx), %r9\n   jmp 49b\n"
+    //  Once for the body: the latest arrival, its round trip into the
+    //  estimate, the window grown by what was delivered after the last
+    //  halving, and the losses that makes visible.
+    "90: testb $2, 40(%rsp)\n   jz 95f\n   test %r14, %r14\n   jz 91f\n"
+    "cmp 0x70258(%rbx), %r14\n   jbe 92f\n   mov %r14, 0x70258(%rbx)\n"
+    "92: test %r15, %r15\n   jz 93f\n   mov %r15, 0x70298(%rbx)\n"
+    "mov 0x70280(%rbx), %rax\n   test %rax, %rax\n   jnz 94f\n"
+    "mov %r15, 0x70280(%rbx)\n   mov %r15, %rcx\n   shr $1, %rcx\n   mov %rcx, 0x70288(%rbx)\n"
+    "jmp 93f\n"
+    "94: mov %r15, %rcx\n   sub %rax, %rcx\n   mov %rax, %rdx\n   sub %r15, %rdx\n"
+    "cmp %rax, %r15\n   cmovbe %rdx, %rcx\n"
+    "mov 0x70288(%rbx), %rdx\n   lea (%rdx,%rdx,2), %rdx\n   add %rcx, %rdx\n   shr $2, %rdx\n"
+    "mov %rdx, 0x70288(%rbx)\n   lea 0(,%rax,8), %rdx\n   sub %rax, %rdx\n   add %r15, %rdx\n"
+    "shr $3, %rdx\n   mov %rdx, 0x70280(%rbx)\n"
+    "93: movl $0, 0x702b0(%rbx)\n   movl $0, 0x702b4(%rbx)\n"
+    "91: test %r13, %r13\n   jz 96f\n   cmp 0x70260(%rbx), %r14\n   jbe 96f\n"
+    "mov 0x70270(%rbx), %rax\n   cmp 0x70278(%rbx), %rax\n   jae 97f\n   add %r13, %rax\n"
+    "jmp 98f\n"
+    "97: mov %rax, %rcx\n   imul $1200, %r13, %rax\n   xor %edx, %edx\n   div %rcx\n"
+    "lea 1(%rcx,%rax), %rax\n"
+    "98: mov $307200, %ecx\n   cmp %rcx, %rax\n   cmova %rcx, %rax\n   mov %rax, 0x70270(%rbx)\n"
+    "96: cmpl $-1, 0x7023c(%rbx)\n   je 95f\n   mov %rbx, %rdi\n   mov 32(%rsp), %rsi\n"
+    "call waterlink_losses\n"
+    "95: testb $1, 40(%rsp)\n   jz 99f\n   incl 0x702a8(%rbx)\n"
+    "99: add $88, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n"
+    "pop %rbx\n"
+    ASM_RET
+    ASM_END(waterlink_apply)
+);
+#elif ARM64
+/*
+        x19 the link, x20 the part, x21 past the last, x22 the bytes newly
+        delivered, x23 the latest transmission known to have arrived, x24
+        its round trip, x25 the link plus 0x6f800, x26 whether frames came
+        (bit 0) and acknowledgements did (bit 1), x27 the sink, x28 its
+        context. On the stack past the saved registers: the body, now, a
+        frame's head, and an acknowledgement's walk across the C it calls.
+        A part: w9 its flags, w10 its key, w11 its first number, x12 its
+        key's receiving entry less 0x600.
+*/
+__asm__(
+    ASM_FUNC(waterlink_apply)
+    "stp x29, x30, [sp, #-144]!\n   mov x29, sp\n   stp x19, x20, [sp, #16]\n"
+    "stp x21, x22, [sp, #32]\n   stp x23, x24, [sp, #48]\n   stp x25, x26, [sp, #64]\n"
+    "stp x27, x28, [sp, #80]\n"
+    "mov x19, x0\n   mov x20, x2\n   add x21, x2, x3, lsl #4\n"
+    "add x25, x0, #0x6f, lsl #12\n   add x25, x25, #0x800\n"
+    "str x1, [sp, #96]\n   mov x26, #0\n   mov x27, x5\n   mov x28, x6\n"
+    "ldr x9, [x25, #0xa48]\n   cmp x4, x9\n   b.ls 1f\n   str x4, [x25, #0xa48]\n"
+    "1:  ldr x9, [x25, #0xa48]\n   str x9, [sp, #104]\n"
+    "mov x22, #0\n   mov x23, #0\n   mov x24, #0\n   cmp x20, x21\n   b.hs 90f\n"
+    "10: ldrb w9, [x20]\n   ldrb w10, [x20, #1]\n   ldr w11, [x20, #4]\n"
+    "cmp w9, #8\n   b.eq 40f\n"
+    //  A frame is owed an acknowledgement whatever becomes of it.
+    "add x12, x10, x10, lsl #1\n   add x12, x25, x12, lsl #2\n"
+    "ldr x13, [x25, #0xa10]\n   cbnz x13, 11f\n   ldr x14, [x25, #0xa48]\n"
+    "str x14, [x25, #0xaa0]\n"
+    "11: mov x14, #1\n   lsl x14, x14, x10\n   orr x13, x13, x14\n   str x13, [x25, #0xa10]\n"
+    "orr x26, x26, #1\n   mov w14, #0x14\n   tst w9, w14\n   b.eq 12f\n   mov w14, #1\n"
+    "strb w14, [x25, #0xaac]\n"
+    "12: ldr w13, [x12, #0x600]\n   cmp w11, w13\n   b.ls 13f\n"
+    "ldrb w14, [x12, #0x608]\n   cbnz w14, 13f\n   ldrb w14, [x12, #0x609]\n   cbnz w14, 14f\n"
+    "tbz w9, #1, 15f\n   add w14, w13, #1\n   cmp w11, w14\n   b.ne 14f\n"
+    "15: cbnz x27, 16f\n"
+    //  Taken: the key moves on, and whatever it holds follows.
+    "17: str w11, [x12, #0x600]\n   ldr x14, [x25, #0xad0]\n   add x14, x14, #1\n"
+    "str x14, [x25, #0xad0]\n   tbz w9, #2, 18f\n   mov w14, #1\n   strb w14, [x12, #0x608]\n"
+    "18: ldr w14, [x12, #0x604]\n   cmn w14, #1\n   b.ne 19f\n   strb wzr, [x12, #0x609]\n"
+    "20: add x20, x20, #16\n   cmp x20, x21\n   b.lo 10b\n   b 90f\n"
+    "19: mov x0, x19\n   mov w1, w10\n   mov x2, x27\n   mov x3, x28\n"
+    "bl waterlink_release\n   b 20b\n"
+    //  At or behind what was taken, or after its last: a copy, answered.
+    "13: ldr x14, [x25, #0xad8]\n   add x14, x14, #1\n   str x14, [x25, #0xad8]\n"
+    "mov w14, #1\n   strb w14, [x25, #0xaac]\n   b 20b\n"
+    //  Ahead, or its key paused: held.
+    "14: mov w14, #1\n   strb w14, [x25, #0xaac]\n"
+    "ldrh w14, [x20, #8]\n   lsl x14, x14, #32\n   orr x14, x14, x11\n"
+    "orr x14, x14, x10, lsl #48\n   orr x14, x14, x9, lsl #56\n   str x14, [sp, #112]\n"
+    "ldrh w3, [x20, #2]\n   ldr x15, [sp, #96]\n   add x3, x15, x3\n   mov x0, x19\n"
+    "add x1, x12, #0x600\n   add x2, sp, #112\n   bl waterlink_hold\n   b 20b\n"
+    //  The application's say: the head goes by address, and nothing held
+    //  in a caller's register survives the call.
+    "16: ldrh w14, [x20, #8]\n   lsl x14, x14, #32\n   orr x14, x14, x11\n"
+    "orr x14, x14, x10, lsl #48\n   orr x14, x14, x9, lsl #56\n   str x14, [sp, #112]\n"
+    "ldrh w2, [x20, #2]\n   ldr x15, [sp, #96]\n   add x2, x15, x2\n   mov x0, x28\n"
+    "add x1, sp, #112\n   blr x27\n"
+    "ldrb w9, [sp, #119]\n   ldrb w10, [x20, #1]\n   ldr w11, [sp, #112]\n"
+    "add x12, x10, x10, lsl #1\n   add x12, x25, x12, lsl #2\n   tst w0, #0xff\n   b.ne 17b\n"
+    "ldrh w3, [x20, #2]\n   ldr x15, [sp, #96]\n   add x3, x15, x3\n   mov x0, x19\n"
+    "add x1, x12, #0x600\n   add x2, sp, #112\n   bl waterlink_hold\n"
+    "ldrb w10, [x20, #1]\n   add x12, x10, x10, lsl #1\n   add x12, x25, x12, lsl #2\n"
+    "mov w14, #1\n   strb w14, [x12, #0x609]\n   b 20b\n"
+    //  An acknowledgement: w11 what was taken, x13 the mask, x15 the key's
+    //  sending entry less 0x200, w9 the slot, x12 its address, w10 the next
+    //  on the key, w14 its sequence.
+    "40: orr x26, x26, #2\n   ldr x13, [x20, #8]\n   add x15, x25, x10, lsl #4\n"
+    "ldr w9, [x15, #0x204]\n"
+    "41: cmn w9, #1\n   b.eq 20b\n"
+    "mov w16, #1200\n   madd x12, x9, x16, x19\n   ldr w10, [x12, #28]\n   ldr w14, [x12, #16]\n"
+    "cmp w14, w11\n   b.ls 42f\n"
+    "sub w16, w14, w11\n   sub w16, w16, #1\n   cmp w16, #63\n   b.hi 49f\n"
+    "lsr x17, x13, x16\n   tbz x17, #0, 49f\n"
+    "42: ldrb w16, [x12, #36]\n   cmp w16, #2\n   b.ne 43f\n"
+    //  In flight: what it carried is delivered and leaves the flight, and
+    //  the newest transmission among them is the round trip's sample.
+    "ldrh w16, [x12, #32]\n   add w17, w16, #4\n   cmp w16, #127\n   cinc w17, w17, hi\n"
+    "cmp w14, #127\n   b.ls 45f\n"
+    "clz w16, w14\n   eor w16, w16, #31\n   add w16, w16, w16, lsl #3\n   add w16, w16, #9\n"
+    "lsr w16, w16, #6\n   add w17, w17, w16\n"
+    "45: add x22, x22, x17\n   ldr x16, [x25, #0xa68]\n   sub x16, x16, x17\n"
+    "str x16, [x25, #0xa68]\n"
+    "ldr x16, [x12, #8]\n   cmp x16, x23\n   b.ls 46f\n   mov x23, x16\n   mov x24, #0\n"
+    "ldrb w16, [x12, #37]\n   cmp w16, #1\n   b.ne 46f\n   ldr x24, [x25, #0xa48]\n"
+    "ldr x16, [x12]\n   sub x24, x24, x16\n"
+    "46: ldp w16, w17, [x12, #20]\n   mov w0, #1200\n   cmn w17, #1\n   b.eq 47f\n"
+    "madd x1, x17, x0, x19\n   str w16, [x1, #20]\n   b 48f\n"
+    "47: str w16, [x25, #0xa3c]\n"
+    "48: cmn w16, #1\n   b.eq 50f\n   madd x1, x16, x0, x19\n   str w17, [x1, #24]\n   b 51f\n"
+    "50: str w17, [x25, #0xa40]\n"
+    "51: ldrb w16, [x12, #34]\n   add x16, x25, x16, lsl #4\n   ldrh w17, [x16, #0x20c]\n"
+    "sub w17, w17, #1\n   strh w17, [x16, #0x20c]\n   mov w16, #-1\n   stp w16, w16, [x12, #20]\n"
+    //  Taken is freed; past what was taken, held.
+    "52: ldr w16, [x12, #16]\n   cmp w16, w11\n   b.hi 53f\n"
+    "ldr x16, [x25, #0xb00]\n   add x16, x16, #1\n   str x16, [x25, #0xb00]\n"
+    "ldr w16, [x15, #0x204]\n   cmp w16, w9\n   b.ne 54f\n   str w10, [x15, #0x204]\n"
+    "ldr w16, [x15, #0x208]\n   cmp w16, w9\n   b.ne 55f\n   mov w16, #-1\n   str w16, [x15, #0x208]\n"
+    "55: strb wzr, [x12, #36]\n   mov w16, #-1\n   str w16, [x12, #28]\n"
+    "ldr w16, [x25, #0xa30]\n   str w16, [x12, #20]\n   str w9, [x25, #0xa30]\n"
+    "ldr w16, [x25, #0xa34]\n   add w16, w16, #1\n   str w16, [x25, #0xa34]\n   b 49f\n"
+    "53: mov w16, #3\n   strb w16, [x12, #36]\n"
+    "49: mov w9, w10\n   b 41b\n"
+    //  Queued, lost and not sent again yet: off its band. A slot freed from
+    //  the middle of its chain: the C walks to it.
+    "43: cmp w16, #1\n   b.ne 52b\n   stp w9, w10, [sp, #120]\n   str x11, [sp, #128]\n"
+    "str x13, [sp, #136]\n   mov x0, x19\n   mov w1, w9\n   bl waterlink_band_remove\n"
+    "ldp w9, w10, [sp, #120]\n   ldr x11, [sp, #128]\n   ldr x13, [sp, #136]\n"
+    "mov w16, #1200\n   madd x12, x9, x16, x19\n"
+    "ldrb w16, [x20, #1]\n   add x15, x25, x16, lsl #4\n   b 52b\n"
+    "54: stp w9, w10, [sp, #120]\n   str x11, [sp, #128]\n   str x13, [sp, #136]\n"
+    "mov x0, x19\n   mov w1, w9\n   bl waterlink_slot_free\n"
+    "ldp w9, w10, [sp, #120]\n   ldr x11, [sp, #128]\n   ldr x13, [sp, #136]\n"
+    "ldrb w16, [x20, #1]\n   add x15, x25, x16, lsl #4\n   b 49b\n"
+    //  Once for the body: the latest arrival, its round trip into the
+    //  estimate, the window grown by what was delivered after the last
+    //  halving, and the losses that makes visible.
+    "90: tbz x26, #1, 95f\n   cbz x23, 91f\n"
+    "ldr x10, [x25, #0xa58]\n   cmp x23, x10\n   b.ls 92f\n   str x23, [x25, #0xa58]\n"
+    "92: cbz x24, 93f\n   str x24, [x25, #0xa98]\n   ldr x10, [x25, #0xa80]\n   cbnz x10, 94f\n"
+    "str x24, [x25, #0xa80]\n   lsr x11, x24, #1\n   str x11, [x25, #0xa88]\n   b 93f\n"
+    "94: subs x11, x24, x10\n   sub x12, x10, x24\n   csel x11, x11, x12, hi\n"
+    "ldr x12, [x25, #0xa88]\n   add x12, x12, x12, lsl #1\n   add x12, x12, x11\n"
+    "lsr x12, x12, #2\n   str x12, [x25, #0xa88]\n"
+    "lsl x12, x10, #3\n   sub x12, x12, x10\n   add x12, x12, x24\n   lsr x12, x12, #3\n"
+    "str x12, [x25, #0xa80]\n"
+    "93: str wzr, [x25, #0xab0]\n   str wzr, [x25, #0xab4]\n"
+    "91: cbz x22, 96f\n   ldr x10, [x25, #0xa60]\n   cmp x23, x10\n   b.ls 96f\n"
+    "ldr x10, [x25, #0xa70]\n   ldr x11, [x25, #0xa78]\n   cmp x10, x11\n   b.hs 97f\n"
+    "add x10, x10, x22\n   b 98f\n"
+    "97: mov x11, #1200\n   mul x11, x22, x11\n   udiv x11, x11, x10\n   add x10, x10, x11\n"
+    "add x10, x10, #1\n"
+    "98: cmp x10, #0x4b, lsl #12\n   b.ls 89f\n   mov x10, #0xb000\n   movk x10, #0x4, lsl #16\n"
+    "89: str x10, [x25, #0xa70]\n"
+    "96: ldr w10, [x25, #0xa3c]\n   cmn w10, #1\n   b.eq 95f\n   mov x0, x19\n"
+    "ldr x1, [sp, #104]\n   bl waterlink_losses\n"
+    "95: tbz x26, #0, 99f\n   ldr w10, [x25, #0xaa8]\n   add w10, w10, #1\n"
+    "str w10, [x25, #0xaa8]\n"
+    "99: ldp x19, x20, [sp, #16]\n   ldp x21, x22, [sp, #32]\n   ldp x23, x24, [sp, #48]\n"
+    "ldp x25, x26, [sp, #64]\n   ldp x27, x28, [sp, #80]\n   ldp x29, x30, [sp], #144\n"
+    ASM_RET
+    ASM_END(waterlink_apply)
+);
+#elif RISCV64
+/*
+        s0 the link, s1 the part, s2 past the last, s3 the bytes newly
+        delivered, s4 the latest transmission known to have arrived, s5 its
+        round trip, s6 the link plus 0x6ff00, s7 whether frames came (bit 0)
+        and acknowledgements did (bit 1), s8 the sink, s9 its context, s10
+        the body, s11 now. On the stack: a frame's head, and an
+        acknowledgement's walk across the C it calls. A part: t0 its flags,
+        t1 its key, t2 its first number, t3 its key's receiving entry plus
+        256.
+*/
+__asm__(
+    ASM_FUNC(waterlink_apply)
+    "addi sp, sp, -144\n   sd ra, 136(sp)\n   sd s0, 128(sp)\n   sd s1, 120(sp)\n"
+    "sd s2, 112(sp)\n   sd s3, 104(sp)\n   sd s4, 96(sp)\n   sd s5, 88(sp)\n   sd s6, 80(sp)\n"
+    "sd s7, 72(sp)\n   sd s8, 64(sp)\n   sd s9, 56(sp)\n   sd s10, 48(sp)\n   sd s11, 40(sp)\n"
+    "mv s0, a0\n   mv s1, a2\n   slli t0, a3, 4\n   add s2, a2, t0\n"
+    "lui s6, 0x70\n   addi s6, s6, -256\n   add s6, a0, s6\n"
+    "mv s8, a5\n   mv s9, a6\n   mv s10, a1\n   li s7, 0\n"
+    "ld t0, 840(s6)\n   bgeu t0, a4, 1f\n   sd a4, 840(s6)\n"
+    "1:  ld s11, 840(s6)\n   li s3, 0\n   li s4, 0\n   li s5, 0\n   bgeu s1, s2, 90f\n"
+    "10: lbu t0, 0(s1)\n   lbu t1, 1(s1)\n   lwu t2, 4(s1)\n   li t3, 8\n   beq t0, t3, 40f\n"
+    //  A frame is owed an acknowledgement whatever becomes of it.
+    "slli t3, t1, 1\n   add t3, t3, t1\n   slli t3, t3, 2\n   add t3, s6, t3\n"
+    "ld t4, 784(s6)\n   bnez t4, 11f\n   ld t5, 840(s6)\n   sd t5, 928(s6)\n"
+    "11: li t5, 1\n   sll t5, t5, t1\n   or t4, t4, t5\n   sd t4, 784(s6)\n   ori s7, s7, 1\n"
+    "andi t4, t0, 0x14\n   beqz t4, 12f\n   li t4, 1\n   sb t4, 940(s6)\n"
+    "12: lwu t4, -256(t3)\n   bgeu t4, t2, 13f\n   lbu t5, -248(t3)\n   bnez t5, 13f\n"
+    "lbu t5, -247(t3)\n   bnez t5, 14f\n   andi t5, t0, 2\n   beqz t5, 15f\n"
+    "addi t5, t4, 1\n   bne t2, t5, 14f\n"
+    "15: bnez s8, 16f\n"
+    //  Taken: the key moves on, and whatever it holds follows.
+    "17: sw t2, -256(t3)\n   ld t5, 976(s6)\n   addi t5, t5, 1\n   sd t5, 976(s6)\n"
+    "andi t5, t0, 4\n   beqz t5, 18f\n   li t5, 1\n   sb t5, -248(t3)\n"
+    "18: lw t5, -252(t3)\n   bgez t5, 19f\n   sb zero, -247(t3)\n"
+    "20: addi s1, s1, 16\n   bltu s1, s2, 10b\n   j 90f\n"
+    "19: mv a0, s0\n   mv a1, t1\n   mv a2, s8\n   mv a3, s9\n   call waterlink_release\n"
+    "j 20b\n"
+    //  At or behind what was taken, or after its last: a copy, answered.
+    "13: ld t5, 984(s6)\n   addi t5, t5, 1\n   sd t5, 984(s6)\n   li t5, 1\n   sb t5, 940(s6)\n"
+    "j 20b\n"
+    //  Ahead, or its key paused: held.
+    "14: li t5, 1\n   sb t5, 940(s6)\n"
+    "lhu t5, 8(s1)\n   slli t5, t5, 32\n   or t5, t5, t2\n   slli t6, t1, 48\n   or t5, t5, t6\n"
+    "slli t6, t0, 56\n   or t5, t5, t6\n   sd t5, 0(sp)\n"
+    "lhu a3, 2(s1)\n   add a3, s10, a3\n   mv a0, s0\n   addi a1, t3, -256\n   mv a2, sp\n"
+    "call waterlink_hold\n   j 20b\n"
+    //  The application's say: the head goes by address, and nothing held
+    //  in a caller's register survives the call.
+    "16: lhu t5, 8(s1)\n   slli t5, t5, 32\n   or t5, t5, t2\n   slli t6, t1, 48\n   or t5, t5, t6\n"
+    "slli t6, t0, 56\n   or t5, t5, t6\n   sd t5, 0(sp)\n"
+    "lhu a2, 2(s1)\n   add a2, s10, a2\n   mv a0, s9\n   mv a1, sp\n   jalr s8\n"
+    "lbu t0, 7(sp)\n   lbu t1, 1(s1)\n   lwu t2, 0(sp)\n"
+    "slli t3, t1, 1\n   add t3, t3, t1\n   slli t3, t3, 2\n   add t3, s6, t3\n"
+    "andi a0, a0, 0xff\n   bnez a0, 17b\n"
+    "lhu a3, 2(s1)\n   add a3, s10, a3\n   mv a0, s0\n   addi a1, t3, -256\n   mv a2, sp\n"
+    "call waterlink_hold\n"
+    "lbu t1, 1(s1)\n   slli t3, t1, 1\n   add t3, t3, t1\n   slli t3, t3, 2\n   add t3, s6, t3\n"
+    "li t5, 1\n   sb t5, -247(t3)\n   j 20b\n"
+    //  An acknowledgement: t2 what was taken, t3 the mask, t4 the key's
+    //  sending entry plus 1280, t0 the slot, a0 its address, t1 the next on
+    //  the key, t5 its sequence.
+    "40: ori s7, s7, 2\n   ld t3, 8(s1)\n   slli t4, t1, 4\n   add t4, s6, t4\n"
+    "lw t0, -1276(t4)\n"
+    "41: bltz t0, 20b\n"
+    "li t5, 1200\n   mul a0, t0, t5\n   add a0, s0, a0\n   lw t1, 28(a0)\n   lwu t5, 16(a0)\n"
+    "bgeu t2, t5, 42f\n"
+    "sub t6, t5, t2\n   addi t6, t6, -1\n   li a1, 64\n   bgeu t6, a1, 49f\n"
+    "srl a1, t3, t6\n   andi a1, a1, 1\n   beqz a1, 49f\n"
+    "42: lbu t6, 36(a0)\n   li a1, 2\n   bne t6, a1, 43f\n"
+    //  In flight: what it carried is delivered and leaves the flight, and
+    //  the newest transmission among them is the round trip's sample.
+    "lhu a1, 32(a0)\n   addi a2, a1, 4\n   li a3, 128\n   bltu a1, a3, 44f\n   addi a2, a2, 1\n"
+    "44: srli a1, t5, 7\n   beqz a1, 45f\n"
+    "56: addi a2, a2, 1\n   srli a1, a1, 7\n   bnez a1, 56b\n"
+    "45: add s3, s3, a2\n   ld a1, 872(s6)\n   sub a1, a1, a2\n   sd a1, 872(s6)\n"
+    "ld a1, 8(a0)\n   bgeu s4, a1, 46f\n   mv s4, a1\n   li s5, 0\n   lbu a1, 37(a0)\n"
+    "li a2, 1\n   bne a1, a2, 46f\n   ld s5, 840(s6)\n   ld a1, 0(a0)\n   sub s5, s5, a1\n"
+    "46: lw a1, 20(a0)\n   lw a2, 24(a0)\n   bltz a2, 47f\n"
+    "li a3, 1200\n   mul a3, a2, a3\n   add a3, s0, a3\n   sw a1, 20(a3)\n   j 48f\n"
+    "47: sw a1, 828(s6)\n"
+    "48: bltz a1, 50f\n   li a3, 1200\n   mul a3, a1, a3\n   add a3, s0, a3\n   sw a2, 24(a3)\n"
+    "j 51f\n"
+    "50: sw a2, 832(s6)\n"
+    "51: lbu a1, 34(a0)\n   slli a1, a1, 4\n   add a1, s6, a1\n   lhu a2, -1268(a1)\n"
+    "addi a2, a2, -1\n   sh a2, -1268(a1)\n   li a1, -1\n   sw a1, 20(a0)\n   sw a1, 24(a0)\n"
+    //  Taken is freed; past what was taken, held.
+    "52: lwu a1, 16(a0)\n   bltu t2, a1, 53f\n"
+    "ld a1, 1024(s6)\n   addi a1, a1, 1\n   sd a1, 1024(s6)\n"
+    "lw a1, -1276(t4)\n   bne a1, t0, 54f\n   sw t1, -1276(t4)\n"
+    "lw a1, -1272(t4)\n   bne a1, t0, 55f\n   li a1, -1\n   sw a1, -1272(t4)\n"
+    "55: sb zero, 36(a0)\n   li a1, -1\n   sw a1, 28(a0)\n   lw a1, 816(s6)\n   sw a1, 20(a0)\n"
+    "sw t0, 816(s6)\n   lw a1, 820(s6)\n   addi a1, a1, 1\n   sw a1, 820(s6)\n   j 49f\n"
+    "53: li a1, 3\n   sb a1, 36(a0)\n"
+    "49: mv t0, t1\n   j 41b\n"
+    //  Queued, lost and not sent again yet: off its band. A slot freed from
+    //  the middle of its chain: the C walks to it.
+    "43: li a1, 1\n   bne t6, a1, 52b\n"
+    "sd t0, 8(sp)\n   sd t1, 16(sp)\n   sd t2, 24(sp)\n   sd t3, 32(sp)\n"
+    "mv a0, s0\n   mv a1, t0\n   call waterlink_band_remove\n"
+    "ld t0, 8(sp)\n   ld t1, 16(sp)\n   ld t2, 24(sp)\n   ld t3, 32(sp)\n"
+    "li a1, 1200\n   mul a0, t0, a1\n   add a0, s0, a0\n"
+    "lbu t4, 1(s1)\n   slli t4, t4, 4\n   add t4, s6, t4\n   j 52b\n"
+    "54: sd t1, 16(sp)\n   sd t2, 24(sp)\n   sd t3, 32(sp)\n"
+    "mv a0, s0\n   mv a1, t0\n   call waterlink_slot_free\n"
+    "ld t1, 16(sp)\n   ld t2, 24(sp)\n   ld t3, 32(sp)\n"
+    "lbu t4, 1(s1)\n   slli t4, t4, 4\n   add t4, s6, t4\n   j 49b\n"
+    //  Once for the body: the latest arrival, its round trip into the
+    //  estimate, the window grown by what was delivered after the last
+    //  halving, and the losses that makes visible.
+    "90: andi t0, s7, 2\n   beqz t0, 95f\n   beqz s4, 91f\n"
+    "ld t0, 856(s6)\n   bgeu t0, s4, 92f\n   sd s4, 856(s6)\n"
+    "92: beqz s5, 93f\n   sd s5, 920(s6)\n   ld t0, 896(s6)\n   bnez t0, 94f\n"
+    "sd s5, 896(s6)\n   srli t1, s5, 1\n   sd t1, 904(s6)\n   j 93f\n"
+    "94: sub t1, s5, t0\n   bltu t0, s5, 57f\n   sub t1, t0, s5\n"
+    "57: ld t2, 904(s6)\n   slli t3, t2, 1\n   add t2, t2, t3\n   add t2, t2, t1\n"
+    "srli t2, t2, 2\n   sd t2, 904(s6)\n"
+    "slli t2, t0, 3\n   sub t2, t2, t0\n   add t2, t2, s5\n   srli t2, t2, 3\n   sd t2, 896(s6)\n"
+    "93: sw zero, 944(s6)\n   sw zero, 948(s6)\n"
+    "91: beqz s3, 96f\n   ld t0, 864(s6)\n   bgeu t0, s4, 96f\n"
+    "ld t0, 880(s6)\n   ld t1, 888(s6)\n   bgeu t0, t1, 97f\n   add t0, t0, s3\n   j 98f\n"
+    "97: li t1, 1200\n   mul t1, s3, t1\n   divu t1, t1, t0\n   add t0, t0, t1\n   addi t0, t0, 1\n"
+    "98: li t1, 307200\n   bgeu t1, t0, 89f\n   mv t0, t1\n"
+    "89: sd t0, 880(s6)\n"
+    "96: lw t0, 828(s6)\n   bltz t0, 95f\n   mv a0, s0\n   mv a1, s11\n   call waterlink_losses\n"
+    "95: andi t0, s7, 1\n   beqz t0, 99f\n   lw t0, 936(s6)\n   addi t0, t0, 1\n   sw t0, 936(s6)\n"
+    "99: ld ra, 136(sp)\n   ld s0, 128(sp)\n   ld s1, 120(sp)\n   ld s2, 112(sp)\n"
+    "ld s3, 104(sp)\n   ld s4, 96(sp)\n   ld s5, 88(sp)\n   ld s6, 80(sp)\n   ld s7, 72(sp)\n"
+    "ld s8, 64(sp)\n   ld s9, 56(sp)\n   ld s10, 48(sp)\n   ld s11, 40(sp)\n   addi sp, sp, 144\n"
+    ASM_RET
+    ASM_END(waterlink_apply)
+);
+#endif
 
 // A body judged and then applied: what every caller without a judge wants.
 bool waterlink_deliver(struct waterlink_link address_to link,

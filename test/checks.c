@@ -55053,6 +55053,240 @@ static bipolar judge_model(p8 address_to body, positive length,
 }
 
 /*
+        Applying as it was in C, before waterlink_apply was each machine's
+        assembly: the reference it must match, and the acknowledging and
+        settling judge_walk below applies through as well. apply_seen counts
+        the paths each call took.
+*/
+enum {
+        APPLY_ACK, APPLY_ACK_TAKEN, APPLY_ACK_HELD, APPLY_ACK_PASSED,
+        APPLY_ACK_FLIGHT, APPLY_ACK_QUEUED, APPLY_ACK_LATEST, APPLY_ACK_SAMPLE,
+        APPLY_ACK_UNSAMPLED, APPLY_FREE_HEAD, APPLY_FREE_WALK, APPLY_FREE_LAST,
+        APPLY_LARGEST, APPLY_ESTIMATE_FIRST, APPLY_ESTIMATE, APPLY_GROW_SLOW,
+        APPLY_GROW_AVOID, APPLY_GROW_CAP, APPLY_SETTLE_LOSSES, APPLY_FRAME,
+        APPLY_STALE, APPLY_OVER, APPLY_HOLD_PAUSED, APPLY_HOLD_AHEAD,
+        APPLY_REFUSED, APPLY_HANDED, APPLY_LAST, APPLY_RELEASE_HELD,
+        APPLY_OWED_FIRST, APPLY_OWED_NOW, APPLY_CLOCK_BEHIND, APPLY_NO_SINK,
+        APPLY_SEEN
+};
+
+static positive apply_seen[APPLY_SEEN];
+
+static fn apply_walk_acknowledge(struct waterlink_link address_to link, p8 key,
+                                 p32 delivered, p64 mask, p64 address_to newly,
+                                 p64 address_to latest, p64 address_to sample)
+{
+        p32 at = link->sending[key].first;
+
+        while (at != WATERLINK_NONE)
+        {
+                struct waterlink_slot address_to slot = link->slot + at;
+                p32 next = slot->chain;
+                p32 gap = slot->sequence - delivered - 1;
+                bool taken = slot->sequence <= delivered;
+
+                if (!taken && (gap >= WATERLINK_ACK_MASK ||
+                               !(mask & (1ull << gap))))
+                {
+                        apply_seen[APPLY_ACK_PASSED]++;
+                        at = next;
+                        continue;
+                }
+                if (slot->state == WATERLINK_SLOT_FLIGHT)
+                {
+                        apply_seen[APPLY_ACK_FLIGHT]++;
+                        address_to newly += waterlink_bytes(slot);
+                        if (slot->serial > address_to latest)
+                        {
+                                apply_seen[APPLY_ACK_LATEST]++;
+                                apply_seen[slot->tries == 1 ? APPLY_ACK_SAMPLE
+                                                            : APPLY_ACK_UNSAMPLED]++;
+                                address_to latest = slot->serial;
+                                address_to sample = slot->tries == 1
+                                                            ? link->clock - slot->sent
+                                                            : 0;
+                        }
+                }
+                else if (slot->state == WATERLINK_SLOT_QUEUED)
+                        apply_seen[APPLY_ACK_QUEUED]++;
+                waterlink_slot_unqueue(link, at);
+                if (taken)
+                {
+                        apply_seen[APPLY_ACK_TAKEN]++;
+                        apply_seen[link->sending[key].first == at ? APPLY_FREE_HEAD
+                                                                  : APPLY_FREE_WALK]++;
+                        apply_seen[APPLY_FREE_LAST] += link->sending[key].last == at;
+                        link->acked++;
+                        waterlink_slot_free(link, at);
+                }
+                else
+                {
+                        apply_seen[APPLY_ACK_HELD]++;
+                        slot->state = WATERLINK_SLOT_HELD;
+                }
+                at = next;
+        }
+}
+
+static fn apply_walk_estimate(struct waterlink_link address_to link, p64 sample)
+{
+        if (!sample)
+                sample = 1;
+        link->recent = sample;
+
+        if (!link->smoothed)
+        {
+                apply_seen[APPLY_ESTIMATE_FIRST]++;
+                link->smoothed = sample;
+                link->variance = sample / 2;
+                return;
+        }
+
+        {
+                p64 gap = sample > link->smoothed ? sample - link->smoothed
+                                                  : link->smoothed - sample;
+
+                apply_seen[APPLY_ESTIMATE]++;
+                link->variance = (3 * link->variance + gap) / 4;
+                link->smoothed = (7 * link->smoothed + sample) / 8;
+        }
+}
+
+static fn apply_walk_settle(struct waterlink_link address_to link, p64 newly,
+                            p64 latest, p64 sample, p64 now)
+{
+        if (latest)
+        {
+                if (latest > link->largest)
+                {
+                        apply_seen[APPLY_LARGEST]++;
+                        link->largest = latest;
+                }
+                if (sample)
+                        apply_walk_estimate(link, sample);
+                link->backoff = 0;
+                link->probes = 0;
+        }
+
+        if (newly && latest > link->recovery)
+        {
+                if (link->window < link->threshold)
+                {
+                        apply_seen[APPLY_GROW_SLOW]++;
+                        link->window += newly;
+                }
+                else
+                {
+                        apply_seen[APPLY_GROW_AVOID]++;
+                        link->window += WATERLINK_DATAGRAM * newly /
+                                        link->window + 1;
+                }
+                if (link->window > WATERLINK_WINDOW_MOST)
+                {
+                        apply_seen[APPLY_GROW_CAP]++;
+                        link->window = WATERLINK_WINDOW_MOST;
+                }
+        }
+
+        if (link->flight_head != WATERLINK_NONE)
+        {
+                apply_seen[APPLY_SETTLE_LOSSES]++;
+                waterlink_losses(link, now);
+        }
+}
+
+static fn apply_walk(struct waterlink_link address_to link, address_any body,
+                     struct waterlink_part address_to parts, positive count,
+                     p64 now, waterlink_sink sink, address_any context)
+{
+        p8 address_to bytes = (p8 address_to)body;
+        bool framed = false;
+        bool acked = false;
+        p64 newly = 0, latest = 0, sample = 0;
+
+        if (now > link->clock)
+                link->clock = now;
+        else if (now < link->clock)
+                apply_seen[APPLY_CLOCK_BEHIND]++;
+        now = link->clock;
+        apply_seen[APPLY_NO_SINK] += !sink;
+
+        for (struct waterlink_part address_to part = parts; part < parts + count;
+             part++)
+        {
+                p8 flags = part->flags;
+                p8 key = part->key;
+                p8 address_to payload = bytes + part->at;
+                struct waterlink_frame head;
+                struct waterlink_receiving address_to live;
+
+                if (flags == WATERLINK_FRAME_ACK)
+                {
+                        apply_seen[APPLY_ACK]++;
+                        apply_walk_acknowledge(link, key, part->number, part->more,
+                                               address_of newly,
+                                               address_of latest,
+                                               address_of sample);
+                        acked = true;
+                        continue;
+                }
+
+                head.key = key;
+                head.sequence = part->number;
+                head.length = (p16)part->more;
+                head.flags = flags;
+                live = link->receiving + key;
+
+                apply_seen[APPLY_FRAME]++;
+                apply_seen[APPLY_OWED_FIRST] += !link->acking;
+                waterlink_ack_owe(link, key);
+                framed = true;
+                if (flags & (WATERLINK_FRAME_URGENT | WATERLINK_FRAME_LAST))
+                {
+                        apply_seen[APPLY_OWED_NOW]++;
+                        link->owed_now = 1;
+                }
+
+                if (head.sequence <= live->delivered || live->over)
+                {
+                        apply_seen[live->over ? APPLY_OVER : APPLY_STALE]++;
+                        link->stale++;
+                        link->owed_now = 1;
+                }
+                else if (live->paused ||
+                         ((flags & WATERLINK_FRAME_DURABLE) &&
+                          head.sequence != live->delivered + 1))
+                {
+                        apply_seen[live->paused ? APPLY_HOLD_PAUSED
+                                                : APPLY_HOLD_AHEAD]++;
+                        link->owed_now = 1;
+                        waterlink_hold(link, live, address_of head, payload);
+                }
+                else if (!waterlink_hand(link, live, address_of head, payload,
+                                         sink, context))
+                {
+                        apply_seen[APPLY_REFUSED]++;
+                        waterlink_hold(link, live, address_of head, payload);
+                        live->paused = 1;
+                }
+                else
+                {
+                        apply_seen[APPLY_HANDED]++;
+                        apply_seen[APPLY_LAST] += (flags & WATERLINK_FRAME_LAST) != 0;
+                        apply_seen[APPLY_RELEASE_HELD] +=
+                                live->first != WATERLINK_NONE;
+                        waterlink_release(link, key, sink, context);
+                }
+        }
+
+        if (acked)
+                apply_walk_settle(link, newly, latest, sample, now);
+
+        if (framed)
+                link->owed_count++;
+}
+
+/*
         Delivery as it was before the judge: one walk applying each part as
         it read it. For a body the judge takes, applying its parts must leave
         a link exactly where this walk leaves it, having handed on the same
@@ -55104,7 +55338,7 @@ static bool judge_walk(struct waterlink_link address_to link,
                                                address_of mask) ||
                             delivered >= WATERLINK_NONE)
                                 return false;
-                        waterlink_acknowledge(link, key, (p32)delivered, mask,
+                        apply_walk_acknowledge(link, key, (p32)delivered, mask,
                                               address_of newly,
                                               address_of latest,
                                               address_of sample);
@@ -55151,7 +55385,7 @@ static bool judge_walk(struct waterlink_link address_to link,
                 at += head.length;
         }
         if (acked)
-                waterlink_acks_settle(link, newly, latest, sample, now);
+                apply_walk_settle(link, newly, latest, sample, now);
         good = memory_span_byte(bytes + at, 0, length - at) == length - at;
         if (good && framed)
                 link->owed_count++;
@@ -55815,12 +56049,12 @@ static p64 fill_change(struct waterlink_link address_to link, p64 state,
 
                 mask &= fill_next(address_of state);
                 if (first != WATERLINK_NONE)
-                        waterlink_acknowledge(
+                        apply_walk_acknowledge(
                                 link, key,
                                 link->slot[first].sequence - 1 + taken, mask,
                                 address_of newly, address_of latest,
                                 address_of sample);
-                waterlink_acks_settle(link, newly, latest, sample, now);
+                apply_walk_settle(link, newly, latest, sample, now);
         }
         else if (op == 9)
         {
@@ -55987,6 +56221,246 @@ static fn fill_procedural(void)
               "for state, on every generated link",
               runs == 300 && calls > 50000 && wrong == 0 && apart == 0);
         check("and the generated links took every path of it",
+              missed == 0);
+}
+
+/*
+        Applying against the C it replaced, on the links fill's changes make
+        and bodies a judge could have passed: acknowledgements at and around
+        each key's chain with every kind of mask, frames stale, next, ahead
+        and far ahead, on keys paused and ended, of every length, and four
+        sinks -- none, one that takes everything, one that turns some away,
+        and one that posts back into the link it is hearing from, which is
+        what a service answering a request does. Now and then a key's chain
+        is left out of order, so a slot taken is not always the first. What
+        each side handed on, and the two links, must be the same.
+*/
+static p64 apply_heard[2][2048];
+static positive apply_heard_count[2];
+static positive apply_sink_mode;
+
+static bool apply_hear(address_any context, struct waterlink_frame address_to head,
+                       p8 address_to payload)
+{
+        positive side = (positive)context - 1;
+        struct waterlink_link address_to link = side ? &fill_two : &fill_one;
+        p64 mark = hash_xxh64(payload, head->length, head->sequence) ^
+                   ((p64)head->key << 56) ^ ((p64)head->flags << 48);
+
+        if (apply_sink_mode == 2 && (head->sequence * 7 + head->key) % 5 == 0 &&
+            head->length & 1)
+                return false;
+        if (apply_heard_count[side] < array_count(apply_heard[side]))
+                apply_heard[side][apply_heard_count[side]++] = mark;
+        if (apply_sink_mode == 3 && head->length % 3 == 0)
+        {
+                p8 key = (p8)((head->key + 1) % 8);
+
+                (void)waterlink_post(link, key,
+                                     key & 1 ? WATERLINK_FRAME_REPLACEABLE
+                                             : WATERLINK_FRAME_DURABLE,
+                                     payload, head->length < 8 ? head->length : 8,
+                                     link->clock);
+        }
+        return true;
+}
+
+//      A body of parts, made from a copy of the generator's state.
+static positive apply_parts(struct waterlink_link address_to link, p64 state,
+                            struct waterlink_part address_to parts,
+                            p8 address_to body)
+{
+        positive count = 1 + fill_next(address_of state) % (fill_next(address_of state) % 4 ? 4 : 12);
+
+        for (positive at = 0; at < WATERLINK_PAYLOAD; at++)
+                body[at] = (p8)fill_next(address_of state);
+        for (positive part = 0; part < count; part++)
+        {
+                p8 key = (p8)(fill_next(address_of state) % 8 ? fill_next(address_of state) % 8
+                                                               : fill_next(address_of state) % 64);
+                struct waterlink_part address_to made = parts + part;
+
+                memory_zero(made, sizeof *made);
+                made->key = key;
+                if (fill_next(address_of state) % 3 == 0)
+                {
+                        p32 at = link->sending[key].first;
+                        positive walk = fill_next(address_of state) % 4;
+                        p32 base;
+
+                        while (walk-- && at != WATERLINK_NONE &&
+                               link->slot[at].chain != WATERLINK_NONE)
+                                at = link->slot[at].chain;
+                        base = at == WATERLINK_NONE ? link->sending[key].sequence
+                                                    : link->slot[at].sequence;
+                        made->flags = WATERLINK_FRAME_ACK;
+                        made->number = fill_next(address_of state) % 5
+                                               ? base - 2 + (p32)(fill_next(address_of state) % 4)
+                                               : fill_sequence_pick(address_of state) - 1;
+                        if (made->number == WATERLINK_NONE)
+                                made->number = 0;
+                        switch (fill_next(address_of state) % 5)
+                        {
+                        case 0: made->more = 0; break;
+                        case 1: made->more = ~0ull; break;
+                        case 2: made->more = 1ull << (fill_next(address_of state) % 64); break;
+                        default: made->more = fill_next(address_of state) &
+                                              fill_next(address_of state);
+                        }
+                }
+                else
+                {
+                        p32 taken = link->receiving[key].delivered;
+                        positive length = fill_next(address_of state) % 4 ? fill_next(address_of state) % 16
+                                                                          : fill_next(address_of state) % 200;
+                        p32 number;
+
+                        switch (fill_next(address_of state) % 8)
+                        {
+                        case 0: number = taken; break;
+                        case 1: number = taken - (p32)(fill_next(address_of state) % 3); break;
+                        case 2: number = taken + 2 + (p32)(fill_next(address_of state) % 70); break;
+                        case 3: number = fill_sequence_pick(address_of state); break;
+                        default: number = taken + 1;
+                        }
+                        if (!number || number == WATERLINK_NONE)
+                                number = 1;
+                        made->flags = (p8)((key & 1 ? WATERLINK_FRAME_REPLACEABLE
+                                                    : WATERLINK_FRAME_DURABLE) |
+                                           (fill_next(address_of state) % 4 ? 0 : WATERLINK_FRAME_URGENT) |
+                                           (fill_next(address_of state) % 29 ? 0 : WATERLINK_FRAME_LAST));
+                        if (fill_next(address_of state) % 16 == 0)
+                                made->flags ^= WATERLINK_FRAME_REPLACEABLE |
+                                               WATERLINK_FRAME_DURABLE;
+                        made->number = number;
+                        made->more = length;
+                        made->at = (p16)(fill_next(address_of state) %
+                                         (WATERLINK_PAYLOAD - length));
+                }
+        }
+        return count;
+}
+
+//      A key's first two slots trade sequences, so an acknowledgement can
+//      take the second and not the first.
+static fn apply_shuffle(struct waterlink_link address_to link, p8 key)
+{
+        p32 first = link->sending[key].first;
+        p32 second = first == WATERLINK_NONE ? WATERLINK_NONE
+                                             : link->slot[first].chain;
+        p32 swap;
+
+        if (second == WATERLINK_NONE)
+                return;
+        swap = link->slot[first].sequence;
+        link->slot[first].sequence = link->slot[second].sequence;
+        link->slot[second].sequence = swap;
+}
+
+static fn apply_procedural(void)
+{
+        static struct waterlink_part parts[WATERLINK_PARTS];
+        static p8 body[WATERLINK_PAYLOAD];
+        p64 state = 0x13198a2e03707344ull;
+        positive runs = 0, calls = 0, apart = 0, heard = 0, missed = 0;
+
+        memory_zero(apply_seen, sizeof apply_seen);
+        for (positive run = 0; run < 240; run++)
+        {
+                p64 now = 1000 + fill_next(address_of state) % 100000;
+
+                waterlink_link_reset(address_of fill_one);
+                waterlink_link_reset(address_of fill_two);
+                apply_heard_count[0] = apply_heard_count[1] = 0;
+                for (positive step = 0; step < 120; step++)
+                {
+                        positive count;
+                        waterlink_sink sink;
+                        p64 at;
+
+                        (void)fill_change(address_of fill_one, state, now);
+                        state = fill_change(address_of fill_two, state, now);
+                        if (fill_next(address_of state) % 3 == 0)
+                        {
+                                bool alone = false;
+                                static p8 out[WATERLINK_PAYLOAD];
+
+                                (void)fill_walk(address_of fill_one, out, now,
+                                                address_of alone);
+                                (void)fill_walk(address_of fill_two, out, now,
+                                                address_of alone);
+                        }
+                        if (fill_next(address_of state) % 23 == 0)
+                        {
+                                p8 key = (p8)(fill_next(address_of state) % 8);
+
+                                apply_shuffle(address_of fill_one, key);
+                                apply_shuffle(address_of fill_two, key);
+                        }
+                        if (fill_next(address_of state) % 11 == 0)
+                        {
+                                p8 key = (p8)(fill_next(address_of state) % 8);
+
+                                fill_one.receiving[key].paused ^= 1;
+                                fill_two.receiving[key].paused ^= 1;
+                        }
+                        count = apply_parts(address_of fill_one, state, parts, body);
+                        (void)fill_next(address_of state);
+                        apply_sink_mode = fill_next(address_of state) % 4;
+                        sink = apply_sink_mode ? apply_hear : null;
+                        at = fill_next(address_of state) % 16 == 0
+                                     ? now - fill_next(address_of state) % 200
+                                     : now;
+                        apply_walk(address_of fill_one, body, parts, count, at,
+                                   sink, (address_any)1);
+                        waterlink_apply(address_of fill_two, body, parts, count, at,
+                                        sink, (address_any)2);
+                        calls++;
+                        apart += memory_compare(address_of fill_one.sending,
+                                                address_of fill_two.sending,
+                                                sizeof fill_one -
+                                                        __builtin_offsetof(
+                                                                struct waterlink_link,
+                                                                sending)) != 0;
+                        for (positive slot = 0; slot < WATERLINK_SLOTS; slot++)
+                                apart += memory_compare(
+                                                 fill_one.slot + slot,
+                                                 fill_two.slot + slot,
+                                                 __builtin_offsetof(
+                                                         struct waterlink_slot,
+                                                         payload)) != 0;
+                        for (positive held = 0; held < WATERLINK_HELD; held++)
+                                apart += memory_compare(
+                                                 fill_one.held + held,
+                                                 fill_two.held + held,
+                                                 __builtin_offsetof(
+                                                         struct waterlink_held,
+                                                         payload)) != 0;
+                        now += fill_next(address_of state) % 8 ? fill_next(address_of state) % 3000
+                                                               : fill_next(address_of state) % 300000;
+                }
+                apart += apply_heard_count[0] != apply_heard_count[1] ||
+                         memory_compare(apply_heard[0], apply_heard[1],
+                                        apply_heard_count[0] * sizeof(p64)) != 0;
+                apart += memory_compare(address_of fill_one, address_of fill_two,
+                                        sizeof fill_one) != 0;
+                heard += apply_heard_count[0];
+                runs++;
+        }
+
+        for (positive seen = 0; seen < APPLY_SEEN; seen++)
+                missed += apply_seen[seen] < 20;
+        string_format(log, "  apply: %p calls in %p runs handed on %p frames; "
+                           "%p paths taken under twenty times\n",
+                      calls, runs, heard, missed);
+        for (positive seen = 0; seen < APPLY_SEEN; seen++)
+                if (apply_seen[seen] < 20)
+                        string_format(log, "    apply path %p taken %p times\n",
+                                      seen, apply_seen[seen]);
+        check("waterlink_apply is the C it replaced, frame for frame and state "
+              "for state, on every generated link and body",
+              runs == 240 && calls > 25000 && heard > 10000 && apart == 0);
+        check("and the generated links and bodies took every path of it",
               missed == 0);
 }
 
@@ -58481,6 +58955,7 @@ b32 main(void)
         body_prefix_boundaries();
         judge_procedural();
         fill_procedural();
+        apply_procedural();
         replay();
         saturation();
         replay_generated();
