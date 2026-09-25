@@ -15846,8 +15846,10 @@ if [ "$jobs" -gt 1 ]; then
         done
 
         # shellcheck disable=SC2016
-        one_lane='sh "$0" --lane "$1" < /dev/null > "$TEST_SHARED_WORK/lane.$1.log" 2>&1
-echo $? > "$TEST_SHARED_WORK/lane.$1.status"'
+        one_lane='lane_began=$(date +%s)
+sh "$0" --lane "$1" < /dev/null > "$TEST_SHARED_WORK/lane.$1.log" 2>&1
+echo $? > "$TEST_SHARED_WORK/lane.$1.status"
+echo $(($(date +%s) - lane_began)) > "$TEST_SHARED_WORK/lane.$1.seconds"'
 
         [ -z "$pooled" ] ||
                 printf '%s\n' $pooled |
@@ -15863,8 +15865,11 @@ echo $? > "$TEST_SHARED_WORK/lane.$1.status"'
                 exit 1
         fi
 
+        #       Each lane says how long it took, so the one holding a run up
+        #       is named without a profile of its own.
         for lane in $requested; do
-                printf '\n%s -- %s\n' "$lane" "$(describe "$lane")"
+                printf '\n%s -- %s (%ss)\n' "$lane" "$(describe "$lane")" \
+                        "$(cat "$work/lane.$lane.seconds" 2>/dev/null || echo ?)"
                 cat "$work/lane.$lane.log" 2>/dev/null
                 outcome=$(cat "$work/lane.$lane.status" 2>/dev/null || echo 1)
 
