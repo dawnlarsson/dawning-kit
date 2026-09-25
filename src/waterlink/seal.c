@@ -1015,8 +1015,111 @@ __asm__(
     ".popsection\n"
 );
 #elif RISCV64
+/*
+        The small bodies on riscv64, where AES is Zvkned's and the
+        carry-less multiply is Zbc's, so they are asked for together as on
+        the other two. The datagram comes in as bytes to v16 -- nothing says
+        it is aligned -- and the counter blocks from J0 go through the
+        rounds in v8, a block to an element group, the round keys in v0 to
+        v7 and v24 to v26. Every vector operand is a group of eight at vl
+        and no more, so one shape serves every VLEN: a group holds eight
+        blocks at the least, the bodies need six at the most, and nothing
+        here assumes a block a register.
+        The hash is scalar, where the multiply is: a gather puts each
+        block's bytes in reverse in v0, its words come off the front of it
+        one at a time, and their Karatsuba products against H^(n+2) ... H^1
+        from the table a0 points at sum into t0/t1 (low), t2/t3 (high) and
+        t4/t5 (middle), folded once at the end.
+*/
+//  t5 bytes of the datagram, header first, to v16, and a counter block for
+//  each sixteen of them from J0 through the rounds in v8. J0 is four zero
+//  bytes, the header's counter word and 00 00 00 01: a gather takes the
+//  header's words two and three into lanes one and two of every block --
+//  an index no VLMAX reaches reads zero -- and a table adds the counters.
+//  The round keys are read sixteen bytes each, as lib.c's Zvkned body
+//  reads them, rather than a register's worth past the schedule.
+#define WATERLINK_SMALL_STREAM                                                \
+    "vsetvli zero, t5, e8, m8, ta, mu\n   vle8.v v16, (a1)\n"                 \
+    "srli t6, t5, 2\n   vsetvli zero, t6, e32, m8, ta, mu\n"                  \
+    "lla t4, .Lwaterlink_small_j0\n   vle32.v v24, (t4)\n"                    \
+    "addi t4, t4, 96\n   vle32.v v0, (t4)\n"                                  \
+    "vrgather.vv v8, v16, v24\n   vor.vv v8, v8, v0\n"                        \
+    "vsetivli zero, 16, e8, m1, ta, ma\n   vle8.v v0, (a0)\n"                 \
+    "addi t4, a0, 16\n   vle8.v v1, (t4)\n   addi t4, a0, 32\n   vle8.v v2, (t4)\n" \
+    "addi t4, a0, 48\n   vle8.v v3, (t4)\n   addi t4, a0, 64\n   vle8.v v4, (t4)\n" \
+    "addi t4, a0, 80\n   vle8.v v5, (t4)\n   addi t4, a0, 96\n   vle8.v v6, (t4)\n" \
+    "addi t4, a0, 112\n   vle8.v v7, (t4)\n   addi t4, a0, 128\n   vle8.v v24, (t4)\n" \
+    "addi t4, a0, 144\n   vle8.v v25, (t4)\n   addi t4, a0, 160\n   vle8.v v26, (t4)\n" \
+    "vsetvli zero, t6, e32, m8, ta, mu\n"                                     \
+    "vaesz.vs v8, v0\n   vaesem.vs v8, v1\n   vaesem.vs v8, v2\n"             \
+    "vaesem.vs v8, v3\n   vaesem.vs v8, v4\n   vaesem.vs v8, v5\n"            \
+    "vaesem.vs v8, v6\n   vaesem.vs v8, v7\n   vaesem.vs v8, v24\n"           \
+    "vaesem.vs v8, v25\n   vaesef.vs v8, v26\n"
+//  The next block's two words off the front of v0, low then high: each
+//  slide moves every word of the group down one, vl being all of them.
+#define WATERLINK_SMALL_WORDS                                                 \
+    "vslidedown.vi v0, v0, 1\n   vmv.x.s a4, v0\n"                            \
+    "vslidedown.vi v0, v0, 1\n   vmv.x.s a5, v0\n"
+//  Its three products against the power at lo(a0), hi(a0) and its words'
+//  sum at mid(a0), summed.
+#define WATERLINK_SMALL_PRODUCT(lo, hi, mid)                                  \
+    "ld a7, " lo "(a0)\n   clmul a6, a4, a7\n   xor t0, t0, a6\n"             \
+    "clmulh a6, a4, a7\n   xor t1, t1, a6\n"                                  \
+    "ld a7, " hi "(a0)\n   clmul a6, a5, a7\n   xor t2, t2, a6\n"             \
+    "clmulh a6, a5, a7\n   xor t3, t3, a6\n"                                  \
+    "xor a2, a4, a5\n   ld a7, " mid "(a0)\n   clmul a6, a2, a7\n"            \
+    "xor t4, t4, a6\n   clmulh a6, a2, a7\n   xor t5, t5, a6\n"
+//  The header against H^(n+2), from 768 - 16 (n + 2) in the table at 192,
+//  then the box's blocks against the powers after it.
+#define WATERLINK_SMALL_HASH_START                                            \
+    "addi a0, a0, 928\n   sub a0, a0, a3\n"                                   \
+    "srli t6, t5, 3\n   vsetvli zero, t6, e64, m8, ta, ma\n"                  \
+    "vmv.x.s a4, v0\n   vslidedown.vi v0, v0, 1\n   vmv.x.s a5, v0\n"         \
+    "ld a7, 0(a0)\n   clmul t0, a4, a7\n   clmulh t1, a4, a7\n"               \
+    "ld a7, 8(a0)\n   clmul t2, a5, a7\n   clmulh t3, a5, a7\n"               \
+    "xor a2, a4, a5\n   ld a7, 768(a0)\n"                                     \
+    "clmul t4, a2, a7\n   clmulh t5, a2, a7\n"                                \
+    WATERLINK_SMALL_WORDS WATERLINK_SMALL_PRODUCT("16", "24", "784")          \
+    "li t6, 16\n   beq a3, t6, 1f\n"                                          \
+    WATERLINK_SMALL_WORDS WATERLINK_SMALL_PRODUCT("32", "40", "800")          \
+    "li t6, 32\n   beq a3, t6, 1f\n"                                          \
+    WATERLINK_SMALL_WORDS WATERLINK_SMALL_PRODUCT("48", "56", "816")          \
+    "li t6, 48\n   beq a3, t6, 1f\n"                                          \
+    WATERLINK_SMALL_WORDS WATERLINK_SMALL_PRODUCT("64", "72", "832")          \
+    "1:\n"
+//  The lengths block against H^1 -- 128 bits of header, the box's bits of
+//  text, so its high word's products are shifts -- then the fold, as
+//  lib.c's Zbc body folds: the hash's high word in t3, its low in t2.
+#define WATERLINK_SMALL_HASH_END                                              \
+    "add t6, a0, a3\n   slli a4, a3, 3\n"                                     \
+    "ld a7, 16(t6)\n   clmul a6, a4, a7\n   xor t0, t0, a6\n"                 \
+    "clmulh a6, a4, a7\n   xor t1, t1, a6\n"                                  \
+    "ld a7, 24(t6)\n   slli a6, a7, 7\n   xor t2, t2, a6\n"                   \
+    "srli a6, a7, 57\n   xor t3, t3, a6\n"                                    \
+    "xori a2, a4, 0x80\n   ld a7, 784(t6)\n   clmul a6, a2, a7\n"             \
+    "xor t4, t4, a6\n   clmulh a6, a2, a7\n   xor t5, t5, a6\n"               \
+    "xor a4, t4, t0\n   xor a4, a4, t2\n   xor a5, t5, t1\n   xor a5, a5, t3\n" \
+    "xor t1, t1, a4\n   xor t2, t2, a5\n"                                     \
+    "li a7, 0xc2\n   slli a7, a7, 56\n"                                       \
+    "clmul a4, t0, a7\n   clmulh a5, t0, a7\n   xor t1, t1, a4\n"             \
+    "xor t2, t2, t0\n   xor t2, t2, a5\n"                                     \
+    "clmul a4, t1, a7\n   clmulh a5, t1, a7\n   xor t2, t2, a4\n"             \
+    "xor t3, t3, t1\n   xor t3, t3, a5\n"
+//  Key stream, text and hash leave no register behind.
+#define WATERLINK_SMALL_WIPE                                                  \
+    "vsetvli t6, zero, e8, m8, ta, ma\n"                                      \
+    "vmv.v.i v0, 0\n   vmv.v.i v8, 0\n   vmv.v.i v16, 0\n   vmv.v.i v24, 0\n" \
+    "li t0, 0\n   li t1, 0\n   li t2, 0\n   li t3, 0\n   li t4, 0\n"          \
+    "li t5, 0\n   li a4, 0\n   li a5, 0\n   li a6, 0\n"
+
 __asm__(
     ASM_FUNC(waterlink_seal_box)
+    "li t0, 64\n   bgtu a3, t0, .Lwaterlink_seal_box_general\n"
+    "lla t0, cpu_has_aes\n   lbu t0, 0(t0)\n"
+    "lla t1, cpu_has_pclmul\n   lbu t1, 0(t1)\n"
+    "and t0, t0, t1\n   beqz t0, .Lwaterlink_seal_box_general\n"
+    "tail waterlink_seal_small\n"
+    ".Lwaterlink_seal_box_general:\n"
     "addi sp, sp, -128\n   sd ra, 120(sp)\n   sd s0, 112(sp)\n   sd s1, 104(sp)\n"
     "sd s2, 96(sp)\n   sd s3, 88(sp)\n"
     "mv s0, a0\n   mv s1, a1\n   mv s2, a3\n"
@@ -1052,6 +1155,12 @@ __asm__(
     ASM_RET
     ASM_END(waterlink_seal_box)
     ASM_FUNC(waterlink_open_box)
+    "li t0, 64\n   bgtu a2, t0, .Lwaterlink_open_box_general\n"
+    "lla t0, cpu_has_aes\n   lbu t0, 0(t0)\n"
+    "lla t1, cpu_has_pclmul\n   lbu t1, 0(t1)\n"
+    "and t0, t0, t1\n   beqz t0, .Lwaterlink_open_box_general\n"
+    "tail waterlink_open_small\n"
+    ".Lwaterlink_open_box_general:\n"
     "addi sp, sp, -128\n   sd ra, 120(sp)\n   sd s0, 112(sp)\n   sd s1, 104(sp)\n"
     "sd s2, 96(sp)\n   sd s3, 88(sp)\n"
     "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n"
@@ -1088,6 +1197,80 @@ __asm__(
     "ld s2, 96(sp)\n   ld s3, 88(sp)\n   addi sp, sp, 128\n"
     ASM_RET
     ASM_END(waterlink_open_box)
+
+    //  a0 the key, a1 the datagram, a2 used, a3 the box: one to four
+    //  blocks, in registers from end to end, and nothing written but the
+    //  box and the tag.
+    ASM_LOCAL_FUNC(waterlink_seal_small)
+    ".option push\n   .option arch, +v, +zvkned, +zbc\n"
+    "addi t5, a3, 16\n"
+    WATERLINK_SMALL_STREAM
+    //  The text to used, xored in; past it the key stream stands as it is,
+    //  which is sealing zeros, as the general body zeroes them. Lane i - 16
+    //  is asked against used and the box, so the header's lanes, where it
+    //  wraps past 239, take neither and block 0 keeps E(J0).
+    "vsetvli zero, t5, e8, m8, ta, mu\n"
+    "vid.v v24\n   vadd.vi v24, v24, -16\n"
+    "vmsltu.vx v0, v24, a2\n   vxor.vv v8, v8, v16, v0.t\n"
+    "vmsltu.vx v0, v24, a3\n   vse8.v v8, (a1), v0.t\n"
+    "vmerge.vvm v16, v16, v8, v0\n"
+    //  Header and box, each block's bytes reversed, for the hash.
+    "vid.v v24\n   vxor.vi v24, v24, 15\n   vrgather.vv v0, v16, v24\n"
+    WATERLINK_SMALL_HASH_START
+    WATERLINK_SMALL_HASH_END
+    //  The hash back to a block, its bytes reversed, xored with E(J0), and
+    //  that is the tag.
+    "vsetivli zero, 2, e64, m8, ta, ma\n"
+    "vmv.v.x v16, t2\n   vslide1down.vx v0, v16, t3\n"
+    "vsetivli zero, 16, e8, m8, ta, ma\n"
+    "vrgather.vv v16, v0, v24\n   vxor.vv v16, v16, v8\n"
+    "add t6, a1, a3\n   addi t6, t6, 16\n   vse8.v v16, (t6)\n"
+    WATERLINK_SMALL_WIPE
+    ASM_RET
+    ".option pop\n"
+    ASM_LOCAL_END(waterlink_seal_small)
+
+    //  a0 the key, a1 the datagram, a2 the box. The rounds make one block
+    //  more, for the tag's lanes, and E(J0) goes onto the tag that came:
+    //  the hash of header and box as they came, each block reversed, is
+    //  then that block's two words in reverse, compared whole. The text
+    //  goes back only when they agree, and a box that does not open is
+    //  wiped instead, through the same store.
+    ASM_LOCAL_FUNC(waterlink_open_small)
+    ".option push\n   .option arch, +v, +zvkned, +zbc\n"
+    "mv a3, a2\n   addi t5, a2, 32\n"
+    WATERLINK_SMALL_STREAM
+    "vsetvli zero, t5, e8, m8, ta, mu\n"
+    "vmv.v.i v0, 0\n   addi t6, a3, 16\n   vslideup.vx v0, v8, t6\n"
+    "vxor.vv v16, v16, v0\n"
+    "vid.v v24\n   vxor.vi v24, v24, 15\n   vrgather.vv v0, v16, v24\n"
+    "vxor.vv v8, v8, v16\n"
+    WATERLINK_SMALL_HASH_START
+    WATERLINK_SMALL_HASH_END
+    WATERLINK_SMALL_WORDS
+    "xor a4, a4, t2\n   xor a5, a5, t3\n   or a4, a4, a5\n"
+    //  Lanes 16 to 16 + box, from the reversed index, whose high bits are
+    //  the lane's.
+    "addi t6, a3, 32\n   vsetvli zero, t6, e8, m8, ta, mu\n"
+    "vadd.vi v24, v24, -16\n   vmsltu.vx v0, v24, a3\n"
+    "beqz a4, 2f\n"
+    "vmv.v.i v8, 0\n"
+    "2:  vse8.v v8, (a1), v0.t\n   seqz a0, a4\n"
+    WATERLINK_SMALL_WIPE
+    ASM_RET
+    ".option pop\n"
+    ASM_LOCAL_END(waterlink_open_small)
+
+    ".pushsection .rodata\n   .balign 16\n"
+    //  J0's gather, six blocks of it: the header's words two and three into
+    //  lanes one and two, and an index no VLMAX reaches into the others;
+    //  then each block's counter, big endian in lane three.
+    ".Lwaterlink_small_j0:\n"
+    ".rept 6\n   .long 0xffffffff, 2, 3, 0xffffffff\n   .endr\n"
+    ".long 0, 0, 0, 0x01000000, 0, 0, 0, 0x02000000\n"
+    ".long 0, 0, 0, 0x03000000, 0, 0, 0, 0x04000000\n"
+    ".long 0, 0, 0, 0x05000000, 0, 0, 0, 0x06000000\n"
+    ".popsection\n"
 );
 #endif
 

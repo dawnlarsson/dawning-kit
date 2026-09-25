@@ -54236,10 +54236,12 @@ static fn sealed_generated(void)
 }
 
 /*
-        The short boxes a keystroke seals -- one to four blocks, which x86
-        seals and opens in registers, and the first box past them -- under
-        every length of text each can hold, with the short body and without
-        it: the datagram net.c's AES-GCM makes, nothing written past the tag,
+        The short boxes a keystroke seals -- one to four blocks, which all
+        three machines seal and open in registers, and the first box past
+        them -- under every length of text each can hold, with the short
+        body and without it (it asks for carry-less multiply beside AES on
+        each, so clearing the one byte turns it off everywhere): the
+        datagram net.c's AES-GCM makes, nothing written past the tag,
         an open that gives the text back and leaves header and tag as they
         were, and every one-bit change anywhere in header, box or tag
         refused, the box wiped and nothing else touched.
