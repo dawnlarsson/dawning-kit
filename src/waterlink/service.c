@@ -2695,6 +2695,10 @@ static b32 link_client_run(string_address name, p8 kind,
         if (link_self.socket < 0)
                 return host_fail("a socket", link_self.socket);
         link_self.gso = !file_environment((string_address) "WATERLINK_NO_SEGMENTS");
+        //      The client greets nobody. Left at zero, the wait watched
+        //      descriptor 0, standard input, as the greeting socket, and an
+        //      input at its end or on a file woke it at once, every turn.
+        link_nearby.socket = -1;
         if (!link_session_open(s))
                 return host_fail("memory", -ENOMEM);
         memory_copy(s->peer, peer->key, 32);

@@ -33694,6 +33694,16 @@ on("b", moon + " link allow a shell")
 runs("")
 shell("")
 
+#       A client with nothing more to send sleeps while the far command runs:
+#       its input is /dev/null here, as it is for every client in this scene.
+spent = os.times()
+status, out, err = on("a", moon + " link run b 'sleep 2; echo slept'")
+spent = [a - b for a, b in zip(os.times(), spent)]
+spent = spent[2] + spent[3]
+say(status == 0 and out == b"slept\n" and spent < 0.5,
+    "a client whose input is at its end sleeps while the command runs "
+    "(%.2f s of CPU over 2 s)" % spent)
+
 status, out, err = on("a", moon + " link run b 'for i in $(seq 1 25); do echo line $i; sleep 0.2; done'",
                       extra={"WATERLINK_REKEY_SECONDS": "1"}, timeout=60)
 keyed = [int(w) for w in err.split() if w.isdigit()]
