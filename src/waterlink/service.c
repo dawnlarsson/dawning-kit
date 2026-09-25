@@ -2106,17 +2106,35 @@ static bool link_carried(p8 address_to datagram, positive length,
         struct waterlink_datagram head;
         struct link_session address_to s = null;
         struct link_keys address_to keys;
+        struct waterlink_part parts[WATERLINK_PARTS];
+        bipolar count = 0;
 
+        //      The header is read before the tag is, so a datagram too short
+        //      to be one is refused before that read, whoever calls.
+        if (length < 48 || length > WATERLINK_DATAGRAM || length % 16)
+                return false;
         memory_copy(address_of head, datagram, 16);
         keys = link_keys_for(head.receiver, address_of s);
         if (!keys || !waterlink_open(address_of keys->receive, datagram,
                                      length))
                 return false;
-        if (!waterlink_replay_new(address_of keys->replay, head.counter))
+
+        //      A tag says who sent a datagram, not that it is one: its kind
+        //      and its whole body are judged before its counter is spent or
+        //      its source believed. A close carries nothing.
+        if (head.kind == WATERLINK_KIND_CARRY)
+                count = waterlink_judge(datagram + 16, length - 32, parts);
+        else if (head.kind != WATERLINK_KIND_CLOSE ||
+                 memory_span_byte(datagram + 16, 0, length - 32) != length - 32)
                 return false;
+        if (count < 0)
+                return false;
+
         if (waterlink_session_spent(now - keys->made, keys->counter))
                 return false;
         if (keys == address_of s->before && now - s->now.made > LINK_GRACE)
+                return false;
+        if (!waterlink_replay_new(address_of keys->replay, head.counter))
                 return false;
 
         if (keys == address_of s->next)
@@ -2142,11 +2160,10 @@ static bool link_carried(p8 address_to datagram, positive length,
                 s->finished = true;
                 return true;
         }
-        if (head.kind != WATERLINK_KIND_CARRY)
-                return false;
 
-        return waterlink_deliver(s->link, datagram + 16, length - 32, now,
-                                    sink, s);
+        waterlink_apply(s->link, datagram + 16, parts, (positive)count, now,
+                        sink, s);
+        return true;
 }
 
 static bipolar link_receive(p8 address_to datagram, p8 address_to address,

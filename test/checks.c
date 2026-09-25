@@ -52018,6 +52018,565 @@ static fn malformed_bodies(void)
                                 sizeof widest, one.clock, hear, null) &&
                       heard == 1 && heard_key[0] == WATERLINK_KEYS - 1 &&
                       heard_sequence[0] == 0xfffffffeu && heard_first[0] == 'z');
+
+        /* A malformed suffix must make the entire authenticated body inert,
+           not deliver its valid prefix and only then report failure. */
+        {
+                static const p8 mixed[] = {
+                    WATERLINK_FRAME_DURABLE, 7, 1, 1, 'x',
+                    WATERLINK_FRAME_DURABLE, 7, 2, 9, 'y'};
+                struct waterlink_link before;
+
+                waterlink_link_reset(address_of one);
+                before = one;
+                heard = 0;
+                check("sec: a malformed body with a valid prefix is refused",
+                      !waterlink_deliver(address_of one,
+                                         (p8 address_to)mixed, sizeof mixed,
+                                         100, hear, null));
+                check("sec: refusing the malformed whole delivers no prefix",
+                      heard == 0);
+                check("sec: and changes none of the transport state",
+                      !memory_compare(address_of one, address_of before,
+                                      sizeof one));
+        }
+}
+
+/*
+        The judge's shortest inputs, every one: no frame or acknowledgement
+        fits in two bytes, and three hold a flags byte, a key and one number
+        of the two a part needs, so exactly the strings of zeros are bodies
+        and they hold nothing.
+*/
+static fn judge_short_exhaustive(void)
+{
+        struct waterlink_part parts[WATERLINK_PARTS];
+        static const p8 keys[] = {0, 63, 64};
+        p8 body[3];
+        positive cases = 0;
+        positive wrong = 0;
+
+        wrong += waterlink_judge(body, 0, parts) != 0;
+        cases++;
+        for (positive first = 0; first < 256; first++)
+        {
+                body[0] = (p8)first;
+                wrong += waterlink_judge(body, 1, parts) != (first ? -1 : 0);
+                cases++;
+                for (positive second = 0; second < 256; second++)
+                {
+                        body[1] = (p8)second;
+                        wrong += waterlink_judge(body, 2, parts) !=
+                                 (first || second ? -1 : 0);
+                        cases++;
+                }
+                for (positive key = 0; key < array_count(keys); key++)
+                        for (positive third = 0; third < 256; third++)
+                        {
+                                body[1] = keys[key];
+                                body[2] = (p8)third;
+                                wrong += waterlink_judge(body, 3, parts) !=
+                                         (first || keys[key] || third ? -1 : 0);
+                                cases++;
+                        }
+        }
+        check("the judge agrees on every body of two bytes and every "
+              "three-byte one around the key's bound",
+              cases == 1 + 256 + 256 * 256 + 256 * 3 * 256 && wrong == 0);
+}
+
+/* Every cut through a compound frame/ack body. The only accepted prefixes
+   are the empty body, the exact end of the frame, the exact end of the ack,
+   and authenticated zero padding after it. Every other cut is inside a
+   header, varint or payload and must be both refused and state-atomic. */
+static fn body_prefix_boundaries(void)
+{
+        p8 body[26] = {WATERLINK_FRAME_DURABLE, 7, 1, 3, 'a', 'b', 'c',
+                       WATERLINK_FRAME_ACK, 7, 4, 0};
+        positive wrong = 0;
+        positive changed = 0;
+        positive delivered = 0;
+
+        for (positive length = 0; length <= sizeof body; length++)
+        {
+                bool want = length == 0 || length == 7 || length >= 11;
+                struct waterlink_link before;
+                bool got;
+
+                waterlink_link_reset(address_of one);
+                before = one;
+                heard = 0;
+                got = waterlink_deliver(address_of one, body, length, 100,
+                                        hear, null);
+                wrong += got != want;
+                if (!want)
+                        changed += heard || memory_compare(address_of one,
+                                                          address_of before,
+                                                          sizeof one);
+                else if (length >= 7)
+                        delivered += heard == 1 && heard_first[0] == 'a';
+        }
+
+        check("every cut through a frame, ack and padding has one answer",
+              wrong == 0);
+        check("every malformed cut is transport- and application-atomic",
+              changed == 0);
+        check("every complete-frame prefix delivers exactly that frame",
+              delivered == 1 + sizeof body - 11 + 1);
+}
+
+/*
+        An independent reading of the wire for the fuzzer below. It never
+        calls the production reader and spells its bounds as numbers, so
+        agreement is two readings of the rules, not the code certifying
+        itself; and it says what a body holds, part for part, so the judge
+        must agree on every word it hands the application, not only on yes.
+*/
+static bool judge_model_number(p8 address_to body, positive length,
+                               positive address_to at, p64 address_to value)
+{
+        p64 got = 0;
+
+        for (positive byte = 0; byte < 10 && address_to at < length; byte++)
+        {
+                p8 one = body[(address_to at)++];
+
+                if (byte == 9 && one > 1)
+                        return false;
+                got |= (p64)(one & 0x7f) << (7 * byte);
+                if (!(one & 0x80))
+                {
+                        if (byte && !one)
+                                return false;
+                        address_to value = got;
+                        return true;
+                }
+        }
+        return false;
+}
+
+static bipolar judge_model(p8 address_to body, positive length,
+                           struct waterlink_part address_to parts)
+{
+        positive at = 0;
+        positive count = 0;
+
+        if (length > 1168)
+                return -1;
+        while (at + 1 < length && body[at])
+        {
+                p8 flags = body[at++];
+                p8 key = body[at++];
+                p64 first, second;
+                bool replaceable = (flags & 1) != 0;
+                bool durable = (flags & 2) != 0;
+
+                if (key >= 64 ||
+                    !judge_model_number(body, length, address_of at,
+                                        address_of first) ||
+                    !judge_model_number(body, length, address_of at,
+                                        address_of second))
+                        return -1;
+                parts[count].flags = flags;
+                parts[count].key = key;
+                parts[count].at = (p16)at;
+                parts[count].number = (p32)first;
+                parts[count].more = second;
+                count++;
+                if (flags == 8)
+                {
+                        if (first >= 0xffffffffu)
+                                return -1;
+                        continue;
+                }
+                if (replaceable == durable || (flags & ~0x17u) || !first ||
+                    first >= 0xffffffffu || second > 1159 || second > length - at)
+                        return -1;
+                at += (positive)second;
+        }
+        for (; at < length; at++)
+                if (body[at])
+                        return -1;
+        return (bipolar)count;
+}
+
+/*
+        Delivery as it was before the judge: one walk applying each part as
+        it read it. For a body the judge takes, applying its parts must leave
+        a link exactly where this walk leaves it, having handed on the same
+        frames in the same order.
+*/
+static bool judge_walk_number(p8 address_to bytes, positive length,
+                              positive address_to at, p64 address_to value)
+{
+        positive used = memory_vli_get(bytes + address_to at,
+                                       length - address_to at, 10, value);
+
+        address_to at += used;
+        return used != 0;
+}
+
+static bool judge_walk(struct waterlink_link address_to link,
+                       p8 address_to bytes, positive length, p64 now,
+                       waterlink_sink sink, address_any context)
+{
+        positive at = 0;
+        bool framed = false;
+        bool acked = false;
+        p64 newly = 0, latest = 0, sample = 0;
+        bool good;
+
+        if (length > WATERLINK_PAYLOAD)
+                return false;
+        if (now > link->clock)
+                link->clock = now;
+        now = link->clock;
+        while (at + 1 < length && bytes[at])
+        {
+                p8 flags = bytes[at];
+                p8 key = bytes[at + 1];
+                struct waterlink_frame head;
+                struct waterlink_receiving address_to live;
+                p64 sequence, size;
+
+                at += 2;
+                if (key >= WATERLINK_KEYS)
+                        return false;
+                if (flags == WATERLINK_FRAME_ACK)
+                {
+                        p64 delivered, mask;
+
+                        if (!judge_walk_number(bytes, length, address_of at,
+                                               address_of delivered) ||
+                            !judge_walk_number(bytes, length, address_of at,
+                                               address_of mask) ||
+                            delivered >= WATERLINK_NONE)
+                                return false;
+                        waterlink_acknowledge(link, key, (p32)delivered, mask,
+                                              address_of newly,
+                                              address_of latest,
+                                              address_of sample);
+                        acked = true;
+                        continue;
+                }
+                if (!waterlink_frame_sane(flags) ||
+                    !judge_walk_number(bytes, length, address_of at,
+                                       address_of sequence) ||
+                    !judge_walk_number(bytes, length, address_of at,
+                                       address_of size) ||
+                    !sequence || sequence >= WATERLINK_NONE ||
+                    size > WATERLINK_FRAME_MAX || size > length - at)
+                        return false;
+                head.key = key;
+                head.sequence = (p32)sequence;
+                head.length = (p16)size;
+                head.flags = flags;
+                live = link->receiving + key;
+                waterlink_ack_owe(link, key);
+                framed = true;
+                if (flags & (WATERLINK_FRAME_URGENT | WATERLINK_FRAME_LAST))
+                        link->owed_now = 1;
+                if (head.sequence <= live->delivered || live->over)
+                {
+                        link->stale++;
+                        link->owed_now = 1;
+                }
+                else if (live->paused ||
+                         ((flags & WATERLINK_FRAME_DURABLE) &&
+                          head.sequence != live->delivered + 1))
+                {
+                        link->owed_now = 1;
+                        waterlink_hold(link, live, address_of head, bytes + at);
+                }
+                else if (!waterlink_hand(link, live, address_of head, bytes + at,
+                                         sink, context))
+                {
+                        waterlink_hold(link, live, address_of head, bytes + at);
+                        live->paused = 1;
+                }
+                else
+                        waterlink_release(link, key, sink, context);
+                at += head.length;
+        }
+        if (acked)
+                waterlink_acks_settle(link, newly, latest, sample, now);
+        good = memory_span_byte(bytes + at, 0, length - at) == length - at;
+        if (good && framed)
+                link->owed_count++;
+        return good;
+}
+
+//      What each side handed on, and a sink that turns some frames away --
+//      by what they are, so both sides turn the same ones away.
+static p64 judge_heard[2][512];
+static positive judge_heard_count[2];
+
+static bool judge_hear(address_any context, struct waterlink_frame address_to head,
+                       p8 address_to payload)
+{
+        positive side = (positive)context - 1;
+        p64 mark = hash_xxh64(payload, head->length, head->sequence);
+
+        if ((head->sequence * 7 + head->key) % 5 == 0 && head->length & 1)
+                return false;
+        if (judge_heard_count[side] < array_count(judge_heard[side]))
+                judge_heard[side][judge_heard_count[side]++] =
+                        mark ^ ((p64)head->key << 56) ^ head->flags;
+        return true;
+}
+
+static p64 judge_state = 0x6a09e667f3bcc909ull;
+
+static p64 judge_next(void)
+{
+        judge_state ^= judge_state << 13;
+        judge_state ^= judge_state >> 7;
+        judge_state ^= judge_state << 17;
+        return judge_state;
+}
+
+//      A number, sometimes spelled longer than it needs: the longer
+//      spellings are refused, and are where a reader that stops early goes
+//      wrong.
+static positive judge_put(p8 address_to into, p64 value, positive longer)
+{
+        positive used = memory_vli_put(into, value);
+
+        if (longer && used < 10)
+        {
+                into[used - 1] |= 0x80;
+                while (--longer && used < 9)
+                        into[used++] = 0x80;
+                into[used++] = 0;
+        }
+        return used;
+}
+
+static const p64 judge_edges[] = {
+    0, 1, 2, 63, 64, 126, 127, 128, 129, 255, 16383, 16384, 1158, 1159, 1160,
+    1167, 1168, 1169, 0xfffffffdull, 0xfffffffeull, 0xffffffffull,
+    0x100000000ull, (1ull << 56) - 1, 1ull << 56, (1ull << 63) - 1, 1ull << 63,
+    ~0ull};
+
+static p64 judge_pick(void)
+{
+        switch (judge_next() % 4)
+        {
+        case 0:
+                return judge_edges[judge_next() % array_count(judge_edges)];
+        case 1:
+                return judge_next() % 300;
+        case 2:
+                return judge_next() >> (judge_next() % 64);
+        default:
+                return 1 + judge_next() % 0xfffffffeull;
+        }
+}
+
+/*
+        A body as a fuzzer makes one: noise a fifth of the time, otherwise
+        parts with numbers from the edges and spellings of every length, cut
+        anywhere, padded with zeros or not, and a bit flipped a third of the
+        time. `plausible` keeps to what a live link sends: small keys,
+        sequences near the start and payloads that fit.
+*/
+static positive judge_body(p8 address_to body, bool plausible)
+{
+        positive used = 0;
+        positive frames = 1 + (positive)(judge_next() % 7);
+        positive length;
+
+        memory_zero(body, WATERLINK_PAYLOAD + 2);
+        if (!plausible && judge_next() % 5 == 0)
+        {
+                length = (positive)(judge_next() % (WATERLINK_PAYLOAD + 2));
+                for (positive at = 0; at < length; at++)
+                        body[at] = (p8)(judge_next() % 3 ? judge_next()
+                                                         : judge_next() % 4);
+                return length;
+        }
+        for (positive frame = 0; frame < frames; frame++)
+        {
+                p8 number[24];
+                positive n = 0;
+                bool ack = judge_next() % 4 == 0;
+                p8 flags = ack ? 8
+                               : (p8)((judge_next() & 1 ? 2 : 1) |
+                                      (judge_next() & 3 ? 0 : 0x10) |
+                                      (judge_next() & 7 ? 0 : 4));
+                p64 first, second;
+                positive payload;
+
+                if (plausible)
+                {
+                        first = ack ? judge_next() % 12 : 1 + judge_next() % 12;
+                        second = ack ? judge_next() & 0xfff
+                                     : judge_next() % 48;
+                }
+                else
+                {
+                        first = judge_next() % 3
+                                        ? (ack ? judge_next() % 0xffffffffull
+                                               : 1 + judge_next() % 0xfffffffeull)
+                                        : judge_pick();
+                        second = ack ? judge_next()
+                                     : judge_next() % 3 ? judge_next() % 200
+                                                        : judge_pick();
+                        if (judge_next() % 16 == 0)
+                                flags = (p8)judge_next();
+                }
+                n += judge_put(number, first,
+                               !plausible && judge_next() % 8 == 0
+                                       ? (positive)(judge_next() % 10)
+                                       : 0);
+                n += judge_put(number + n, second,
+                               !plausible && judge_next() % 8 == 0
+                                       ? (positive)(judge_next() % 10)
+                                       : 0);
+                payload = ack || second > 1300 ? 0 : (positive)second;
+                if (used + 2 + n + payload > WATERLINK_PAYLOAD)
+                        break;
+                body[used++] = flags;
+                body[used++] = (p8)(plausible ? judge_next() % 6
+                                    : judge_next() % 8 ? judge_next() % 64
+                                                       : judge_next());
+                memory_copy(body + used, number, n);
+                used += n;
+                for (positive at = 0; at < payload; at++)
+                        body[used++] = (p8)judge_next();
+        }
+        if (plausible)
+                return used + (positive)(judge_next() % 16) <= WATERLINK_PAYLOAD
+                               ? used + (positive)(judge_next() % 16)
+                               : used;
+        switch (judge_next() % 4)
+        {
+        case 0:
+                length = used;
+                break;
+        case 1:
+                length = used + (positive)(judge_next() % 20);
+                break;
+        case 2:
+                length = used ? (positive)(judge_next() % used) : 0;
+                break;
+        default:
+                length = used + (positive)(judge_next() %
+                                           (WATERLINK_PAYLOAD + 2 - used));
+        }
+        if (length > WATERLINK_PAYLOAD + 1)
+                length = WATERLINK_PAYLOAD + 1;
+        if (judge_next() % 3 == 0 && length)
+                body[judge_next() % length] ^= (p8)(1u << (judge_next() % 8));
+        return length;
+}
+
+static struct waterlink_link judge_one, judge_two;
+
+static fn judge_procedural(void)
+{
+        struct waterlink_part parts[WATERLINK_PARTS];
+        struct waterlink_part model[WATERLINK_PARTS];
+        p8 body[WATERLINK_PAYLOAD + 2];
+        positive cases = 0, wrong = 0, valid = 0, parted = 0, atomic = 0;
+        positive runs = 0, bodies = 0, apart = 0;
+
+        for (positive round = 0; round < 300000; round++)
+        {
+                positive length = judge_body(body, false);
+                bipolar want = judge_model(body, length, model);
+                bipolar got = waterlink_judge(body, length, parts);
+
+                cases++;
+                wrong += want != got;
+                if (want >= 0 && want == got)
+                {
+                        valid++;
+                        parted += (positive)want;
+                        wrong += memory_compare(parts, model,
+                                                (positive)want * sizeof *parts) != 0;
+                }
+                if (want < 0 && atomic < 1024)
+                {
+                        struct waterlink_link before;
+
+                        waterlink_link_reset(address_of one);
+                        before = one;
+                        heard = 0;
+                        if (!waterlink_deliver(address_of one, body, length, round,
+                                               hear, null) &&
+                            !heard &&
+                            !memory_compare(address_of one, address_of before,
+                                            sizeof one))
+                                atomic++;
+                }
+        }
+
+        //      Runs of bodies a live link could hear, into two links: one
+        //      through the judge's parts, one through the walk it replaced.
+        for (positive run = 0; run < 400; run++)
+        {
+                p8 payload[64];
+                bool alone = false;
+
+                waterlink_link_reset(address_of judge_one);
+                waterlink_link_reset(address_of judge_two);
+                judge_heard_count[0] = judge_heard_count[1] = 0;
+                for (positive at = 0; at < sizeof payload; at++)
+                        payload[at] = (p8)judge_next();
+                for (positive post = 0; post < 9; post++)
+                {
+                        p8 key = (p8)(1 + post % 3);
+                        p16 size = (p16)(1 + judge_next() % 60);
+                        p8 flags = post & 1 ? WATERLINK_FRAME_DURABLE
+                                            : WATERLINK_FRAME_REPLACEABLE;
+
+                        (void)waterlink_post(address_of judge_one, key, flags,
+                                             payload, size, 1000 + post);
+                        (void)waterlink_post(address_of judge_two, key, flags,
+                                             payload, size, 1000 + post);
+                }
+                (void)waterlink_fill(address_of judge_one, body, 2000,
+                                     address_of alone);
+                (void)waterlink_fill(address_of judge_two, body, 2000,
+                                     address_of alone);
+                for (positive step = 0; step < 40; step++)
+                {
+                        positive length = judge_body(body, true);
+                        bool first, second;
+
+                        if (waterlink_judge(body, length, parts) < 0)
+                                continue;
+                        first = waterlink_deliver(address_of judge_one, body,
+                                                  length, 3000 + step * 50,
+                                                  judge_hear, (address_any)1);
+                        second = judge_walk(address_of judge_two, body, length,
+                                            3000 + step * 50, judge_hear,
+                                            (address_any)2);
+                        apart += first != second || !first;
+                        bodies++;
+                }
+                apart += judge_heard_count[0] != judge_heard_count[1] ||
+                         memory_compare(judge_heard[0], judge_heard[1],
+                                        judge_heard_count[0] * sizeof(p64)) ||
+                         memory_compare(address_of judge_one, address_of judge_two,
+                                        sizeof judge_one);
+                runs++;
+        }
+
+        string_format(log, "  judge: %p bodies, %p taken with %p parts, "
+                           "%p refusals snapshotted; %p runs of %p live "
+                           "bodies\n",
+                      cases, valid, parted, atomic, runs, bodies);
+        check("the judge agrees with an independent reading, part for part, "
+              "on every generated body",
+              cases == 300000 && wrong == 0 && valid > 10000 &&
+                      cases - valid > 10000);
+        check("a refused body changes nothing and hands nothing on",
+              atomic == 1024);
+        check("applying the judge's parts is the walk it replaced, frame for "
+              "frame and word for word",
+              runs == 400 && bodies > 8000 && apart == 0);
 }
 
 static fn replay(void)
@@ -54301,6 +54860,9 @@ b32 main(void)
         stale_arrivals();
         durable_reordered();
         malformed_bodies();
+        judge_short_exhaustive();
+        body_prefix_boundaries();
+        judge_procedural();
         replay();
         saturation();
         replay_generated();
@@ -54889,6 +55451,123 @@ static fn initiator_answer(void)
         link_session_close(s);
 }
 
+/* A tag proves who sent bytes, not that those bytes are a Waterlink body.
+   Malformed authenticated traffic must spend neither its counter nor its
+   claimed roaming address before the body grammar accepts it. */
+static fn carried_is_atomic(void)
+{
+        struct link_session address_to s = link_self.session;
+        struct link_session before;
+        struct waterlink_link link_before;
+        struct waterlink_datagram head = {WATERLINK_KIND_CARRY, 0x10203040, 1};
+        crypto_aesgcm_key sealing_key;
+        p8 raw[16];
+        p8 datagram[WATERLINK_DATAGRAM];
+        p8 from[16];
+        static const p8 malformed[] = {
+            WATERLINK_FRAME_DURABLE, 7, 1, 1, 'x',
+            WATERLINK_FRAME_DURABLE, 7, 2, 9, 'y'};
+        positive length;
+        p64 now;
+
+        check("a session for authenticated-body atomicity opens",
+              link_session_open(s));
+        wls_seeded(raw, sizeof raw, 91);
+        link_keys_install(address_of s->now, raw, raw, head.receiver,
+                          0x50607080);
+        now = link_now();
+        crypto_aesgcm_prepare(address_of sealing_key, raw);
+        memory_copy(from, wls_loopback, sizeof from);
+        from[15] = 2;
+
+        {
+                p8 sealed[64];
+                positive sealed_length;
+                positive refused = 0;
+                positive unchanged = 0;
+
+                memory_copy(sealed, address_of head, sizeof head);
+                sealed_length = waterlink_seal(address_of sealing_key, sealed,
+                                                0);
+                for (positive cut = 0; cut < 48; cut++)
+                {
+                        before = *s;
+                        link_before = *s->link;
+                        refused += !link_carried(sealed, cut, from, 1234, now,
+                                                 null);
+                        unchanged +=
+                                !memory_compare(s, address_of before,
+                                                sizeof before) &&
+                                !memory_compare(s->link,
+                                                address_of link_before,
+                                                sizeof link_before);
+                }
+                for (positive bit = 0; bit < sealed_length * 8; bit++)
+                {
+                        memory_copy(datagram, sealed, sealed_length);
+                        datagram[bit / 8] ^= (p8)(1u << (bit % 8));
+                        before = *s;
+                        link_before = *s->link;
+                        refused += !link_carried(datagram, sealed_length, from,
+                                                 1234, now, null);
+                        unchanged +=
+                                !memory_compare(s, address_of before,
+                                                sizeof before) &&
+                                !memory_compare(s->link,
+                                                address_of link_before,
+                                                sizeof link_before);
+                }
+                check("sec: every short length and every one-bit authenticated "
+                      "datagram mutation is refused",
+                      refused == 48 + sealed_length * 8);
+                check("sec: all of those carriage refusals are state-atomic",
+                      unchanged == refused);
+        }
+
+        memory_copy(datagram, address_of head, sizeof head);
+        memory_copy(datagram + 16, malformed, sizeof malformed);
+        length = waterlink_seal(address_of sealing_key, datagram,
+                                sizeof malformed);
+        link_self.state_dirty = false;
+        before = *s;
+        link_before = *s->link;
+
+        check("sec: an authenticated malformed carried body is refused",
+              !link_carried(datagram, length, from, 1234, now, null));
+        check("sec: it changes no session, replay, roaming or link state",
+              !memory_compare(s, address_of before, sizeof before) &&
+                      !memory_compare(s->link, address_of link_before,
+                                      sizeof link_before) &&
+                      !link_self.state_dirty);
+
+        /* Seal a grammatical keepalive under the very same counter. If the
+           malformed datagram spent it, this valid datagram is a replay. */
+        memory_copy(datagram, address_of head, sizeof head);
+        length = waterlink_seal(address_of sealing_key, datagram, 0);
+        check("sec: the malformed datagram did not spend its counter",
+              link_carried(datagram, length, from, 1234, now + 1, null));
+
+        {
+                struct waterlink_replay replay_before = s->now.replay;
+                p64 expired = s->now.made +
+                              (p64)WATERLINK_REJECT_SECONDS * 1000000;
+
+                head.counter = 2;
+                memory_copy(datagram, address_of head, sizeof head);
+                length = waterlink_seal(address_of sealing_key, datagram, 0);
+                check("sec: an authenticated datagram under expired keys is "
+                      "refused",
+                      !link_carried(datagram, length, from, 1234, expired,
+                                    null));
+                check("sec: expired keys spend no replay counter",
+                      !memory_compare(address_of s->now.replay,
+                                      address_of replay_before,
+                                      sizeof replay_before));
+        }
+        link_session_close(s);
+        crypto_forget(address_of sealing_key, sizeof sealing_key);
+}
+
 /*
         Group pairing: the replay marker is spent last, follow-ups come only
         from where the pairing began, and replies are judged on a copy.
@@ -55435,6 +56114,7 @@ b32 main(void)
         publication();
         responder(listener, port);
         initiator_answer();
+        carried_is_atomic();
         greetings(listener, port);
         labels();
         wpa_key();
@@ -66348,8 +67028,10 @@ b32 main(void)
 /*
         Waterlink's transform, step by step, in the steady state of a stream:
         a sender posts a frame, fills and seals a datagram; a receiver opens
-        it, asks the replay window, delivers it, and fills the acknowledgement
-        the sender then takes back. Every step is timed where it sits in that
+        it, judges it, asks the replay window, applies it, and fills the acknowledgement
+        the sender then takes back. The receiver's steps run in link_carried's
+        order: the body is judged whole before the replay window is asked,
+        and applied from what the judge read. Every step is timed where it sits in that
         loop, so its caches and branches are the ones a real stream has, and
         reported as ticks a frame, the timer's own cost taken off. Two shapes:
         bulk (1,139-byte frames, one to a datagram) and a keystroke (one byte,
@@ -66361,7 +67043,7 @@ b32 main(void)
 #include "../src/waterlink/link.c"
 #include "../src/waterlink/seal.c"
 
-#define STEPS 8
+#define STEPS 9
 static struct waterlink_link sender, receiver;
 static struct waterlink_replay window;
 static crypto_aesgcm_key key;
@@ -66371,8 +67053,9 @@ static p8 payload[WATERLINK_FRAME_MAX];
 static p64 spent[STEPS];
 static p64 counter;
 static p64 stream_clock;
-static const char *step_name[STEPS] = {"post", "fill", "seal", "open", "replay",
-                                       "deliver", "fill ack", "take ack"};
+static const char *step_name[STEPS] = {"post",  "fill",  "seal",
+                                       "open",  "judge", "replay",
+                                       "apply", "fill ack", "take ack"};
 
 static fn frame_once(positive length, p16 flags, bool timed)
 {
@@ -66380,6 +67063,8 @@ static fn frame_once(positive length, p16 flags, bool timed)
         positive used;
         positive sealed;
         positive acked;
+        bipolar count;
+        struct waterlink_part parts[WATERLINK_PARTS];
         bool alone = false;
         struct waterlink_datagram head = {WATERLINK_KIND_CARRY, 1, 0};
 
@@ -66397,18 +67082,21 @@ static fn frame_once(positive length, p16 flags, bool timed)
         t[3] = timed ? get_cpu_time() : 0;
         (void)waterlink_open(address_of key, datagram, sealed);
         t[4] = timed ? get_cpu_time() : 0;
-        (void)waterlink_replay_new(address_of window, head.counter);
+        count = waterlink_judge(datagram + 16, sealed - 32, parts);
         t[5] = timed ? get_cpu_time() : 0;
-        (void)waterlink_deliver(address_of receiver, datagram + 16,
-                                   sealed - 32, stream_clock, null, null);
+        (void)waterlink_replay_new(address_of window, head.counter);
         t[6] = timed ? get_cpu_time() : 0;
+        if (count >= 0)
+                waterlink_apply(address_of receiver, datagram + 16, parts,
+                                (positive)count, stream_clock, null, null);
+        t[7] = timed ? get_cpu_time() : 0;
         acked = waterlink_fill(address_of receiver, acks, stream_clock + 1,
                                address_of alone);
-        t[7] = timed ? get_cpu_time() : 0;
+        t[8] = timed ? get_cpu_time() : 0;
         if (acked)
                 (void)waterlink_deliver(address_of sender, acks, acked,
                                            stream_clock + 2, null, null);
-        t[8] = timed ? get_cpu_time() : 0;
+        t[9] = timed ? get_cpu_time() : 0;
 
         if (timed)
                 for (positive at = 0; at < STEPS; at++)

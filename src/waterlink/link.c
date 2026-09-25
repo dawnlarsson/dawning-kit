@@ -246,17 +246,6 @@ static p32 waterlink_band_of(p8 flags)
                                               : WATERLINK_BAND_NORMAL;
 }
 
-// A number off the wire, the offset stepped past it: memory_vli_get's.
-static bool waterlink_number_get(p8 address_to bytes, positive length,
-                                 positive address_to at, p64 address_to value)
-{
-        positive used = memory_vli_get(bytes + address_to at,
-                                       length - address_to at, 10, value);
-
-        address_to at += used;
-        return used != 0;
-}
-
 // A slot's frame as it goes out, and what it costs the window.
 static positive waterlink_head_put(p8 address_to at,
                                    struct waterlink_slot address_to slot)
@@ -1193,8 +1182,248 @@ bool waterlink_paused(struct waterlink_link address_to link, p8 key)
 }
 
 /*
-        Walk an authenticated body: acknowledgements to the sending half,
-        frames to the application.
+        What a judged body holds, one part to each frame or acknowledgement
+        in the order they came: its flags and key, a frame's sequence or
+        what an acknowledgement says was delivered, a frame's length or an
+        acknowledgement's mask, and where a frame's payload starts. The
+        smallest part is four bytes, so a body holds at most a quarter of
+        its bytes of them.
+*/
+struct waterlink_part
+{
+        p8 flags;
+        p8 key;
+        p16 at;
+        p32 number;
+        p64 more;
+};
+
+#define WATERLINK_PARTS (WATERLINK_PAYLOAD / 4)
+
+/*
+        Judge an authenticated body whole, and say what it holds: the number
+        of parts written, or -1 when the link would not take it.
+
+        A tag proves who sent the bytes, not that they are a body, and a body
+        is taken whole or not at all -- a request followed by a malformed
+        frame must not reach the application while the datagram as a whole
+        is refused. So every frame and acknowledgement is read and checked
+        here, and nothing but zeros may follow the last: a zero flags byte is
+        where the frames stop, and the padding is inside the tag, so this is
+        the sender's statement and not a guess. What is read is kept, so the
+        body is read once and applied from the parts.
+
+        One pass, in each machine's registers: a part is two stores, a number
+        of one byte never leaves the line, and the zeros after the last part
+        are lib.c's memory_span_byte.
+*/
+bipolar waterlink_judge(address_any body, positive length,
+                        struct waterlink_part address_to parts);
+
+_Static_assert(sizeof(struct waterlink_part) == 16 &&
+                       __builtin_offsetof(struct waterlink_part, at) == 2 &&
+                       __builtin_offsetof(struct waterlink_part, number) == 4 &&
+                       __builtin_offsetof(struct waterlink_part, more) == 8,
+               "the judge writes a part as two words");
+_Static_assert(WATERLINK_PAYLOAD == 1168 && WATERLINK_FRAME_MAX == 1159 &&
+                       WATERLINK_KEYS == 64 && WATERLINK_FRAME_ACK == 8 &&
+                       WATERLINK_FRAME_WIRE == 0x17 &&
+                       WATERLINK_NONE == 0xffffffffu,
+               "the judge's bounds are these");
+
+#if X64
+/*
+        rdi the body, rsi its length, rdx the parts; r8 the offset, r9 sixteen
+        times the parts written, ebx the flags and key as one word, r10 and
+        r11 the two numbers.
+*/
+__asm__(
+    ASM_FUNC(waterlink_judge)
+    "cmp $1168, %rsi\n   ja 8f\n"
+    "push %rbx\n   xor %r8d, %r8d\n   xor %r9d, %r9d\n"
+    //  A part starts at a flags byte that is not zero, with its key after.
+    "1:  lea 1(%r8), %rax\n   cmp %rsi, %rax\n   jae 6f\n"
+    "movzwl (%rdi,%r8), %ebx\n   test %bl, %bl\n   jz 6f\n"
+    "cmp $0x3fff, %ebx\n   ja 9f\n"
+    "add $2, %r8\n"
+    "cmp %rsi, %r8\n   jae 9f\n"
+    "movzbl (%rdi,%r8), %r10d\n   inc %r8\n   test %r10b, %r10b\n   js 20f\n"
+    "2:  cmp %rsi, %r8\n   jae 9f\n"
+    "movzbl (%rdi,%r8), %r11d\n   inc %r8\n   test %r11b, %r11b\n   js 30f\n"
+    //  The part: flags, key, where a payload would start and the first
+    //  number in one word, the second in the other.
+    "3:  mov %r8, %rax\n   shl $16, %rax\n   or %rbx, %rax\n"
+    "mov %r10, %rcx\n   shl $32, %rcx\n   or %rcx, %rax\n"
+    "mov %rax, (%rdx,%r9)\n   mov %r11, 8(%rdx,%r9)\n   add $16, %r9\n"
+    //  An acknowledgement names a sequence; its mask is any word.
+    "cmp $8, %bl\n   jne 4f\n"
+    "mov $0xfffffffe, %eax\n   cmp %rax, %r10\n   jbe 1b\n   jmp 9f\n"
+    //  A frame: a sequence, one class, no bit the wire does not know, and a
+    //  length that is a frame's and is there.
+    "4:  lea -1(%r10), %rax\n   mov $0xfffffffd, %ecx\n   cmp %rcx, %rax\n   ja 9f\n"
+    "mov %ebx, %eax\n   shr $1, %eax\n   xor %ebx, %eax\n   test $1, %al\n   jz 9f\n"
+    "test $0xe8, %bl\n   jnz 9f\n"
+    "cmp $1159, %r11\n   ja 9f\n"
+    "mov %rsi, %rax\n   sub %r8, %rax\n   cmp %rax, %r11\n   ja 9f\n"
+    "add %r11, %r8\n   jmp 1b\n"
+    //  Zeros to the end. rbx keeps sixteen times the count over the bytes
+    //  left, both under 4096 times it, across the call.
+    "6:  sub %r8, %rsi\n   add %r8, %rdi\n   shl $12, %r9\n   lea (%r9,%rsi), %rbx\n"
+    "mov %rsi, %rdx\n   xor %esi, %esi\n   call memory_span_byte\n"
+    "mov %ebx, %ecx\n   and $4095, %ecx\n   cmp %rcx, %rax\n   jne 9f\n"
+    "mov %rbx, %rax\n   shr $16, %rax\n   pop %rbx\n"
+    ASM_RET
+    "9:  pop %rbx\n"
+    "8:  mov $-1, %rax\n"
+    ASM_RET
+    //  The rest of a number that said more follows, seven bits a byte; a
+    //  last byte of zero is a longer spelling of a shorter number, and the
+    //  tenth byte holds bit 63 alone.
+    "20: and $0x7f, %r10d\n   mov $7, %ecx\n"
+    "21: cmp %rsi, %r8\n   jae 9b\n"
+    "movzbl (%rdi,%r8), %eax\n   inc %r8\n"
+    "cmp $63, %ecx\n   je 24f\n"
+    "test %al, %al\n   js 23f\n"
+    "test %eax, %eax\n   jz 9b\n"
+    "shl %cl, %rax\n   or %rax, %r10\n   jmp 2b\n"
+    "23: and $0x7f, %eax\n   shl %cl, %rax\n   or %rax, %r10\n   add $7, %ecx\n   jmp 21b\n"
+    "24: cmp $1, %eax\n   jne 9b\n   bts $63, %r10\n   jmp 2b\n"
+    "30: and $0x7f, %r11d\n   mov $7, %ecx\n"
+    "31: cmp %rsi, %r8\n   jae 9b\n"
+    "movzbl (%rdi,%r8), %eax\n   inc %r8\n"
+    "cmp $63, %ecx\n   je 34f\n"
+    "test %al, %al\n   js 33f\n"
+    "test %eax, %eax\n   jz 9b\n"
+    "shl %cl, %rax\n   or %rax, %r11\n   jmp 3b\n"
+    "33: and $0x7f, %eax\n   shl %cl, %rax\n   or %rax, %r11\n   add $7, %ecx\n   jmp 31b\n"
+    "34: cmp $1, %eax\n   jne 9b\n   bts $63, %r11\n   jmp 3b\n"
+    ASM_END(waterlink_judge)
+);
+#elif ARM64
+/*
+        x0 the body, x1 its length, x2 the parts; x8 the offset, x9 the parts
+        written, w11 the flags, w12 the key, x13 and x14 the two numbers.
+*/
+__asm__(
+    ASM_FUNC(waterlink_judge)
+    "cmp x1, #1168\n   b.hi 8f\n"
+    "mov x8, #0\n   mov x9, #0\n"
+    "1:  add x10, x8, #1\n   cmp x10, x1\n   b.hs 6f\n"
+    "ldrb w11, [x0, x8]\n   cbz w11, 6f\n"
+    "ldrb w12, [x0, x10]\n   cmp w12, #63\n   b.hi 8f\n"
+    "add x8, x8, #2\n"
+    "cmp x8, x1\n   b.hs 8f\n"
+    "ldrb w13, [x0, x8]\n   add x8, x8, #1\n   tbnz w13, #7, 20f\n"
+    "2:  cmp x8, x1\n   b.hs 8f\n"
+    "ldrb w14, [x0, x8]\n   add x8, x8, #1\n   tbnz w14, #7, 30f\n"
+    "3:  orr w15, w11, w12, lsl #8\n   orr x15, x15, x8, lsl #16\n"
+    "orr x15, x15, x13, lsl #32\n"
+    "add x16, x2, x9, lsl #4\n   stp x15, x14, [x16]\n   add x9, x9, #1\n"
+    "cmp w11, #8\n   b.ne 4f\n"
+    "mov w16, #0xfffffffe\n   cmp x13, x16\n   b.ls 1b\n   b 8f\n"
+    "4:  sub x16, x13, #1\n   mov w17, #0xfffffffd\n   cmp x16, x17\n   b.hi 8f\n"
+    "eor w16, w11, w11, lsr #1\n   tbz w16, #0, 8f\n"
+    "mov w17, #0x17\n   bics wzr, w11, w17\n   b.ne 8f\n"
+    "cmp x14, #1159\n   b.hi 8f\n"
+    "sub x16, x1, x8\n   cmp x14, x16\n   b.hi 8f\n"
+    "add x8, x8, x14\n   b 1b\n"
+    "6:  stp x29, x30, [sp, #-32]!\n   mov x29, sp\n   stp x19, x20, [sp, #16]\n"
+    "sub x19, x1, x8\n   mov x20, x9\n"
+    "add x0, x0, x8\n   mov w1, #0\n   mov x2, x19\n   bl memory_span_byte\n"
+    "cmp x0, x19\n   csinv x0, x20, xzr, eq\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #32\n"
+    ASM_RET
+    "8:  mov x0, #-1\n"
+    ASM_RET
+    "20: and w13, w13, #0x7f\n   mov w17, #7\n"
+    "21: cmp x8, x1\n   b.hs 8b\n"
+    "ldrb w16, [x0, x8]\n   add x8, x8, #1\n"
+    "cmp w17, #63\n   b.eq 24f\n"
+    "tbnz w16, #7, 23f\n"
+    "cbz w16, 8b\n"
+    "lsl x16, x16, x17\n   orr x13, x13, x16\n   b 2b\n"
+    "23: and w16, w16, #0x7f\n   lsl x16, x16, x17\n   orr x13, x13, x16\n"
+    "add w17, w17, #7\n   b 21b\n"
+    "24: cmp w16, #1\n   b.ne 8b\n   orr x13, x13, #0x8000000000000000\n   b 2b\n"
+    "30: and w14, w14, #0x7f\n   mov w17, #7\n"
+    "31: cmp x8, x1\n   b.hs 8b\n"
+    "ldrb w16, [x0, x8]\n   add x8, x8, #1\n"
+    "cmp w17, #63\n   b.eq 34f\n"
+    "tbnz w16, #7, 33f\n"
+    "cbz w16, 8b\n"
+    "lsl x16, x16, x17\n   orr x14, x14, x16\n   b 3b\n"
+    "33: and w16, w16, #0x7f\n   lsl x16, x16, x17\n   orr x14, x14, x16\n"
+    "add w17, w17, #7\n   b 31b\n"
+    "34: cmp w16, #1\n   b.ne 8b\n   orr x14, x14, #0x8000000000000000\n   b 3b\n"
+    ASM_END(waterlink_judge)
+);
+#elif RISCV64
+/*
+        a0 the body, a1 its length, a2 the parts; t1 the offset, t2 the parts
+        written, t4 the flags, t5 the key, a3 and a4 the two numbers.
+*/
+__asm__(
+    ASM_FUNC(waterlink_judge)
+    "li t0, 1168\n   bgtu a1, t0, 8f\n"
+    "li t1, 0\n   li t2, 0\n"
+    "1:  addi t0, t1, 1\n   bgeu t0, a1, 6f\n"
+    "add t3, a0, t1\n   lbu t4, 0(t3)\n   beqz t4, 6f\n"
+    "lbu t5, 1(t3)\n   li t0, 63\n   bgtu t5, t0, 8f\n"
+    "addi t1, t1, 2\n"
+    "bgeu t1, a1, 8f\n"
+    "add t3, a0, t1\n   lbu a3, 0(t3)\n   addi t1, t1, 1\n"
+    "andi t0, a3, 0x80\n   bnez t0, 20f\n"
+    "2:  bgeu t1, a1, 8f\n"
+    "add t3, a0, t1\n   lbu a4, 0(t3)\n   addi t1, t1, 1\n"
+    "andi t0, a4, 0x80\n   bnez t0, 30f\n"
+    "3:  slli t0, t5, 8\n   or t0, t0, t4\n   slli t3, t1, 16\n   or t0, t0, t3\n"
+    "slli t3, a3, 32\n   or t0, t0, t3\n"
+    "slli t3, t2, 4\n   add t3, a2, t3\n   sd t0, 0(t3)\n   sd a4, 8(t3)\n"
+    "addi t2, t2, 1\n"
+    "li t0, 8\n   bne t4, t0, 4f\n"
+    "li t0, 0xfffffffe\n   bleu a3, t0, 1b\n   j 8f\n"
+    "4:  addi t0, a3, -1\n   li t3, 0xfffffffd\n   bgtu t0, t3, 8f\n"
+    "srli t0, t4, 1\n   xor t0, t0, t4\n   andi t0, t0, 1\n   beqz t0, 8f\n"
+    "andi t0, t4, 0xe8\n   bnez t0, 8f\n"
+    "li t0, 1159\n   bgtu a4, t0, 8f\n"
+    "sub t0, a1, t1\n   bgtu a4, t0, 8f\n"
+    "add t1, t1, a4\n   j 1b\n"
+    "6:  addi sp, sp, -32\n   sd ra, 24(sp)\n   sd s0, 16(sp)\n   sd s1, 8(sp)\n"
+    "sub s0, a1, t1\n   mv s1, t2\n"
+    "add a0, a0, t1\n   li a1, 0\n   mv a2, s0\n   call memory_span_byte\n"
+    "li t0, -1\n   bne a0, s0, 7f\n   mv t0, s1\n"
+    "7:  mv a0, t0\n"
+    "ld ra, 24(sp)\n   ld s0, 16(sp)\n   ld s1, 8(sp)\n   addi sp, sp, 32\n"
+    ASM_RET
+    "8:  li a0, -1\n"
+    ASM_RET
+    "20: andi a3, a3, 0x7f\n   li a5, 7\n"
+    "21: bgeu t1, a1, 8b\n"
+    "add t3, a0, t1\n   lbu t0, 0(t3)\n   addi t1, t1, 1\n"
+    "li t3, 63\n   beq a5, t3, 24f\n"
+    "andi t3, t0, 0x80\n   bnez t3, 23f\n"
+    "beqz t0, 8b\n"
+    "sll t0, t0, a5\n   or a3, a3, t0\n   j 2b\n"
+    "23: andi t0, t0, 0x7f\n   sll t0, t0, a5\n   or a3, a3, t0\n"
+    "addi a5, a5, 7\n   j 21b\n"
+    "24: li t3, 1\n   bne t0, t3, 8b\n   slli t0, t0, 63\n   or a3, a3, t0\n   j 2b\n"
+    "30: andi a4, a4, 0x7f\n   li a5, 7\n"
+    "31: bgeu t1, a1, 8b\n"
+    "add t3, a0, t1\n   lbu t0, 0(t3)\n   addi t1, t1, 1\n"
+    "li t3, 63\n   beq a5, t3, 34f\n"
+    "andi t3, t0, 0x80\n   bnez t3, 33f\n"
+    "beqz t0, 8b\n"
+    "sll t0, t0, a5\n   or a4, a4, t0\n   j 3b\n"
+    "33: andi t0, t0, 0x7f\n   sll t0, t0, a5\n   or a4, a4, t0\n"
+    "addi a5, a5, 7\n   j 31b\n"
+    "34: li t3, 1\n   bne t0, t3, 8b\n   slli t0, t0, 63\n   or a4, a4, t0\n   j 3b\n"
+    ASM_END(waterlink_judge)
+);
+#endif
+
+/*
+        Apply a judged body: acknowledgements to the sending half, frames to
+        the application.
 
         A stream frame is taken when it is the next on its key and held when
         it is ahead; a register frame is taken when it is newer than what the
@@ -1204,57 +1433,35 @@ bool waterlink_paused(struct waterlink_link address_to link, p8 key)
         not, is owed an acknowledgement, because a copy arriving is the
         sender saying it never heard the first one was acknowledged.
 
-        Every bound is checked against what the body says it is, and nothing
-        here trusts a length twice. Returns false when the body is malformed,
-        which for an authenticated peer means a bug on the far side rather
-        than an attack -- and is still a refusal, because a link that guesses
-        is a link with two opinions.
+        Every part comes from waterlink_judge, which has checked each bound
+        against what the body says it is; nothing here reads the body but a
+        frame's payload where the judge found it.
 */
-bool waterlink_deliver(struct waterlink_link address_to link,
-                          address_any body, positive length, p64 now,
-                          waterlink_sink sink, address_any context)
+fn waterlink_apply(struct waterlink_link address_to link, address_any body,
+                   struct waterlink_part address_to parts, positive count,
+                   p64 now, waterlink_sink sink, address_any context)
 {
         p8 address_to bytes = (p8 address_to)body;
-        positive at = 0;
         bool framed = false;
         bool acked = false;
         p64 newly = 0, latest = 0, sample = 0;
-        bool good;
-
-        if (length > WATERLINK_PAYLOAD)
-                return false;
 
         if (now > link->clock)
                 link->clock = now;
         now = link->clock;
 
-        //      A zero flags byte is where the frames stop: every frame has a
-        //      class or is an acknowledgement, and the box is zeros after the
-        //      last. The padding is inside the tag, so this is the sender's
-        //      statement and not a guess.
-        while (at + 1 < length && bytes[at])
+        for (struct waterlink_part address_to part = parts; part < parts + count;
+             part++)
         {
-                p8 flags = bytes[at];
-                p8 key = bytes[at + 1];
+                p8 flags = part->flags;
+                p8 key = part->key;
+                p8 address_to payload = bytes + part->at;
                 struct waterlink_frame head;
                 struct waterlink_receiving address_to live;
-                p64 sequence, size;
-
-                at += 2;
-                if (key >= WATERLINK_KEYS)
-                        return false;
 
                 if (flags == WATERLINK_FRAME_ACK)
                 {
-                        p64 delivered, mask;
-
-                        if (!waterlink_number_get(bytes, length, address_of at,
-                                                  address_of delivered) ||
-                            !waterlink_number_get(bytes, length, address_of at,
-                                                  address_of mask) ||
-                            delivered >= WATERLINK_NONE)
-                                return false;
-                        waterlink_acknowledge(link, key, (p32)delivered, mask,
+                        waterlink_acknowledge(link, key, part->number, part->more,
                                               address_of newly,
                                               address_of latest,
                                               address_of sample);
@@ -1262,18 +1469,9 @@ bool waterlink_deliver(struct waterlink_link address_to link,
                         continue;
                 }
 
-                if (!waterlink_frame_sane(flags) ||
-                    !waterlink_number_get(bytes, length, address_of at,
-                                          address_of sequence) ||
-                    !waterlink_number_get(bytes, length, address_of at,
-                                          address_of size) ||
-                    !sequence || sequence >= WATERLINK_NONE ||
-                    size > WATERLINK_FRAME_MAX || size > length - at)
-                        return false;
-
                 head.key = key;
-                head.sequence = (p32)sequence;
-                head.length = (p16)size;
+                head.sequence = part->number;
+                head.length = (p16)part->more;
                 head.flags = flags;
                 live = link->receiving + key;
 
@@ -1292,26 +1490,37 @@ bool waterlink_deliver(struct waterlink_link address_to link,
                           head.sequence != live->delivered + 1))
                 {
                         link->owed_now = 1;
-                        waterlink_hold(link, live, address_of head, bytes + at);
+                        waterlink_hold(link, live, address_of head, payload);
                 }
-                else if (!waterlink_hand(link, live, address_of head, bytes + at,
+                else if (!waterlink_hand(link, live, address_of head, payload,
                                          sink, context))
                 {
-                        waterlink_hold(link, live, address_of head, bytes + at);
+                        waterlink_hold(link, live, address_of head, payload);
                         live->paused = 1;
                 }
                 else
                         waterlink_release(link, key, sink, context);
-                at += head.length;
         }
 
         if (acked)
                 waterlink_acks_settle(link, newly, latest, sample, now);
 
-        good = memory_span_byte(bytes + at, 0, length - at) == length - at;
-        if (good && framed)
+        if (framed)
                 link->owed_count++;
-        return good;
+}
+
+// A body judged and then applied: what every caller without a judge wants.
+bool waterlink_deliver(struct waterlink_link address_to link,
+                          address_any body, positive length, p64 now,
+                          waterlink_sink sink, address_any context)
+{
+        struct waterlink_part parts[WATERLINK_PARTS];
+        bipolar count = waterlink_judge(body, length, parts);
+
+        if (count < 0)
+                return false;
+        waterlink_apply(link, body, parts, (positive)count, now, sink, context);
+        return true;
 }
 
 /*
