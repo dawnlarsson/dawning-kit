@@ -2448,52 +2448,95 @@ static CONST bipolar arith_negate(bipolar value)
         0x / base# are a different literal. Those all belong to the walker.
         A lone 0 is a decimal zero. Anything that does not fit in a signed
         machine word is left to the saturating reader as well.
+
+        x is the value and y one past its last digit, or both are zero when
+        this is not one: the answer comes back in the two return registers,
+        where a cursor and a value handed in by address went to the stack
+        and back on each side of every literal and every counter's value.
+        The C asked at each digit whether the next would overflow; eighteen
+        digits never can and nineteen are still below 2^64, so the digits
+        are only counted and one test at the end refuses what a signed word
+        cannot hold. A digit is a load, a range test and two multiply-adds,
+        the loop's only taken branch is its own, and one digit, which is
+        most of them, counts nothing. The byte after the digits is looked
+        up in string_set_name, the name bytes expand_name_character asks
+        for.
 */
-static bool arith_plain_natural(string_address address_to at,
-                                bipolar address_to value)
-{
-        string_address step = address_to at;
-        p8 seen = string_get(step);
-        positive held = 0;
+positive2 arith_plain_natural(string_address at);
 
-        if (seen < '0' || seen > '9')
-                return false;
-
-        if (seen == '0')
-        {
-                p8 next = string_get(step + 1);
-
-                if (byte_is_digit(next) || next == 'x' ||
-                    next == 'X' || next == '#' ||
-                    expand_name_character(next))
-                        return false;
-
-                address_to at = step + 1;
-                address_to value = 0;
-                return true;
-        }
-
-        do
-        {
-                positive digit = (positive)(seen - '0');
-
-                if (held > (positive)bipolar_max / 10 ||
-                    (held == (positive)bipolar_max / 10 &&
-                     digit > (positive)bipolar_max % 10))
-                        return false;
-
-                held = held * 10 + digit;
-                step++;
-                seen = string_get(step);
-        } while (byte_is_digit(seen));
-
-        if (expand_name_character(seen))
-                return false;
-
-        address_to at = step;
-        address_to value = (bipolar)held;
-        return true;
-}
+#if X64
+__asm__(
+    ASM_FUNC(arith_plain_natural)
+    "movzbl (%rdi), %eax\n   sub $48, %eax\n   cmp $9, %eax\n   ja 8f\n"
+    "lea string_set_name(%rip), %r10\n   test %eax, %eax\n   jz 5f\n"
+    "lea 1(%rdi), %rdx\n   movzbl (%rdx), %ecx\n   lea -48(%rcx), %r9d\n   cmp $9, %r9d\n   ja 4f\n"
+    "1:  lea (%rax,%rax,4), %rax\n   lea (%r9,%rax,2), %rax\n   inc %rdx\n"
+    "movzbl (%rdx), %ecx\n   lea -48(%rcx), %r9d\n   cmp $9, %r9d\n   jbe 1b\n"
+    // %ecx is the byte after the digits, %rdx where it stands.
+    "cmpb $0, (%r10,%rcx)\n   jne 8f\n   mov %rdx, %rcx\n   sub %rdi, %rcx\n   cmp $18, %rcx\n   ja 6f\n"
+    ASM_RET
+    "4:  cmpb $0, (%r10,%rcx)\n   jne 8f\n"
+    ASM_RET
+    // A zero on its own: not in front of a digit, a letter, _ or #.
+    "5:  movzbl 1(%rdi), %ecx\n   cmp $35, %ecx\n   je 8f\n   cmpb $0, (%r10,%rcx)\n   jne 8f\n"
+    "lea 1(%rdi), %rdx\n"
+    ASM_RET
+    // Nineteen digits are exact in 64 bits and fit when the sign is clear.
+    "6:  cmp $19, %rcx\n   ja 8f\n   test %rax, %rax\n   js 8f\n"
+    ASM_RET
+    "8:  xor %eax, %eax\n   xor %edx, %edx\n"
+    ASM_RET
+    ASM_END(arith_plain_natural)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(arith_plain_natural)
+    "ldrb w2, [x0]\n   sub w2, w2, #48\n   cmp w2, #9\n   b.hi 8f\n"
+    "adrp x10, string_set_name\n   add x10, x10, :lo12:string_set_name\n   cbz w2, 5f\n"
+    "add x1, x0, #1\n   ldrb w4, [x1]\n   sub w5, w4, #48\n   cmp w5, #9\n   b.hi 4f\n"
+    "1:  add x2, x2, x2, lsl #2\n   add x2, x5, x2, lsl #1\n"
+    "ldrb w4, [x1, #1]!\n   sub w5, w4, #48\n   cmp w5, #9\n   b.ls 1b\n"
+    // w4 is the byte after the digits, x1 where it stands.
+    "ldrb w6, [x10, x4]\n   cbnz w6, 8f\n   sub x6, x1, x0\n   cmp x6, #18\n   b.hi 6f\n"
+    "3:  mov x0, x2\n"
+    ASM_RET
+    "4:  ldrb w6, [x10, x4]\n   cbnz w6, 8f\n   mov x0, x2\n"
+    ASM_RET
+    // A zero on its own: not in front of a digit, a letter, _ or #.
+    "5:  ldrb w4, [x0, #1]\n   cmp w4, #35\n   b.eq 8f\n   ldrb w6, [x10, x4]\n   cbnz w6, 8f\n"
+    "add x1, x0, #1\n   mov x0, #0\n"
+    ASM_RET
+    // Nineteen digits are exact in 64 bits and fit when the sign is clear.
+    "6:  cmp x6, #19\n   b.hi 8f\n   tbz x2, #63, 3b\n"
+    "8:  mov x0, #0\n   mov x1, #0\n"
+    ASM_RET
+    ASM_END(arith_plain_natural)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(arith_plain_natural)
+    "lbu t0, 0(a0)\n   addi t0, t0, -48\n   li t1, 10\n   bgeu t0, t1, 8f\n"
+    "lla t6, string_set_name\n   beqz t0, 5f\n"
+    "addi a1, a0, 1\n   lbu t3, 0(a1)\n   addi t4, t3, -48\n   bgeu t4, t1, 4f\n"
+    "1:  slli t5, t0, 2\n   add t0, t0, t5\n   slli t0, t0, 1\n   add t0, t0, t4\n"
+    "addi a1, a1, 1\n   lbu t3, 0(a1)\n   addi t4, t3, -48\n   bltu t4, t1, 1b\n"
+    // t3 is the byte after the digits, a1 where it stands.
+    "add t5, t6, t3\n   lbu t5, 0(t5)\n   bnez t5, 8f\n   sub t5, a1, a0\n   li t4, 18\n   bgtu t5, t4, 6f\n"
+    "3:  mv a0, t0\n"
+    ASM_RET
+    "4:  add t5, t6, t3\n   lbu t5, 0(t5)\n   bnez t5, 8f\n   mv a0, t0\n"
+    ASM_RET
+    // A zero on its own: not in front of a digit, a letter, _ or #.
+    "5:  lbu t3, 1(a0)\n   li t4, 35\n   beq t3, t4, 8f\n   add t5, t6, t3\n   lbu t5, 0(t5)\n   bnez t5, 8f\n"
+    "addi a1, a0, 1\n   li a0, 0\n"
+    ASM_RET
+    // Nineteen digits are exact in 64 bits and fit when the sign is clear.
+    "6:  li t4, 19\n   bgtu t5, t4, 8f\n   bgez t0, 3b\n"
+    "8:  li a0, 0\n   li a1, 0\n"
+    ASM_RET
+    ASM_END(arith_plain_natural)
+);
+#endif
 
 // A value is seldom padded, so the byte in front decides before the scan.
 static PURE inline INLINE string_address arith_skip_blanks(string_address at)
@@ -2529,8 +2572,14 @@ static bool arith_plain_scalar(string_address text, bipolar address_to value)
                 step++;
         }
 
-        if (!arith_plain_natural(address_of step, address_of magnitude))
-                return false;
+        {
+                positive2 plain = arith_plain_natural(step);
+
+                if (!plain.y)
+                        return false;
+                step = (string_address)plain.y;
+                magnitude = (bipolar)plain.x;
+        }
 
         if (string_get(arith_skip_blanks(step)))
                 return false;
@@ -3049,14 +3098,15 @@ static bipolar arith_primary_step()
 
                 // A plain decimal is most literals a script writes. A # behind
                 // it makes it a base, which the walker below reads.
-                if (arith_plain_natural(address_of scan, address_of value) &&
-                    string_not(scan, '#'))
                 {
-                        arith_at = scan;
-                        return value;
-                }
+                        positive2 plain = arith_plain_natural(arith_at);
 
-                scan = arith_at;
+                        if (plain.y && string_not((string_address)plain.y, '#'))
+                        {
+                                arith_at = (string_address)plain.y;
+                                return (bipolar)plain.x;
+                        }
+                }
 
                 // What is in front of a # is a base and not a value, and only
                 // a run of plain decimal digits can be one: 0x10#1 is neither.
@@ -3434,6 +3484,7 @@ static HOT bool arith_increment_fast(bipolar address_to value)
         bipolar held;
         bipolar next;
         positive2 hashed;
+        positive2 plain;
         bool same;
 
         if (arith_bash_mode && (first == '+' || first == '-') &&
@@ -3483,8 +3534,11 @@ static HOT bool arith_increment_fast(bipolar address_to value)
                         assign = true;
                         add = op == '+';
                         at = arith_skip_space(at + 2);
-                        if (!arith_plain_natural(address_of at, address_of delta))
+                        plain = arith_plain_natural(at);
+                        if (!plain.y)
                                 return false;
+                        at = (string_address)plain.y;
+                        delta = (bipolar)plain.x;
                         at = arith_skip_space(at);
                         if (string_get(at))
                                 return false;
@@ -3493,8 +3547,11 @@ static HOT bool arith_increment_fast(bipolar address_to value)
                 {
                         add = op == '+';
                         at = arith_skip_space(at + 1);
-                        if (!arith_plain_natural(address_of at, address_of delta))
+                        plain = arith_plain_natural(at);
+                        if (!plain.y)
                                 return false;
+                        at = (string_address)plain.y;
+                        delta = (bipolar)plain.x;
                         at = arith_skip_space(at);
                         if (string_get(at))
                                 return false;

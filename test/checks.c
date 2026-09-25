@@ -27035,6 +27035,167 @@ static fn shell_asm_names(p8 address_to pages)
                         }
                 }
         }
+        arith_plain_natural from src/sh/expand.c against the C it replaced,
+        which asked at every digit whether the next would overflow: every
+        byte after 7, 0 and 123, every pair and triple of bytes a literal,
+        a name and a base are made of, digit runs of every length to 24 with
+        the boundaries of a signed word among them, at every alignment and
+        ending on the last byte before a page nobody may read. The routine
+        answers in two registers, the value and the end, both zero for a
+        refusal; the former answered through two addresses and left them
+        alone when it refused.
+*/
+positive2 arith_plain_natural(string_address at);
+
+static bool shell_asm_natural_former(string_address address_to at,
+                                     bipolar address_to value)
+{
+        string_address step = address_to at;
+        p8 seen = string_get(step);
+        positive held = 0;
+
+        if (seen < '0' || seen > '9')
+                return false;
+
+        if (seen == '0')
+        {
+                p8 next = string_get(step + 1);
+
+                if (byte_is_digit(next) || next == 'x' || next == 'X' ||
+                    next == '#' || byte_is_alnum(next) || next == '_')
+                        return false;
+
+                address_to at = step + 1;
+                address_to value = 0;
+                return true;
+        }
+
+        do
+        {
+                positive digit = (positive)(seen - '0');
+
+                if (held > (positive)bipolar_max / 10 ||
+                    (held == (positive)bipolar_max / 10 &&
+                     digit > (positive)bipolar_max % 10))
+                        return false;
+
+                held = held * 10 + digit;
+                step++;
+                seen = string_get(step);
+        } while (byte_is_digit(seen));
+
+        if (byte_is_alnum(seen) || seen == '_')
+                return false;
+
+        address_to at = step;
+        address_to value = (bipolar)held;
+        return true;
+}
+
+static fn shell_asm_natural_one(const p8 address_to text)
+{
+        string_address want_at = (string_address)text;
+        bipolar want_value = 0;
+        bool want = shell_asm_natural_former(address_of want_at, address_of want_value);
+        positive2 answer = arith_plain_natural((string_address)text);
+        bool got = answer.y != 0;
+        string_address got_at = got ? (string_address)answer.y : (string_address)text;
+        bipolar got_value = (bipolar)answer.x;
+
+        if (!want)
+                want_value = 0;
+        if (!got && answer.x)
+                got_value = -1;
+
+        checks++;
+        if (want != got || want_at != got_at || want_value != got_value)
+        {
+                failures++;
+                if (failures < 10)
+                        string_format(log, "FAIL arith_plain_natural %s: %p at +%p value %p want %p at +%p value %p\n",
+                                      (string_address)text, (positive)got,
+                                      (positive)(got_at - (string_address)text), (positive)got_value,
+                                      (positive)want, (positive)(want_at - (string_address)text),
+                                      (positive)want_value);
+        }
+}
+
+static fn shell_asm_naturals(p8 address_to pages)
+{
+        static p8 room[64];
+        static const p8 bytes[] = "0123456789aZxX_#@ +-)\x80\xff";
+        static const char address_to edges[] = {
+                "9223372036854775807", "9223372036854775808", "9223372036854775806",
+                "9999999999999999999", "10000000000000000000", "18446744073709551615",
+                "18446744073709551616", "922337203685477580", "922337203685477581",
+                "999999999999999999", "1000000000000000000", "00", "0", "01", "0x1",
+        };
+        positive length;
+
+        for (positive lead = 0; lead < 3; lead++)
+                for (positive byte = 0; byte < 256; byte++)
+                {
+                        static const char address_to leads[] = {"7", "0", "123"};
+
+                        length = string_length((string_address)leads[lead]);
+                        memory_copy_apart(room, leads[lead], length);
+                        room[length] = (p8)byte;
+                        room[length + 1] = 0;
+                        shell_asm_natural_one(room);
+                        room[0] = (p8)byte;
+                        room[1] = 0;
+                        shell_asm_natural_one(room);
+                }
+
+        for (positive a = 0; a < sizeof(bytes) - 1; a++)
+                for (positive b = 0; b < sizeof(bytes); b++)
+                        for (positive c = 0; c < sizeof(bytes); c++)
+                        {
+                                room[0] = bytes[a];
+                                room[1] = b < sizeof(bytes) - 1 ? bytes[b] : 0;
+                                room[2] = c < sizeof(bytes) - 1 ? bytes[c] : 0;
+                                room[3] = 0;
+                                shell_asm_natural_one(room);
+                        }
+
+        for (positive i = 0; i < array_count(edges); i++)
+                for (positive tail = 0; tail < 4; tail++)
+                {
+                        length = string_length((string_address)edges[i]);
+                        memory_copy_apart(room, edges[i], length);
+                        room[length] = "\0a#)"[tail];
+                        room[length + 1] = 0;
+                        shell_asm_natural_one(room);
+                }
+
+        for (positive round = 0; round < 200000; round++)
+        {
+                positive digits = 1 + shell_asm_next() % 24;
+                positive offset = shell_asm_next() % 16;
+                p8 address_to text = room + offset;
+
+                for (positive i = 0; i < digits; i++)
+                        text[i] = (p8)('0' + shell_asm_next() % 10);
+                if (shell_asm_next() % 2)
+                        text[0] = (p8)('1' + shell_asm_next() % 9);
+                text[digits] = shell_asm_next() % 3 ? bytes[shell_asm_next() % (sizeof(bytes) - 1)] : 0;
+                text[digits + 1] = 0;
+                shell_asm_natural_one(text);
+        }
+
+        if (pages)
+                for (length = 0; length < 24; length++)
+                        for (positive shape = 0; shape < 4; shape++)
+                        {
+                                p8 address_to text = pages + 8192 - length - 1;
+
+                                for (positive i = 0; i < length; i++)
+                                        text[i] = (p8)('1' + (i + shape) % 9);
+                                if (length && shape == 3)
+                                        text[0] = '0';
+                                text[length] = 0;
+                                shell_asm_natural_one(text);
+                        }
 }
 
 b32 main(void)
@@ -27094,6 +27255,7 @@ b32 main(void)
         shell_asm_binaries((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_writes((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_names((bipolar)(positive)pages > 0 ? pages : null);
+        shell_asm_naturals((bipolar)(positive)pages > 0 ? pages : null);
 
         string_format(log, "shell assembly: %p checks, %p failures\n", checks, failures);
         log_flush();
