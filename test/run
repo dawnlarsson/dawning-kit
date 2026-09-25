@@ -4298,8 +4298,20 @@ differential_domain()
 
         differential_farm=${2:-$farm}
 
+        differential_jobs=$(nproc 2> /dev/null || echo 4)
+
+        #       The shell domain's cases spend their time waiting -- on a
+        #       terminal to answer, a job to stop, a timeout to pass -- and
+        #       leave the processor idle while they do: a run of one worker a
+        #       processor held the load under one. Three a processor keep it
+        #       busy, 886 seconds to 396 on the 32-thread box. The other
+        #       domains compute and keep one a processor.
+        case $1 in
+        shell) differential_jobs=$((differential_jobs * 3)) ;;
+        esac
+
         python3 test/differential.py "$differential_farm" --domain "$1" \
-                --jobs "${MW_JOBS:-$(nproc 2> /dev/null || echo 4)}"
+                --jobs "${MW_JOBS:-$differential_jobs}"
 }
 
 #       awk, script and setarch carry a stock spawn denial even when the
