@@ -24807,17 +24807,55 @@ __asm__(
     ASM_RET
     ASM_END(memory_utf8_span)
 
+    // memory_span_byte: the x86_64 body carries the contract. Outside the
+    // kernel the byte is cut to its eight bits first, since AAPCS64 leaves
+    // the rest of w1 undefined, and the first byte is asked before anything
+    // else. From sixteen the blocks are read as a nibble a byte,
+    // and the last ends at the size over bytes already found equal. Four to
+    // fifteen are two words of eight or of four that overlap the same way,
+    // each against the byte eight times over: here, unlike x86_64, a word
+    // read over bytes just stored one at a time takes them from the stores
+    // (on the M2 it costs what a word read long after does), so the words
+    // stay. One to three go to the byte loop, which the kernel keeps alone.
     ASM_FUNC(memory_span_byte)
     "mov x3, #0\n   mov x4, x0\n"
 #ifndef KERNEL_MODE
-    "cmp x2, #16\n   b.lo .Lmemory_span_byte_arm64_tail\n"
-    "dup v2.16b, w1\n"
-    ".balign 16\n.Lmemory_span_byte_arm64_16:\n"
-    "ldr q0, [x4]\n   cmeq v0.16b, v0.16b, v2.16b\n"
-    "uminv b1, v0.16b\n   umov w5, v1.b[0]\n   cmp w5, #255\n"
-    "b.ne .Lmemory_span_byte_arm64_tail\n   add x4, x4, #16\n"
-    "add x3, x3, #16\n   sub x2, x2, #16\n   cmp x2, #16\n"
-    "b.hs .Lmemory_span_byte_arm64_16\n"
+    "and w1, w1, #255\n   cbz x2, .Lmemory_span_byte_arm64_done\n"
+    "ldrb w5, [x0]\n   cmp w5, w1\n   b.ne .Lmemory_span_byte_arm64_done\n"
+    "cmp x2, #4\n   b.lo .Lmemory_span_byte_arm64_short\n"
+    "cmp x2, #16\n   b.lo .Lmemory_span_byte_arm64_words\n"
+    "dup v2.16b, w1\n   sub x6, x2, #16\n   cbz x6, .Lmemory_span_byte_arm64_last\n"
+    ".Lmemory_span_byte_arm64_16:\n"
+    "ldr q0, [x0, x3]\n   cmeq v0.16b, v0.16b, v2.16b\n"
+    "shrn v0.8b, v0.8h, #4\n   fmov x5, d0\n   cmn x5, #1\n"
+    "b.ne .Lmemory_span_byte_arm64_found\n"
+    "add x3, x3, #16\n   cmp x3, x6\n   b.lo .Lmemory_span_byte_arm64_16\n"
+    //  One to sixteen left: the last block starts sixteen short of the end.
+    ".Lmemory_span_byte_arm64_last:\n   mov x3, x6\n"
+    "ldr q0, [x0, x6]\n   cmeq v0.16b, v0.16b, v2.16b\n"
+    "shrn v0.8b, v0.8h, #4\n   fmov x5, d0\n   cmn x5, #1\n"
+    "b.ne .Lmemory_span_byte_arm64_found\n   mov x0, x2\n"
+    ASM_RET
+    ".Lmemory_span_byte_arm64_found:\n   mvn x5, x5\n   rbit x5, x5\n   clz x5, x5\n"
+    "add x0, x3, x5, lsr #2\n"
+    ASM_RET
+    ".Lmemory_span_byte_arm64_words:\n"
+    "mov x8, #0x0101010101010101\n   mul x7, x1, x8\n"
+    "cmp x2, #8\n   b.lo .Lmemory_span_byte_arm64_four\n"
+    "ldr x5, [x0]\n   eor x5, x5, x7\n   cbnz x5, .Lmemory_span_byte_arm64_word\n"
+    "sub x3, x2, #8\n   ldr x5, [x0, x3]\n   eor x5, x5, x7\n"
+    "cbnz x5, .Lmemory_span_byte_arm64_word\n   mov x0, x2\n"
+    ASM_RET
+    ".Lmemory_span_byte_arm64_four:\n"
+    "ldr w5, [x0]\n   eor w5, w5, w7\n   cbnz w5, .Lmemory_span_byte_arm64_word\n"
+    "sub x3, x2, #4\n   ldr w5, [x0, x3]\n   eor w5, w5, w7\n"
+    "cbnz w5, .Lmemory_span_byte_arm64_word\n   mov x0, x2\n"
+    ASM_RET
+    ".Lmemory_span_byte_arm64_word:\n   rbit x5, x5\n   clz x5, x5\n"
+    "add x0, x3, x5, lsr #3\n"
+    ASM_RET
+    ".Lmemory_span_byte_arm64_short:\n   mov x3, #1\n   add x4, x0, #1\n"
+    "sub x2, x2, #1\n"
 #endif
     ".Lmemory_span_byte_arm64_tail:\n   cbz x2, .Lmemory_span_byte_arm64_done\n"
     ".Lmemory_span_byte_arm64_one:\n   ldrb w5, [x4], #1\n"

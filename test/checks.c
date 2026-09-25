@@ -13228,6 +13228,162 @@ fn check_offsets_of_either()
 }
 
 /*
+        memory_span_byte against the loop it answers for, one block at a time:
+        the block is size bytes of the fill, with up to sixty four bytes of
+        another value on either side inside the page between the guards, and
+        a byte one bit off the fill goes to every place in turn and then
+        nowhere. A second byte off the fill by another bit follows it by one
+        to fifteen, so it mostly shares the first's word or block, and an
+        answer that names the last difference in a word rather than the first
+        is wrong. The bits turn over with the place. Answers that are not the
+        byte loop's over the same bytes are counted, and the first few said.
+
+        The byte arrives with bits above its eight set, through a pointer
+        that passes it as a whole register, where the calling convention
+        leaves those bits undefined: AAPCS64 and the x86_64 one do, and GCC
+        on arm64 passes x + 1 for a byte as it stands. RISC-V's makes the
+        caller extend it, so there the byte arrives clean.
+*/
+static p8 address_to span_byte_page;
+static positive span_byte_wrong, span_byte_calls;
+typedef positive (*span_byte_register)(address_any, positive, positive);
+static span_byte_register volatile span_byte_call =
+    (span_byte_register)(address_any)memory_span_byte;
+
+static positive span_byte_reference(p8 address_to at, p8 value, positive size)
+{
+        positive equal = 0;
+
+        while (equal < size && at[equal] == value)
+                equal++;
+
+        return equal;
+}
+
+static fn span_byte_block(p8 address_to at, positive size, p8 fill, p8 around,
+                          positive turn)
+{
+        p8 address_to from = at - span_byte_page >= 64 ? at - 64 : span_byte_page;
+        p8 address_to top = span_byte_page + 4096;
+        p8 address_to to = top - (at + size) >= 64 ? at + size + 64 : top;
+
+        reference_fill(from, around, (positive)(at - from));
+        reference_fill(at, fill, size);
+        reference_fill(at + size, around, (positive)(to - at - size));
+        for (positive place = 0; place <= size; place++)
+        {
+                positive later = place + 1 + turn % 15;
+
+                if (place < size)
+                        at[place] = (p8)(fill ^ (1u << ((place + turn) & 7)));
+                if (later < size)
+                        at[later] = (p8)(fill ^ (1u << ((place + turn + 3) & 7)));
+#if RISCV64
+                positive above = 0;
+#else
+                positive above = (((place + turn) & 0xff) + 1) << 8;
+#endif
+                positive want = span_byte_reference(at, fill, size);
+                positive got = span_byte_call(at, fill | above, size);
+                span_byte_calls++;
+                if (got != want && span_byte_wrong++ < 8)
+                        string_format(log, "  FAIL memory_span_byte size %p at page+%p "
+                                           "fill %p around %p: got %p want %p\n",
+                                      size, (positive)(at - span_byte_page), (positive)fill,
+                                      (positive)around, got, want);
+                if (place < size)
+                        at[place] = fill;
+                if (later < size)
+                        at[later] = fill;
+        }
+}
+
+/*
+        Every size to 300 and every residue of sixty four at the start, the
+        block once flush against a guard page before it and once with its end
+        flush against one after it, so at a residue of zero a read one byte
+        outside faults. The bytes around it equal the fill at even residues
+        and are its complement at odd ones, so a byte read outside that is
+        counted is wrong either way. The fill turns over with size and
+        residue: zero, all ones, the top bit alone, all but it, and two
+        characters callers skip. Then, to forty bytes, the sizes callers
+        mostly ask, every fill against every bit at every place. On x86_64
+        once for each body the machine has, AVX-512, AVX2 and neither, since
+        the wide one hands its last bytes back to the sixteen-byte blocks.
+*/
+fn check_span_byte()
+{
+        static const p8 fills[] = {0x00, 0xff, 0x80, 0x7f, '0', ' '};
+        p8 address_to pages = memory(3 * 4096);
+        bool mapped = (bipolar)(positive)pages > 0;
+
+        same("memory_span_byte", "guard mapping", mapped, 1);
+        if (!mapped)
+                return;
+        bool protected =
+            system_call_3(syscall(mprotect), (positive)pages, 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0) == 0;
+        same("memory_span_byte", "guard pages protected", protected, 1);
+        if (!protected)
+        {
+                memory_free(pages, 3 * 4096);
+                return;
+        }
+        span_byte_page = pages + 4096;
+#if X64
+        p8 avx2 = cpu_has_avx2, avx512 = cpu_has_avx512;
+        positive tiers = 3;
+#else
+        positive tiers = 1;
+#endif
+        for (positive tier = 0; tier < tiers; tier++)
+        {
+#if X64
+                cpu_has_avx512 = tier == 0 ? avx512 : 0;
+                cpu_has_avx2 = tier == 2 ? 0 : avx2;
+#endif
+                span_byte_wrong = span_byte_calls = 0;
+                for (positive size = 0; size <= 300; size++)
+                        for (positive residue = 0; residue < 64; residue++)
+                                for (positive flush = 0; flush < 2; flush++)
+                                {
+                                        p8 fill = fills[(size + residue) % array_count(fills)];
+                                        p8 around = residue & 1 ? (p8)~fill : fill;
+                                        p8 address_to at =
+                                            flush ? span_byte_page + 4096 - size - residue
+                                                  : span_byte_page + residue;
+
+                                        span_byte_block(at, size, fill, around, residue + flush);
+                                }
+                same("memory_span_byte", "every size, residue and place", span_byte_wrong, 0);
+                same("memory_span_byte", "cases", span_byte_calls, 45451 * 128);
+
+                span_byte_wrong = span_byte_calls = 0;
+                for (positive size = 0; size <= 40; size++)
+                        for (positive residue = 0; residue < 64; residue++)
+                                for (positive flush = 0; flush < 2; flush++)
+                                        for (positive f = 0; f < array_count(fills); f++)
+                                                for (positive bit = 0; bit < 8; bit++)
+                                                {
+                                                        p8 fill = fills[f];
+                                                        p8 around = residue & 1 ? (p8)~fill : fill;
+                                                        p8 address_to at =
+                                                            flush ? span_byte_page + 4096 - size - residue
+                                                                  : span_byte_page + residue;
+
+                                                        span_byte_block(at, size, fill, around, bit);
+                                                }
+                same("memory_span_byte", "every fill and bit to forty", span_byte_wrong, 0);
+                same("memory_span_byte", "short cases", span_byte_calls, 861 * 128 * 6 * 8);
+        }
+#if X64
+        cpu_has_avx2 = avx2;
+        cpu_has_avx512 = avx512;
+#endif
+        memory_free(pages, 3 * 4096);
+}
+
+/*
         memory_offsets_between and memory_offsets_outside against a byte
         loop: the same sizes, residues and limits as memory_offsets_of_either,
         over random bytes, ranges from one value to all of them. On x86_64
@@ -22662,6 +22818,7 @@ b32 main()
         check_delete_bytes();
         check_squeeze_bytes();
         check_offsets_of_either();
+        check_span_byte();
         check_offsets_range();
         check_checksums();
         check_copy_match();
