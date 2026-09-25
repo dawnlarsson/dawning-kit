@@ -2388,6 +2388,28 @@ lane_waterlink()
 {
         freestanding_checks_lane waterlink waterlink
         waterlink_outcome=$?
+        #       qemu's default riscv64 core has the vector crypto the short
+        #       seal asks for, so the run above never takes the body a core
+        #       without it keeps. Once more on rv64 -- Zbc and no V -- where
+        #       the gate must send every box to the general body, and an
+        #       instruction the core lacks is a SIGILL.
+        if [ -x "$work/waterlink.riscv64" ] &&
+           command -v qemu-riscv64 > /dev/null 2>&1; then
+                QEMU_CPU=rv64 qemu-riscv64 "$work/waterlink.riscv64" \
+                        > "$work/waterlink.riscv64-scalar.out" 2>&1
+                scalar_status=$?
+                sed -n '/FAIL/p' "$work/waterlink.riscv64-scalar.out"
+                line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
+                        "$work/waterlink.riscv64-scalar.out")
+                if [ "$scalar_status" = 0 ] && [ -n "$line" ] &&
+                   [ "${line#* }" = 0 ]; then
+                        tally waterlink-riscv64-scalar "${line% *}" "${line% *}"
+                else
+                        note "the riscv64 checks on a core without V did not agree"
+                        tally waterlink-riscv64-scalar 0 1
+                        waterlink_outcome=1
+                fi
+        fi
         #       The service half -- admission, pairing, authorization files,
         #       staging -- on this machine only: it runs in a user namespace
         #       of its own, which qemu-user, being threaded, cannot enter.
