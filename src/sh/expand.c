@@ -2225,9 +2225,16 @@ static positive arith_assign_target_length HOT_STATE;
 static bool arith_assign_stored HOT_STATE;
 static bool expand_assignment_commit HOT_STATE;
 
+/* Most operators and operands stand against each other, and the ladder asks
+   at every level, so the byte in front decides before the set scan runs. */
 static PURE inline INLINE string_address arith_skip_space(string_address at)
 {
-        return at + string_span_of_set(at, " \t\n");
+        p8 seen = string_get(at);
+
+        if (seen != ' ' && seen != '\t' && seen != '\n')
+                return at;
+
+        return at + 1 + string_span_of_set(at + 1, " \t\n");
 }
 
 /*
@@ -2325,7 +2332,7 @@ COLD fn shell_arith_report(writer write, string_address command,
                               expr);
 }
 
-static fn arith_space()
+static inline INLINE fn arith_space()
 {
         arith_at = arith_skip_space(arith_at);
 }
@@ -2429,6 +2436,109 @@ static COLD bool arith_element_name(expand_reference address_to reference)
         return reference->key != null;
 }
 
+static CONST bipolar arith_negate(bipolar value)
+{
+        return (bipolar)(0 - (positive)value);
+}
+
+/*
+        A plain decimal operand, and only that.
+
+        Leading zeros are octal in this grammar, 08 is a diagnostic, and
+        0x / base# are a different literal. Those all belong to the walker.
+        A lone 0 is a decimal zero. Anything that does not fit in a signed
+        machine word is left to the saturating reader as well.
+*/
+static bool arith_plain_natural(string_address address_to at,
+                                bipolar address_to value)
+{
+        string_address step = address_to at;
+        p8 seen = string_get(step);
+        positive held = 0;
+
+        if (seen < '0' || seen > '9')
+                return false;
+
+        if (seen == '0')
+        {
+                p8 next = string_get(step + 1);
+
+                if (byte_is_digit(next) || next == 'x' ||
+                    next == 'X' || next == '#' ||
+                    expand_name_character(next))
+                        return false;
+
+                address_to at = step + 1;
+                address_to value = 0;
+                return true;
+        }
+
+        do
+        {
+                positive digit = (positive)(seen - '0');
+
+                if (held > (positive)bipolar_max / 10 ||
+                    (held == (positive)bipolar_max / 10 &&
+                     digit > (positive)bipolar_max % 10))
+                        return false;
+
+                held = held * 10 + digit;
+                step++;
+                seen = string_get(step);
+        } while (byte_is_digit(seen));
+
+        if (expand_name_character(seen))
+                return false;
+
+        address_to at = step;
+        address_to value = (bipolar)held;
+        return true;
+}
+
+// A value is seldom padded, so the byte in front decides before the scan.
+static PURE inline INLINE string_address arith_skip_blanks(string_address at)
+{
+        if (string_not(at, ' ') && string_not(at, '\t'))
+                return at;
+
+        return at + string_span(at, string_set_blanks);
+}
+
+// A variable that already holds a decimal, the way a loop counter does
+// after the first assignment. Octal, bases and nested expressions go
+// through arith_value_of instead of being guessed at here.
+static bool arith_plain_scalar(string_address text, bipolar address_to value)
+{
+        string_address step;
+        bool negative = false;
+        bipolar magnitude;
+
+        if (!text)
+                return false;
+
+        step = arith_skip_blanks(text);
+        if (!string_get(step))
+        {
+                address_to value = 0;
+                return true;
+        }
+
+        if (string_is(step, '-') || string_is(step, '+'))
+        {
+                negative = string_is(step, '-');
+                step++;
+        }
+
+        if (!arith_plain_natural(address_of step, address_of magnitude))
+                return false;
+
+        if (string_get(arith_skip_blanks(step)))
+                return false;
+
+        address_to value = negative ? arith_negate(magnitude) : magnitude;
+        return true;
+}
+
 /*
         The number a name holds, and the value itself when it is not one.
 
@@ -2473,6 +2583,14 @@ static bipolar arith_number_of(expand_reference reference, p8 address_to scratch
                 }
 
                 return 0;
+        }
+
+        // A counter holds plain decimal digits, which is one pass here.
+        {
+                bipolar plain;
+
+                if (arith_plain_scalar(value, address_of plain))
+                        return plain;
         }
 
         step = value + string_span(value, string_set_blanks);
@@ -2645,11 +2763,6 @@ static CONST bipolar arith_product(bipolar left, bipolar right)
         return (bipolar)((positive)left * (positive)right);
 }
 
-static CONST bipolar arith_negate(bipolar value)
-{
-        return (bipolar)(0 - (positive)value);
-}
-
 /*
         Raising to a power, which the machine has no instruction for.
 
@@ -2809,12 +2922,46 @@ static bipolar arith_lvalue(p8 prefix)
         string_address start = arith_at;
         p8 name_local[EXPAND_LOCAL_NAME];
         expand_reference name = {0};
-        positive length = string_span(arith_at, string_set_name);
+        positive2 named = expand_name_hash(start);
+        positive length = named.y;
         shell_mark held;
         bipolar value = 0;
 
         arith_is_lvalue = false;
         arith_at += length;
+
+        /*
+                A plain read of a scalar that holds a decimal, which is what a
+                loop counter is: the span in the expression is hashed as it
+                is measured and probed as it stands, where the name used to be
+                copied out to be terminated and hashed again from the copy.
+                A prefix or postfix operator, a subscript, an untaken arm, a
+                value that is not one plain number and anything the table does
+                not hold as a scalar take the walk below, unchanged.
+        */
+        if (!prefix && length && length < EXPAND_LOCAL_NAME && arith_active &&
+            string_not(arith_at, '[') &&
+            !(shell_bash_compat && memory_is_word(start, length, "PIPESTATUS")))
+        {
+                string_address after = arith_skip_space(arith_at);
+                p8 op = string_get(after);
+
+                if (!((op == '+' || op == '-') && string_get(after + 1) == op))
+                {
+                        string_address raw = env_get_hashed_span(
+                            start, length, named.x, null);
+
+                        if (raw && arith_plain_scalar(raw, address_of value))
+                        {
+                                arith_at = after;
+                                name.name = start;
+                                name.name_length = length;
+                                arith_keep_lvalue(name, value);
+                                return value;
+                        }
+                }
+        }
+
         bool element = length && string_is(arith_at, '[');
         if (element)
                 held = shell_store_mark(address_of expand_store);
@@ -2894,6 +3041,59 @@ static bipolar arith_primary_step()
         arith_space();
         arith_is_lvalue = false;
 
+        if (byte_is_digit(string_get(arith_at)))
+        {
+                bool valid;
+                string_address scan = arith_at;
+                string_address start = arith_at;
+
+                // A plain decimal is most literals a script writes. A # behind
+                // it makes it a base, which the walker below reads.
+                if (arith_plain_natural(address_of scan, address_of value) &&
+                    string_not(scan, '#'))
+                {
+                        arith_at = scan;
+                        return value;
+                }
+
+                scan = arith_at;
+
+                // What is in front of a # is a base and not a value, and only
+                // a run of plain decimal digits can be one: 0x10#1 is neither.
+                scan += string_span(scan, string_set_digits);
+
+                if (string_is(scan, '#'))
+                        return arith_based(scan);
+
+                value = expand_base_number(address_of arith_at, address_of valid,
+                                          arith_bash_mode);
+
+                if (!valid)
+                {
+                        /* 08 is refused as an octal digit. The cursor has
+                           already walked past the leading 0, so the token
+                           bash names is restored from the start of the
+                           literal, then the cursor goes back to after it. */
+                        string_address held = arith_at;
+
+                        arith_at = start;
+                        arith_fail("value too great for base");
+                        arith_at = held;
+                }
+
+                return value;
+        }
+
+        /*
+                A name with no dollar in front of it, which is the one place in
+                the language where that reads a variable. Numbers and names
+                are most operands and neither starts with an operator, so
+                they are asked first.
+        */
+        if (expand_name_character(string_get(arith_at)))
+                return arith_lvalue(0);
+
+
         if (string_is(arith_at, '('))
         {
                 arith_at++;
@@ -2951,45 +3151,6 @@ static bipolar arith_primary_step()
                 arith_is_lvalue = false;
                 return value;
         }
-
-        if (byte_is_digit(string_get(arith_at)))
-        {
-                bool valid;
-                string_address scan = arith_at;
-                string_address start = arith_at;
-
-                // What is in front of a # is a base and not a value, and only
-                // a run of plain decimal digits can be one: 0x10#1 is neither.
-                scan += string_span(scan, string_set_digits);
-
-                if (string_is(scan, '#'))
-                        return arith_based(scan);
-
-                value = expand_base_number(address_of arith_at, address_of valid,
-                                          arith_bash_mode);
-
-                if (!valid)
-                {
-                        /* 08 is refused as an octal digit. The cursor has
-                           already walked past the leading 0, so the token
-                           bash names is restored from the start of the
-                           literal, then the cursor goes back to after it. */
-                        string_address held = arith_at;
-
-                        arith_at = start;
-                        arith_fail("value too great for base");
-                        arith_at = held;
-                }
-
-                return value;
-        }
-
-        /*
-                A name with no dollar in front of it, which is the one place in
-                the language where that reads a variable.
-        */
-        if (expand_name_character(string_get(arith_at)))
-                return arith_lvalue(0);
 
         // A byte that starts no value at all, which is where a missing
         // operand lands: $((1 + )) answered 1 and $((2 ** 3)) answered 0.
@@ -3246,96 +3407,6 @@ static bipolar arith_expression()
 }
 
 /*
-        A plain decimal operand, and only that.
-
-        Leading zeros are octal in this grammar, 08 is a diagnostic, and
-        0x / base# are a different literal. Those all belong to the walker.
-        A lone 0 is a decimal zero. Anything that does not fit in a signed
-        machine word is left to the saturating reader as well.
-*/
-static bool arith_plain_natural(string_address address_to at,
-                                bipolar address_to value)
-{
-        string_address step = address_to at;
-        p8 seen = string_get(step);
-        positive held = 0;
-
-        if (seen < '0' || seen > '9')
-                return false;
-
-        if (seen == '0')
-        {
-                p8 next = string_get(step + 1);
-
-                if (byte_is_digit(next) || next == 'x' ||
-                    next == 'X' || next == '#' ||
-                    expand_name_character(next))
-                        return false;
-
-                address_to at = step + 1;
-                address_to value = 0;
-                return true;
-        }
-
-        do
-        {
-                positive digit = (positive)(seen - '0');
-
-                if (held > (positive)bipolar_max / 10 ||
-                    (held == (positive)bipolar_max / 10 &&
-                     digit > (positive)bipolar_max % 10))
-                        return false;
-
-                held = held * 10 + digit;
-                step++;
-                seen = string_get(step);
-        } while (byte_is_digit(seen));
-
-        if (expand_name_character(seen))
-                return false;
-
-        address_to at = step;
-        address_to value = (bipolar)held;
-        return true;
-}
-
-// A variable that already holds a decimal, the way a loop counter does
-// after the first assignment. Octal, bases and nested expressions go
-// through arith_value_of instead of being guessed at here.
-static bool arith_plain_scalar(string_address text, bipolar address_to value)
-{
-        string_address step;
-        bool negative = false;
-        bipolar magnitude;
-
-        if (!text)
-                return false;
-
-        step = text + string_span(text, string_set_blanks);
-        if (!string_get(step))
-        {
-                address_to value = 0;
-                return true;
-        }
-
-        if (string_is(step, '-') || string_is(step, '+'))
-        {
-                negative = string_is(step, '-');
-                step++;
-        }
-
-        if (!arith_plain_natural(address_of step, address_of magnitude))
-                return false;
-
-        step += string_span(step, string_set_blanks);
-        if (string_get(step))
-                return false;
-
-        address_to value = negative ? arith_negate(magnitude) : magnitude;
-        return true;
-}
-
-/*
         A loop counter is a name plus one.
 
         $((i + 1)) and the assigning cousins a script actually writes used
@@ -3377,7 +3448,8 @@ static HOT bool arith_increment_fast(bipolar address_to value)
                 return false;
 
         name_start = at;
-        name_length = string_span(at, string_set_name);
+        hashed = expand_name_hash(at);
+        name_length = hashed.y;
         if (!name_length || name_length >= EXPAND_LOCAL_NAME)
                 return false;
 
@@ -3435,7 +3507,6 @@ static HOT bool arith_increment_fast(bipolar address_to value)
         name.name = name_local;
         name.name_length = name_length;
 
-        hashed = string_hash_33_length(name_local);
         {
                 string_address raw = env_get_hashed_span(name_local, hashed.y,
                                                          hashed.x, null);
@@ -9955,6 +10026,7 @@ static string_address expand_assignment_arithmetic(string_address word,
         positive digits;
         bipolar value;
         string_address made;
+        bool plain;
 
         if (value_at < 2 || word[value_at - 1] != '=')
                 return null;
@@ -9965,8 +10037,22 @@ static string_address expand_assignment_arithmetic(string_address word,
                 return null;
 
         inner = rhs + 3;
-        stop = expand_paren_end(inner);
-        if (!stop || string_get(stop + 1) != ')' || string_get(stop + 2))
+
+        /* A body with no parenthesis, quote, backslash, dollar or backtick
+           ends at its first ), and that one scan is all it needs: the
+           bracket walker, the check for something to expand and
+           arith_expand_body's own check each walked it again. A group
+           takes the walker. */
+        stop = inner + string_span_without_set(inner, "()$`\"'\\");
+        plain = string_is(stop, ')');
+        if (!plain)
+        {
+                stop = expand_paren_end(inner);
+                if (!stop)
+                        return null;
+        }
+
+        if (string_get(stop + 1) != ')' || string_get(stop + 2))
                 return null;
 
         length = (positive)(stop - inner);
@@ -9974,12 +10060,12 @@ static string_address expand_assignment_arithmetic(string_address word,
         if (!text)
                 return (string_address) "";
 
-        if (string_get(text + string_span_without_set(text, "$`\"'\\")))
+        if (!plain && string_get(text + string_span_without_set(text, "$`\"'\\")))
                 return null;
 
         arith_assign_target = word;
         arith_assign_target_length = value_at - 1;
-        ready = arith_expand_body(text);
+        ready = text;
         if (expand_failed)
         {
                 arith_assign_target = null;
