@@ -10090,12 +10090,45 @@ positive shell_expand_fields(string_address word, shell_words address_to out)
 RETURNS_NONNULL string_address shell_expand_word(string_address word)
 {
         string_address result;
+        bool quoted;
+        positive hash;
+        positive length = expand_simple_dollar_shape(word, address_of quoted,
+                                                     address_of hash);
+        string_address value = null;
+        positive value_length = 0;
 
-        if (!expand_word_ready(word))
-                return (string_address) "";
+        /* A word that is only $name or "$name" -- a case subject, a
+           redirection target -- is the value's bytes, since nothing here
+           splits or globs, and a word with nothing to expand -- /dev/null
+           -- is its own; the walk took both through expand_into and the
+           expansion buffer. Anything the table does not hold as a scalar
+           is the walk's, as in expand_assignment_parameter. */
+        if (length &&
+            !(shell_bash_compat &&
+              memory_is_word(word + (quoted ? 2 : 1), length, "PIPESTATUS")))
+                value = env_get_hashed_span(word + (quoted ? 2 : 1), length,
+                                            hash, address_of value_length);
+        else if (!length)
+        {
+                expand_sets_prepare();
+                value_length = string_span(word, expand_literal_set);
+                if (!string_get(word + value_length))
+                        value = word;
+        }
 
-        expand_drop_empty();
-        result = expand_keep_bytes(expand_text, expand_length);
+        if (value)
+        {
+                expand_begin();
+                result = expand_keep_bytes(value, value_length);
+        }
+        else
+        {
+                if (!expand_word_ready(word))
+                        return (string_address) "";
+
+                expand_drop_empty();
+                result = expand_keep_bytes(expand_text, expand_length);
+        }
 
         if (expand_overflow)
         {
@@ -10373,6 +10406,28 @@ static RETURNS_NONNULL string_address shell_expand_quoted(
 
 RETURNS_NONNULL string_address shell_expand_pattern(string_address word)
 {
+        positive length;
+
+        /* A pattern with nothing to expand, no quote and no pattern byte --
+           the a in case $x in a) -- is its own bytes: the walk and the lift
+           each copied them once more to say so. */
+        expand_sets_prepare();
+        length = string_span(word, expand_literal_set);
+        if (!string_get(word + length))
+        {
+                string_address result;
+
+                expand_begin();
+                result = expand_keep_bytes(word, length);
+                if (expand_overflow)
+                {
+                        expand_fatal_status(string_report(writer_stderr_once, 2, "Expansion too long: %s\n", word));
+                        return (string_address) "";
+                }
+
+                return result;
+        }
+
         return shell_expand_quoted(word, false);
 }
 
