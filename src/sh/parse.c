@@ -179,6 +179,10 @@ static parse_redirect address_to parse_redirects;
 // NAME=( ... ): the value is a list of elements and not one string, so it is
 // neither expanded nor assigned the way every other assignment word is.
 #define PARSE_WORD_COMPOUND 8
+/* An assignment word with a newline inside it, which moves the line a
+   command made only of assignments reports: asked once here, not at every
+   run of the command. */
+#define PARSE_WORD_NEWLINE 16
 
 // What a case item's terminator was, kept in the item node's flags.
 #define CASE_STOP 0
@@ -1495,6 +1499,9 @@ static b32 parse_word_new(string_address text, positive length)
 
                 parse_word_name_hashes[parse_word_used] =
                     memory_hash_33(text, name_length);
+
+                if (memory_first_of(text, '\n', length))
+                        flags |= PARSE_WORD_NEWLINE;
         }
         else
                 parse_word_name_hashes[parse_word_used] = 0;

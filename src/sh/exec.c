@@ -10093,9 +10093,12 @@ static b32 exec_simple(b32 index)
                         at++;
                 if (words && at == words)
                         for (at = 0; at < words; at++)
-                                exec_line += (b32)memory_count(
-                                    parse_words[node->word + at],
-                                    parse_word_lengths[node->word + at], '\n');
+                                if (parse_word_flags[node->word + at] &
+                                    PARSE_WORD_NEWLINE)
+                                        exec_line += (b32)memory_count(
+                                            parse_words[node->word + at],
+                                            parse_word_lengths[node->word + at],
+                                            '\n');
         }
         exec_wait_node = index;
         token_used = 0;
@@ -10352,6 +10355,37 @@ static b32 exec_simple(b32 index)
                         arith_assign_stored = false;
                         shell_argv[at] = trial;
                         continue;
+                }
+                /* A command that is one plain assignment and nothing else has
+                   nothing after it that could fail and undo it, so there is no
+                   old value to copy aside and release again. Its variable is
+                   still looked up, since a nameref needs the kept path to find
+                   the target it would change; a subscript or a compound value
+                   takes it too. */
+                if (trial && assignments_only && leading == 1 &&
+                    !(flags & PARSE_WORD_COMPOUND) &&
+                    trial[parse_word_name_lengths[word_index] - 1] != ']')
+                {
+                        exec_kept_value plain = {0};
+
+                        env_saved_state(address_of plain.binding, trial,
+                                        parse_word_name_lengths[word_index]);
+                        if (!(plain.binding.variable.attributes &
+                              SHELL_ARRAY_NAMEREF))
+                        {
+                                shell_argv[at] = trial;
+                                if (!exec_assign_value(
+                                        trial, parse_word_name_lengths[word_index],
+                                        parse_word_name_hashes[word_index],
+                                        (flags & PARSE_WORD_APPEND) != 0, false,
+                                        address_of plain,
+                                        exec_assignment_error_status(true, null)))
+                                {
+                                        status = shell_bash_compat ? 1 : 2;
+                                        goto fail;
+                                }
+                                continue;
+                        }
                 }
                 if (!trial ||
                     !exec_keep_value(expanded_kept + expanded_count, trial,
