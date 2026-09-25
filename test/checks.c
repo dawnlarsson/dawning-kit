@@ -13384,6 +13384,1591 @@ fn check_span_byte()
 }
 
 /*
+        Every routine here that takes an argument narrower than a register,
+        asked twice on the same input: once through its prototype, which
+        hands the argument over as the calling convention says, and once
+        through a pointer that passes a whole register with bits set above
+        the argument's width. The answers, and every byte either call wrote,
+        must be the same.
+
+        AAPCS64 and the x86_64 convention leave the bits above a byte, a
+        half, a bool and an int undefined, and GCC uses the licence: on arm64
+        it passes x + 1 for a byte as it stands, and on either it passes a
+        long cut to an int as the long. memory_span_byte compared all of w1
+        until the check above it said so. RISC-V's convention makes the
+        caller extend, and a signed byte with its sign, so there the second
+        call passes a b8 zero extended instead and every other argument as
+        the convention has it. That is stricter than the convention, on
+        purpose: what is asked of a routine that takes a b8 is that it reads
+        its byte however the byte arrives, and the riscv64 record count
+        compared a sign extended delimiter against bytes loaded unsigned. On
+        every machine the C names' int is asked as well, whose bits eight to
+        thirty one are the caller's to set and the routine's to drop:
+        strchr(s, 0x141) is strchr(s, 'A'), and a char of 0xe9 arrives as
+        0xffffffe9, which riscv64 extends to the whole register.
+
+        The junk is one of five shapes, picked at random a call: a few bits
+        just above the width, all ones above it (a sign extension's), bits
+        32 to 63 alone (a long cut to an int), random, and the one bit just
+        above. An int takes the same shapes above bit 31, and a bool
+        arrives as 0, 1, 2 or 0x80 under them. A narrow answer is compared
+        at its width. A block a routine reads is laid at every residue of
+        sixty four up to seventy two bytes and at eight residues past that,
+        so the byte, word and vector paths and their tails each meet the
+        argument; an output is written twice, into two buffers laid out and
+        filled alike, and compared whole with the bytes around it. On x86_64
+        once per body the machine has: AVX-512 with VBMI, AVX-512 without,
+        AVX2, and neither.
+
+        The same source asks a kernel object's bodies when built with
+        VERIFY_NARROW_KERNEL, which the verify lane does on each machine
+        (kernel_narrow_one in test/run): lib.c compiled as the kernel vector
+        audits compile it, every symbol prefixed kernel_, linked beside the
+        library. The KERNEL_MODE bodies are then the ones called, which
+        nothing else runs outside a kernel, Canvas's pixel routines among
+        them; one the object does not carry is said and skipped.
+*/
+#define DIRTY_LIBRARY(X)                                                       \
+        X(memory_first_of) X(memory_last_of) X(memory_count)                  \
+        X(memory_span_byte) X(memory_first_of_ascii_case) X(memory_fill)      \
+        X(memory_fill_32) X(memory_fill_u32) X(memory_copy_until)             \
+        X(memory_offsets_of_either) X(memory_offsets_between)                 \
+        X(memory_offsets_outside) X(memory_escape_index)                      \
+        X(memory_into_escaped) X(memory_search_prepare)                       \
+        X(memory_count_records_with_prepared) X(memory_count_words)           \
+        X(string_first_of) X(string_first_of_or_end) X(string_first_of_max)   \
+        X(string_last_of) X(string_last_of_or_end) X(string_cut)              \
+        X(string_replace_all) X(writer_fill) X(writer_field)                  \
+        X(string_to_field) X(positive_to_padded) X(positive_into_padded)      \
+        X(positive_into_base) X(positive_into_human_nearest_string)           \
+        X(buffered_write_byte) X(network_store_16) X(bytes_reverse_16)        \
+        X(network_store_32) X(bytes_reverse_32) X(host_into)                  \
+        X(byte_class_holds) X(byte_is_alnum) X(byte_is_alpha)                 \
+        X(byte_is_ascii) X(byte_is_blank) X(byte_is_control)                  \
+        X(byte_is_digit) X(byte_is_graphic) X(byte_is_hexadecimal)            \
+        X(byte_is_lower) X(byte_is_printable) X(byte_is_punctuation)          \
+        X(byte_is_space) X(byte_is_upper) X(byte_to_ascii) X(byte_to_lower)   \
+        X(byte_to_upper) X(hash_crc32) X(hash_crc32_msb)                      \
+        X(memory_checksum_bsd16) X(unicode_width) X(bits_first_set)           \
+        X(absolute_whole) X(wait_status_code_base) X(string_to_number)        \
+        X(string_to_number_unsigned) X(string_to_number_checked)              \
+        X(string_to_number_unsigned_checked) X(program_argument)              \
+        X(program_environment) X(jump_to_mark) X(signal_jump_mark)            \
+        X(signal_jump_to_mark) X(memchr) X(memrchr) X(memccpy) X(memset)      \
+        X(strchr) X(strrchr) X(strchrnul) X(strnchr)
+
+#ifdef VERIFY_NARROW_KERNEL
+#define DIRTY_ROUTINE(name) kernel_##name
+#define DIRTY_KERNEL(name) extern typeof(name) kernel_##name __attribute__((weak));
+DIRTY_LIBRARY(DIRTY_KERNEL)
+
+//      Canvas's pixel routines, which only a kernel object carries, and
+//      every colour they take is a u32. The cell is window.c's.
+struct dirty_cell
+{
+        p32 character;
+        p8 ink, paper;
+        p16 flags;
+};
+#define DIRTY_CANVAS(X)                                                        \
+        X(canvas_rect_fill) X(canvas_rect_fill_wide) X(canvas_row_blit)       \
+        X(canvas_row_blit_wide) X(canvas_glyph) X(canvas_glyph2)              \
+        X(canvas_glyph_wide) X(canvas_cell) X(canvas_cell2)                   \
+        X(canvas_cell_wide) X(canvas_cell2_wide) X(canvas_cells)              \
+        X(canvas_cells_wide)
+#define DIRTY_RECT(name)                                                       \
+        extern fn kernel_##name(p32 address_to, positive, positive, positive, \
+                                p32) __attribute__((weak));
+#define DIRTY_BLIT(name)                                                       \
+        extern fn kernel_##name(p32 address_to, const p32 address_to,         \
+                                positive, p32) __attribute__((weak));
+#define DIRTY_GLYPH(name)                                                      \
+        extern fn kernel_##name(p32 address_to, positive, const p8 address_to,\
+                                positive, positive, p32) __attribute__((weak));
+#define DIRTY_CELL(name)                                                       \
+        extern fn kernel_##name(p32 address_to, positive, const p8 address_to,\
+                                positive, p32, p32) __attribute__((weak));
+#define DIRTY_CELLS(name)                                                      \
+        extern fn kernel_##name(p32 address_to, positive, const p8 address_to,\
+                                const struct dirty_cell address_to, positive, \
+                                p32, p32) __attribute__((weak));
+DIRTY_RECT(canvas_rect_fill)
+DIRTY_RECT(canvas_rect_fill_wide)
+DIRTY_BLIT(canvas_row_blit)
+DIRTY_BLIT(canvas_row_blit_wide)
+DIRTY_GLYPH(canvas_glyph)
+DIRTY_GLYPH(canvas_glyph2)
+DIRTY_GLYPH(canvas_glyph_wide)
+DIRTY_CELL(canvas_cell)
+DIRTY_CELL(canvas_cell2)
+DIRTY_CELL(canvas_cell_wide)
+DIRTY_CELL(canvas_cell2_wide)
+DIRTY_CELLS(canvas_cells)
+DIRTY_CELLS(canvas_cells_wide)
+#else
+#define DIRTY_ROUTINE(name) name
+#define DIRTY_CANVAS(X)
+#endif
+#define DIRTY_LIST(X) DIRTY_LIBRARY(X) DIRTY_CANVAS(X)
+
+#ifdef VERIFY_NARROW_KERNEL
+/*
+        What an arm64 kernel body ends in a branch to -- memset, strchr,
+        strrchr, strlen, memcpy and memmove -- is the kernel's own, which is
+        not in the object. These stand in for them as lib/string.c writes
+        them, cutting the character to a char as C says, so a body is asked
+        about what it does before the branch. Weak, so an object that
+        carries its own, as x86_64's does, keeps it.
+*/
+#define DIRTY_STAND_IN KEEP __attribute__((externally_visible, weak))
+DIRTY_STAND_IN char address_to kernel_strchr(const char address_to s, int c)
+{
+        for (; *s != (char)c; s++)
+                if (!*s)
+                        return null;
+        return (char address_to)s;
+}
+DIRTY_STAND_IN char address_to kernel_strrchr(const char address_to s, int c)
+{
+        const char address_to last = null;
+
+        do
+                if (*s == (char)c)
+                        last = s;
+        while (*s++);
+        return (char address_to)last;
+}
+DIRTY_STAND_IN positive kernel_strlen(const char address_to s)
+{
+        positive length = 0;
+
+        while (s[length])
+                length++;
+        return length;
+}
+DIRTY_STAND_IN void address_to kernel_memset(void address_to to, int c, sized size)
+{
+        for (sized i = 0; i < size; i++)
+                ((char address_to)to)[i] = (char)c;
+        return to;
+}
+DIRTY_STAND_IN void address_to kernel_memmove(void address_to to,
+                                              const void address_to from,
+                                              sized size)
+{
+        return memory_copy(to, from, size);
+}
+DIRTY_STAND_IN void address_to kernel_memcpy(void address_to to,
+                                             const void address_to from,
+                                             sized size)
+{
+        return memory_copy(to, from, size);
+}
+#endif
+#define DIRTY_HAS(name) ((address_any)DIRTY_ROUTINE(name) != null)
+
+#define DIRTY_ENUM(name) DIRTY_##name,
+enum { DIRTY_LIST(DIRTY_ENUM) DIRTY_ROUTINES };
+#define DIRTY_NAME(name) (string_address) #name,
+static const string_address dirty_names[DIRTY_ROUTINES] = { DIRTY_LIST(DIRTY_NAME) };
+#define DIRTY_ADDRESS(name) (address_any)DIRTY_ROUTINE(name),
+static address_any const dirty_addresses[DIRTY_ROUTINES] = { DIRTY_LIST(DIRTY_ADDRESS) };
+
+static positive dirty_compared[DIRTY_ROUTINES], dirty_wrong[DIRTY_ROUTINES];
+static positive dirty_tier;
+static p64 dirty_seed = 0x6a09e667f3bcc909ull;
+
+static positive dirty_random(void)
+{
+        dirty_seed ^= dirty_seed << 13;
+        dirty_seed ^= dirty_seed >> 7;
+        dirty_seed ^= dirty_seed << 17;
+        return (positive)dirty_seed;
+}
+
+//      A value of `bits` with junk above it, in one of the five shapes
+//      picked at random: a turn count would line up with the number of
+//      calls a case makes, and a routine would meet one shape every time.
+static positive dirty(positive value, positive bits)
+{
+#if RISCV64
+        //      The byte zero extended, which the convention would have
+        //      signed for a b8; the half and the int as it has them.
+        return bits == 32 ? (positive)(bipolar)(b32)value
+                          : value & (((positive)1 << bits) - 1);
+#endif
+        positive keep = ((positive)1 << bits) - 1;
+        positive turn = dirty_random();
+        positive shape = turn % 5;
+        positive junk = shape == 0   ? ((turn >> 8 & 0xff) + 1) << bits
+                        : shape == 1 ? ~keep
+                        : shape == 2 ? (positive)0xa5c3e18700000000ull
+                        : shape == 3 ? dirty_random()
+                                     : keep + 1;
+
+        junk &= ~keep;
+        return (value & keep) | (junk ? junk : keep + 1);
+}
+#define D8(v) dirty((positive)(v), 8)
+#define D16(v) dirty((positive)(v), 16)
+#define D32(v) dirty((positive)(v), 32)
+
+//      The clean side: a narrow value read back from memory of its own
+//      type, so the register holds exactly what the type says, whatever
+//      the expression that made it left in a wider one. Two slots of each,
+//      for a call with two such arguments.
+static volatile p8 dirty_p8_slot[2];
+static volatile b8 dirty_b8_slot[2];
+static volatile p16 dirty_p16_slot;
+static volatile p32 dirty_p32_slot;
+static volatile b32 dirty_b32_slot[2];
+#define C8(v) (dirty_p8_slot[0] = (p8)(v), dirty_p8_slot[0])
+#define C8B(v) (dirty_p8_slot[1] = (p8)(v), dirty_p8_slot[1])
+#define CS8(v) (dirty_b8_slot[0] = (b8)(v), dirty_b8_slot[0])
+#define CS8B(v) (dirty_b8_slot[1] = (b8)(v), dirty_b8_slot[1])
+#define C16(v) (dirty_p16_slot = (p16)(v), dirty_p16_slot)
+#define C32(v) (dirty_p32_slot = (p32)(v), dirty_p32_slot)
+#define CS32(v) (dirty_b32_slot[0] = (b32)(v), dirty_b32_slot[0])
+#define CS32B(v) (dirty_b32_slot[1] = (b32)(v), dirty_b32_slot[1])
+
+//      The dirty side: the routine's address laundered through memory, so
+//      nothing about the call is known but the register-wide type it is
+//      made through.
+static address_any volatile dirty_slot;
+static address_any dirty_launder(address_any routine)
+{
+        dirty_slot = routine;
+        return dirty_slot;
+}
+typedef positive (*dirty_1)(positive);
+typedef positive (*dirty_2)(positive, positive);
+typedef positive (*dirty_3)(positive, positive, positive);
+typedef positive (*dirty_4)(positive, positive, positive, positive);
+typedef positive (*dirty_5)(positive, positive, positive, positive, positive);
+typedef positive (*dirty_6)(positive, positive, positive, positive, positive,
+                            positive);
+typedef positive (*dirty_7)(positive, positive, positive, positive, positive,
+                            positive, positive);
+typedef positive2 (*dirty_pair_3)(positive, positive, positive);
+typedef positive2 (*dirty_pair_5)(positive, positive, positive, positive,
+                                  positive);
+#define DIRTY(arity, name) \
+        ((dirty_##arity)dirty_launder((address_any)DIRTY_ROUTINE(name)))
+#define P(x) ((positive)(x))
+
+static fn dirty_agree(positive routine, positive clean, positive answer,
+                      positive where)
+{
+        dirty_compared[routine]++;
+        if (clean != answer && dirty_wrong[routine]++ < 4)
+                string_format(log, "  FAIL %s: %p through its prototype, %p "
+                                   "with the bits above a narrow argument "
+                                   "changed (case %p, tier %p)\n",
+                              dirty_names[routine], clean, answer, where,
+                              dirty_tier);
+}
+#define AGREE(name, clean, answer, where)                                     \
+        dirty_agree(DIRTY_##name, (positive)(clean), (positive)(answer),      \
+                    (positive)(where))
+
+//      Where two outputs first differ, counted from one; nought when they
+//      do not.
+static positive dirty_differ(p8 address_to one, p8 address_to two,
+                             positive size)
+{
+        for (positive i = 0; i < size; i++)
+                if (one[i] != two[i])
+                        return i + 1;
+        return 0;
+}
+
+//      An address as a distance into its own buffer, so the two calls'
+//      answers compare; null stays apart from every distance.
+static positive dirty_offset(address_any answer, p8 address_to base)
+{
+        return answer ? (positive)((p8 address_to)answer - base) : (positive)-1;
+}
+
+#define DIRTY_ROOM 4608
+static p8 dirty_in[DIRTY_ROOM] __attribute__((aligned(64)));
+static p8 dirty_one[DIRTY_ROOM] __attribute__((aligned(64)));
+static p8 dirty_two[DIRTY_ROOM] __attribute__((aligned(64)));
+static p32 dirty_at_one[4200], dirty_at_two[4200];
+
+static const p8 dirty_values[] = {0x00, 0x01, '\n', ' ', '"', '0', 'A', 'a',
+                                  'z', 0x7f, 0x80, 0xa0, 0xe9, 0xff};
+static const positive dirty_long_sizes[] = {79, 80, 95, 96, 97, 127, 128,
+                                            129, 191, 192, 255, 256, 257, 300,
+                                            511, 512, 513, 1000, 4000};
+static const positive dirty_long_residues[] = {0, 1, 7, 15, 17, 31, 33, 63};
+
+//      Every size to seventy two at every residue of sixty four, then the
+//      longer sizes up to largest at eight residues.
+static fn dirty_plane(fn (*one)(positive size, positive residue,
+                                positive turn),
+                      positive largest)
+{
+        positive turn = 0;
+
+        for (positive size = 0; size <= 72; size++)
+                for (positive residue = 0; residue < 64; residue++)
+                        one(size, residue, turn++);
+        for (positive s = 0; s < array_count(dirty_long_sizes); s++)
+                if (dirty_long_sizes[s] <= largest)
+                        for (positive r = 0; r < array_count(dirty_long_residues); r++)
+                                one(dirty_long_sizes[s], dirty_long_residues[r],
+                                    turn++);
+}
+
+//      A byte that is neither value nor, for a letter, its other case.
+static p8 dirty_other(p8 value, bool nonzero)
+{
+        for (;;)
+        {
+                p8 byte = (p8)dirty_random();
+
+                if (byte != value && byte != (p8)(value ^ 0x20) &&
+                    (byte || !nonzero))
+                        return byte;
+        }
+}
+
+//      Once per body the machine has.
+static fn dirty_tiers(fn (*each)(void))
+{
+#if X64 && !defined(VERIFY_NARROW_KERNEL)
+        p8 avx2 = cpu_has_avx2, avx512 = cpu_has_avx512;
+        p8 vbmi = cpu_has_avx512_vbmi, vbmi2 = cpu_has_avx512_vbmi2;
+
+        for (dirty_tier = 0; dirty_tier < 4; dirty_tier++)
+        {
+                cpu_has_avx512 = dirty_tier < 2 ? avx512 : 0;
+                cpu_has_avx512_vbmi = dirty_tier == 0 ? vbmi : 0;
+                cpu_has_avx512_vbmi2 = dirty_tier == 0 ? vbmi2 : 0;
+                cpu_has_avx2 = dirty_tier < 3 ? avx2 : 0;
+                each();
+        }
+        cpu_has_avx2 = avx2;
+        cpu_has_avx512 = avx512;
+        cpu_has_avx512_vbmi = vbmi;
+        cpu_has_avx512_vbmi2 = vbmi2;
+#else
+        dirty_tier = 0;
+        each();
+#endif
+}
+
+/*
+        The byte hunts, over one arrangement: bytes that are neither the
+        value nor its other case, the value at a random place and again at a
+        stride after it, and on odd turns its other case just after that.
+*/
+static fn dirty_hunts_one(positive size, positive residue, positive turn)
+{
+        p8 address_to at = dirty_in + 64 + residue;
+        p8 value = dirty_values[turn % array_count(dirty_values)];
+        positive place = dirty_random() % (size + 1);
+        positive where = size << 16 | residue << 8 | value;
+
+        for (positive i = 0; i < size + 128; i++)
+                (at - 64)[i] = dirty_other(value, false);
+        for (positive i = place; i < size; i += 11 + turn % 5)
+                at[i] = value;
+        if ((turn & 1) && place + 3 < size)
+                at[place + 3] = (p8)(value ^ 0x20);
+
+        if (DIRTY_HAS(memory_first_of))
+                AGREE(memory_first_of,
+                      DIRTY_ROUTINE(memory_first_of)(at, CS8(value), size),
+                      DIRTY(3, memory_first_of)(P(at), D8(value), size), where);
+        if (DIRTY_HAS(memory_last_of))
+                AGREE(memory_last_of,
+                      DIRTY_ROUTINE(memory_last_of)(at, CS8(value), size),
+                      DIRTY(3, memory_last_of)(P(at), D8(value), size), where);
+        if (DIRTY_HAS(memory_count))
+                AGREE(memory_count,
+                      DIRTY_ROUTINE(memory_count)(at, size, CS8(value)),
+                      DIRTY(3, memory_count)(P(at), size, D8(value)), where);
+        if (DIRTY_HAS(memory_first_of_ascii_case))
+                AGREE(memory_first_of_ascii_case,
+                      DIRTY_ROUTINE(memory_first_of_ascii_case)(at, CS8(value), size),
+                      DIRTY(3, memory_first_of_ascii_case)(P(at), D8(value), size),
+                      where);
+
+        //      memchr and memrchr take an int, whose bits eight to thirty one
+        //      are the caller's to set on every machine.
+        b32 wide = (b32)(turn & 2 ? value | 0x100 : value | 0xffffff00u);
+        if (DIRTY_HAS(memchr) && DIRTY_HAS(memory_first_of))
+                AGREE(memchr, DIRTY_ROUTINE(memory_first_of)(at, CS8(value), size),
+                      DIRTY_ROUTINE(memchr)(at, CS32(wide), size), where);
+        if (DIRTY_HAS(memrchr) && DIRTY_HAS(memory_last_of))
+                AGREE(memrchr, DIRTY_ROUTINE(memory_last_of)(at, CS8(value), size),
+                      DIRTY_ROUTINE(memrchr)(at, CS32(wide), size), where);
+
+        //      A copy up to the value, into two destinations alike.
+        p8 address_to one = dirty_one + 64 + residue;
+        p8 address_to two = dirty_two + 64 + residue;
+        p8 guard = (p8)(0x5a ^ turn);
+
+        reference_fill(one - 64, guard, size + 128);
+        reference_fill(two - 64, guard, size + 128);
+        if (DIRTY_HAS(memory_copy_until))
+        {
+                positive clean = dirty_offset(
+                    DIRTY_ROUTINE(memory_copy_until)(one, at, CS8(value), size), one);
+                positive answer = dirty_offset(
+                    (address_any)DIRTY(4, memory_copy_until)(P(two), P(at),
+                                                             D8(value), size),
+                    two);
+                AGREE(memory_copy_until, clean, answer, where);
+                AGREE(memory_copy_until, 0,
+                      dirty_differ(one - 64, two - 64, size + 128), where);
+        }
+        if (DIRTY_HAS(memccpy) && DIRTY_HAS(memory_copy_until))
+        {
+                reference_fill(one - 64, guard, size + 128);
+                reference_fill(two - 64, guard, size + 128);
+                positive clean = dirty_offset(
+                    DIRTY_ROUTINE(memory_copy_until)(one, at, CS8(value), size), one);
+                positive answer = dirty_offset(
+                    DIRTY_ROUTINE(memccpy)(two, at, CS32(wide), size), two);
+                AGREE(memccpy, clean, answer, where);
+                AGREE(memccpy, 0, dirty_differ(one - 64, two - 64, size + 128),
+                      where);
+        }
+
+        //      And a run of the value from the start, for the span.
+        for (positive i = 0; i < place; i++)
+                at[i] = value;
+        if (place < size)
+                at[place] = dirty_other(value, false);
+        if (DIRTY_HAS(memory_span_byte))
+                AGREE(memory_span_byte,
+                      DIRTY_ROUTINE(memory_span_byte)(at, C8(value), size),
+                      DIRTY(3, memory_span_byte)(P(at), D8(value), size), where);
+}
+
+static fn dirty_hunts(void) { dirty_plane(dirty_hunts_one, 4000); }
+
+//      The fills, a byte, an int's byte and a word at a time.
+static fn dirty_fill_one(positive size, positive residue, positive turn)
+{
+        p8 value = dirty_values[turn % array_count(dirty_values)];
+        p8 guard = (p8)(0xa5 ^ turn);
+        p8 address_to one = dirty_one + 64 + residue;
+        p8 address_to two = dirty_two + 64 + residue;
+        positive where = size << 16 | residue << 8 | value;
+
+        reference_fill(one - 64, guard, size + 128);
+        reference_fill(two - 64, guard, size + 128);
+        if (DIRTY_HAS(memory_fill))
+        {
+                positive clean = dirty_offset(
+                    DIRTY_ROUTINE(memory_fill)(one, CS8(value), size), one);
+                positive answer = dirty_offset(
+                    (address_any)DIRTY(3, memory_fill)(P(two), D8(value), size),
+                    two);
+
+                AGREE(memory_fill, clean, answer, where);
+                AGREE(memory_fill, 0,
+                      dirty_differ(one - 64, two - 64, size + 128), where);
+                if (DIRTY_HAS(memset))
+                {
+                        b32 wide = (b32)(turn & 1 ? value | 0x100
+                                                  : value | 0xffffff00u);
+
+                        reference_fill(two - 64, guard, size + 128);
+                        AGREE(memset, clean,
+                              dirty_offset(DIRTY_ROUTINE(memset)(two, CS32(wide),
+                                                                 size),
+                                           two),
+                              where);
+                        AGREE(memset, 0,
+                              dirty_differ(one - 64, two - 64, size + 128), where);
+                }
+        }
+
+        //      Four bytes at a time, at the four residues of four.
+        p32 word = (p32)dirty_random();
+        positive count = size / 4;
+        one = dirty_one + 64 + (residue & ~(positive)3);
+        two = dirty_two + 64 + (residue & ~(positive)3);
+        where = size << 16 | residue << 8 | 0x32;
+        if (DIRTY_HAS(memory_fill_32))
+        {
+                reference_fill(one - 64, guard, count * 4 + 128);
+                reference_fill(two - 64, guard, count * 4 + 128);
+                positive clean = dirty_offset(
+                    DIRTY_ROUTINE(memory_fill_32)(one, C32(word), count), one);
+                positive answer = dirty_offset(
+                    (address_any)DIRTY(3, memory_fill_32)(P(two),
+                                                          D32(word), count),
+                    two);
+                AGREE(memory_fill_32, clean, answer, where);
+                AGREE(memory_fill_32, 0,
+                      dirty_differ(one - 64, two - 64, count * 4 + 128), where);
+        }
+        if (DIRTY_HAS(memory_fill_u32))
+        {
+                reference_fill(one - 64, guard, count * 4 + 128);
+                reference_fill(two - 64, guard, count * 4 + 128);
+                DIRTY_ROUTINE(memory_fill_u32)(one, count, C32(word));
+                DIRTY(3, memory_fill_u32)(P(two), count, D32(word));
+                AGREE(memory_fill_u32, 0,
+                      dirty_differ(one - 64, two - 64, count * 4 + 128), where);
+        }
+}
+
+static fn dirty_fill(void) { dirty_plane(dirty_fill_one, 4000); }
+
+//      Offsets of either byte, and of the bytes inside or outside a range.
+static fn dirty_offsets_one(positive size, positive residue, positive turn)
+{
+        static const p8 ranges[][2] = {{0x20, 0x7e}, {8, 10}, {0, 0},
+                                       {0xff, 0xff}, {0, 0xff}, {'a', 'z'},
+                                       {0x80, 0xbf}};
+        static const positive limits[] = {1, 2, 7, 64, 5000};
+        p8 address_to at = dirty_in + 64 + residue;
+        p8 first = dirty_values[turn % array_count(dirty_values)];
+        p8 second = dirty_values[(turn / 3 + 5) % array_count(dirty_values)];
+        p8 low = ranges[turn % array_count(ranges)][0];
+        p8 high = ranges[turn % array_count(ranges)][1];
+        positive limit = limits[(turn / 7) % array_count(limits)];
+        positive where = size << 16 | residue << 8 | limit;
+
+        for (positive i = 0; i < size + 64; i++)
+        {
+                positive pick = dirty_random();
+
+                at[i] = (pick & 7) == 0 ? first : (pick & 7) == 1 ? second
+                                                                   : (p8)(pick >> 8);
+        }
+        if (DIRTY_HAS(memory_offsets_of_either))
+        {
+                positive clean = DIRTY_ROUTINE(memory_offsets_of_either)(
+                    dirty_at_one, at, size, C8(first), C8B(second), limit);
+                positive answer = DIRTY(6, memory_offsets_of_either)(
+                    P(dirty_at_two), P(at), size, D8(first), D8(second), limit);
+                AGREE(memory_offsets_of_either, clean, answer, where);
+                AGREE(memory_offsets_of_either, 0,
+                      dirty_differ((p8 address_to)dirty_at_one,
+                                   (p8 address_to)dirty_at_two,
+                                   (clean < answer ? clean : answer) * 4),
+                      where);
+        }
+        if (DIRTY_HAS(memory_offsets_between))
+        {
+                positive clean = DIRTY_ROUTINE(memory_offsets_between)(
+                    dirty_at_one, at, size, C8(low), C8B(high), limit);
+                positive answer = DIRTY(6, memory_offsets_between)(
+                    P(dirty_at_two), P(at), size, D8(low), D8(high), limit);
+                AGREE(memory_offsets_between, clean, answer, where);
+                AGREE(memory_offsets_between, 0,
+                      dirty_differ((p8 address_to)dirty_at_one,
+                                   (p8 address_to)dirty_at_two,
+                                   (clean < answer ? clean : answer) * 4),
+                      where);
+        }
+        if (DIRTY_HAS(memory_offsets_outside))
+        {
+                positive clean = DIRTY_ROUTINE(memory_offsets_outside)(
+                    dirty_at_one, at, size, C8(low), C8B(high), limit);
+                positive answer = DIRTY(6, memory_offsets_outside)(
+                    P(dirty_at_two), P(at), size, D8(low), D8(high), limit);
+                AGREE(memory_offsets_outside, clean, answer, where);
+                AGREE(memory_offsets_outside, 0,
+                      dirty_differ((p8 address_to)dirty_at_one,
+                                   (p8 address_to)dirty_at_two,
+                                   (clean < answer ? clean : answer) * 4),
+                      where);
+        }
+}
+
+static fn dirty_offsets(void) { dirty_plane(dirty_offsets_one, 4000); }
+
+/*
+        The escapes: every policy, the hex categories 0..63 and JSON's 64,
+        and for the encoder each with bit 128 too, over bytes from every
+        category, into room for all of it on even turns and for about the
+        input on odd ones.
+*/
+static fn dirty_escape_one(positive size, positive residue, positive turn)
+{
+        static const p8 alphabet[] = {0, 1, 9, 10, 13, 31, ' ', '"', '\\', '/',
+                                      'a', 'Z', '~', 0x7f, 0x80, 0xc3, 0xff};
+        p8 address_to at = dirty_in + 64 + residue;
+        positive pick = turn % 130;
+        p8 policy = (p8)(pick < 65 ? pick : 128 | (pick - 65));
+        positive capacity = turn & 1 ? size + turn % 7 : size * 6 + 16;
+        p8 address_to one = dirty_one + 64 + (turn & 15);
+        p8 address_to two = dirty_two + 64 + (turn & 15);
+        p8 guard = (p8)(0x3c ^ turn);
+        positive where = size << 16 | residue << 8 | policy;
+
+        for (positive i = 0; i < size; i++)
+        {
+                positive r = dirty_random();
+
+                at[i] = r % 3 ? (p8)('a' + (r >> 8) % 26)
+                              : alphabet[(r >> 8) % array_count(alphabet)];
+        }
+        if (DIRTY_HAS(memory_escape_index))
+                AGREE(memory_escape_index,
+                      DIRTY_ROUTINE(memory_escape_index)(at, size, C8(policy & 127)),
+                      DIRTY(3, memory_escape_index)(P(at), size, D8(policy & 127)),
+                      where);
+        if (DIRTY_HAS(memory_into_escaped))
+        {
+                reference_fill(one - 64, guard, capacity + 128);
+                reference_fill(two - 64, guard, capacity + 128);
+                positive2 clean = DIRTY_ROUTINE(memory_into_escaped)(
+                    one, at, size, capacity, C8(policy));
+                positive2 answer = DIRTY(pair_5, memory_into_escaped)(
+                    P(two), P(at), size, capacity, D8(policy));
+                AGREE(memory_into_escaped, clean.x, answer.x, where);
+                AGREE(memory_into_escaped, clean.y, answer.y, where);
+                AGREE(memory_into_escaped, 0,
+                      dirty_differ(one - 64, two - 64, capacity + 128), where);
+        }
+}
+
+static fn dirty_escape(void) { dirty_plane(dirty_escape_one, 513); }
+
+//      Word counts, from inside a word and out of one.
+static fn dirty_words_one(positive size, positive residue, positive turn)
+{
+        static const p8 alphabet[] = {' ', '\t', '\n', '\v', '\f', '\r', 'a',
+                                      'b', 0x80, 0, '.', 0xa0};
+        static const p8 insides[] = {0, 1, 2, 0x80};
+        p8 address_to at = dirty_in + 64 + residue;
+        p8 inside = insides[turn % 4];
+
+        for (positive i = 0; i < size; i++)
+                at[i] = alphabet[dirty_random() % array_count(alphabet)];
+        if (!DIRTY_HAS(memory_count_words))
+                return;
+        positive2 clean = DIRTY_ROUTINE(memory_count_words)(at, size, C8(inside));
+        positive2 answer = DIRTY(pair_3, memory_count_words)(P(at), size, D8(inside));
+        AGREE(memory_count_words, clean.x, answer.x, size << 16 | residue << 8 | inside);
+        AGREE(memory_count_words, clean.y, answer.y, size << 16 | residue << 8 | inside);
+}
+
+static fn dirty_words(void) { dirty_plane(dirty_words_one, 1000); }
+
+/*
+        Records holding a needle, split at a delimiter that is a newline,
+        nought, a comma or a high byte, with the needle's anchors prepared by
+        the clean call.
+*/
+static fn dirty_records_one(positive size, positive residue, positive turn)
+{
+        static const p8 delimiters[] = {'\n', 0, ',', 0x80, 0xff};
+        static const p8 needle[] = "needle0123456789ABCDEFGH";
+        static const positive lengths[] = {0, 1, 2, 6, 24};
+        p8 address_to at = dirty_in + 64 + residue;
+        p8 delimiter = delimiters[turn % array_count(delimiters)];
+        positive length = lengths[(turn / 5) % array_count(lengths)];
+        positive step = 5 + turn % 29;
+
+        if (!DIRTY_HAS(memory_count_records_with_prepared) ||
+            !DIRTY_HAS(memory_search_prepare))
+                return;
+        for (positive i = 0; i < size; i++)
+                at[i] = (i + 1) % step ? 'x' : delimiter;
+        for (positive i = turn % 13; length && i + length <= size; i += 3 * step)
+                for (positive k = 0; k < length; k++)
+                        at[i + k] = needle[k];
+        positive2 anchors = DIRTY_ROUTINE(memory_search_prepare)(
+            (address_any)needle, length, C8(0));
+        AGREE(memory_count_records_with_prepared,
+              DIRTY_ROUTINE(memory_count_records_with_prepared)(
+                  at, size, (address_any)needle, length, anchors.x, anchors.y,
+                  CS8(delimiter)),
+              DIRTY(7, memory_count_records_with_prepared)(
+                  P(at), size, P(needle), length, anchors.x, anchors.y,
+                  D8(delimiter)),
+              size << 16 | residue << 8 | delimiter);
+}
+
+static fn dirty_records(void) { dirty_plane(dirty_records_one, 1000); }
+
+//      Needle anchors, folded and not, over needles of every shape.
+static fn dirty_prepare(void)
+{
+        static const positive sizes[] = {0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16,
+                                         17, 31, 32, 33, 40, 64, 100, 300};
+        static const p8 truths[] = {0, 1, 2, 0x80};
+        p8 address_to needle = dirty_in + 64;
+
+        if (!DIRTY_HAS(memory_search_prepare))
+                return;
+        for (positive s = 0; s < array_count(sizes); s++)
+                for (positive shape = 0; shape < 8; shape++)
+                        for (positive t = 0; t < array_count(truths); t++)
+                        {
+                                positive size = sizes[s];
+
+                                for (positive i = 0; i < size; i++)
+                                {
+                                        positive r = dirty_random();
+
+                                        needle[i] = shape == 0   ? 'a'
+                                                    : shape == 1 ? (p8)('A' + r % 26 + (r & 32))
+                                                    : shape == 2 ? (p8)r
+                                                    : shape == 3 ? (p8)("0123456789.,;:!?"[r % 16])
+                                                    : shape == 4 ? (i == size / 2 ? 'Q' : 'e')
+                                                    : shape == 5 ? (p8)(0x80 + r % 128)
+                                                    : shape == 6 ? (p8)(r & 1 ? 'x' : 'X')
+                                                                 : (p8)(' ' + r % 95);
+                                }
+                                positive2 clean = DIRTY_ROUTINE(memory_search_prepare)(
+                                    needle, size, C8(truths[t]));
+                                positive2 answer = DIRTY(pair_3, memory_search_prepare)(
+                                    P(needle), size, D8(truths[t]));
+                                positive where = size << 16 | shape << 8 | truths[t];
+
+                                AGREE(memory_search_prepare, clean.x, answer.x, where);
+                                AGREE(memory_search_prepare, clean.y, answer.y, where);
+                        }
+}
+
+/*
+        The string hunts and the two that write, over a terminated string
+        of bytes that are neither the value nor nought, the value at a
+        random place and at a stride after it, and bytes past the terminator
+        that may hold it. The value is nought on one turn in fourteen, which
+        is the terminator's own question.
+*/
+static fn dirty_strings_one(positive size, positive residue, positive turn)
+{
+        p8 address_to at = dirty_in + 64 + residue;
+        p8 value = dirty_values[turn % array_count(dirty_values)];
+        p8 replace = dirty_values[(turn / 3 + 1) % array_count(dirty_values)];
+        positive place = dirty_random() % (size + 1);
+        positive bounds[] = {0, place, size, size + 9};
+        positive bound = bounds[(turn / 14) % 4];
+        positive where = size << 16 | residue << 8 | value;
+        b32 wide = (b32)(turn & 1 ? value | 0x100 : value | 0xffffff00u);
+
+        for (positive i = 0; i < size; i++)
+                at[i] = dirty_other(value, true);
+        for (positive i = place; value && i < size; i += 7 + turn % 11)
+                at[i] = value;
+        at[size] = 0;
+        for (positive i = 1; i <= 32; i++)
+                at[size + i] = i & 3 ? value : (p8)dirty_random();
+
+        if (DIRTY_HAS(string_first_of))
+                AGREE(string_first_of,
+                      DIRTY_ROUTINE(string_first_of)(at, C8(value)),
+                      DIRTY(2, string_first_of)(P(at), D8(value)), where);
+        if (DIRTY_HAS(string_first_of_or_end))
+                AGREE(string_first_of_or_end,
+                      DIRTY_ROUTINE(string_first_of_or_end)(at, C8(value)),
+                      DIRTY(2, string_first_of_or_end)(P(at), D8(value)),
+                      where);
+        if (DIRTY_HAS(string_first_of_max))
+                AGREE(string_first_of_max,
+                      DIRTY_ROUTINE(string_first_of_max)(at, bound, C8(value)),
+                      DIRTY(3, string_first_of_max)(P(at), bound, D8(value)),
+                      where);
+        if (DIRTY_HAS(string_last_of))
+                AGREE(string_last_of,
+                      DIRTY_ROUTINE(string_last_of)(at, C8(value)),
+                      DIRTY(2, string_last_of)(P(at), D8(value)), where);
+        if (DIRTY_HAS(string_last_of_or_end))
+                AGREE(string_last_of_or_end,
+                      DIRTY_ROUTINE(string_last_of_or_end)(at, C8(value)),
+                      DIRTY(2, string_last_of_or_end)(P(at), D8(value)),
+                      where);
+        if (DIRTY_HAS(strchr) && DIRTY_HAS(string_first_of))
+                AGREE(strchr, DIRTY_ROUTINE(string_first_of)(at, C8(value)),
+                      DIRTY_ROUTINE(strchr)((const char address_to)at, CS32(wide)),
+                      where);
+        if (DIRTY_HAS(strchrnul) && DIRTY_HAS(string_first_of_or_end))
+                AGREE(strchrnul, DIRTY_ROUTINE(string_first_of_or_end)(at, C8(value)),
+                      DIRTY_ROUTINE(strchrnul)((const char address_to)at, CS32(wide)),
+                      where);
+        if (DIRTY_HAS(strnchr) && DIRTY_HAS(string_first_of_max))
+                AGREE(strnchr, DIRTY_ROUTINE(string_first_of_max)(at, bound, C8(value)),
+                      DIRTY_ROUTINE(strnchr)((const char address_to)at, bound,
+                                             CS32(wide)),
+                      where);
+        if (DIRTY_HAS(strrchr) && DIRTY_HAS(string_last_of_or_end))
+                AGREE(strrchr, DIRTY_ROUTINE(string_last_of_or_end)(at, C8(value)),
+                      DIRTY_ROUTINE(strrchr)((const char address_to)at, CS32(wide)),
+                      where);
+
+        //      Cut and replace in place, each on its own copy.
+        p8 address_to one = dirty_one + 64 + residue;
+        p8 address_to two = dirty_two + 64 + residue;
+        if (DIRTY_HAS(string_cut))
+        {
+                reference_copy(one - 64, at - 64, size + 128);
+                reference_copy(two - 64, at - 64, size + 128);
+                positive clean = dirty_offset(
+                    DIRTY_ROUTINE(string_cut)(one, CS8(value)), one);
+                positive answer = dirty_offset(
+                    (address_any)DIRTY(2, string_cut)(P(two), D8(value)), two);
+                AGREE(string_cut, clean, answer, where);
+                AGREE(string_cut, 0, dirty_differ(one - 64, two - 64, size + 128),
+                      where);
+        }
+        if (DIRTY_HAS(string_replace_all))
+        {
+                reference_copy(one - 64, at - 64, size + 128);
+                reference_copy(two - 64, at - 64, size + 128);
+                DIRTY_ROUTINE(string_replace_all)(one, CS8(value), CS8B(replace));
+                if (turn % 3 == 0)
+                        DIRTY(3, string_replace_all)(P(two), D8(value), P(CS8B(replace)));
+                else if (turn % 3 == 1)
+                        DIRTY(3, string_replace_all)(P(two), P(CS8(value)), D8(replace));
+                else
+                        DIRTY(3, string_replace_all)(P(two), D8(value), D8(replace));
+                AGREE(string_replace_all, 0,
+                      dirty_differ(one - 64, two - 64, size + 128), where);
+        }
+}
+
+static fn dirty_strings(void) { dirty_plane(dirty_strings_one, 4000); }
+
+/*
+        What a writer was handed, call by call: each call's length in two
+        bytes and then its bytes, side one for the clean call and side two
+        for the other, compared whole.
+*/
+static p8 dirty_log_room[2][16384];
+static positive dirty_logged[2], dirty_side;
+
+static fn dirty_writer(address_any data, positive length)
+{
+        p8 address_to into = dirty_log_room[dirty_side];
+        positive used = dirty_logged[dirty_side];
+
+        if (used + 2 + length > sizeof(dirty_log_room[0]))
+        {
+                dirty_logged[dirty_side] = sizeof(dirty_log_room[0]) + 1;
+                return;
+        }
+        into[used] = (p8)length;
+        into[used + 1] = (p8)(length >> 8);
+        for (positive i = 0; i < length; i++)
+                into[used + 2 + i] = ((p8 address_to)data)[i];
+        dirty_logged[dirty_side] = used + 2 + length;
+}
+
+static fn dirty_log(positive side)
+{
+        dirty_side = side;
+        dirty_logged[side] = 0;
+}
+
+static positive dirty_logs_differ(void)
+{
+        if (dirty_logged[0] != dirty_logged[1])
+                return (positive)-1;
+        return dirty_differ(dirty_log_room[0], dirty_log_room[1], dirty_logged[0]);
+}
+
+static fn dirty_writers(void)
+{
+        static const p8 pads[] = {0, ' ', '0', '#', 0x80, 0xff};
+        static const p8 prefixes[] = {0, '-', '+', 0x80};
+        static const p8 truths[] = {0, 1, 2, 0x80};
+        static const positive values[] = {0, 7, 42, 99999, 4294967296ull,
+                                          (positive)-1};
+        writer write = dirty_writer;
+        if (DIRTY_HAS(writer_fill))
+                for (positive count = 0; count <= 40; count++)
+                        for (positive v = 0; v < array_count(dirty_values); v++)
+                        {
+                                p8 byte = dirty_values[v];
+
+                                dirty_log(0);
+                                DIRTY_ROUTINE(writer_fill)(write, count, C8(byte));
+                                dirty_log(1);
+                                DIRTY(3, writer_fill)(P(write), count, D8(byte));
+                                AGREE(writer_fill, 0, dirty_logs_differ(),
+                                      count << 8 | byte);
+                        }
+
+        p8 address_to data = dirty_in + 64;
+        for (positive i = 0; i < 64; i++)
+                data[i] = (p8)(i * 43 + 1);
+        data[1] = 0;
+        for (positive length = 0; length <= 24; length++)
+                for (positive width = 0; width <= 40; width++)
+                        for (positive p = 0; p < array_count(pads); p++)
+                                for (positive t = 0; t < array_count(truths); t++)
+                                {
+                                        p8 pad = pads[p], left = truths[t];
+                                        positive where = length << 24 | width << 16 |
+                                                         pad << 8 | left;
+                                        positive which = (length + width + p + t) % 3;
+
+                                        if (DIRTY_HAS(writer_field))
+                                        {
+                                                dirty_log(0);
+                                                DIRTY_ROUTINE(writer_field)(
+                                                    write, data, length, width,
+                                                    CS8(pad), C8(left));
+                                                dirty_log(1);
+                                                DIRTY(6, writer_field)(
+                                                    P(write), P(data), length, width,
+                                                    which == 1 ? P(CS8(pad)) : D8(pad),
+                                                    which == 0 ? P(C8(left)) : D8(left));
+                                                AGREE(writer_field, 0,
+                                                      dirty_logs_differ(), where);
+                                        }
+                                        if (DIRTY_HAS(string_to_field))
+                                        {
+                                                p8 text[32];
+
+                                                for (positive i = 0; i < length; i++)
+                                                        text[i] = (p8)(1 + (i * 47 + length) % 255);
+                                                text[length] = 0;
+                                                dirty_log(0);
+                                                DIRTY_ROUTINE(string_to_field)(
+                                                    write, text, width, CS8(pad),
+                                                    C8(left));
+                                                dirty_log(1);
+                                                DIRTY(5, string_to_field)(
+                                                    P(write), P(text), width,
+                                                    which == 1 ? P(CS8(pad)) : D8(pad),
+                                                    which == 0 ? P(C8(left)) : D8(left));
+                                                AGREE(string_to_field, 0,
+                                                      dirty_logs_differ(), where);
+                                        }
+                                }
+
+        if (DIRTY_HAS(positive_to_padded))
+                for (positive v = 0; v < array_count(values); v++)
+                        for (positive width = 0; width <= 30; width++)
+                                for (positive p = 0; p < array_count(pads); p++)
+                                        for (positive x = 0; x < array_count(prefixes); x++)
+                                        {
+                                                p8 pad = pads[p], prefix = prefixes[x];
+                                                positive which = (v + width + p + x) % 3;
+
+                                                dirty_log(0);
+                                                DIRTY_ROUTINE(positive_to_padded)(
+                                                    write, values[v], width, C8(pad),
+                                                    C8B(prefix));
+                                                dirty_log(1);
+                                                DIRTY(5, positive_to_padded)(
+                                                    P(write), values[v], width,
+                                                    which == 1 ? P(C8(pad)) : D8(pad),
+                                                    which == 0 ? P(C8B(prefix)) : D8(prefix));
+                                                AGREE(positive_to_padded, 0,
+                                                      dirty_logs_differ(),
+                                                      v << 24 | width << 16 | pad << 8 | prefix);
+                                        }
+}
+
+//      The three that write digits into a buffer.
+static fn dirty_into(void)
+{
+        static const p8 pads[] = {0, ' ', '0', '#', 0x80, 0xff};
+        static const p8 truths[] = {0, 1, 2, 0x80};
+        static positive values[64];
+        p8 address_to one = dirty_one + 64;
+        p8 address_to two = dirty_two + 64;
+        values[0] = 0;
+        values[1] = (positive)-1;
+        for (positive i = 2; i < 34; i++)
+                values[i] = ((positive)1 << (i + 28)) - (i & 1);
+        for (positive i = 34; i < 64; i++)
+                values[i] = dirty_random() >> (i % 50);
+
+        for (positive v = 0; v < array_count(values); v++)
+        {
+                positive value = values[v];
+
+                if (DIRTY_HAS(positive_into_padded))
+                        for (positive width = 0; width <= 40; width++)
+                                for (positive p = 0; p < array_count(pads); p++)
+                                {
+                                        reference_fill(one - 16, 0x77, 96);
+                                        reference_fill(two - 16, 0x77, 96);
+                                        positive clean = DIRTY_ROUTINE(positive_into_padded)(
+                                            one, value, width, C8(pads[p]));
+                                        positive answer = DIRTY(4, positive_into_padded)(
+                                            P(two), value, width, D8(pads[p]));
+                                        positive where = v << 16 | width << 8 | pads[p];
+
+                                        AGREE(positive_into_padded, clean, answer, where);
+                                        AGREE(positive_into_padded, 0,
+                                              dirty_differ(one - 16, two - 16, 96), where);
+                                }
+                if (DIRTY_HAS(positive_into_base))
+                        for (positive base = 2; base <= 36; base++)
+                                for (positive t = 0; t < array_count(truths); t++)
+                                {
+                                        reference_fill(one - 16, 0x77, 96);
+                                        reference_fill(two - 16, 0x77, 96);
+                                        positive clean = DIRTY_ROUTINE(positive_into_base)(
+                                            one, value, base, C8(truths[t]));
+                                        positive answer = DIRTY(4, positive_into_base)(
+                                            P(two), value, base, D8(truths[t]));
+                                        positive where = v << 16 | base << 8 | truths[t];
+
+                                        AGREE(positive_into_base, clean, answer, where);
+                                        AGREE(positive_into_base, 0,
+                                              dirty_differ(one - 16, two - 16, 96), where);
+                                }
+                if (DIRTY_HAS(positive_into_human_nearest_string))
+                        for (positive shift = 0; shift < 64; shift += 3)
+                                for (positive t = 0; t < array_count(truths); t++)
+                                {
+                                        positive scaled = value >> shift;
+
+                                        reference_fill(one - 16, 0x77, 48);
+                                        reference_fill(two - 16, 0x77, 48);
+                                        positive clean = DIRTY_ROUTINE(
+                                            positive_into_human_nearest_string)(
+                                            one, scaled, C8(truths[t]));
+                                        positive answer = DIRTY(
+                                            3, positive_into_human_nearest_string)(
+                                            P(two), scaled, D8(truths[t]));
+                                        positive where = v << 16 | shift << 8 | truths[t];
+
+                                        AGREE(positive_into_human_nearest_string, clean,
+                                              answer, where);
+                                        AGREE(positive_into_human_nearest_string, 0,
+                                              dirty_differ(one - 16, two - 16, 48), where);
+                                }
+        }
+}
+
+//      A byte into a buffer, with room, at the edge that flushes to
+//      /dev/null, and with none at all.
+static fn dirty_buffered(void)
+{
+        static const positive capacities[] = {0, 1, 8, 32};
+        bipolar sink;
+
+        if (!DIRTY_HAS(buffered_write_byte))
+                return;
+        sink = system_call_4(syscall(openat), AT_FDCWD, (positive)"/dev/null",
+                             FILE_READ_WRITE, 0);
+        if (sink < 0)
+        {
+                string_format(log, "  NOTE buffered_write_byte: no /dev/null to flush into\n");
+                return;
+        }
+        for (positive c = 0; c < array_count(capacities); c++)
+                for (positive used = 0; used <= capacities[c]; used++)
+                        for (positive v = 0; v < array_count(dirty_values); v++)
+                        {
+                                positive capacity = capacities[c];
+                                positive used_one = used, used_two = used;
+                                p8 byte = dirty_values[v];
+                                positive where = capacity << 16 | used << 8 | byte;
+
+                                reference_fill(dirty_one, 0x66, 64);
+                                reference_fill(dirty_two, 0x66, 64);
+                                b32 clean = DIRTY_ROUTINE(buffered_write_byte)(
+                                    (positive)sink, dirty_one, capacity, &used_one,
+                                    C8(byte));
+                                b32 answer = (b32)DIRTY(5, buffered_write_byte)(
+                                    (positive)sink, P(dirty_two), capacity,
+                                    P(&used_two), D8(byte));
+                                AGREE(buffered_write_byte, (p32)clean, (p32)answer, where);
+                                AGREE(buffered_write_byte, used_one, used_two, where);
+                                AGREE(buffered_write_byte, 0,
+                                      dirty_differ(dirty_one, dirty_two, 64), where);
+                        }
+        system_call_1(syscall(close), (positive)sink);
+}
+
+//      The byte orders and the address spelling.
+static fn dirty_orders(void)
+{
+        for (positive turn = 0; turn < 4096; turn++)
+        {
+                p32 word = turn < 64 ? (p32)(((positive)1 << (turn & 31)) - (turn >> 5))
+                                     : (p32)dirty_random();
+                p16 half = (p16)(turn < 256 ? turn * 257 : word);
+
+                if (DIRTY_HAS(bytes_reverse_16))
+                        AGREE(bytes_reverse_16,
+                              DIRTY_ROUTINE(bytes_reverse_16)(C16(half)),
+                              (p16)DIRTY(1, bytes_reverse_16)(D16(half)), half);
+                if (DIRTY_HAS(bytes_reverse_32))
+                        AGREE(bytes_reverse_32,
+                              DIRTY_ROUTINE(bytes_reverse_32)(C32(word)),
+                              (p32)DIRTY(1, bytes_reverse_32)(D32(word)), word);
+                if (DIRTY_HAS(network_store_16))
+                {
+                        reference_fill(dirty_one, 0x55, 16);
+                        reference_fill(dirty_two, 0x55, 16);
+                        DIRTY_ROUTINE(network_store_16)(dirty_one + 4 + (turn & 3), C16(half));
+                        DIRTY(2, network_store_16)(P(dirty_two + 4 + (turn & 3)), D16(half));
+                        AGREE(network_store_16, 0,
+                              dirty_differ(dirty_one, dirty_two, 16), half);
+                }
+                if (DIRTY_HAS(network_store_32))
+                {
+                        reference_fill(dirty_one, 0x55, 16);
+                        reference_fill(dirty_two, 0x55, 16);
+                        DIRTY_ROUTINE(network_store_32)(dirty_one + 4 + (turn & 3), C32(word));
+                        DIRTY(2, network_store_32)(P(dirty_two + 4 + (turn & 3)), D32(word));
+                        AGREE(network_store_32, 0,
+                              dirty_differ(dirty_one, dirty_two, 16), word);
+                }
+                if (DIRTY_HAS(host_into))
+                {
+                        reference_fill(dirty_one, 0x55, 40);
+                        reference_fill(dirty_two, 0x55, 40);
+                        positive clean = DIRTY_ROUTINE(host_into)(dirty_one + 8, C32(word));
+                        positive answer = DIRTY(2, host_into)(P(dirty_two + 8), D32(word));
+                        AGREE(host_into, clean, answer, word);
+                        AGREE(host_into, 0, dirty_differ(dirty_one, dirty_two, 40), word);
+                }
+        }
+}
+
+/*
+        The byte classes: every class number and some that are none, every
+        byte, and the int-taking predicates and cases over EOF, every byte
+        and some values past one.
+*/
+static fn dirty_classes(void)
+{
+        typedef b32 (*predicate)(b32);
+        static const b32 whiches[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+                                      13, 255, 0x7fffffff, -1, (b32)0x80000000};
+        static const positive routines[] = {
+            DIRTY_byte_is_alnum, DIRTY_byte_is_alpha, DIRTY_byte_is_ascii,
+            DIRTY_byte_is_blank, DIRTY_byte_is_control, DIRTY_byte_is_digit,
+            DIRTY_byte_is_graphic, DIRTY_byte_is_hexadecimal, DIRTY_byte_is_lower,
+            DIRTY_byte_is_printable, DIRTY_byte_is_punctuation,
+            DIRTY_byte_is_space, DIRTY_byte_is_upper, DIRTY_byte_to_ascii,
+            DIRTY_byte_to_lower, DIRTY_byte_to_upper};
+        if (DIRTY_HAS(byte_class_holds))
+                for (positive w = 0; w < array_count(whiches); w++)
+                        for (positive value = 0; value < 256; value++)
+                        {
+                                b32 which = whiches[w];
+                                positive where = w << 8 | value;
+                                p8 clean = DIRTY_ROUTINE(byte_class_holds)(CS32(which),
+                                                                           C8(value));
+
+                                AGREE(byte_class_holds, clean,
+                                      (p8)DIRTY(2, byte_class_holds)(D32(which), P(C8(value))),
+                                      where);
+                                AGREE(byte_class_holds, clean,
+                                      (p8)DIRTY(2, byte_class_holds)(P(CS32(which)), D8(value)),
+                                      where);
+                        }
+
+        for (positive r = 0; r < array_count(routines); r++)
+        {
+                predicate routine = (predicate)dirty_addresses[routines[r]];
+
+                if (!routine)
+                        continue;
+                for (bipolar value = -300; value < 600; value++)
+                {
+                        b32 v = value < 520 ? (b32)value
+                                            : value == 599 ? (b32)0x80000000
+                                                           : (b32)dirty_random();
+
+                        dirty_agree(routines[r], (p32)routine(CS32(v)),
+                                    (p32)((dirty_1)dirty_launder((address_any)routine))(
+                                        D32(v)),
+                                    (positive)(p32)v);
+                }
+        }
+}
+
+/*
+        The int arguments that are not bytes: a checksum's running value, a
+        code point, a bit pattern, a signal base, a number base, an index
+        and a jump's value.
+*/
+static fn dirty_words_32(void)
+{
+        static const b32 bases[] = {0, 2, 8, 10, 16, 36, 1, 37, -1, 17};
+        static const char address_to inputs[] = {
+            "0", "123", "-42", "0x1f", "077", "zz", "  12", "1e3",
+            "99999999999999999999999", "", "+7", "0b101", "-0x80000000"};
+        for (positive size = 0; size <= 300; size += size < 72 ? 1 : 57)
+        {
+                p8 address_to at = dirty_in + 64 + (size & 15);
+                p32 seed = (p32)dirty_random();
+
+                for (positive i = 0; i < size; i++)
+                        at[i] = (p8)dirty_random();
+                if (DIRTY_HAS(hash_crc32))
+                        AGREE(hash_crc32, DIRTY_ROUTINE(hash_crc32)(C32(seed), at, size),
+                              (p32)DIRTY(3, hash_crc32)(D32(seed), P(at), size), size);
+                if (DIRTY_HAS(hash_crc32_msb))
+                        AGREE(hash_crc32_msb,
+                              DIRTY_ROUTINE(hash_crc32_msb)(C32(seed), at, size),
+                              (p32)DIRTY(3, hash_crc32_msb)(D32(seed), P(at), size), size);
+                if (DIRTY_HAS(memory_checksum_bsd16))
+                        AGREE(memory_checksum_bsd16,
+                              DIRTY_ROUTINE(memory_checksum_bsd16)(at, size, C32(seed)),
+                              (p32)DIRTY(3, memory_checksum_bsd16)(P(at), size, D32(seed)),
+                              size);
+        }
+
+        for (positive turn = 0; turn < 20000; turn++)
+        {
+                p32 code = turn < 12000 ? (p32)(turn * 97)
+                           : turn < 12512 ? (p32)(0x10ff00 + turn - 12000)
+                           : turn < 12600 ? (p32)(0xffffffffu - (turn - 12512))
+                                          : (p32)dirty_random();
+                b32 bits = (b32)(turn < 64 ? (positive)1 << (turn & 31) : dirty_random());
+
+                if (DIRTY_HAS(unicode_width))
+                        AGREE(unicode_width,
+                              DIRTY_ROUTINE(unicode_width)(C32(code), turn & 1),
+                              DIRTY(2, unicode_width)(D32(code), turn & 1), code);
+                if (turn < 4096 && DIRTY_HAS(bits_first_set))
+                        AGREE(bits_first_set, (p32)DIRTY_ROUTINE(bits_first_set)(CS32(bits)),
+                              (p32)DIRTY(1, bits_first_set)(D32(bits)), (p32)bits);
+                if (turn < 4096 && DIRTY_HAS(absolute_whole))
+                        AGREE(absolute_whole, (p32)DIRTY_ROUTINE(absolute_whole)(CS32(bits)),
+                              (p32)DIRTY(1, absolute_whole)(D32(bits)), (p32)bits);
+                if (turn < 4096 && DIRTY_HAS(wait_status_code_base))
+                {
+                        static const b32 signal_bases[] = {0, 128, 256, 384, 0x10080};
+                        positive raw = turn < 1024 ? (turn & 0x7f) | (turn >> 7) << 8
+                                                   : turn * 0x9e37 & 0xffff;
+                        b32 base = signal_bases[turn % array_count(signal_bases)];
+
+                        AGREE(wait_status_code_base,
+                              (p32)DIRTY_ROUTINE(wait_status_code_base)(raw, CS32(base)),
+                              (p32)DIRTY(2, wait_status_code_base)(raw, D32(base)),
+                              raw << 32 | (p32)base);
+                }
+        }
+
+        for (positive i = 0; i < array_count(inputs); i++)
+                for (positive b = 0; b < array_count(bases); b++)
+                {
+                        string_address input = (string_address)inputs[i];
+                        string_address stopped_one = null, stopped_two = null;
+                        b32 range_one = 7, range_two = 7;
+                        positive where = i << 8 | (p8)bases[b];
+
+                        if (DIRTY_HAS(string_to_number))
+                        {
+                                AGREE(string_to_number,
+                                      DIRTY_ROUTINE(string_to_number)(input, &stopped_one,
+                                                                      CS32(bases[b])),
+                                      DIRTY(3, string_to_number)(P(input), P(&stopped_two),
+                                                                 D32(bases[b])),
+                                      where);
+                                AGREE(string_to_number, stopped_one, stopped_two, where);
+                        }
+                        if (DIRTY_HAS(string_to_number_unsigned))
+                        {
+                                AGREE(string_to_number_unsigned,
+                                      DIRTY_ROUTINE(string_to_number_unsigned)(
+                                          input, &stopped_one, CS32(bases[b])),
+                                      DIRTY(3, string_to_number_unsigned)(
+                                          P(input), P(&stopped_two), D32(bases[b])),
+                                      where);
+                                AGREE(string_to_number_unsigned, stopped_one, stopped_two,
+                                      where);
+                        }
+                        if (DIRTY_HAS(string_to_number_checked))
+                        {
+                                AGREE(string_to_number_checked,
+                                      DIRTY_ROUTINE(string_to_number_checked)(
+                                          input, &stopped_one, CS32(bases[b]), &range_one),
+                                      DIRTY(4, string_to_number_checked)(
+                                          P(input), P(&stopped_two), D32(bases[b]),
+                                          P(&range_two)),
+                                      where);
+                                AGREE(string_to_number_checked, stopped_one, stopped_two,
+                                      where);
+                                AGREE(string_to_number_checked, range_one, range_two, where);
+                        }
+                        if (DIRTY_HAS(string_to_number_unsigned_checked))
+                        {
+                                AGREE(string_to_number_unsigned_checked,
+                                      DIRTY_ROUTINE(string_to_number_unsigned_checked)(
+                                          input, &stopped_one, CS32(bases[b]), &range_one),
+                                      DIRTY(4, string_to_number_unsigned_checked)(
+                                          P(input), P(&stopped_two), D32(bases[b]),
+                                          P(&range_two)),
+                                      where);
+                                AGREE(string_to_number_unsigned_checked, stopped_one,
+                                      stopped_two, where);
+                                AGREE(string_to_number_unsigned_checked, range_one,
+                                      range_two, where);
+                        }
+                }
+
+        if (DIRTY_HAS(program_argument) && DIRTY_HAS(program_environment))
+        {
+                b32 count = program_argument_count();
+                positive environment = 0;
+                string_address address_to list = program_environment_list();
+
+                while (list && list[environment])
+                        environment++;
+                for (b32 index = 0; index <= count; index++)
+                        AGREE(program_argument,
+                              DIRTY_ROUTINE(program_argument)(CS32(index)),
+                              DIRTY(1, program_argument)(D32(index)), index);
+                for (b32 index = 0; index <= (b32)environment && index < 64; index++)
+                        AGREE(program_environment,
+                              DIRTY_ROUTINE(program_environment)(CS32(index)),
+                              DIRTY(1, program_environment)(D32(index)), index);
+        }
+}
+
+/*
+        A jump's value is an int, and nought arrives as one. The value comes
+        back through the mark's second arrival, so each round is guarded
+        against a third.
+*/
+#if !defined(VERIFY_NARROW_KERNEL)
+static jump_state dirty_jump;
+static volatile positive dirty_jump_rounds;
+static volatile b32 dirty_jump_value;
+
+static fn dirty_jumps(void)
+{
+        static const b32 values[] = {0, 1, 5, -1, 0x7fffffff};
+        for (positive v = 0; v < array_count(values); v++)
+                for (positive shape = 0; shape < 5; shape++)
+                {
+                        b32 want = values[v] ? values[v] : 1;
+
+                        dirty_jump_rounds = 0;
+                        dirty_jump_value = jump_mark(dirty_jump);
+                        if (dirty_jump_rounds++ == 0)
+                                DIRTY(2, jump_to_mark)(P(dirty_jump), D32(values[v]));
+                        AGREE(jump_to_mark, (p32)want, (p32)dirty_jump_value,
+                              v << 8 | shape);
+
+                        for (positive save = 0; save < 2; save++)
+                        {
+                                dirty_jump_rounds = 0;
+                                dirty_jump_value = (b32)DIRTY(2, signal_jump_mark)(
+                                    P(dirty_jump), save ? D32(1) : D32(0));
+                                if (dirty_jump_rounds++ == 0)
+                                {
+                                        AGREE(signal_jump_mark, save,
+                                              dirty_jump[26] != 0, v << 8 | shape);
+                                        DIRTY(2, signal_jump_to_mark)(P(dirty_jump),
+                                                                      D32(values[v]));
+                                }
+                                AGREE(signal_jump_to_mark, (p32)want,
+                                      (p32)dirty_jump_value, v << 8 | shape);
+                        }
+                }
+}
+#endif
+
+#ifdef VERIFY_NARROW_KERNEL
+/*
+        Canvas's rectangles, blits, glyphs and cells, over one pitch of three
+        hundred and twenty pixels, every colour a u32 with junk above it.
+        The wide bodies run here outside the kernel's bracket, which is
+        theirs to need only in ring 0.
+*/
+#define DIRTY_PIXELS 6144
+static p32 dirty_canvas_one[DIRTY_PIXELS], dirty_canvas_two[DIRTY_PIXELS];
+static p32 dirty_from[512];
+static p8 dirty_font[256 * 16];
+static struct dirty_cell dirty_cells[48];
+
+static fn dirty_canvas_reset(void)
+{
+        for (positive i = 0; i < DIRTY_PIXELS; i++)
+                dirty_canvas_one[i] = dirty_canvas_two[i] = (p32)(0x5a5a0000u ^ i);
+}
+
+static positive dirty_canvas_differ(void)
+{
+        return dirty_differ((p8 address_to)dirty_canvas_one,
+                            (p8 address_to)dirty_canvas_two,
+                            sizeof(dirty_canvas_one));
+}
+
+static fn dirty_canvas(void)
+{
+        static const positive widths[] = {0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17,
+                                          31, 32, 33, 63, 64, 65, 207, 208, 209, 300};
+        static const positive heights[] = {0, 1, 3};
+        p32 address_to one = dirty_canvas_one + 3;
+        p32 address_to two = dirty_canvas_two + 3;
+        for (positive i = 0; i < sizeof(dirty_font); i++)
+                dirty_font[i] = (p8)dirty_random();
+        for (positive i = 0; i < array_count(dirty_from); i++)
+                dirty_from[i] = (p32)dirty_random();
+        for (positive i = 0; i < array_count(dirty_cells); i++)
+        {
+                dirty_cells[i].character = (p32)dirty_random();
+                dirty_cells[i].ink = (p8)i;
+                dirty_cells[i].paper = (p8)(i * 7);
+                dirty_cells[i].flags = 0;
+        }
+
+        for (positive turn = 0; turn < 6; turn++)
+        {
+                p32 colour = turn == 0 ? 0 : turn == 1 ? 0xffffffffu : (p32)dirty_random();
+                p32 other = turn == 1 ? 0 : (p32)dirty_random();
+                p32 opaque = turn % 3 == 0 ? 0 : turn % 3 == 1 ? 0xff000000u : colour;
+
+                for (positive w = 0; w < array_count(widths); w++)
+                {
+                        positive width = widths[w];
+                        positive where = turn << 16 | width;
+
+                        for (positive h = 0; h < array_count(heights); h++)
+                        {
+                                positive height = heights[h];
+
+                                if (DIRTY_HAS(canvas_rect_fill))
+                                {
+                                        dirty_canvas_reset();
+                                        kernel_canvas_rect_fill(one, 320, width, height, C32(colour));
+                                        DIRTY(5, canvas_rect_fill)(P(two), 320, width, height, D32(colour));
+                                        AGREE(canvas_rect_fill, 0, dirty_canvas_differ(), where | height << 12);
+                                }
+                                if (DIRTY_HAS(canvas_rect_fill_wide))
+                                {
+                                        dirty_canvas_reset();
+                                        kernel_canvas_rect_fill_wide(one, 320, width, height, C32(colour));
+                                        DIRTY(5, canvas_rect_fill_wide)(P(two), 320, width, height, D32(colour));
+                                        AGREE(canvas_rect_fill_wide, 0, dirty_canvas_differ(), where | height << 12);
+                                }
+                        }
+                        if (DIRTY_HAS(canvas_row_blit))
+                        {
+                                dirty_canvas_reset();
+                                kernel_canvas_row_blit(one, dirty_from, width, C32(opaque));
+                                DIRTY(4, canvas_row_blit)(P(two), P(dirty_from), width, D32(opaque));
+                                AGREE(canvas_row_blit, 0, dirty_canvas_differ(), where);
+                        }
+                        if (DIRTY_HAS(canvas_row_blit_wide))
+                        {
+                                dirty_canvas_reset();
+                                kernel_canvas_row_blit_wide(one, dirty_from, width, C32(opaque));
+                                DIRTY(4, canvas_row_blit_wide)(P(two), P(dirty_from), width, D32(opaque));
+                                AGREE(canvas_row_blit_wide, 0, dirty_canvas_differ(), where);
+                        }
+                        if (DIRTY_HAS(canvas_cells) && width <= 40)
+                        {
+                                dirty_canvas_reset();
+                                kernel_canvas_cells(one, 320, dirty_font, dirty_cells, width,
+                                                    C32(colour), C32(other));
+                                DIRTY(7, canvas_cells)(P(two), 320, P(dirty_font), P(dirty_cells),
+                                                       width, D32(colour), D32(other));
+                                AGREE(canvas_cells, 0, dirty_canvas_differ(), where);
+                        }
+                        if (DIRTY_HAS(canvas_cells_wide) && width <= 40)
+                        {
+                                dirty_canvas_reset();
+                                kernel_canvas_cells_wide(one, 320, dirty_font, dirty_cells, width,
+                                                         C32(colour), C32(other));
+                                DIRTY(7, canvas_cells_wide)(P(two), 320, P(dirty_font), P(dirty_cells),
+                                                            width, D32(colour), D32(other));
+                                AGREE(canvas_cells_wide, 0, dirty_canvas_differ(), where);
+                        }
+                }
+
+                for (positive rows = 0; rows <= 16; rows++)
+                        for (positive stride = 1; stride <= 2; stride++)
+                        {
+                                p8 address_to bits = dirty_font + turn * 37 + rows;
+                                positive where = turn << 16 | rows << 8 | stride;
+
+#define DIRTY_GLYPH_CASE(name)                                                   \
+                                if (DIRTY_HAS(name))                            \
+                                {                                               \
+                                        dirty_canvas_reset();                   \
+                                        kernel_##name(one, 40, bits, stride, rows, C32(colour)); \
+                                        DIRTY(6, name)(P(two), 40, P(bits), stride, rows, D32(colour)); \
+                                        AGREE(name, 0, dirty_canvas_differ(), where); \
+                                }
+#define DIRTY_CELL_CASE(name)                                                    \
+                                if (DIRTY_HAS(name) && stride == 1)             \
+                                {                                               \
+                                        dirty_canvas_reset();                   \
+                                        kernel_##name(one, 40, bits, rows, C32(colour), C32(other)); \
+                                        DIRTY(6, name)(P(two), 40, P(bits), rows, D32(colour), D32(other)); \
+                                        AGREE(name, 0, dirty_canvas_differ(), where); \
+                                }
+                                DIRTY_GLYPH_CASE(canvas_glyph)
+                                DIRTY_GLYPH_CASE(canvas_glyph2)
+                                DIRTY_GLYPH_CASE(canvas_glyph_wide)
+                                DIRTY_CELL_CASE(canvas_cell)
+                                DIRTY_CELL_CASE(canvas_cell2)
+                                DIRTY_CELL_CASE(canvas_cell_wide)
+                                DIRTY_CELL_CASE(canvas_cell2_wide)
+#undef DIRTY_GLYPH_CASE
+#undef DIRTY_CELL_CASE
+                        }
+        }
+}
+#endif
+
+fn check_dirty_arguments(void)
+{
+        for (positive r = 0; r < DIRTY_ROUTINES; r++)
+                dirty_compared[r] = dirty_wrong[r] = 0;
+
+        dirty_tiers(dirty_hunts);
+        dirty_tiers(dirty_fill);
+        dirty_tiers(dirty_offsets);
+        dirty_tiers(dirty_escape);
+        dirty_tiers(dirty_words);
+        dirty_tiers(dirty_records);
+        dirty_tiers(dirty_prepare);
+        dirty_tiers(dirty_strings);
+        dirty_writers();
+        dirty_into();
+        dirty_buffered();
+        dirty_orders();
+        dirty_classes();
+        dirty_words_32();
+#if !defined(VERIFY_NARROW_KERNEL)
+        dirty_jumps();
+#else
+        dirty_canvas();
+#endif
+
+        positive compared = 0, absent = 0;
+        for (positive r = 0; r < DIRTY_ROUTINES; r++)
+                if (!dirty_addresses[r])
+                        string_format(log, "%s %s", absent++ ? "" : "  NOTE not in this library:",
+                                      dirty_names[r]);
+        if (absent)
+                string_format(log, "\n");
+        for (positive r = 0; r < DIRTY_ROUTINES; r++)
+        {
+                compared += dirty_compared[r];
+#ifdef VERIFY_NARROW_TALLY
+                string_format(log, "  %s: %p compared, %p wrong\n", dirty_names[r],
+                              dirty_compared[r], dirty_wrong[r]);
+#endif
+                if (!dirty_addresses[r])
+                        continue;
+                same(dirty_names[r], "answers that change with the bits above "
+                                     "a narrow argument",
+                     dirty_wrong[r], 0);
+                if (dirty_wrong[r])
+                        string_format(log, "  %s: %p of %p answers changed\n",
+                                      dirty_names[r], dirty_wrong[r],
+                                      dirty_compared[r]);
+                same(dirty_names[r], "asked with bits above a narrow argument",
+                     dirty_compared[r] > 0, 1);
+        }
+        string_format(log, "  NOTE narrow arguments: %p answers compared, "
+                           "%p routines not in this library\n",
+                      compared, absent);
+}
+
+/*
         memory_offsets_between and memory_offsets_outside against a byte
         loop: the same sizes, residues and limits as memory_offsets_of_either,
         over random bytes, ranges from one value to all of them. On x86_64
@@ -22765,6 +24350,10 @@ b32 main()
         check_format_deep();
         check_format_decimals();
 #endif
+#elif defined(VERIFY_NARROW_ONLY)
+        // The narrow-argument check alone, for the kernel object's bodies
+        // under VERIFY_NARROW_KERNEL: see check_dirty_arguments.
+        check_dirty_arguments();
 #elif defined(VERIFY_FORMATTERS_ONLY)
         // A small cross-machine lane for the shared numeric core. It avoids
         // making a formatter change wait on unrelated platform tests when a
@@ -22819,6 +24408,7 @@ b32 main()
         check_squeeze_bytes();
         check_offsets_of_either();
         check_span_byte();
+        check_dirty_arguments();
         check_offsets_range();
         check_checksums();
         check_copy_match();

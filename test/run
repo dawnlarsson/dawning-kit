@@ -2233,7 +2233,108 @@ target_build()
         return "$target_built"
 }
 
-verify_one() { freestanding_checks_one verify verify "$@"; }
+verify_one()
+{
+        verify_status=0
+        freestanding_checks_one verify verify "$@" || verify_status=$?
+        kernel_narrow_one || {
+                kernel_narrow_status=$?
+                [ "$kernel_narrow_status" = 2 ] || verify_status=1
+        }
+        return "$verify_status"
+}
+
+#       The KERNEL_MODE bodies, asked the verify check's narrow-argument
+#       questions (check_dirty_arguments). No lane runs the kernel's half of
+#       lib.c as a program otherwise, and an arm64 kernel body kept comparing
+#       all of w1 after the userspace one had stopped. lib.c is compiled as
+#       the kernel vector audits compile it, each symbol is prefixed kernel_
+#       so the object sits beside the library, and the narrow section alone
+#       is linked against it and run where verify runs. x86_64 twice: with
+#       ALTERNATIVE left as the old instruction, which is early boot, and as
+#       the new one, which is every call after alternative_instructions.
+kernel_narrow_one()
+{
+        kernel_narrow_objcopy=${target_compiler%gcc}objcopy
+        command -v "$kernel_narrow_objcopy" > /dev/null 2>&1 ||
+                kernel_narrow_objcopy=objcopy
+        command -v "$kernel_narrow_objcopy" > /dev/null 2>&1 ||
+                { note "$target kernel narrow: NOT RUN -- no objcopy"; return 2; }
+
+        case $target in
+        x86_64) kernel_narrow_forms="old new" ;;
+        *) kernel_narrow_forms=kernel ;;
+        esac
+
+        kernel_narrow_failed=0
+        for kernel_narrow_form in $kernel_narrow_forms; do
+                case $kernel_narrow_form in
+                kernel) kernel_narrow_name=$target ;;
+                *) kernel_narrow_name=$target-$kernel_narrow_form ;;
+                esac
+                kernel_narrow_object=$work/narrow.$target.$kernel_narrow_form
+                case $target in
+                x86_64)
+                        mkdir -p "$kernel_narrow_object.include/asm" || return 1
+                        printf '#define ALTERNATIVE(old_instruction, new_instruction, feature) %s_instruction\n' \
+                                "$kernel_narrow_form" \
+                                > "$kernel_narrow_object.include/asm/alternative.h"
+                        printf '%s\n' '#define X86_FEATURE_ERMS 0' \
+                                > "$kernel_narrow_object.include/asm/cpufeatures.h"
+                        set -- -mno-sse -mno-sse2 -mno-mmx -msoft-float \
+                                "-I$kernel_narrow_object.include"
+                        ;;
+                arm64)
+                        set -- -march=armv8-a -mgeneral-regs-only -mno-outline-atomics
+                        ;;
+                riscv64)
+                        #       The verify binary's own floor and float ABI, which a
+                        #       link needs to agree on; the bodies are the same text.
+                        set -- -march=rv64imafd_zicsr_zifencei -mabi=lp64d
+                        ;;
+                esac
+
+                if ! $target_compiler -std=gnu11 -O2 -ffreestanding -fno-builtin \
+                        -nostdlib "$@" -DSTANDARD_MODERN_C_KERNEL \
+                        '-DEXPORT_SYMBOL(name)=' -DCONFIG_MOONWATER_CANVAS \
+                        -c src/lib.c -o "$kernel_narrow_object.o" \
+                        2> "$kernel_narrow_object.err" ||
+                   ! "$kernel_narrow_objcopy" --prefix-symbols=kernel_ \
+                        --rename-section .noinstr.text=.text.kernel_noinstr \
+                        --rename-section .text.moonwater_simd=.text.kernel_simd \
+                        "$kernel_narrow_object.o" "$kernel_narrow_object.k.o" \
+                        2>> "$kernel_narrow_object.err"
+                then
+                        note "the $kernel_narrow_name KERNEL_MODE library did not build for the narrow check:"
+                        sed 's/^/    /' "$kernel_narrow_object.err" | head -10
+                        kernel_narrow_failed=1
+                        continue
+                fi
+
+                target_build freestanding_check verify "$kernel_narrow_object" \
+                        "$target" -DVERIFY_NARROW_ONLY -DVERIFY_NARROW_KERNEL \
+                        "$kernel_narrow_object.k.o" ||
+                        { kernel_narrow_failed=1; continue; }
+
+                $target_runner "$kernel_narrow_object" \
+                        > "$kernel_narrow_object.out" 2>&1
+                kernel_narrow_run=$?
+                sed -n '/FAIL/p' "$kernel_narrow_object.out"
+                line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
+                        "$kernel_narrow_object.out")
+                if [ -z "$line" ]; then
+                        note "$kernel_narrow_name kernel narrow check printed no verdict"
+                        kernel_narrow_failed=1
+                        continue
+                fi
+                tally "verify-kernel-$kernel_narrow_name" \
+                        "$((${line% *} - ${line#* }))" "${line% *}"
+                [ "$kernel_narrow_run" = 0 ] && [ "${line#* }" = 0 ] ||
+                        kernel_narrow_failed=1
+        done
+
+        return "$kernel_narrow_failed"
+}
 
 lane_verify() { target_lane verify_one; }
 

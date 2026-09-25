@@ -5268,7 +5268,10 @@ __asm__(
     // Preparing is deliberately scalar and cold: the searches below consume
     // the result many times, while this walks the needle exactly once.
     ASM_FUNC(memory_search_prepare)
-    "mov %rdx, %r11\n   xor %eax, %eax\n   xor %edx, %edx\n"
+    // ascii_case is a bool, which is a byte here, and the psABI leaves the
+    // bits above it undefined: a whole %rdx read a false with junk above it
+    // as true. The byte alone, in the instruction that copied the register.
+    "movzbl %dl, %r11d\n   xor %eax, %eax\n   xor %edx, %edx\n"
     "test %rsi, %rsi\n   jz 9f\n   lea -1(%rsi), %rdx\n"
     "cmp $2, %rsi\n   jb 9f\n   push %rbx\n   push %r12\n"
     "lea byte_commonness(%rip), %r8\n   mov $256, %r9d\n"
@@ -19838,7 +19841,12 @@ __asm__(
     //       one halfword, which is why the round count is capped at 255.
     //
     ASM_FUNC(memory_count)
-    "mov x3, #0\n"
+    //
+    //       The byte is cut to its eight bits first: AAPCS64 leaves w2 above
+    //       them undefined, and the byte loop -- the tail here, the whole of
+    //       it in a kernel -- compares all of w2 against a byte it loaded.
+    //
+    "mov x3, #0\n   and w2, w2, #255\n"
     "cbz x1, 9f\n"
 #ifndef KERNEL_MODE
     "dup v1.16b, w2\n"
@@ -20076,7 +20084,8 @@ __asm__(
     ".Lmemory_first_icase_arm64_found:\n" ASM_RET
     ASM_END(memory_first_of_ascii_case)
     ASM_FUNC(memory_search_prepare)
-    "mov x9, #0\n   mov x10, #0\n   cbz x1, 9f\n"
+    // ascii_case is a bool, a byte, and AAPCS64 leaves w2 above it undefined.
+    "mov x9, #0\n   mov x10, #0\n   and w2, w2, #255\n   cbz x1, 9f\n"
     "sub x10, x1, #1\n   cmp x1, #2\n   b.lo 9f\n"
     "adrp x3, byte_commonness\n   add x3, x3, :lo12:byte_commonness\n"
     "mov x4, #256\n   mov x5, #256\n   mov x6, #0\n"
@@ -20489,9 +20498,14 @@ __asm__(
     "mov x0, #0\n" ASM_RET
     ASM_LOCAL_END(memory_search_prepared_core)
     ASM_FUNC(memory_count_records_with_prepared)
+    // The delimiter is a byte and AAPCS64 leaves w6 above it undefined; the
+    // empty needle's walk and the needle's own check compare all of w6, so it
+    // is cut before either.
+    //
     // Empty needle: every delimiter ends a record, plus a nonempty final
     // suffix.  Kept scalar because it is a cold semantic edge, not the grep
     // literal path this routine exists to floor.
+    "and w6, w6, #255\n"
     "cbnz x3, .Lmemory_records_arm64_have_needle\n   cbz x1, .Lmemory_records_arm64_zero\n"
     "mov x7, #0\n   mov x8, #0\n"
     ".Lmemory_records_arm64_empty_loop:\n   ldrb w9, [x0, x8]\n"
@@ -24818,9 +24832,9 @@ __asm__(
     // (on the M2 it costs what a word read long after does), so the words
     // stay. One to three go to the byte loop, which the kernel keeps alone.
     ASM_FUNC(memory_span_byte)
-    "mov x3, #0\n   mov x4, x0\n"
+    "mov x3, #0\n   mov x4, x0\n   and w1, w1, #255\n"
 #ifndef KERNEL_MODE
-    "and w1, w1, #255\n   cbz x2, .Lmemory_span_byte_arm64_done\n"
+    "cbz x2, .Lmemory_span_byte_arm64_done\n"
     "ldrb w5, [x0]\n   cmp w5, w1\n   b.ne .Lmemory_span_byte_arm64_done\n"
     "cmp x2, #4\n   b.lo .Lmemory_span_byte_arm64_short\n"
     "cmp x2, #16\n   b.lo .Lmemory_span_byte_arm64_words\n"
@@ -30161,7 +30175,9 @@ ASM_FUNC(positive_to_string)
     "positive_human_nearest_units:\n   .byte 0\n"
     "   .ascii \"KMGTPEZYRQ\"\n"
     ".popsection\n"
-    "cmp w2, #0\n"
+    // binary is a bool, a byte: its eight bits are asked and not w2's
+    // thirty two, which AAPCS64 leaves undefined above them.
+    "tst w2, #255\n"
     "mov x2, x0\n   mov x3, #1000\n"
     "mov x8, #1024\n"
     "csel x3, x8, x3, ne\n   mov x4, xzr\n   mov x5, xzr\n   mov x6, xzr\n"
@@ -31041,6 +31057,9 @@ ASM_FUNC(positive_to_string)
     "positive_base_upper:\n"
     "   .ascii \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"\n"
     ".popsection\n"
+    // upper is a bool, a byte, and AAPCS64 leaves w3 above it undefined;
+    // the generic, hex and base 32 bodies each ask cbz w3.
+    "and w3, w3, #255\n"
     "sub x4, x2, #2\n"
     "cmp x4, #34\n"
     "b.hi .Lpositive_base_arm_invalid\n   cmp x2, #10\n"
@@ -32107,6 +32126,10 @@ __asm__(
     ASM_RET
     ASM_LOCAL_END(memory_search_prepared_core)
     ASM_FUNC(memory_count_records_with_prepared)
+    // The delimiter is a b8, which the RISC-V convention hands over sign
+    // extended: 0x80 arrives as -128 and no byte lbu loads is that. The byte
+    // alone is what every compare below means.
+    "andi a6, a6, 0xff\n"
     "bnez a3, .Lmemory_records_rv_have_needle\n"
     "beqz a1, .Lmemory_records_rv_zero\n   li t0, 0\n   li t1, 0\n"
     ".Lmemory_records_rv_empty_loop:\n   add t2, a0, t1\n   lbu t3, 0(t2)\n"
