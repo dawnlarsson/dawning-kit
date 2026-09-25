@@ -354,17 +354,19 @@ typedef struct
         positive count;
 } link_peers;
 
-static fn link_peers_load(link_peers address_to peers)
+static bipolar link_peers_read(link_peers address_to peers)
 {
         positive got = 0;
+        bipolar read;
 
         memory_zero(peers, sizeof(address_to peers));
-        if (link_read_private_records(LINK_PEERS_PATH,
-                                      (p8 address_to)peers->peer,
-                                      sizeof(peers->peer),
-                                      sizeof(struct waterlink_peer),
-                                      address_of got) < 0)
-                return;
+        read = link_read_private_records(LINK_PEERS_PATH,
+                                         (p8 address_to)peers->peer,
+                                         sizeof(peers->peer),
+                                         sizeof(struct waterlink_peer),
+                                         address_of got);
+        if (read < 0)
+                return read;
 
         peers->count = got / sizeof(struct waterlink_peer);
 
@@ -379,6 +381,22 @@ static fn link_peers_load(link_peers address_to peers)
                         at--;
                 }
         }
+        return 0;
+}
+
+static fn link_peers_load(link_peers address_to peers)
+{
+        (void)link_peers_read(peers);
+}
+
+//      The peers, to change them: a file that is there and cannot be read
+//      is not an empty list, and saving over it would forget every peer in
+//      it. Only a file never written is empty.
+static bool link_peers_for_change(link_peers address_to peers)
+{
+        bipolar read = link_peers_read(peers);
+
+        return read >= 0 || read == -ENOENT;
 }
 
 static bipolar link_peers_save(link_peers address_to peers)
@@ -1446,6 +1464,21 @@ static fn link_refuse(struct link_session address_to s, string_address why)
         s->kind = LINK_KIND_NONE;
 }
 
+/* Validate the shape before any request-specific field is read. A shell
+   request always carries its four-byte window size; in particular, do not
+   let a short authenticated request make link_start_shell or the mode reader
+   look beyond the frame payload. */
+static bool link_request_well_formed(p8 kind, p8 address_to payload,
+                                     positive length)
+{
+        positive skip = kind == LINK_KIND_PUSH ? 5 : 1;
+
+        if (kind == LINK_KIND_SHELL)
+                return length >= 5 && length <= 5 + 31;
+        return length >= skip && length - skip <= LINK_REQUEST_MAX &&
+               !memory_first_of(payload + skip, 0, length - skip);
+}
+
 static fn link_request(struct link_session address_to s, p8 address_to payload,
                        positive length)
 {
@@ -1495,16 +1528,18 @@ static fn link_request(struct link_session address_to s, p8 address_to payload,
         //      A command or a path is one string with no NUL in it, behind a
         //      push's mode; a terminal's request is its size and TERM.
         skip = s->kind == LINK_KIND_PUSH ? 5 : 1;
-        if (s->kind != LINK_KIND_SHELL &&
-            (length < skip || length - skip > LINK_REQUEST_MAX ||
-             memory_first_of(payload + skip, 0, length - skip)))
+        if (!link_request_well_formed(s->kind, payload, length))
         {
                 link_refuse(s, "that request is malformed");
                 return;
         }
-        memory_copy(text, payload + skip, length - skip);
-        text[length - skip] = 0;
-        memory_copy(address_of mode, payload + 1, 4);
+        if (s->kind != LINK_KIND_SHELL)
+        {
+                memory_copy(text, payload + skip, length - skip);
+                text[length - skip] = 0;
+        }
+        if (s->kind == LINK_KIND_PUSH)
+                memory_copy(address_of mode, payload + 1, 4);
 
         //      Pull and log are commands the machine already has, named here
         //      and never parsed by a shell.
@@ -1809,7 +1844,7 @@ static fn link_session_watch(struct link_session address_to s,
 
 // The handshake, at the machine's end -----------------------------------------
 
-static bool link_stamp_fresh(p8 address_to key, p8 address_to stamp)
+static positive link_stamp_at(p8 address_to key)
 {
         positive at;
 
@@ -1817,21 +1852,70 @@ static bool link_stamp_fresh(p8 address_to key, p8 address_to stamp)
                 if (crypto_same(link_self.stamp_key[at], key, 32))
                         break;
 
+        return at;
+}
+
+/* Peer removal must eventually release its replay slot. The listener may
+   outlive `link forget`, so compact stale markers when capacity matters
+   rather than letting forgotten peers permanently deny a new identity. */
+static fn link_stamps_prune(void)
+{
+        link_peers peers;
+        positive at = 0;
+
+        //      A file that cannot be read is not an empty list: every
+        //      marker stays.
+        if (link_peers_read(address_of peers) < 0)
+                return;
+        while (at < link_self.stamps)
+        {
+                if (link_peer_keyed(address_of peers, link_self.stamp_key[at]))
+                {
+                        at++;
+                        continue;
+                }
+                link_self.stamps--;
+                if (at < link_self.stamps)
+                {
+                        memory_copy(link_self.stamp_key[at],
+                                    link_self.stamp_key[link_self.stamps], 32);
+                        memory_copy(link_self.stamp[at],
+                                    link_self.stamp[link_self.stamps],
+                                    WATERLINK_STAMP_BYTES);
+                }
+                crypto_forget(link_self.stamp_key[link_self.stamps], 32);
+                crypto_forget(link_self.stamp[link_self.stamps],
+                              WATERLINK_STAMP_BYTES);
+        }
+}
+
+static bool link_stamp_new(p8 address_to key, p8 address_to stamp)
+{
+        positive at = link_stamp_at(key);
+
         if (at < link_self.stamps)
+                return waterlink_stamp_newer(stamp, link_self.stamp[at]);
+        if (link_self.stamps == LINK_PEERS_MAX)
+                link_stamps_prune();
+        /* Every paired peer fits in this table. Once it is full, refusing an
+           unknown identity preserves every resident peer's replay marker;
+           replacing slot zero would let a group member rotate invented
+           static keys until an old initiation from that peer became new. */
+        return link_self.stamps < LINK_PEERS_MAX;
+}
+
+static fn link_stamp_keep(p8 address_to key, p8 address_to stamp)
+{
+        positive at = link_stamp_at(key);
+
+        if (at == link_self.stamps)
         {
-                if (!waterlink_stamp_newer(stamp, link_self.stamp[at]))
-                        return false;
+                if (link_self.stamps == LINK_PEERS_MAX)
+                        return;
+                link_self.stamps++;
         }
-        else
-        {
-                if (link_self.stamps < LINK_PEERS_MAX)
-                        at = link_self.stamps++;
-                else
-                        at = 0;
-                memory_copy(link_self.stamp_key[at], key, 32);
-        }
+        memory_copy(link_self.stamp_key[at], key, 32);
         memory_copy(link_self.stamp[at], stamp, WATERLINK_STAMP_BYTES);
-        return true;
 }
 
 static fn link_server_initiation(p8 address_to datagram, positive length,
@@ -1877,16 +1961,19 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
         if (psk)
         {
                 crypto_forget(address_of noise, sizeof noise);
-                if (link_stamp_fresh(who, hello))
-                        link_pair_greeted(group, who,
-                                          hello + WATERLINK_STAMP_BYTES,
-                                          address, port, now);
+                if (link_stamp_new(who, hello))
+                {
+                        if (link_pair_greeted(group, who,
+                                             hello + WATERLINK_STAMP_BYTES,
+                                             address, port, now))
+                                link_stamp_keep(who, hello);
+                }
                 return;
         }
 
         link_peers_load(address_of peers);
         peer = link_peer_keyed(address_of peers, who);
-        if (!peer || !link_stamp_fresh(who, hello))
+        if (!peer || !link_stamp_new(who, hello))
         {
                 crypto_forget(address_of noise, sizeof noise);
                 return;
@@ -1894,6 +1981,14 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
 
         memory_copy(address_of conversation, hello + WATERLINK_STAMP_BYTES, 8);
         memory_copy(address_of theirs, hello + WATERLINK_STAMP_BYTES + 8, 4);
+        /* Zero is not a session index: link_index_new deliberately never
+           issues it, and no carried reply can find it. Refuse it before it
+           can reserve a session or consume the peer's replay stamp. */
+        if (!theirs)
+        {
+                crypto_forget(address_of noise, sizeof noise);
+                return;
+        }
 
         for (positive at = 0; at < LINK_SESSIONS; at++)
         {
@@ -1936,6 +2031,12 @@ static fn link_server_initiation(p8 address_to datagram, positive length,
                 s->may = peer->may;
                 s->conversation = conversation;
         }
+
+        /* Only a handshake that can actually become a session spends its
+           replay stamp. An entropy outage or a full session table must not
+           turn a client's retransmission into a replay and strand it until
+           it creates a new initiation. */
+        link_stamp_keep(who, hello);
 
         waterlink_split(address_of noise, false, send, receive);
 
@@ -2431,6 +2532,8 @@ static bool link_client_answer(struct link_session address_to s,
         p8 send[16], receive[16];
         p32 theirs = 0;
 
+        if (length != WATERLINK_DATAGRAM)
+                return false;
         memory_copy(address_of head, datagram, 16);
         if (head.kind != WATERLINK_KIND_RESPOND || head.receiver != ours ||
             !waterlink_gate_passes(address_of link_self.me, datagram, length))

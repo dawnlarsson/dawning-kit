@@ -382,7 +382,8 @@ static b32 link_pair_locked(string_address name, string_address text,
         string_copy(peer.name, name);
         peer.may = WATERLINK_MAY_DEFAULT;
 
-        link_peers_load(address_of peers);
+        if (!link_peers_for_change(address_of peers))
+                return host_refuse("%s could not be read\n", LINK_PEERS_PATH);
         found = link_peer_named(address_of peers, name);
         if (!found)
                 found = link_peer_keyed(address_of peers, peer.key);
@@ -727,19 +728,27 @@ static b32 link_leave(string_address namespace, bool forget)
                 link_peers peers;
                 bipolar lock = link_peers_lock();
                 positive dropped = 0;
+                bool read = link_peers_for_change(address_of peers);
 
-                link_peers_load(address_of peers);
-                for (positive at = 0; at < peers.count; at++)
+                for (positive at = 0; read && at < peers.count; at++)
                         if (peers.peer[at].group == keys.mark)
                         {
                                 peers.peer[at--] = peers.peer[--peers.count];
                                 dropped++;
                         }
-                (void)link_peers_save(address_of peers);
+                if (read)
+                        (void)link_peers_save(address_of peers);
                 link_peers_unlock(lock);
-                string_format(log, host_label "left %s and forgot the %p "
-                                              "machines it paired\n",
-                              namespace, dropped);
+                if (read)
+                        string_format(log, host_label "left %s and forgot the "
+                                                      "%p machines it paired\n",
+                                      namespace, dropped);
+                else
+                        string_format(log, host_label "left %s; %s could not "
+                                                      "be read, so the "
+                                                      "machines it paired are "
+                                                      "kept\n",
+                                      namespace, LINK_PEERS_PATH);
         }
         else
                 string_format(log, host_label "left %s; the machines it paired "

@@ -250,7 +250,7 @@ static bool link_nearby_labels(void)
 */
 static bool link_pair_keep(positive group, p8 address_to key,
                            p8 address_to offered, p8 address_to address,
-                           p16 port)
+                           p16 port, bool address_to accepted)
 {
         struct waterlink_group_keys address_to keys = link_nearby.keys + group;
         link_peers peers;
@@ -259,7 +259,13 @@ static bool link_pair_keep(positive group, p8 address_to key,
         bool changed = false;
         bool new = false;
 
-        link_peers_load(address_of peers);
+        address_to accepted = false;
+
+        if (!link_peers_for_change(address_of peers))
+        {
+                link_peers_unlock(lock);
+                return false;
+        }
         peer = link_peer_keyed(address_of peers, key);
         if (!peer && peers.count < LINK_PEERS_MAX &&
             !crypto_same(key, link_self.me.public, 32))
@@ -286,7 +292,14 @@ static bool link_pair_keep(positive group, p8 address_to key,
                 changed = true;
         }
         if (changed)
-                new = link_peers_save(address_of peers) >= 0 && new;
+        {
+                bool saved = link_peers_save(address_of peers) >= 0;
+
+                new = saved && new;
+                if (!saved)
+                        peer = null;
+        }
+        address_to accepted = peer != null;
         link_peers_unlock(lock);
         link_self.state_dirty = true;
         return new;
@@ -538,12 +551,16 @@ static fn link_pair_begin(positive group, p8 address_to address, p16 port,
 }
 
 //      A greeting that opened: the member is kept, and greeted back if new.
-static fn link_pair_greeted(positive group, p8 address_to key,
-                            p8 address_to name, p8 address_to address,
-                            p16 port, p64 now)
+static bool link_pair_greeted(positive group, p8 address_to key,
+                              p8 address_to name, p8 address_to address,
+                              p16 port, p64 now)
 {
-        if (link_pair_keep(group, key, name, address, port))
+        bool accepted;
+
+        if (link_pair_keep(group, key, name, address, port,
+                           address_of accepted))
                 link_pair_begin(group, address, port, now);
+        return accepted;
 }
 
 /*

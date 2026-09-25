@@ -53438,7 +53438,7 @@ static fn random_seeded(p8 address_to into, positive length, p8 seed)
 static fn handshake(void)
 {
         struct waterlink_identity alice, bob, eve;
-        struct waterlink_noise starting, answering;
+        struct waterlink_noise starting, answering, starting_kept;
         p8 first[WATERLINK_DATAGRAM];
         p8 second[WATERLINK_DATAGRAM];
         p8 kept[WATERLINK_DATAGRAM];
@@ -53491,6 +53491,96 @@ static fn handshake(void)
         check("and names the initiator's index",
               ((struct waterlink_datagram address_to)second)->receiver ==
                       0x11223344);
+        starting_kept = starting;
+
+        /* Every individual bit is authenticated by mac1, including header,
+           ciphertext, tag and padding. This is exhaustive over both full
+           handshake datagrams rather than a sample of interesting offsets. */
+        {
+                p8 changed[WATERLINK_DATAGRAM];
+                positive first_refused = 0;
+                positive second_refused = 0;
+
+                for (positive bit = 0; bit < WATERLINK_DATAGRAM * 8; bit++)
+                {
+                        memory_copy(changed, kept, sizeof changed);
+                        changed[bit / 8] ^= (p8)(1u << (bit % 8));
+                        first_refused +=
+                                !waterlink_gate_passes(address_of bob, changed,
+                                                       sizeof changed);
+
+                        memory_copy(changed, second, sizeof changed);
+                        changed[bit / 8] ^= (p8)(1u << (bit % 8));
+                        second_refused +=
+                                !waterlink_gate_passes(address_of alice, changed,
+                                                       sizeof changed);
+                }
+                check("sec: every one-bit initiation mutation fails its gate",
+                      first_refused == WATERLINK_DATAGRAM * 8);
+                check("sec: every one-bit answer mutation fails its gate",
+                      second_refused == WATERLINK_DATAGRAM * 8);
+        }
+
+        /* mac1 is keyed only by a public identity and is deliberately not
+           authentication. Give each encrypted-field mutation a freshly
+           correct mac1 and require Noise's DH/transcript tag to reject it. */
+        {
+                p8 changed[WATERLINK_DATAGRAM];
+                p8 gate[32];
+                positive first_refused = 0;
+                positive second_refused = 0;
+                positive first_bits =
+                        (WATERLINK_INITIATE_BYTES - 16) * 8;
+                positive second_bits =
+                        (WATERLINK_RESPOND_BYTES - 16) * 8;
+
+                waterlink_gate_of(bob.public, gate);
+                for (positive bit = 0; bit < first_bits; bit++)
+                {
+                        struct waterlink_noise candidate;
+
+                        memory_copy(changed, kept, sizeof changed);
+                        changed[16 + bit / 8] ^= (p8)(1u << (bit % 8));
+                        waterlink_mac1(gate, changed,
+                                       16 + WATERLINK_INITIATE_BYTES - 16,
+                                       changed + 16 +
+                                               WATERLINK_INITIATE_BYTES - 16);
+                        first_refused +=
+                                waterlink_gate_passes(address_of bob, changed,
+                                                      sizeof changed) &&
+                                !waterlink_accept(address_of candidate,
+                                                  address_of bob, null, changed,
+                                                  who, heard_hello);
+                        crypto_forget(address_of candidate, sizeof candidate);
+                }
+
+                waterlink_gate_of(alice.public, gate);
+                for (positive bit = 0; bit < second_bits; bit++)
+                {
+                        struct waterlink_noise candidate = starting_kept;
+
+                        memory_copy(changed, second, sizeof changed);
+                        changed[16 + bit / 8] ^= (p8)(1u << (bit % 8));
+                        waterlink_mac1(gate, changed,
+                                       16 + WATERLINK_RESPOND_BYTES - 16,
+                                       changed + 16 +
+                                               WATERLINK_RESPOND_BYTES - 16);
+                        second_refused +=
+                                waterlink_gate_passes(address_of alice, changed,
+                                                      sizeof changed) &&
+                                !waterlink_answered(address_of candidate,
+                                                    address_of alice, changed,
+                                                    address_of index);
+                        crypto_forget(address_of candidate, sizeof candidate);
+                }
+                check("sec: Noise rejects every one-bit initiation mutation "
+                      "behind a repaired gate",
+                      first_refused == first_bits);
+                check("sec: Noise rejects every one-bit answer mutation behind "
+                      "a repaired gate",
+                      second_refused == second_bits);
+        }
+
         check("the initiator reads the answer",
               waterlink_answered(address_of starting, address_of alice, second,
                                  address_of index) &&
@@ -54653,16 +54743,15 @@ static fn publication(void)
 static struct waterlink_identity wls_server, wls_client, wls_b;
 
 static fn wls_initiation(p8 address_to datagram, p64 conversation,
-                         p64 stamp_seconds)
+                         p64 stamp_seconds, p32 index)
 {
         struct waterlink_noise noise;
         p8 hello[WATERLINK_HELLO_BYTES];
         p8 ephemeral[32];
-        p32 ours = 0x01020304;
 
         waterlink_stamp(hello, stamp_seconds, 0);
         memory_copy(hello + WATERLINK_STAMP_BYTES, address_of conversation, 8);
-        memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of ours, 4);
+        memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of index, 4);
         wls_seeded(ephemeral, 32, (p8)conversation);
         (void)waterlink_initiate(address_of noise, address_of wls_client,
                                  wls_server.public, null, ephemeral, hello, datagram);
@@ -54678,8 +54767,22 @@ static fn responder(bipolar listener, p16 port)
         memory_zero(address_of link_self.admission, sizeof link_self.admission);
         wls_drain(listener);
 
+        {
+                positive stamps = link_self.stamps;
+
+                wls_initiation(datagram, 10, 999, 0);
+                link_server_initiation(datagram, WATERLINK_DATAGRAM,
+                                       wls_loopback, port, 900000);
+                check("sec: an initiation with the reserved zero index holds "
+                      "no session and is not answered",
+                      wls_sessions_used() == 0 &&
+                              wls_heard(listener, answer) <= 0);
+                check("sec: a zero-index initiation spends no replay stamp",
+                      link_self.stamps == stamps);
+        }
+
         entropy_down = true;
-        wls_initiation(datagram, 11, 1000);
+        wls_initiation(datagram, 11, 1000, 0x01020304);
         link_server_initiation(datagram, WATERLINK_DATAGRAM, wls_loopback, port,
                                1000000);
         entropy_down = false;
@@ -54687,10 +54790,12 @@ static fn responder(bipolar listener, p16 port)
               wls_sessions_used() == 0);
         check("sec: and is not answered", wls_heard(listener, answer) <= 0);
 
-        wls_initiation(datagram, 12, 1001);
+        /* The same authenticated datagram is what a client retransmits when
+           no answer arrived. A local resource failure must not consume its
+           replay stamp. */
         link_server_initiation(datagram, WATERLINK_DATAGRAM, wls_loopback, port,
                                2000000);
-        check("an initiation from a paired peer is answered",
+        check("sec: after entropy returns the same initiation is answered",
               wls_heard(listener, answer) == WATERLINK_DATAGRAM &&
                       wls_sessions_used() == 1);
 
@@ -54726,6 +54831,39 @@ static fn initiator_answer(void)
                                who, heard);
         (void)waterlink_respond(address_of answering, e2, ours, 0x55667788,
                                 second);
+
+        {
+                struct link_session session_before = *s;
+                positive refused = 0;
+                positive unchanged = 0;
+
+                for (positive length = 0; length < WATERLINK_DATAGRAM; length++)
+                {
+                        before = live;
+                        refused += !link_client_answer(s, address_of live, ours,
+                                                       second, length);
+                        unchanged +=
+                                !memory_compare(address_of live,
+                                                address_of before,
+                                                sizeof live) &&
+                                !memory_compare(s, address_of session_before,
+                                                sizeof session_before);
+                }
+                before = live;
+                refused += !link_client_answer(s, address_of live, ours,
+                                               second,
+                                               WATERLINK_DATAGRAM + 1);
+                unchanged += !memory_compare(address_of live,
+                                             address_of before, sizeof live) &&
+                             !memory_compare(s, address_of session_before,
+                                             sizeof session_before);
+                check("sec: every non-exact handshake-answer length is "
+                      "refused",
+                      refused == WATERLINK_DATAGRAM + 1);
+                check("sec: all handshake-answer length refusals are "
+                      "state-atomic",
+                      unchanged == refused);
+        }
 
         //      The forgery: a different ephemeral, gated correctly, so it
         //      reaches the curve and fails there.
@@ -54866,13 +55004,44 @@ static fn greetings(bipolar listener, p16 port)
         check("a member greeting from somewhere new is followed there",
               peers.count == 1 && peers.peer[0].port == port + 1);
 
-        wls_greeting(address_of wls_b, address_of wls_office, "itself", 14,
-                     greeting);
-        link_server_initiation(greeting, WATERLINK_DATAGRAM, wls_loopback, port,
-                               1500000);
-        check("sec: this machine's own greeting, back through the loop, keeps "
-              "nothing",
-              wls_peers_count() == 1);
+        //      A peers file that is there and cannot be read is not an empty
+        //      list: a new member's greeting must not save itself over it.
+        {
+                positive stamps = link_self.stamps;
+
+                (void)system_call_4(syscall(fchmodat),
+                                    (positive)(bipolar)AT_FDCWD,
+                                    (positive)LINK_PEERS_PATH, 0644, 0);
+                wls_greeting(address_of wls_server, address_of wls_office,
+                             "machine-c", 15, greeting);
+                link_server_initiation(greeting, WATERLINK_DATAGRAM,
+                                       wls_loopback, port, 1450000);
+                (void)system_call_4(syscall(fchmodat),
+                                    (positive)(bipolar)AT_FDCWD,
+                                    (positive)LINK_PEERS_PATH, 0600, 0);
+                link_peers_load(address_of peers);
+                check("sec: a greeting over a peers file that cannot be read "
+                      "keeps the file and spends no replay slot",
+                      peers.count == 1 &&
+                              string_equals(peers.peer[0].name, "machine-a") &&
+                              link_self.stamps == stamps &&
+                              wls_heard(listener, back) <= 0);
+        }
+
+        {
+                positive stamps = link_self.stamps;
+
+                wls_greeting(address_of wls_b, address_of wls_office, "itself",
+                             14, greeting);
+                link_server_initiation(greeting, WATERLINK_DATAGRAM,
+                                       wls_loopback, port, 1500000);
+                check("sec: this machine's own greeting, back through the "
+                      "loop, keeps nothing",
+                      wls_peers_count() == 1);
+                check("sec: a greeting refused by pairing spends no replay "
+                      "slot",
+                      link_self.stamps == stamps);
+        }
 
         wls_peers_with(wls_client.public, WATERLINK_MAY_VERBS);
         wls_greeting(address_of wls_client, address_of wls_office, "machine-a",
@@ -55145,6 +55314,69 @@ static fn indexes_and_commands(void)
               link_index_new() == 0);
         entropy_down = false;
         check("and with it one is", link_index_new() != 0);
+
+        {
+                p8 key[32];
+                p8 stamp[WATERLINK_STAMP_BYTES];
+                p8 first[32];
+                struct waterlink_peer peers[LINK_PEERS_MAX];
+
+                link_self.stamps = 0;
+                memory_zero(peers, sizeof peers);
+                waterlink_stamp(stamp, 1000, 0);
+                for (positive at = 0; at < LINK_PEERS_MAX; at++)
+                {
+                        memory_zero(key, sizeof key);
+                        key[0] = (p8)at;
+                        key[1] = 1;
+                        if (!at)
+                                memory_copy(first, key, sizeof first);
+                        memory_copy(peers[at].key, key, sizeof key);
+                        string_copy(peers[at].name, "peer");
+                        if (link_stamp_new(key, stamp))
+                                link_stamp_keep(key, stamp);
+                }
+                (void)wls_write(LINK_PEERS_PATH, peers, sizeof peers, 0600);
+                memory_zero(key, sizeof key);
+                key[0] = 0xff;
+                key[1] = 1;
+                check("sec: a full replay table refuses an unknown identity",
+                      link_self.stamps == LINK_PEERS_MAX &&
+                              !link_stamp_new(key, stamp));
+                check("sec: filling the replay table does not evict its first "
+                      "peer's marker",
+                      !link_stamp_new(first, stamp));
+
+                (void)system_call_4(syscall(fchmodat),
+                                    (positive)(bipolar)AT_FDCWD,
+                                    (positive)LINK_PEERS_PATH, 0644, 0);
+                check("sec: an unreadable peer authority cannot erase replay "
+                      "markers",
+                      !link_stamp_new(key, stamp) &&
+                              link_self.stamps == LINK_PEERS_MAX &&
+                              !link_stamp_new(first, stamp));
+
+                (void)wls_write(LINK_PEERS_PATH, peers, sizeof peers[0], 0600);
+                check("a full replay table releases forgotten peers before "
+                      "refusing a new identity",
+                      link_stamp_new(key, stamp) && link_self.stamps == 1);
+        }
+
+        {
+                p8 request[6] = {LINK_ASK_SHELL, 0, 0, 0, 0, 0};
+
+                check("sec: a shell request without its complete window size "
+                      "is malformed",
+                      !link_request_well_formed(LINK_KIND_SHELL, request, 1) &&
+                              !link_request_well_formed(LINK_KIND_SHELL,
+                                                        request, 4));
+                check("sec: a shell request with its complete window size is "
+                      "well formed",
+                      link_request_well_formed(LINK_KIND_SHELL, request, 5));
+                check("sec: an oversized shell terminal name is malformed",
+                      !link_request_well_formed(LINK_KIND_SHELL, request,
+                                                5 + 32));
+        }
 
         {
                 p8 zero[33];
