@@ -10427,9 +10427,21 @@ __asm__(
     "vaesenc %zmm28, %zmm0, %zmm0\n"
     "vaesenc %zmm29, %zmm0, %zmm0\n"
     "vaesenclast %zmm30, %zmm0, %zmm0\n"
-    "lea .Laes_ctr_x64_masks(%rip), %r9\n   kmovq (%r9,%r8,8), %k1\n"
-    "vmovdqu8 (%rdx), %zmm19{%k1}{z}\n   vpxord %zmm19, %zmm0, %zmm0\n"
-    "vmovdqu8 %zmm0, (%rcx){%k1}\n"
+    //  One, two or three blocks, stored as exactly that many and never
+    //  through a mask: a masked store is not forwarded, and a caller that
+    //  opened a datagram in place reads it back at once and waits for the
+    //  store to reach the cache.
+    "cmp $2, %r8\n   jae .Laes_ctr_x64_zmm_last_two\n"
+    "vpxorq (%rdx), %xmm0, %xmm1\n   vmovdqu64 %xmm1, (%rcx)\n"
+    "jmp .Laes_ctr_x64_zmm_last_done\n"
+    ".Laes_ctr_x64_zmm_last_two:\n"
+    "vpxorq (%rdx), %ymm0, %ymm1\n"
+    "cmp $2, %r8\n   je .Laes_ctr_x64_zmm_last_store\n"
+    "vextracti64x4 $1, %zmm0, %ymm2\n   vpxorq 32(%rdx), %xmm2, %xmm2\n"
+    "vmovdqu64 %xmm2, 32(%rcx)\n"
+    ".Laes_ctr_x64_zmm_last_store:\n"
+    "vmovdqu64 %ymm1, (%rcx)\n"
+    ".Laes_ctr_x64_zmm_last_done:\n"
     "vmovd %r8d, %xmm19\n   vpaddd %xmm19, %xmm16, %xmm16\n"
     ".Laes_ctr_x64_zmm_done:\n"
     "vpshufb %xmm31, %xmm16, %xmm16\n   vmovdqu64 %xmm16, (%rsi)\n"
