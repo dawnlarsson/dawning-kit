@@ -58646,6 +58646,7 @@ static fn coalesced_runs(void)
                                 sizeof frame);
         link_session_flush(s, link_now());
         (void)system_call_2(syscall(nanosleep), (positive)address_of pause, 0);
+        link_self.socket_quiet = false;
         link_receive_all(link_now());
         check("a run it sent itself is taken, every frame in order",
               s->link->delivered == runs &&
@@ -58653,6 +58654,49 @@ static fn coalesced_runs(void)
         link_session_close(s);
         socket_close((b32)link_self.socket);
         link_self.socket = outer;
+}
+
+/*
+        A turn asks a descriptor only when the wait heard it: a read that
+        came back short leaves its stream quiet, a quiet stream is not read
+        again, and the wait, when the descriptor has more, wakes at once and
+        makes it loud, so nothing written is left behind.
+*/
+static fn quiet_streams(void)
+{
+        struct link_session address_to s = link_self.session;
+        system_poll_descriptor watch[5];
+        bool address_to quiet[5];
+        positive count = 0;
+        b32 pipe[2];
+        p64 now = link_now();
+
+        if (system_pipe(pipe, O_CLOEXEC | O_NONBLOCK) < 0 ||
+            !link_session_open(s))
+        {
+                check("a session over a pipe opens", false);
+                return;
+        }
+        link_stream_set(s->reads, pipe[0], LINK_KEY_OUTPUT,
+                        WATERLINK_FRAME_DURABLE);
+        (void)system_write_once(pipe[1], "abc", 3);
+        link_stream_read(s, s->reads);
+        check("a read that comes back short posts it and leaves the stream "
+              "quiet",
+              s->link->posted == 1 && s->reads[0].quiet);
+        (void)system_write_once(pipe[1], "def", 3);
+        link_stream_read(s, s->reads);
+        check("a quiet stream is not read again before a wait hears it",
+              s->link->posted == 1);
+        link_session_watch(s, watch, quiet, address_of count);
+        link_wait(watch, quiet, count, now + 5000000, now);
+        check("the wait hears what came and wakes at once",
+              link_now() - now < 1000000 && !s->reads[0].quiet);
+        link_stream_read(s, s->reads);
+        check("so what was written after is read and posted",
+              s->link->posted == 2 && s->reads[0].quiet);
+        link_session_close(s); // and the read end with it
+        system_close(pipe[1]);
 }
 
 /*
@@ -59048,7 +59092,8 @@ static fn ipv4_only(void)
                         wrong |= 4;
                 wait = (system_poll_descriptor){(b32)link_self.socket,
                                                 SYSTEM_POLL_READ, 0};
-                link_wait(address_of wait, 1, link_now() + 2000000);
+                link_wait(address_of wait, null, 1, link_now() + 2000000,
+                          link_now());
                 if (link_receive(from, address_of from_port,
                                  address_of each) != 4 ||
                     each != 4 || memory_compare(link_inbound, "ping", 4) ||
@@ -59205,6 +59250,7 @@ b32 main(void)
         carried_is_atomic();
         segment_runs(listener, port);
         coalesced_runs();
+        quiet_streams();
         greetings(listener, port);
         labels();
         wpa_key();

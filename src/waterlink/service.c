@@ -725,6 +725,7 @@ struct link_stream {
         p8 key;
         p8 flags;
         bool done;
+        bool quiet; // it said "not now", and no wait has heard it since
 };
 
 struct link_session {
@@ -751,6 +752,7 @@ struct link_session {
         struct link_stream writes[2]; // a key written to a descriptor
         bipolar pid;
         bipolar pidfd;
+        bool pid_quiet; // still running when last asked
         bipolar terminal; // a shell's, both a read and a write
         bool exited;
         b32 status;
@@ -804,6 +806,10 @@ static const p8 link_kind_asks[] = {0, LINK_ASK_SHELL, LINK_ASK_RUN,
 typedef struct
 {
         bipolar socket;
+        bool socket_quiet; // read to its end, and no wait has heard it since
+        p64 now;           // the turn's clock, which a frame posted in it carries
+        p64 wall;          // this machine's clock in seconds, read at
+        p64 wall_read;     // this turn's clock
         bool server;
         bool gso;
         bool v4; // no IPv6 here: the socket is AF_INET
@@ -1138,7 +1144,7 @@ static bool link_post(struct link_session address_to s, p8 key, p8 flags,
         if (length)
                 memory_copy(payload + 1, data, length);
         return waterlink_post(s->link, key, flags, payload, (p16)(length + 1),
-                              link_now());
+                              link_self.now);
 }
 
 /*
@@ -1191,6 +1197,7 @@ static fn link_stream_set(struct link_stream address_to stream, bipolar fd,
         stream->key = key;
         stream->flags = flags;
         stream->done = fd < 0;
+        stream->quiet = false;
         stream->skip = 0;
 }
 
@@ -1590,31 +1597,46 @@ static fn link_request(struct link_session address_to s, p8 address_to payload,
 }
 
 /*
-        One descriptor to wait on, when it is open and wants something: a
-        descriptor watched for nothing still wakes the wait on a hangup.
+        One descriptor to wait on, when it is open and wants something, and
+        the flag that says it is quiet: the wait clears it when the
+        descriptor answers, and a turn asks only what is not quiet, so a
+        wake costs the calls for what woke it and not one for everything.
 */
 static fn link_watch(system_poll_descriptor address_to watch,
-                     positive address_to count, bipolar handle, p16 events)
+                     bool address_to address_to quiet, positive address_to count,
+                     bipolar handle, p16 events, bool address_to flag)
 {
         if (handle < 0 || !events)
                 return;
         watch[address_to count].descriptor = (b32)handle;
         watch[address_to count].events = events;
+        quiet[address_to count] = flag;
         (address_to count)++;
 }
 
-// Until something is ready or wake comes, whichever is first.
-static fn link_wait(system_poll_descriptor address_to watch, positive count,
-                    p64 wake)
+/*
+        Until something is ready or wake comes, whichever is first. The
+        turn's clock stands for now: a wait shorter than the least a timer
+        means is timed from the clock read again, since there the turn's own
+        length would show.
+*/
+static fn link_wait(system_poll_descriptor address_to watch,
+                    bool address_to address_to quiet, positive count, p64 wake,
+                    p64 now)
 {
-        p64 now = link_now();
         timespec limit;
 
+        if (wake > now && wake - now < WATERLINK_GRANULE)
+                now = link_now();
         if (wake < now)
                 wake = now;
         limit.tv_sec = (wake - now) / 1000000;
         limit.tv_nsec = (wake - now) % 1000000 * 1000;
-        (void)system_poll_wait(watch, count, address_of limit, null);
+        if (system_poll_wait(watch, count, address_of limit, null) <= 0 || !quiet)
+                return;
+        for (positive at = 0; at < count; at++)
+                if (watch[at].returned && quiet[at])
+                        address_to quiet[at] = false;
 }
 
 /*
@@ -1625,13 +1647,17 @@ static fn link_wait(system_poll_descriptor address_to watch, positive count,
 static fn link_stream_read(struct link_session address_to s,
                            struct link_stream address_to stream)
 {
-        while (!stream->done && link_room(s))
+        while (!stream->done && !stream->quiet && link_room(s))
         {
+                positive want = link_room(s) * LINK_CHUNK;
                 bipolar got = system_read_once(stream->fd, link_read_buffer,
-                                               link_room(s) * LINK_CHUNK);
+                                               want);
 
                 if (got == -EAGAIN || got == -4)
+                {
+                        stream->quiet = got == -EAGAIN;
                         return;
+                }
                 if (got <= 0)
                 {
                         //      A terminal whose last holder closed it reads
@@ -1650,6 +1676,9 @@ static fn link_stream_read(struct link_session address_to s,
                                         (positive)got - at < LINK_CHUNK
                                                 ? (positive)got - at
                                                 : LINK_CHUNK);
+                //      Less than was asked for is all there was: another
+                //      read now would only say "not now".
+                stream->quiet = (positive)got < want;
         }
 }
 
@@ -1673,7 +1702,10 @@ static bool link_stream_take(struct link_session address_to s,
                                 length - 1 - stream->skip);
 
                         if (wrote == -EAGAIN || wrote == -4)
+                        {
+                                stream->quiet = wrote == -EAGAIN;
                                 return false;
+                        }
                         if (wrote <= 0)
                         {
                                 //      A disk that refuses: the rest is
@@ -1777,7 +1809,7 @@ static bool link_hear(address_any context, struct waterlink_frame address_to hea
 static fn link_session_streams(struct link_session address_to s, p64 now)
 {
         for (positive at = 0; at < 2; at++)
-                if (s->writes[at].fd >= 0 &&
+                if (s->writes[at].fd >= 0 && !s->writes[at].quiet &&
                     waterlink_paused(s->link, s->writes[at].key))
                         waterlink_resume(s->link, s->writes[at].key, link_hear,
                                          s);
@@ -1788,8 +1820,9 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
         if (!link_self.server || s->kind == LINK_KIND_NONE)
                 return;
 
-        //      The command's end, once: its status, after everything it said.
-        if (s->pidfd >= 0 && !s->exited)
+        //      The command's end, once: its status, after everything it said,
+        //      asked when the pidfd says it is there.
+        if (s->pidfd >= 0 && !s->exited && !s->pid_quiet)
         {
                 p8 information[128];
 
@@ -1805,6 +1838,8 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
 
                         link_exited(s, code == 1 ? value : 128 + value, now);
                 }
+                else
+                        s->pid_quiet = true;
         }
 
         //      A terminal can stay open behind a command that left something
@@ -1833,20 +1868,24 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
 // What a session waits on: descriptors with something to read or room to take.
 static fn link_session_watch(struct link_session address_to s,
                              system_poll_descriptor address_to watch,
+                             bool address_to address_to quiet,
                              positive address_to count)
 {
         bool room = link_room(s) != 0;
 
         for (positive at = 0; at < 2; at++)
         {
-                link_watch(watch, count, s->reads[at].fd,
-                           room && !s->reads[at].done ? SYSTEM_POLL_READ : 0);
-                link_watch(watch, count, s->writes[at].fd,
+                link_watch(watch, quiet, count, s->reads[at].fd,
+                           room && !s->reads[at].done ? SYSTEM_POLL_READ : 0,
+                           address_of s->reads[at].quiet);
+                link_watch(watch, quiet, count, s->writes[at].fd,
                            waterlink_paused(s->link, s->writes[at].key)
                                    ? SYSTEM_POLL_WRITE
-                                   : 0);
+                                   : 0,
+                           address_of s->writes[at].quiet);
         }
-        link_watch(watch, count, s->pidfd, s->exited ? 0 : SYSTEM_POLL_READ);
+        link_watch(watch, quiet, count, s->pidfd,
+                   s->exited ? 0 : SYSTEM_POLL_READ, address_of s->pid_quiet);
 }
 
 #include "nearby.c"
@@ -2108,6 +2147,19 @@ static fn link_session_end(struct link_session address_to s, bool tell)
 */
 static fn link_note_seen(struct link_session address_to s, p64 wall);
 
+/*      This machine's clock in seconds, for when a peer was last seen: read
+        again once the link's own clock has moved a second, and not for every
+        datagram, which it was, a system call each. */
+static p64 link_wall(p64 now)
+{
+        if (!link_self.wall_read || now - link_self.wall_read >= 1000000)
+        {
+                link_self.wall = system_clock_ns(0) / 1000000000ull;
+                link_self.wall_read = now;
+        }
+        return link_self.wall;
+}
+
 static bool link_carried(p8 address_to datagram, positive length,
                          p8 address_to address, p16 port, p64 now,
                          waterlink_sink sink)
@@ -2160,7 +2212,7 @@ static bool link_carried(p8 address_to datagram, positive length,
         s->heard = now;
         if (link_self.server)
         {
-                link_note_seen(s, system_clock_ns(0) / 1000000000ull);
+                link_note_seen(s, link_wall(now));
                 link_self.state_dirty = true;
         }
 
@@ -2416,17 +2468,20 @@ static p64 link_sessions_turn(p64 now)
 }
 
 static positive link_sessions_watch(system_poll_descriptor address_to watch,
-                                    bipolar signals)
+                                    bool address_to address_to quiet,
+                                    bipolar signals, bool address_to signalled)
 {
         positive count = 0;
 
-        link_watch(watch, address_of count, link_self.socket, SYSTEM_POLL_READ);
-        link_watch(watch, address_of count, signals, SYSTEM_POLL_READ);
-        link_watch(watch, address_of count, link_nearby.socket,
-                   SYSTEM_POLL_READ);
+        link_watch(watch, quiet, address_of count, link_self.socket,
+                   SYSTEM_POLL_READ, address_of link_self.socket_quiet);
+        link_watch(watch, quiet, address_of count, signals, SYSTEM_POLL_READ,
+                   signalled);
+        link_watch(watch, quiet, address_of count, link_nearby.socket,
+                   SYSTEM_POLL_READ, null);
         for (positive at = 0; at < LINK_SESSIONS; at++)
                 if (link_self.session[at].used)
-                        link_session_watch(link_self.session + at, watch,
+                        link_session_watch(link_self.session + at, watch, quiet,
                                            address_of count);
         return count;
 }
@@ -2455,7 +2510,7 @@ static fn link_datagram(p8 address_to datagram, positive length,
 
 static fn link_receive_all(p64 now)
 {
-        for (positive turn = 0; turn < 256;)
+        for (positive turn = 0; turn < 256 && !link_self.socket_quiet;)
         {
                 p8 address[16];
                 p16 port;
@@ -2464,7 +2519,10 @@ static fn link_receive_all(p64 now)
                                            address_of size);
 
                 if (got < 0)
+                {
+                        link_self.socket_quiet = true;
                         break;
+                }
                 turn++;
                 for (positive at = 0; at < (positive)got; at += size, turn++)
                         link_datagram(link_inbound + at,
@@ -2482,6 +2540,8 @@ static fn link_receive_all(p64 now)
 static b32 link_serve(void)
 {
         system_poll_descriptor watch[3 + LINK_SESSIONS * 5];
+        bool address_to quiet[3 + LINK_SESSIONS * 5];
+        bool signals_quiet = false;
         bipolar lock;
         bipolar signals;
         b32 stop = 0;
@@ -2512,21 +2572,28 @@ static b32 link_serve(void)
 
         for (;;)
         {
-                p64 now = link_now();
+                p64 now = link_self.now = link_now();
                 p64 wake;
                 p64 due;
 
-                if (signals >= 0)
+                if (signals >= 0 && !signals_quiet)
+                {
                         link_signals_take(signals, address_of stop);
+                        signals_quiet = true;
+                }
                 if (stop)
                         break;
 
                 wake = link_sessions_turn(now);
                 link_state_write(now);
                 due = link_nearby_tick(now);
-                link_wait(watch, link_sessions_watch(watch, signals),
-                          due < wake ? due : wake);
-                now = link_now();
+                link_wait(watch, quiet,
+                          link_sessions_watch(watch, quiet, signals,
+                                              address_of signals_quiet),
+                          due < wake ? due : wake, now);
+                if (link_self.socket_quiet && link_nearby.socket < 0)
+                        continue;
+                now = link_self.now = link_now();
                 link_receive_all(now);
                 link_nearby_receive(now);
         }
@@ -2664,6 +2731,8 @@ static b32 link_client_run(string_address name, p8 kind,
                            string_address address_to words, positive count)
 {
         system_poll_descriptor watch[3 + 5];
+        bool address_to quiet[3 + 5];
+        bool signals_quiet = false;
         link_peers peers;
         struct waterlink_peer address_to peer;
         struct link_session address_to s = link_self.session;
@@ -2797,11 +2866,14 @@ static b32 link_client_run(string_address name, p8 kind,
 
         for (;;)
         {
-                p64 now = link_now();
+                p64 now = link_self.now = link_now();
                 p64 wake;
 
-                if (signals >= 0)
+                if (signals >= 0 && !signals_quiet)
+                {
                         link_signals_take(signals, address_of stopped);
+                        signals_quiet = true;
+                }
 
                 if (!s->now.live)
                 {
@@ -2938,8 +3010,12 @@ static b32 link_client_run(string_address name, p8 kind,
                 if (link_client.ours &&
                     link_client.initiated + LINK_ATTEMPT < wake)
                         wake = link_client.initiated + LINK_ATTEMPT;
-                link_wait(watch, link_sessions_watch(watch, signals), wake);
-                link_receive_all(link_now());
+                link_wait(watch, quiet,
+                          link_sessions_watch(watch, quiet, signals,
+                                              address_of signals_quiet),
+                          wake, now);
+                if (!link_self.socket_quiet)
+                        link_receive_all(link_self.now = link_now());
         }
 
         edit_terminal_restore();
