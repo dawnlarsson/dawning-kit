@@ -54124,6 +54124,40 @@ static fn sealed_short(void)
         check("and opens at its own length", opened == agreed);
         check("and not at a length it was not sealed at",
               refused == sizeof sizes / sizeof sizes[0]);
+
+        /*      Length overflow is an old network-parser fault line. Exercise
+                both sides of the payload bound and the values whose padding
+                additions would wrap, with guards proving a rejected seal
+                writes neither the datagram nor its neighbours. */
+        {
+                static const positive hostile[] = {
+                    WATERLINK_PAYLOAD + 1, ~(positive)0,
+                    ~(positive)0 - 7, ~(positive)0 - 15};
+                struct
+                {
+                        p64 before[2];
+                        p8 datagram[WATERLINK_DATAGRAM];
+                        p64 after[2];
+                } guarded;
+                p8 original[sizeof guarded];
+                positive refused_huge = 0;
+
+                memory_fill(address_of guarded, 0xa5, sizeof guarded);
+                memory_copy(original, address_of guarded, sizeof guarded);
+                for (positive at = 0; at < array_count(hostile); at++)
+                        refused_huge +=
+                                waterlink_seal(address_of sealing,
+                                               guarded.datagram,
+                                               hostile[at]) == 0;
+                check("sec: oversized and wrapping seal spans are inert",
+                      refused_huge == array_count(hostile) &&
+                              !memory_compare(original, address_of guarded,
+                                              sizeof guarded));
+                check("sec: box sizing saturates without integer wrap",
+                      waterlink_box(~(positive)0) == WATERLINK_PAYLOAD &&
+                              waterlink_box(~(positive)0 - 15) ==
+                                      WATERLINK_PAYLOAD);
+        }
 }
 
 /*
@@ -54628,6 +54662,66 @@ static fn reader_credit(void)
         check("and the rest follows, with the link left idle",
               one.delivered == 101 && waterlink_idle(address_of one) &&
                       one.retransmitted == 0);
+}
+
+/*      The wire judge already refuses channel bytes above 63.  The application
+        entry points are also called by the service, though, so their own
+        boundary is a fuse: a bad channel cannot index past a table, and a
+        refused post cannot poison the link's monotonic clock. Put sentinels
+        around a link and try every invalid key, flag byte and frame length,
+        rather than checking only the first invalid value. */
+static fn invalid_application_keys(void)
+{
+        struct
+        {
+                p64 before[2];
+                struct waterlink_link link;
+                p64 after[2];
+        } guarded;
+        struct waterlink_link original;
+        positive wrong = 0;
+        positive rejected = 0;
+        p64 refused;
+
+        memory_fill(address_of guarded, 0xa5, sizeof guarded);
+        waterlink_link_reset(address_of guarded.link);
+        refused = guarded.link.refused;
+        original = guarded.link;
+        for (positive key = WATERLINK_KEYS; key < 256; key++)
+        {
+                wrong += waterlink_paused(address_of guarded.link, (p8)key);
+                waterlink_resume(address_of guarded.link, (p8)key,
+                                 hear_or_refuse, null);
+                wrong += waterlink_post(address_of guarded.link, (p8)key,
+                                        WATERLINK_FRAME_DURABLE, null,
+                                        WATERLINK_FRAME_MAX, ~0ull);
+                rejected++;
+        }
+        for (positive flags = 0; flags < 256; flags++)
+                if (!waterlink_frame_sane((p8)flags))
+                {
+                        wrong += waterlink_post(address_of guarded.link, 0,
+                                                (p8)flags, null, 0, ~0ull);
+                        rejected++;
+                }
+        for (positive length = WATERLINK_FRAME_MAX + 1;
+             length <= (positive)(p16)~0; length++)
+        {
+                wrong += waterlink_post(address_of guarded.link, 0,
+                                        WATERLINK_FRAME_DURABLE, null,
+                                        (p16)length, ~0ull);
+                rejected++;
+        }
+        original.refused += rejected;
+        check("sec: invalid application posts are inert", wrong == 0 &&
+                      guarded.link.refused == refused + rejected &&
+                      !memory_compare(address_of original,
+                                      address_of guarded.link,
+                                      sizeof original) &&
+                      guarded.before[0] == 0xa5a5a5a5a5a5a5a5ull &&
+                      guarded.before[1] == 0xa5a5a5a5a5a5a5a5ull &&
+                      guarded.after[0] == 0xa5a5a5a5a5a5a5a5ull &&
+                      guarded.after[1] == 0xa5a5a5a5a5a5a5a5ull);
 }
 
 static fn superseded_in_flight(void)
@@ -56242,6 +56336,7 @@ b32 main(void)
         superseded_in_flight();
         full_frame_beside_owed_ack();
         reader_credit();
+        invalid_application_keys();
         network_generated();
         handshake();
         pbkdf2_vectors();
@@ -56936,8 +57031,126 @@ static fn carried_is_atomic(void)
                                       address_of replay_before,
                                       sizeof replay_before));
         }
+        {
+                struct waterlink_replay replay_before = s->now.replay;
+
+                /*      A one-way peer may reach the receiving key's message
+                        limit while this machine has sent almost nothing.
+                        The peer's authenticated counter, not our unrelated
+                        sending counter, must retire the key. */
+                s->now.counter = 0;
+                head.counter = WATERLINK_REKEY_MESSAGES + (1ull << 20);
+                memory_copy(datagram, address_of head, sizeof head);
+                length = waterlink_seal(address_of sealing_key, datagram, 0);
+                check("sec: a peer cannot exceed a receiving key's message "
+                      "limit while our sending counter is low",
+                      !link_carried(datagram, length, from, 1234, now + 2,
+                                    null));
+                check("sec: a message-limit refusal spends no replay counter",
+                      !memory_compare(address_of s->now.replay,
+                                      address_of replay_before,
+                                      sizeof replay_before));
+        }
+        {
+                /*      A receive drain is handed a clock snapshot, while a
+                        handshake inside it records a fresh timestamp. Even
+                        though the drain now refreshes each turn, keep the age
+                        boundary fused too: a carry queued immediately behind
+                        the handshake is not 2^64 microseconds old merely
+                        because its snapshot is a microsecond earlier. */
+                struct waterlink_replay replay_before = s->now.replay;
+
+                s->now.made = now + 100;
+                head.counter = 3;
+                memory_copy(datagram, address_of head, sizeof head);
+                length = waterlink_seal(address_of sealing_key, datagram, 0);
+                check("sec: a carry behind its handshake survives a stale "
+                      "batch clock snapshot",
+                      link_carried(datagram, length, from, 1234, now, null));
+                check("and that accepted carry spends exactly its replay slot",
+                      memory_compare(address_of s->now.replay,
+                                     address_of replay_before,
+                                     sizeof replay_before));
+        }
         link_session_close(s);
         crypto_forget(address_of sealing_key, sizeof sealing_key);
+}
+
+/*      The encrypted frame key and its first payload byte are both format
+        discriminators.  Exercise the cross-channel confusion cases directly:
+        valid authentication must not let an input record impersonate a local
+        process exit, or an unknown/overlong answer release client input. */
+static fn control_records_are_canonical(void)
+{
+        struct link_session s;
+        struct waterlink_frame head;
+        p8 payload[8];
+        positive stream_wrong = 0;
+        positive answer_wrong = 0;
+
+        memory_zero(address_of s, sizeof s);
+        s.pid = 1;
+        s.terminal = -1;
+        s.writes[0].fd = -1;
+        s.writes[0].key = LINK_KEY_INPUT;
+        s.writes[0].done = false;
+        head.key = LINK_KEY_INPUT;
+        head.length = 5;
+        payload[0] = LINK_EXIT;
+        memory_zero(payload + 1, 4);
+        check("sec: an input record cannot impersonate process exit",
+              link_hear(address_of s, address_of head, payload) &&
+                      !s.exited && !s.writes[0].done);
+
+        payload[0] = LINK_END;
+        head.length = 2;
+        check("sec: an overlong stream end is inert",
+              link_hear(address_of s, address_of head, payload) &&
+                      !s.writes[0].done);
+
+        link_self.server = false;
+        head.key = LINK_KEY_ANSWER;
+        head.length = 1;
+        payload[0] = '?';
+        check("sec: an unknown answer does not release client input",
+              link_hear(address_of s, address_of head, payload) && !s.answered);
+        payload[0] = 'O';
+        head.length = 2;
+        check("sec: an overlong acceptance is not an acceptance",
+              link_hear(address_of s, address_of head, payload) && !s.answered);
+        head.length = 1;
+        check("an exact acceptance is accepted",
+              link_hear(address_of s, address_of head, payload) && s.answered);
+
+        /* Every short spelling, not merely the examples above. On an input
+           stream only data and the exact one-byte end record have meaning;
+           an answer is N plus optional text, or an exact one-byte O. */
+        for (positive type = 0; type < 256; type++)
+                for (positive length = 0; length <= sizeof payload; length++)
+                {
+                        bool ended = type == LINK_END && length == 1;
+                        bool answer = (type == 'N' && length >= 1) ||
+                                      (type == 'O' && length == 1);
+
+                        memory_zero(address_of s, sizeof s);
+                        s.writes[0].fd = -1;
+                        s.writes[0].key = LINK_KEY_INPUT;
+                        memory_fill(payload, 'x', sizeof payload);
+                        payload[0] = (p8)type;
+                        head.key = LINK_KEY_INPUT;
+                        head.length = (p16)length;
+                        (void)link_hear(address_of s, address_of head, payload);
+                        stream_wrong += s.exited || s.writes[0].done != ended;
+
+                        memory_zero(address_of s, sizeof s);
+                        head.key = LINK_KEY_ANSWER;
+                        (void)link_hear(address_of s, address_of head, payload);
+                        answer_wrong += s.answered != answer;
+                }
+        check("sec: every short stream control spelling is canonical",
+              stream_wrong == 0);
+        check("sec: every short answer spelling is canonical",
+              answer_wrong == 0);
 }
 
 /*
@@ -57487,6 +57700,7 @@ b32 main(void)
         responder(listener, port);
         initiator_answer();
         carried_is_atomic();
+        control_records_are_canonical();
         greetings(listener, port);
         labels();
         wpa_key();

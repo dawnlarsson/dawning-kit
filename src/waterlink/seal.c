@@ -1100,7 +1100,7 @@ __asm__(
 */
 positive waterlink_box(positive used)
 {
-        if (used + WATERLINK_HEADER_MOST > WATERLINK_PAYLOAD)
+        if (used > WATERLINK_PAYLOAD - WATERLINK_HEADER_MOST)
                 return WATERLINK_PAYLOAD;
         return used ? (used + 15) & ~(positive)15 : 16;
 }
@@ -1115,7 +1115,16 @@ positive waterlink_box(positive used)
 positive waterlink_seal(crypto_aesgcm_key address_to key, p8 address_to datagram,
                         positive used)
 {
-        positive box = waterlink_box(used);
+        positive box;
+
+        /*      `used` is normally the result of waterlink_fill, but sealing
+                is also an application-facing boundary.  Refuse an impossible
+                span before padding arithmetic or the assembly receives it;
+                otherwise a wrapped size can turn the padding clear into a
+                write outside the datagram. */
+        if (used > WATERLINK_PAYLOAD)
+                return 0;
+        box = waterlink_box(used);
 
         waterlink_seal_box(key, datagram, used, box);
         return 16 + box + 16;

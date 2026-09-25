@@ -468,22 +468,31 @@ static fn waterlink_slot_free(struct waterlink_link address_to link, p32 at)
 bool waterlink_post(struct waterlink_link address_to link, p8 key, p8 flags,
                     address_any payload, p16 length, p64 now)
 {
-        struct waterlink_sending address_to live = link->sending + key;
+        struct waterlink_sending address_to live;
         p8 class = flags & (WATERLINK_FRAME_REPLACEABLE | WATERLINK_FRAME_DURABLE);
         struct waterlink_slot address_to slot;
         bool queued;
         p32 at;
 
-        if (now > link->clock)
-                link->clock = now;
-
+        /*      Form no pointer from an application key until its bound is
+                proved.  Merely computing sending + key outside the array is
+                undefined in C, even when the short-circuit below keeps it
+                from being dereferenced. */
         if (key >= WATERLINK_KEYS || !waterlink_frame_sane(flags) ||
-            length > WATERLINK_FRAME_MAX || (live->class && live->class != class) ||
-            live->closing || live->sequence == WATERLINK_NONE)
+            length > WATERLINK_FRAME_MAX)
         {
                 link->refused++;
                 return false;
         }
+        live = link->sending + key;
+        if ((live->class && live->class != class) || live->closing ||
+            live->sequence == WATERLINK_NONE)
+        {
+                link->refused++;
+                return false;
+        }
+        if (now > link->clock)
+                link->clock = now;
         live->class = class;
 
         at = live->last;
@@ -1166,6 +1175,13 @@ static fn waterlink_release(struct waterlink_link address_to link, p8 key,
 fn waterlink_resume(struct waterlink_link address_to link, p8 key,
                     waterlink_sink sink, address_any context)
 {
+        /*      Keys also arrive from the application side of the link.  The
+                wire judge confines its byte before it reaches this API, but
+                a confused or compromised service must not turn an invalid
+                channel number into an out-of-bounds receiving-table access. */
+        if (key >= WATERLINK_KEYS)
+                return;
+
         p32 before = link->receiving[key].delivered;
 
         waterlink_release(link, key, sink, context);
@@ -1178,7 +1194,7 @@ fn waterlink_resume(struct waterlink_link address_to link, p8 key,
 
 bool waterlink_paused(struct waterlink_link address_to link, p8 key)
 {
-        return link->receiving[key].paused;
+        return key < WATERLINK_KEYS && link->receiving[key].paused;
 }
 
 /*
