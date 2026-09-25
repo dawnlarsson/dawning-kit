@@ -1129,7 +1129,12 @@ static bool exec_inplace_ready(bool restricted);
    keep streaming without the copy. */
 static fn shell_parser_source_fork_prepare()
 {
-        floodlight_reload();
+        /* Only whether a register is live matters here. One that was live
+           and has gone since leaves this the stricter path, and every launch
+           reloads it for itself, so it is read again only while none has
+           been live: one appearing is the change this must not miss. */
+        if (floodlight_report_state != FLOODLIGHT_REPORT_VALID)
+                floodlight_reload();
         if (floodlight_report_state == FLOODLIGHT_REPORT_VALID)
         {
                 if (!floodlight_parent_prepare(true))

@@ -15664,7 +15664,7 @@ __asm__(
    bytes.  A USER_NOTIF supervisor already controlling this process remains
    outside what an in-process policy can prove; any read/open anomaly here is
    therefore a silent fail-closed refusal. */
-static bool floodlight_entry_unfiltered()
+static bool floodlight_entry_prove()
 {
 #define FLOODLIGHT_STATUS_MAX (16 * 1024)
 #define FLOODLIGHT_STATUS_CHUNK 2048
@@ -15752,6 +15752,23 @@ finished:
         return false;
 #undef FLOODLIGHT_STATUS_CHUNK
 #undef FLOODLIGHT_STATUS_MAX
+}
+
+/*
+        That proof, made once a process. Its filters change only by its own
+        hand, which floodlight_own_seccomp records, and a fork inherits them:
+        an unfiltered entry stays proved for the rest of this process and
+        every fork of it, which is what spares a subshell the dozen system
+        calls of reading its own status. A failed proof is asked again, since
+        it can be passing -- a shell that asked before /proc was mounted.
+*/
+static bool floodlight_entry_proved;
+
+static bool floodlight_entry_unfiltered()
+{
+        if (!floodlight_entry_proved)
+                floodlight_entry_proved = floodlight_entry_prove();
+        return floodlight_entry_proved;
 }
 
 /* Read one coherent policy snapshot for every launch decision.  Keeping the
@@ -16465,6 +16482,9 @@ static bool floodlight_confine(const p32 address_to numbers, positive count,
         if (system_call_5(syscall(prctl), PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0)
                 return false;
 
+        /* From here the entry proof no longer says anything about this
+           process, installed or not, so it is made again when next asked. */
+        floodlight_entry_proved = false;
         if (system_call_3(syscall(seccomp), SECCOMP_SET_MODE_FILTER, 0,
                           (positive)address_of program) < 0)
                 return false;

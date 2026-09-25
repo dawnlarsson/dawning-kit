@@ -25356,9 +25356,9 @@ def harness_floodlight(argv):
         shell.index('#define FLOODLIGHT_DESCRIPTOR_PATH_ROOM'):
         shell.index('/* execveat with an empty path')]
     entry_source = shell[
-        shell.index('static bool floodlight_entry_unfiltered()\n{'):
+        shell.index('static bool floodlight_entry_prove()\n{'):
         shell.index('/* Read one coherent policy snapshot',
-                    shell.index('static bool floodlight_entry_unfiltered()\n{'))]
+                    shell.index('static bool floodlight_entry_prove()\n{'))]
     silent_stop_source = shell[
         shell.index('static DEAD_END fn floodlight_silent_stop()\n{'):
         shell.index('\nstatic bool floodlight_external_final(',
@@ -25802,7 +25802,7 @@ int main(void)
 
         /* Both the syscall view and the authenticated status bytes report a
            clean entry before this process installs any test filter. */
-        if (!floodlight_entry_unfiltered())
+        if (!floodlight_entry_prove())
                 return 68;
 
         /* Supplementary groups can place the two seccomp rows beyond any
@@ -25810,7 +25810,7 @@ int main(void)
            line and still authenticate both rows at EOF. */
         fake_long_status = 1;
         fake_status_at = 0;
-        if (!floodlight_entry_unfiltered())
+        if (!floodlight_entry_prove())
                 return 73;
         fake_long_status = 0;
 
@@ -25818,17 +25818,17 @@ int main(void)
            writing the buffer.  First seed the same stack slot with valid
            rows, then prove a forged success cannot replay those stale bytes. */
         fake_valid_status = 2;
-        if (!floodlight_entry_unfiltered())
+        if (!floodlight_entry_prove())
                 return 77;
         fake_untouched_status = 2;
-        if (floodlight_entry_unfiltered())
+        if (floodlight_entry_prove())
                 return 79;
 
         /* A bind mount over the status path is still proc-looking by type and
            stable by inode.  It must be rejected for crossing the held proc
            root's mount boundary before any bytes are trusted. */
         fake_status_mount = 1;
-        if (floodlight_entry_unfiltered())
+        if (floodlight_entry_prove())
                 return 72;
         fake_status_mount = 0;
 
@@ -25850,12 +25850,26 @@ int main(void)
                         close(controlled);
                 unlink(name);
                 fake_status_open = 1;
-                if (floodlight_entry_unfiltered())
+                if (floodlight_entry_prove())
                         return 70;
                 fake_status_open = 0;
                 if (open("/dev/null", O_RDONLY) != 0)
                         return 71;
         }
+
+        /* The proof is made once a process: a failure is asked again, and
+           a success stands for the rest of the process, forgeries after it
+           included, since nothing but this process can add a filter. */
+        fake_status_mount = 1;
+        if (floodlight_entry_unfiltered() || floodlight_entry_proved)
+                return 80;
+        fake_status_mount = 0;
+        if (!floodlight_entry_unfiltered())
+                return 81;
+        fake_status_mount = 1;
+        if (!floodlight_entry_unfiltered())
+                return 82;
+        fake_status_mount = 0;
 
         fail_call = 1;
         if (floodlight_confine(refused, 2, false))
