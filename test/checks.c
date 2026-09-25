@@ -55431,6 +55431,565 @@ static fn judge_procedural(void)
               runs == 400 && bodies > 8000 && apart == 0);
 }
 
+/*
+        Filling as it was in C, before waterlink_fill was each machine's
+        assembly: the reference the assembly must match, state for state and
+        byte for byte. fill_seen counts the paths each call took, so the
+        check can say its states reached every one of them.
+*/
+enum {
+        FILL_SEQUENCE_1, FILL_SEQUENCE_2, FILL_SEQUENCE_3, FILL_SEQUENCE_4,
+        FILL_SEQUENCE_5, FILL_LENGTH_2, FILL_HEAD_9, FILL_TINY,
+        FILL_PAYLOAD_0, FILL_PAYLOAD_1, FILL_PAYLOAD_2, FILL_PAYLOAD_4,
+        FILL_PAYLOAD_8, FILL_PAYLOAD_16, FILL_PAYLOAD_33, FILL_ROOM_RESET,
+        FILL_FULL, FILL_REQUEUE_AT, FILL_TAIL_AT, FILL_PRIOR, FILL_BLOCKED,
+        FILL_PROBED, FILL_PROBES_IDLE, FILL_PACED, FILL_WINDOW_FULL,
+        FILL_PACE_HOLD, FILL_URGENT, FILL_RETRANSMIT, FILL_FLIGHT_EMPTY,
+        FILL_FLIGHT_TAIL, FILL_ACKS_OVER_8, FILL_ACK_MASK_LONG, FILL_ACK_ROOM,
+        FILL_ACKS_DONE, FILL_ACK_NOW, FILL_ACK_COUNT, FILL_ACK_DELAY,
+        FILL_ACK_NOT_DUE, FILL_ACK_DELIVERED_5, FILL_CLOCK_BEHIND,
+        FILL_LOSSES, FILL_BOTH_BANDS, FILL_SEEN
+};
+
+static positive fill_seen[FILL_SEEN];
+
+static positive fill_walk_head_put(p8 address_to at,
+                                   struct waterlink_slot address_to slot)
+{
+        positive used = 2;
+
+        at[0] = slot->flags;
+        at[1] = slot->key;
+        used += memory_vli_put(at + used, slot->sequence);
+        used += memory_vli_put(at + used, slot->length);
+        return used;
+}
+
+static fn fill_walk_flight_append(struct waterlink_link address_to link, p32 at)
+{
+        struct waterlink_slot address_to slot = link->slot + at;
+
+        fill_seen[link->flight_tail == WATERLINK_NONE ? FILL_FLIGHT_EMPTY
+                                                      : FILL_FLIGHT_TAIL]++;
+        slot->next = WATERLINK_NONE;
+        slot->prior = link->flight_tail;
+        if (link->flight_tail == WATERLINK_NONE)
+                link->flight_head = at;
+        else
+                link->slot[link->flight_tail].next = at;
+        link->flight_tail = at;
+        link->in_flight += waterlink_bytes(slot);
+        link->sending[slot->key].flying++;
+}
+
+static p32 fill_walk_band_take(struct waterlink_link address_to link, p32 band,
+                               p32 address_to prior_out)
+{
+        p32 prior = WATERLINK_NONE;
+
+        for (p32 at = link->head[band]; at != WATERLINK_NONE;
+             at = link->slot[at].next)
+        {
+                if (band == WATERLINK_BAND_URGENT ||
+                    !waterlink_key_blocked(link, link->slot + at))
+                {
+                        address_to prior_out = prior;
+                        return at;
+                }
+                fill_seen[FILL_BLOCKED]++;
+                prior = at;
+        }
+        return WATERLINK_NONE;
+}
+
+static positive fill_walk_ack_write(struct waterlink_link address_to link,
+                                    p8 address_to bytes, positive room)
+{
+        positive used = 0;
+
+        if (bits_counted(link->acking) > 8)
+                fill_seen[FILL_ACKS_OVER_8]++;
+        while (link->acking)
+        {
+                p8 key = (p8)bits_trailing_zeros(link->acking);
+                struct waterlink_receiving address_to live =
+                        link->receiving + key;
+                p64 mask = 0;
+
+                for (p32 held = live->first; held != WATERLINK_NONE;
+                     held = link->held[held].next)
+                {
+                        p32 gap = link->held[held].head.sequence -
+                                  live->delivered - 1;
+
+                        if (gap < WATERLINK_ACK_MASK)
+                                mask |= 1ull << gap;
+                }
+
+                if (used + 2 + memory_vli_size(live->delivered) +
+                            memory_vli_size(mask) >
+                    room)
+                {
+                        fill_seen[FILL_ACK_ROOM]++;
+                        break;
+                }
+                fill_seen[FILL_ACK_MASK_LONG] += mask >= 0x80;
+                fill_seen[FILL_ACK_DELIVERED_5] +=
+                        memory_vli_size(live->delivered) == 5;
+                bytes[used++] = WATERLINK_FRAME_ACK;
+                bytes[used++] = key;
+                used += memory_vli_put(bytes + used, live->delivered);
+                used += memory_vli_put(bytes + used, mask);
+                link->acking &= link->acking - 1;
+        }
+        return used;
+}
+
+static positive fill_walk(struct waterlink_link address_to link,
+                          address_any out, p64 now, bool address_to alone)
+{
+        p8 address_to bytes = (p8 address_to)out;
+        positive used = 0;
+        positive room = WATERLINK_PAYLOAD;
+        positive paced = 0;
+        bool probed = false;
+        bool full = false;
+        positive urgent = 0;
+
+        address_to alone = false;
+        if (now > link->clock)
+                link->clock = now;
+        else if (now < link->clock)
+                fill_seen[FILL_CLOCK_BEHIND]++;
+
+        if (link->flight_head != WATERLINK_NONE)
+        {
+                fill_seen[FILL_LOSSES]++;
+                waterlink_losses(link, now);
+        }
+
+        if (link->acking)
+        {
+                positive owed = (positive)bits_counted(link->acking);
+
+                room -= WATERLINK_ACK_MOST * (owed < 8 ? owed : 8);
+        }
+
+        for (p32 band = 0; band < WATERLINK_BANDS && !full; band++)
+        {
+                for (;;)
+                {
+                        struct waterlink_slot address_to slot;
+                        p32 prior = WATERLINK_NONE;
+                        p32 at;
+                        positive size;
+                        positive spelled;
+
+                        if (band != WATERLINK_BAND_URGENT && !link->probes &&
+                            (link->in_flight >= link->window ||
+                             (link->smoothed && now < link->pace)))
+                        {
+                                if (link->head[band] != WATERLINK_NONE)
+                                        fill_seen[link->in_flight >= link->window
+                                                          ? FILL_WINDOW_FULL
+                                                          : FILL_PACE_HOLD]++;
+                                break;
+                        }
+
+                        at = fill_walk_band_take(link, band, address_of prior);
+                        if (at == WATERLINK_NONE)
+                                break;
+
+                        slot = link->slot + at;
+                        size = (positive)waterlink_bytes(slot);
+                        if (used + size > room)
+                        {
+                                if (!used && size <= WATERLINK_PAYLOAD)
+                                {
+                                        fill_seen[FILL_ROOM_RESET]++;
+                                        room = WATERLINK_PAYLOAD;
+                                }
+                                else
+                                {
+                                        fill_seen[FILL_FULL]++;
+                                        full = true;
+                                        break;
+                                }
+                        }
+
+                        spelled = 2 + memory_vli_size(slot->sequence) +
+                                  memory_vli_size(slot->length);
+                        fill_seen[FILL_SEQUENCE_1 - 1 +
+                                  memory_vli_size(slot->sequence)]++;
+                        fill_seen[FILL_LENGTH_2] += slot->length >= 0x80;
+                        fill_seen[FILL_HEAD_9] += spelled == 9;
+                        fill_seen[FILL_TINY] += size < 8;
+                        fill_seen[!slot->length        ? FILL_PAYLOAD_0
+                                  : slot->length < 2  ? FILL_PAYLOAD_1
+                                  : slot->length < 4  ? FILL_PAYLOAD_2
+                                  : slot->length < 8  ? FILL_PAYLOAD_4
+                                  : slot->length < 16 ? FILL_PAYLOAD_8
+                                  : slot->length < 33 ? FILL_PAYLOAD_16
+                                                      : FILL_PAYLOAD_33]++;
+                        fill_seen[FILL_PRIOR] += prior != WATERLINK_NONE;
+                        fill_seen[FILL_TAIL_AT] += link->tail[band] == at &&
+                                                   prior != WATERLINK_NONE;
+                        fill_seen[FILL_REQUEUE_AT] += link->requeue[band] == at;
+
+                        used += fill_walk_head_put(bytes + used, slot);
+                        if (slot->length)
+                                memory_copy(bytes + used, slot->payload,
+                                            slot->length);
+                        used += slot->length;
+
+                        if (band == WATERLINK_BAND_URGENT)
+                        {
+                                address_to alone = true;
+                                urgent++;
+                        }
+                        else if (link->probes)
+                                probed = true;
+                        else
+                                paced += size;
+
+                        waterlink_band_unlink(link, band, at, prior);
+                        slot->state = WATERLINK_SLOT_FLIGHT;
+                        slot->serial = ++link->serial;
+                        slot->sent = now;
+                        if (slot->tries++)
+                        {
+                                fill_seen[FILL_RETRANSMIT]++;
+                                link->retransmitted++;
+                        }
+                        fill_walk_flight_append(link, at);
+                        link->sent++;
+                        if (band != WATERLINK_BAND_URGENT && urgent)
+                                fill_seen[FILL_BOTH_BANDS]++;
+                }
+        }
+
+        fill_seen[FILL_URGENT] += urgent != 0;
+        if (probed)
+                fill_seen[FILL_PROBED]++;
+        else if (link->probes)
+                fill_seen[FILL_PROBES_IDLE]++;
+        if (probed)
+                link->probes--;
+
+        if (link->acking && !used)
+                fill_seen[link->owed_now ? FILL_ACK_NOW
+                          : link->owed_count >= WATERLINK_ACK_EVERY
+                                  ? FILL_ACK_COUNT
+                          : now - link->owed >= WATERLINK_ACK_DELAY
+                                  ? FILL_ACK_DELAY
+                                  : FILL_ACK_NOT_DUE]++;
+        if (link->acking && (used || waterlink_ack_due(link, now)))
+        {
+                used += fill_walk_ack_write(link, bytes + used,
+                                            WATERLINK_PAYLOAD - used);
+                if (!link->acking)
+                {
+                        fill_seen[FILL_ACKS_DONE]++;
+                        link->owed_count = 0;
+                        link->owed_now = 0;
+                }
+        }
+
+        if (paced && link->smoothed)
+        {
+                p64 gap = link->smoothed * paced * 4 / (link->window * 5);
+                p64 whole = link->smoothed * WATERLINK_DATAGRAM * 4 /
+                            (link->window * 5);
+                p64 floor = now > whole * WATERLINK_PACE_BURST
+                                    ? now - whole * WATERLINK_PACE_BURST
+                                    : 0;
+
+                fill_seen[FILL_PACED]++;
+                if (link->pace < floor)
+                        link->pace = floor;
+                link->pace += gap;
+        }
+
+        return used;
+}
+
+/*
+        States for filling, made the way a link makes them and then pushed
+        to the edges: posts on streams and registers of every length class,
+        sequences started at every spelling's edge, a key run past its
+        window, frames lost back to the front of their bands, keys taken and
+        held at the far side's every distance, more keys owed than a body
+        reserves room for, and the window, the pacer, the probes and the
+        clock set anywhere a live link can put them. Every change is made the
+        same way to two links; one fills through the reference, the other
+        through waterlink_fill, and after every call the two must have
+        written the same bytes -- and nothing past them -- and be in the same
+        state, which the whole struct confirms at the end of each run.
+*/
+static struct waterlink_link fill_one, fill_two;
+
+static p64 fill_next(p64 address_to state)
+{
+        address_to state ^= address_to state << 13;
+        address_to state ^= address_to state >> 7;
+        address_to state ^= address_to state << 17;
+        return address_to state;
+}
+
+static p32 fill_sequence_pick(p64 address_to state)
+{
+        static const p32 edges[] = {
+            1,         2,         126,         127,         128,
+            129,       16382,     16383,       16384,       16385,
+            2097150,   2097151,   2097152,     268435454,   268435455,
+            268435456, 268435457, 0xfffffff0u, 0xfffffffdu};
+
+        if (fill_next(state) % 3)
+                return edges[fill_next(state) % array_count(edges)];
+        return 1 + (p32)(fill_next(state) % 0xfffffff0u);
+}
+
+static p16 fill_length_pick(p64 address_to state)
+{
+        switch (fill_next(state) % 11)
+        {
+        case 0: return 0;
+        case 1: return 1;
+        case 2: return (p16)(2 + fill_next(state) % 2);
+        case 3: return (p16)(4 + fill_next(state) % 4);
+        case 4: return (p16)(8 + fill_next(state) % 8);
+        case 5: return (p16)(16 + fill_next(state) % 17);
+        case 6: return (p16)(33 + fill_next(state) % 100);
+        case 7: return (p16)(126 + fill_next(state) % 4);
+        case 8: return (p16)(1100 + fill_next(state) % 60);
+        default: return (p16)(fill_next(state) % 64);
+        }
+}
+
+//      One change, made from a copy of the generator's state so that the
+//      two links see the same one.
+static p64 fill_change(struct waterlink_link address_to link, p64 state,
+                       p64 now)
+{
+        static p8 payload[WATERLINK_FRAME_MAX];
+        p64 op = fill_next(address_of state) % 18;
+
+        for (positive at = 0; at < 64; at++)
+                payload[at] = (p8)(at * 29 + op);
+        if (op < 7 || op == 16)
+        {
+                positive posts = op == 16 ? 70 + fill_next(address_of state) % 20
+                                          : 1 + fill_next(address_of state) % 12;
+                p8 key = (p8)(fill_next(address_of state) % 8 ? fill_next(address_of state) % 8
+                                                               : fill_next(address_of state) % 64);
+
+                for (positive post = 0; post < posts; post++)
+                {
+                        p8 flags;
+                        p16 length = fill_length_pick(address_of state);
+
+                        if (op != 16 && fill_next(address_of state) % 3 == 0)
+                                key = (p8)(fill_next(address_of state) % 8);
+                        flags = key & 1 ? WATERLINK_FRAME_REPLACEABLE
+                                        : WATERLINK_FRAME_DURABLE;
+                        if (fill_next(address_of state) % 3 == 0)
+                                flags |= WATERLINK_FRAME_URGENT;
+                        if (fill_next(address_of state) % 97 == 0)
+                                flags |= WATERLINK_FRAME_LAST;
+                        if (link->sending[key].first == WATERLINK_NONE &&
+                            fill_next(address_of state) % 3 == 0)
+                                link->sending[key].sequence =
+                                        fill_sequence_pick(address_of state);
+                        (void)waterlink_post(link, key, flags, payload, length,
+                                             now);
+                }
+        }
+        else if (op == 7 || op == 8)
+        {
+                //      The far side takes some of a key and holds some past it.
+                p8 key = (p8)(fill_next(address_of state) % 8);
+                p32 first = link->sending[key].first;
+                p64 newly = 0, latest = 0, sample = 0;
+                p32 taken = (p32)(fill_next(address_of state) % 6);
+                p64 mask = fill_next(address_of state);
+
+                mask &= fill_next(address_of state);
+                if (first != WATERLINK_NONE)
+                        waterlink_acknowledge(
+                                link, key,
+                                link->slot[first].sequence - 1 + taken, mask,
+                                address_of newly, address_of latest,
+                                address_of sample);
+                waterlink_acks_settle(link, newly, latest, sample, now);
+        }
+        else if (op == 9)
+        {
+                for (p32 at = link->flight_head; at != WATERLINK_NONE;)
+                {
+                        p32 next = link->slot[at].next;
+
+                        if (fill_next(address_of state) & 1)
+                                waterlink_lose(link, at);
+                        at = next;
+                }
+        }
+        else if (op == 10 || op == 11)
+        {
+                //      Arrivals owed an answer, some held ahead of what was
+                //      taken, the most keys a body can answer or more.
+                positive keys = op == 11 ? 9 + fill_next(address_of state) % 40
+                                         : 1 + fill_next(address_of state) % 3;
+
+                for (positive one_key = 0; one_key < keys; one_key++)
+                {
+                        p8 key = (p8)(fill_next(address_of state) % 64);
+                        struct waterlink_receiving address_to live =
+                                link->receiving + key;
+                        positive holds = fill_next(address_of state) % 5;
+
+                        if (live->first == WATERLINK_NONE)
+                                live->delivered =
+                                        fill_next(address_of state) % 4
+                                                ? (p32)(fill_next(address_of state) % 300)
+                                                : fill_sequence_pick(address_of state);
+                        for (positive hold = 0; hold < holds; hold++)
+                        {
+                                struct waterlink_frame head;
+
+                                head.key = key;
+                                head.flags = WATERLINK_FRAME_DURABLE;
+                                head.length = (p16)(fill_next(address_of state) % 5);
+                                head.sequence = live->delivered + 1 +
+                                                (p32)(fill_next(address_of state) % 70);
+                                waterlink_hold(link, live, address_of head,
+                                               payload);
+                        }
+                        waterlink_ack_owe(link, key);
+                }
+        }
+        else if (op == 12)
+        {
+                p64 span = WATERLINK_WINDOW_MOST - WATERLINK_WINDOW_LEAST;
+
+                link->window = fill_next(address_of state) % 2
+                                       ? link->in_flight + fill_next(address_of state) % 4000
+                                       : WATERLINK_WINDOW_LEAST +
+                                                 fill_next(address_of state) % span;
+                if (link->window < WATERLINK_WINDOW_LEAST)
+                        link->window = WATERLINK_WINDOW_LEAST;
+                if (link->window > WATERLINK_WINDOW_MOST)
+                        link->window = WATERLINK_WINDOW_MOST;
+                link->smoothed = fill_next(address_of state) % 3
+                                         ? fill_next(address_of state) % 60000
+                                         : 0;
+                link->pace = fill_next(address_of state) % 2
+                                     ? now + fill_next(address_of state) % 5000
+                                     : now - fill_next(address_of state) % 5000;
+        }
+        else if (op == 13)
+                link->probes = (p32)(fill_next(address_of state) % 3);
+        else if (op == 14)
+        {
+                link->owed_now = (p8)(fill_next(address_of state) & 1);
+                link->owed_count = (p32)(fill_next(address_of state) % 4);
+                link->owed = now - (fill_next(address_of state) % 2
+                                            ? fill_next(address_of state) % 2500
+                                            : WATERLINK_ACK_DELAY - 1 +
+                                                      fill_next(address_of state) % 3);
+        }
+        else if (op == 15)
+        {
+                link->window = WATERLINK_WINDOW_MOST;
+                link->pace = 0;
+                if (fill_next(address_of state) % 4 == 0)
+                        link->acking = 0;
+        }
+        return state;
+}
+
+static fn fill_procedural(void)
+{
+        static p8 body_one[WATERLINK_PAYLOAD + 64];
+        static p8 body_two[WATERLINK_PAYLOAD + 64];
+        p64 state = 0x243f6a8885a308d3ull;
+        positive runs = 0, calls = 0, written = 0, wrong = 0, apart = 0;
+        positive missed = 0;
+
+        memory_zero(fill_seen, sizeof fill_seen);
+        for (positive run = 0; run < 300; run++)
+        {
+                p64 now = 1000 + fill_next(address_of state) % 100000;
+
+                waterlink_link_reset(address_of fill_one);
+                waterlink_link_reset(address_of fill_two);
+                for (positive step = 0; step < 160; step++)
+                {
+                        positive fills = 1 + fill_next(address_of state) % 3;
+
+                        (void)fill_change(address_of fill_one, state, now);
+                        state = fill_change(address_of fill_two, state, now);
+                        for (positive fill = 0; fill < fills; fill++)
+                        {
+                                bool alone_one = (fill_next(address_of state) & 1) != 0;
+                                bool alone_two = alone_one;
+                                p64 at = fill_next(address_of state) % 16 == 0
+                                                 ? now - fill_next(address_of state) % 200
+                                                 : now;
+                                positive used_one, used_two;
+
+                                for (positive byte = 0; byte < sizeof body_one; byte++)
+                                        body_one[byte] = body_two[byte] =
+                                                (p8)(byte * 13 + step + fill);
+                                used_one = fill_walk(address_of fill_one, body_one,
+                                                     at, address_of alone_one);
+                                used_two = waterlink_fill(address_of fill_two,
+                                                          body_two, at,
+                                                          address_of alone_two);
+                                calls++;
+                                written += used_one;
+                                wrong += used_one != used_two ||
+                                         alone_one != alone_two ||
+                                         memory_compare(body_one, body_two,
+                                                        sizeof body_one) != 0;
+                                apart += memory_compare(
+                                                 address_of fill_one.sending,
+                                                 address_of fill_two.sending,
+                                                 sizeof fill_one -
+                                                         __builtin_offsetof(
+                                                                 struct waterlink_link,
+                                                                 sending)) != 0;
+                                for (positive slot = 0; slot < WATERLINK_SLOTS; slot++)
+                                        apart += memory_compare(
+                                                         fill_one.slot + slot,
+                                                         fill_two.slot + slot,
+                                                         __builtin_offsetof(
+                                                                 struct waterlink_slot,
+                                                                 payload)) != 0;
+                        }
+                        now += fill_next(address_of state) % 8 ? fill_next(address_of state) % 3000
+                                                               : fill_next(address_of state) % 300000;
+                }
+                apart += memory_compare(address_of fill_one, address_of fill_two,
+                                        sizeof fill_one) != 0;
+                runs++;
+        }
+
+        for (positive seen = 0; seen < FILL_SEEN; seen++)
+                missed += fill_seen[seen] < 20;
+        string_format(log, "  fill: %p calls in %p runs wrote %p bytes; "
+                           "%p paths taken under twenty times\n",
+                      calls, runs, written, missed);
+        for (positive seen = 0; seen < FILL_SEEN; seen++)
+                if (fill_seen[seen] < 20)
+                        string_format(log, "    fill path %p taken %p times\n",
+                                      seen, fill_seen[seen]);
+        check("waterlink_fill is the C it replaced, byte for byte and state "
+              "for state, on every generated link",
+              runs == 300 && calls > 50000 && wrong == 0 && apart == 0);
+        check("and the generated links took every path of it",
+              missed == 0);
+}
+
 static fn replay(void)
 {
         struct waterlink_replay window;
@@ -57921,6 +58480,7 @@ b32 main(void)
         judge_short_exhaustive();
         body_prefix_boundaries();
         judge_procedural();
+        fill_procedural();
         replay();
         saturation();
         replay_generated();

@@ -36188,6 +36188,10 @@ int main(int argc, char **argv)
         the receiver, and a paused reader resumed, with the free list, the
         held pool and the flight walked for consistency after every step and
         an alarm standing guard against a loop the sanitizers cannot see.
+        waterlink_fill is assembly too wherever the judge's is compiled, and
+        fills into a body flush against a PROT_NONE page; where no machine's
+        fill is compiled and none is C, the reference fill test/checks.c
+        keeps stands in.
 */
 
 #include <sys/mman.h>
@@ -36395,7 +36399,10 @@ int main(int argc, char **argv)
 
         /*      The core over a loopback: A posts and fills, B hears, B
                 resumes; hostile bodies go straight to B. Invariants after
-                every step. */
+                every step. Every body is filled flush against a guard page,
+                since fill is assembly the sanitizers cannot see into. */
+        p8 *fill_body = guard_region(WATERLINK_PAYLOAD);
+
         waterlink_link_reset(&link_a);
         waterlink_link_reset(&link_b);
         p64 clock = 1;
@@ -36434,7 +36441,7 @@ int main(int argc, char **argv)
                         hostile body does instead. */
                 for (int d = 0; d < 8; d++)
                 {
-                        p8 body[WATERLINK_PAYLOAD];
+                        p8 *body = fill_body;
                         bool alone = false;
                         positive used = waterlink_fill(&link_a, body, clock, &alone);
 
@@ -36480,7 +36487,7 @@ int main(int argc, char **argv)
                                 inv_bad++;
                 }
                 {
-                        p8 back[WATERLINK_PAYLOAD];
+                        p8 *back = fill_body;
                         bool alone = false;
                         positive used = waterlink_fill(&link_b, back, clock, &alone);
 
@@ -36494,7 +36501,8 @@ int main(int argc, char **argv)
                "%lu part mismatches; loop %lu invariant failures; heard %lu\n",
                judged, wrong, valid, parted, part_mismatch, inv_bad, (unsigned long)heard_count);
 #ifdef WL_JUDGE_ASM
-        printf("core: judge ran the x86_64 assembly against the model\n");
+        printf("core: judge ran the x86_64 assembly against the model, and "
+               "fill its assembly into guarded bodies\n");
 #else
         printf("core: judge ran the C model (no asm on this host)\n");
 #endif
@@ -36538,25 +36546,54 @@ int main(int argc, char **argv)
             "#endif // WATERLINK_HANDSHAKE_INCLUDED"),
         DRIVER_GATE])
 
-    core_head = sec(link, "// The largest frame that can share", "#if X64")
-    core_asm = sec(link, "#if X64", "/*\n        Apply a judged body")
-    core_tail = sec(link, "fn waterlink_apply(struct waterlink_link",
+    #   The core whole, with each machine's assembly chosen by the defines in
+    #   front of it: x86_64's on an x86_64 ELF host, none elsewhere. fill's
+    #   C stands wherever a machine keeps it; where every machine is
+    #   assembly, test/checks.c's reference fill stands in for it here, as
+    #   judge_model does for the judge.
+    core_text = sec(link, "// The largest frame that can share",
                     "#endif // WATERLINK_LINK_INCLUDED")
+    fill_c = "#else\npositive waterlink_fill(" in core_text
     jmodel = sec(checks, "static bool judge_model_number(",
                  "/*\n        Delivery as it was before the judge")
     jgen = sec(checks, "static p64 judge_state = 0x6a09e667f3bcc909ull;",
                "static struct waterlink_link judge_one, judge_two;")
+    fmodel = sec(checks, "enum {\n        FILL_SEQUENCE_1",
+                 "/*\n        States for filling")
+    FILL_MODEL = r'''
+positive waterlink_fill(struct waterlink_link *link, address_any out, p64 now,
+                        bool *alone)
+{
+        return fill_walk(link, out, now, alone);
+}
+'''
+    #   What the assembly calls, as symbols it can reach: the losses walk is
+    #   KEEP in link.c, and the copy is lib.c's routine by name.
+    ASM_CALLEES = r'''
+#undef KEEP
+#define KEEP __attribute__((used))
+#undef memory_copy_apart
+static void *memory_copy_apart(void *into, const void *from, positive size)
+        __attribute__((used, noinline));
+static void *memory_copy_apart(void *into, const void *from, positive size)
+{
+        return memory_copy(into, from, size);
+}
+'''
 
     def core_source(with_asm, fuzzer):
-        parts = [SHIM, wl, vli, core_head]
+        parts = [SHIM, wl, vli, ASM_CALLEES,
+                 "#define X64 %d\n#define ARM64 0\n#define RISCV64 0\n"
+                 % (1 if with_asm else 0) + ASM_MACROS, core_text]
         driver = DRIVER_CORE
         if with_asm:
-            parts += ["#define X64 1\n#define ARM64 0\n#define RISCV64 0\n" + ASM_MACROS,
-                      core_asm]
             driver = "#define WL_JUDGE_ASM 1\n" + driver
         if fuzzer:
             driver = "#define WL_FUZZER 1\n" + driver
-        parts += [core_tail, jmodel, jgen, driver]
+        parts += [jmodel, jgen, fmodel]
+        if not with_asm and not fill_c:
+            parts.append(FILL_MODEL)
+        parts.append(driver)
         return "\n".join(parts)
 
     is_elf_x86 = (platform.system() != "Darwin" and
