@@ -55015,6 +55015,39 @@ static fn initiator_answer(void)
         (void)waterlink_respond(address_of answering, e2, ours, 0x55667788,
                                 second);
 
+        {
+                struct link_session session_before = *s;
+                positive refused = 0;
+                positive unchanged = 0;
+
+                for (positive length = 0; length < WATERLINK_DATAGRAM; length++)
+                {
+                        before = live;
+                        refused += !link_client_answer(s, address_of live, ours,
+                                                       second, length);
+                        unchanged +=
+                                !memory_compare(address_of live,
+                                                address_of before,
+                                                sizeof live) &&
+                                !memory_compare(s, address_of session_before,
+                                                sizeof session_before);
+                }
+                before = live;
+                refused += !link_client_answer(s, address_of live, ours,
+                                               second,
+                                               WATERLINK_DATAGRAM + 1);
+                unchanged += !memory_compare(address_of live,
+                                             address_of before, sizeof live) &&
+                             !memory_compare(s, address_of session_before,
+                                             sizeof session_before);
+                check("sec: every non-exact handshake-answer length is "
+                      "refused",
+                      refused == WATERLINK_DATAGRAM + 1);
+                check("sec: all handshake-answer length refusals are "
+                      "state-atomic",
+                      unchanged == refused);
+        }
+
         //      The forgery: a different ephemeral, gated correctly, so it
         //      reaches the curve and fails there.
         memory_copy(forged, second, WATERLINK_DATAGRAM);
