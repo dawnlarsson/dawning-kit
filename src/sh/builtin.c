@@ -2200,18 +2200,24 @@ static bool shell_binding_hold(shell_binding address_to saved, positive extra)
                 env_cell_drop((string_address)(cell + 1));
                 return false;
         }
+        /* The cell was free a moment ago, so nothing live is in it and the
+           two copies go straight to the bytes, terminators written here. */
         string_address name = (string_address)(cell + 1);
-        memory_copy_end(name, saved->name, length);
-        saved->variable.text = name + length + 1 + extra;
+        string_address text = name + length + 1 + extra;
+        memory_copy_apart(name, saved->name, length);
+        name[length] = end;
+        memory_copy_apart(text, value.text ? value.text : name, length + size);
+        text[length + size] = end;
+        saved->variable.text = text;
         saved->variable.owned = false;
-        memory_copy_end(saved->variable.text, value.text ? value.text : name, length + size);
         saved->name = name;
         return true;
 }
 
 static fn shell_binding_drop(shell_binding address_to saved)
 {
-        array_table_release(saved->variable.array);
+        if (saved->variable.array)
+                array_table_release(saved->variable.array);
         if (saved->variable.owned)
                 env_cell_drop(saved->variable.text);
         env_cell_drop(saved->name);
@@ -3453,7 +3459,7 @@ static PURE bool env_restricted_name(const_string name, positive length)
         return false;
 }
 
-static PURE bool env_assignment_readonly_found_destination(
+static PURE bool env_assignment_readonly_found_named(
     const_string name, positive length, positive hash, positive found,
     env_variable address_to destination)
 {
@@ -3476,6 +3482,33 @@ static PURE bool env_assignment_readonly_found_destination(
 
         return env_reference_readonly(
             env_reference_destination(name, length, hash, destination));
+}
+
+/*
+        Whether an assignment may not happen, asked first of what can say yes.
+
+        Every assignment asks this, most of them twice, and the answer is
+        almost always no. Only a restricted shell, bash's own readonly names,
+        or a variable already marked readonly or a nameref can say yes, so
+        those three are what is looked at here; the names are compared only
+        when one of the first two is on, and the reference followed only for
+        the third. The whole question was a call that compared names on every
+        assignment.
+*/
+static inline PURE bool env_assignment_readonly_found_destination(
+    const_string name, positive length, positive hash, positive found,
+    env_variable address_to destination)
+{
+        env_variable address_to variable = destination ? destination
+            : found < shell_var_count ? shell_vars + found : null;
+
+        if (!shell_restricted && !shell_bash_compat &&
+            (!variable || !(variable->attributes &
+                            (SHELL_ARRAY_READONLY | SHELL_ARRAY_NAMEREF))))
+                return false;
+
+        return env_assignment_readonly_found_named(name, length, hash, found,
+                                                   destination);
 }
 
 static PURE bool env_assignment_readonly_destination(const_string name,
