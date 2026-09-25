@@ -15104,68 +15104,168 @@ typedef struct
         The policy stays here, while all byte work stays at the hardware floor:
         memory_hash_33 hashes a name and memory_compare verifies the one hash
         candidate. The same index shape serves utilities and shell commands.
+
+        A slot is one word: the low half of the name's hash, its length, and
+        its row plus one, zero for a free slot. Twenty four bytes a slot held
+        the whole hash for nothing -- the name is compared on any candidate
+        anyway -- and at 256 slots for 209 tools a name that is not a tool,
+        which every external command is, probed ten slots on average before
+        it met a free one. 512 slots of eight bytes are two thirds of the
+        memory and two probes.
 */
-typedef name_index_slot shell_name_slot;
-
-static fn shell_name_index_build(address_any table, positive stride,
-                                 positive count, shell_name_slot address_to slots,
-                                 positive room)
+typedef struct
 {
-        positive tombstones = 0;
+        p32 hash;
+        p8 length;
+        p8 spare;
+        p16 index_plus_one;
+} shell_name_slot;
 
+/*
+        DJB2 of a name of up to fifteen bytes, worked out by the compiler.
+
+        memory_hash_33's answer for the same bytes, one step a byte and the
+        steps past the end multiplying by one and adding nothing, so a table
+        of names can carry the hash each lookup is going to ask for.
+*/
+#define NAME_HASH_STEP(s, i, h)                                                \
+        ((h) * ((i) < sizeof(s) - 1 ? 33u : 1u) +                              \
+         ((i) < sizeof(s) - 1 ? (p8)(s)[(i) < sizeof(s) - 1 ? (i) : 0] : 0u))
+#define NAME_HASH(s)                                                           \
+        NAME_HASH_STEP(s, 15, NAME_HASH_STEP(s, 14, NAME_HASH_STEP(s, 13,      \
+        NAME_HASH_STEP(s, 12, NAME_HASH_STEP(s, 11, NAME_HASH_STEP(s, 10,      \
+        NAME_HASH_STEP(s, 9, NAME_HASH_STEP(s, 8, NAME_HASH_STEP(s, 7,         \
+        NAME_HASH_STEP(s, 6, NAME_HASH_STEP(s, 5, NAME_HASH_STEP(s, 4,         \
+        NAME_HASH_STEP(s, 3, NAME_HASH_STEP(s, 2, NAME_HASH_STEP(s, 1,         \
+        NAME_HASH_STEP(s, 0, (positive)5381))))))))))))))))
+
+/*
+        The index is filled once a process, the first time a name is asked,
+        and a process that runs one command asks once: sh -c 'cat file'
+        hashed every one of the two hundred and sixty names both tables hold
+        and put each through the general insertion, with its tombstones, to
+        look up two of them -- 33,000 of the 59,000 instructions that command
+        took. The tool table's hashes and lengths are the compiler's now, and
+        a name goes into the first free slot of an index that has no
+        tombstones to reuse.
+*/
+static COLD fn shell_name_index_build(address_any table, positive stride,
+                                      positive count, shell_name_slot address_to slots,
+                                      positive room, const positive address_to hashes,
+                                      const p8 (address_to keys)[2])
+{
         memory_fill(slots, 0, room * sizeof(slots[0]));
 
         for (positive index = 0; index < count; index++)
         {
-                string_address name =
-                    *(string_address address_to)((p8 address_to)table +
-                                                  index * stride);
-                positive2 answer = string_hash_33_length(name);
+                positive2 answer;
+                positive at;
 
-                name_index_put(slots, room, answer.x, answer.y, index,
-                               address_of tombstones);
-        }
-}
-
-static positive shell_name_index_find(string_address name, address_any table,
-                                      positive stride, positive count,
-                                      shell_name_slot address_to slots,
-                                      positive room, bool address_to ready,
-                                      positive2 named)
-{
-        positive at;
-
-        if (!address_to ready)
-        {
-                shell_name_index_build(table, stride, count, slots, room);
-                address_to ready = true;
-        }
-
-        at = named.x & (room - 1);
-
-        for (positive probes = 0; probes < room; probes++)
-        {
-                shell_name_slot address_to slot = slots + at;
-
-                if (!slot->index_plus_one)
-                        return count;
-
-                if (slot->hash == named.x && slot->length == named.y)
-                {
-                        positive index = slot->index_plus_one - 1;
-                        string_address candidate =
+                if (hashes)
+                        answer = (positive2){hashes[index], keys[index][1]};
+                else
+                        answer = string_hash_33_length(
                             *(string_address address_to)((p8 address_to)table +
-                                                          index * stride);
-
-                        if (!memory_compare(name, candidate, named.y))
-                                return index;
-                }
-
-                at = (at + 1) & (room - 1);
+                                                          index * stride));
+                at = answer.x & (room - 1);
+                while (slots[at].index_plus_one)
+                        at = (at + 1) & (room - 1);
+                slots[at] = (shell_name_slot){(p32)answer.x, (p8)answer.y, 0,
+                                              (p16)(index + 1)};
         }
-
-        return count;
 }
+
+/*
+        Where a name is in a filled index, or positive_max.
+
+        A slot is compared as one word shifted clear of its row: the low half
+        of the hash and the length against the name's, and on agreement the
+        table name is compared eight bytes a turn and the last eight again
+        from eight up and byte by byte under eight, the way
+        env_find_hashed_span_probe compares a variable's name, since the word
+        asked for was stored a moment before. A slot that disagrees is one
+        backward branch to the next. Both tables are a name and a function,
+        sixteen bytes a row, and no name in either is longer than 255 bytes,
+        so a longer one is answered at once. The static assertions beside
+        each index keep a free slot in it, which is what ends a probe.
+
+        The C loop called memory_compare for the candidate, and the index it
+        probed sat in the same function as the fill, which made every lookup
+        pay for the frame the fill needed.
+*/
+positive shell_name_index_probe(string_address name, positive length,
+                                positive hash, const shell_name_slot address_to slots,
+                                positive mask, address_any table);
+
+_Static_assert(sizeof(shell_name_slot) == 8 && __builtin_offsetof(shell_name_slot, length) == 4 &&
+               __builtin_offsetof(shell_name_slot, index_plus_one) == 6 &&
+               sizeof(shell_tool) == 16 && __builtin_offsetof(shell_tool, name) == 0,
+               "shell_name_index_probe reads a slot and a table row at these offsets");
+
+#if X64
+__asm__(
+    ASM_FUNC(shell_name_index_probe)
+    "cmp $255, %rsi\n   ja 8f\n"
+    // The key: the low half of the hash and the length, shifted as a slot
+    // is to drop its row.
+    "mov %rdx, %rax\n   and %r8, %rax\n"
+    "mov %edx, %edx\n   mov %rsi, %r11\n   shl $32, %r11\n   or %r11, %rdx\n   shl $16, %rdx\n"
+    "jmp 1f\n"
+    "5: inc %rax\n   and %r8, %rax\n"
+    "1: mov (%rcx,%rax,8), %r10\n   test %r10, %r10\n   jz 8f\n"
+    "mov %r10, %r11\n   shl $16, %r11\n   cmp %rdx, %r11\n   jne 5b\n"
+    // The candidate's name, from its row.
+    "push %rbx\n"
+    "shr $48, %r10\n   shl $4, %r10\n   mov -16(%r9,%r10), %r10\n"
+    ENV_NAME_SAME_X64("r10", "rbx", "r11", "r11b", "4f")
+    "pop %rbx\n"
+    "mov (%rcx,%rax,8), %rax\n   shr $48, %rax\n   dec %rax\n"
+    ASM_RET
+    "4: pop %rbx\n   jmp 5b\n"
+    "8: mov $-1, %rax\n"
+    ASM_RET
+    ASM_END(shell_name_index_probe)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(shell_name_index_probe)
+    "cmp x1, #255\n   b.hi 8f\n"
+    // The name comparison takes x3 to x6, so the index moves out of them.
+    "mov x9, x3\n   mov x10, x4\n   mov x11, x5\n   and x12, x2, x10\n"
+    "mov w13, w2\n   orr x13, x13, x1, lsl #32\n"
+    "b 1f\n"
+    "5: add x12, x12, #1\n   and x12, x12, x10\n"
+    "1: ldr x14, [x9, x12, lsl #3]\n   cbz x14, 8f\n"
+    "and x15, x14, #0xffffffffffff\n   cmp x15, x13\n   b.ne 5b\n"
+    // The candidate's name, from its row.
+    "lsr x14, x14, #48\n   add x14, x11, x14, lsl #4\n   ldur x14, [x14, #-16]\n"
+    ENV_NAME_SAME_ARM64("x14", "5b")
+    "ldr x0, [x9, x12, lsl #3]\n   lsr x0, x0, #48\n   sub x0, x0, #1\n"
+    ASM_RET
+    "8: mov x0, #-1\n"
+    ASM_RET
+    ASM_END(shell_name_index_probe)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(shell_name_index_probe)
+    "li t0, 255\n   bgtu a1, t0, 8f\n"
+    "and t0, a2, a4\n"
+    "slli t2, a2, 32\n   srli t2, t2, 32\n   slli t1, a1, 32\n   or t2, t2, t1\n   slli t2, t2, 16\n"
+    "j 1f\n"
+    "5: addi t0, t0, 1\n   and t0, t0, a4\n"
+    "1: slli t1, t0, 3\n   add t1, t1, a3\n   ld t6, 0(t1)\n   beqz t6, 8f\n"
+    "slli t3, t6, 16\n   bne t3, t2, 5b\n"
+    // The candidate's name, from its row.
+    "srli t6, t6, 48\n   slli t6, t6, 4\n   add t6, t6, a5\n   ld t6, -16(t6)\n"
+    ENV_NAME_SAME_RISCV("t6", "5b")
+    "ld a0, 0(t1)\n   srli a0, a0, 48\n   addi a0, a0, -1\n"
+    ASM_RET
+    "8: li a0, -1\n"
+    ASM_RET
+    ASM_END(shell_name_index_probe)
+);
+#endif
 
 /*
         Which categories this build keeps, decided once.
@@ -15242,6 +15342,18 @@ static const p8 shell_tool_key[][2] = {
 #undef SHELL_TOOL_KEEP
 };
 
+//      Every name's hash, in table order, for the index to be filled from.
+static const positive shell_tool_hash[] = {
+#define SHELL_TOOL_KEEP(name, function) NAME_HASH(#name),
+#include "tools.inc"
+#undef SHELL_TOOL_KEEP
+};
+
+#define SHELL_TOOL_KEEP(name, function) \
+        _Static_assert(sizeof(#name) <= 16, #name " is longer than NAME_HASH reads");
+#include "tools.inc"
+#undef SHELL_TOOL_KEEP
+
 #undef SHELL_TOOL
 #undef SHELL_TOOL_SYSTEM
 #undef SHELL_TOOL_UTIL_SBIN
@@ -15249,8 +15361,9 @@ static const p8 shell_tool_key[][2] = {
 #undef SHELL_TOOL_MONITOR
 #undef SHELL_TOOL_GENERAL
 
-_Static_assert(array_count(shell_tool_key) == SHELL_TOOLS,
-               "the key array and the tool table describe the same tools");
+_Static_assert(array_count(shell_tool_key) == SHELL_TOOLS &&
+               array_count(shell_tool_hash) == SHELL_TOOLS,
+               "the key and hash arrays and the tool table describe the same tools");
 /*
         Room for every name with slots to spare, because the index is open:
         a full one has nowhere to put the next name and nowhere to stop
@@ -15258,7 +15371,7 @@ _Static_assert(array_count(shell_tool_key) == SHELL_TOOLS,
         build that stops rather than a shell that hangs, which is how this
         was found -- one tool too many and every lookup spun.
 */
-#define SHELL_TOOL_INDEX_ROOM 256
+#define SHELL_TOOL_INDEX_ROOM 512
 
 static shell_name_slot shell_tool_index[SHELL_TOOL_INDEX_ROOM];
 _Static_assert(SHELL_TOOLS < SHELL_TOOL_INDEX_ROOM,
@@ -15267,10 +15380,20 @@ static bool shell_tool_index_ready;
 
 static positive shell_tool_find_hashed(string_address name, positive2 named)
 {
-        return shell_name_index_find(name, shell_tools, sizeof(shell_tools[0]),
-                                     SHELL_TOOLS, shell_tool_index,
-                                     SHELL_TOOL_INDEX_ROOM,
-                                     address_of shell_tool_index_ready, named);
+        if (!shell_tool_index_ready)
+        {
+                shell_name_index_build(shell_tools, sizeof(shell_tools[0]),
+                                       SHELL_TOOLS, shell_tool_index,
+                                       SHELL_TOOL_INDEX_ROOM, shell_tool_hash,
+                                       shell_tool_key);
+                shell_tool_index_ready = true;
+        }
+        positive found = shell_name_index_probe(name, named.y, named.x,
+                                                shell_tool_index,
+                                                SHELL_TOOL_INDEX_ROOM - 1,
+                                                shell_tools);
+
+        return found < SHELL_TOOLS ? found : SHELL_TOOLS;
 }
 
 /*
@@ -18688,9 +18811,11 @@ shell_command shell_commands[] = {
 };
 
 #define SHELL_COMMAND_COUNT ((array_count(shell_commands)) - 1)
-#define SHELL_COMMAND_INDEX_ROOM 128
+#define SHELL_COMMAND_INDEX_ROOM 256
 
 static shell_name_slot shell_command_index[SHELL_COMMAND_INDEX_ROOM];
+_Static_assert(sizeof(shell_command) == 16 && __builtin_offsetof(shell_command, name) == 0,
+               "shell_name_index_probe reads a command row as it reads a tool row");
 _Static_assert(SHELL_COMMAND_COUNT < SHELL_COMMAND_INDEX_ROOM,
                "the command index needs a free slot for every builtin");
 static bool shell_command_index_ready;
@@ -18703,11 +18828,19 @@ static positive shell_disabled_count;
 static positive shell_command_index_hashed(string_address name,
                                             positive2 named)
 {
-        return shell_name_index_find(
-            name, shell_commands, sizeof(shell_commands[0]),
-            SHELL_COMMAND_COUNT, shell_command_index,
-            SHELL_COMMAND_INDEX_ROOM, address_of shell_command_index_ready,
-            named);
+        if (!shell_command_index_ready)
+        {
+                shell_name_index_build(shell_commands, sizeof(shell_commands[0]),
+                                       SHELL_COMMAND_COUNT, shell_command_index,
+                                       SHELL_COMMAND_INDEX_ROOM, null, null);
+                shell_command_index_ready = true;
+        }
+        positive found = shell_name_index_probe(name, named.y, named.x,
+                                                shell_command_index,
+                                                SHELL_COMMAND_INDEX_ROOM - 1,
+                                                shell_commands);
+
+        return found < SHELL_COMMAND_COUNT ? found : SHELL_COMMAND_COUNT;
 }
 
 static inline INLINE bool shell_builtin_disabled(string_address name)

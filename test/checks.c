@@ -26893,6 +26893,150 @@ static fn shell_asm_writes(p8 address_to pages)
         }
 }
 
+/*
+        shell_name_index_probe from src/sh/builtin.c against the C probe it
+        replaced, with memory_compare, over the word-sized slots the shell
+        fills now: tables of a name and a function a row filled into an index
+        the way the shell fills it, the first free slot from the hash's own,
+        with hashes that collide on purpose -- the same slot, the same low half
+        over different high halves, and the same hash and length over
+        different bytes -- names of every length up to forty, lookups of every
+        name, of names that differ in one byte, of hashes and lengths nothing
+        has and of lengths past 255, and names that end on the last byte
+        before a page nobody may read.
+*/
+typedef struct
+{
+        p32 hash;
+        p8 length;
+        p8 spare;
+        p16 index_plus_one;
+} shell_asm_name_slot;
+
+positive shell_name_index_probe(string_address name, positive length, positive hash,
+                                const shell_asm_name_slot address_to slots, positive mask,
+                                address_any table);
+
+typedef struct
+{
+        string_address name;
+        address_any function;
+} shell_asm_row;
+
+static positive shell_asm_probe_former(const p8 address_to name, positive length, positive hash,
+                                       const shell_asm_name_slot address_to slots, positive mask,
+                                       const shell_asm_row address_to table)
+{
+        positive at = hash & mask;
+
+        if (length > 255)
+                return (positive)-1;
+        for (positive probes = 0; probes <= mask; probes++)
+        {
+                const shell_asm_name_slot address_to slot = slots + at;
+
+                if (!slot->index_plus_one)
+                        return (positive)-1;
+                if (slot->hash == (p32)hash && slot->length == length &&
+                    !memory_compare(name, table[slot->index_plus_one - 1].name, length))
+                        return slot->index_plus_one - 1;
+                at = (at + 1) & mask;
+        }
+        return (positive)-1;
+}
+
+static fn shell_asm_probe_one(const p8 address_to name, positive length, positive hash,
+                              const shell_asm_name_slot address_to slots, positive mask,
+                              const shell_asm_row address_to table)
+{
+        positive want = shell_asm_probe_former(name, length, hash, slots, mask, table);
+        positive got = shell_name_index_probe((string_address)name, length, hash, slots, mask,
+                                              (address_any)table);
+
+        checks++;
+        if (want != got)
+        {
+                failures++;
+                if (failures < 10)
+                        string_format(log, "FAIL shell_name_index_probe length %p hash %p: %p want %p\n",
+                                      length, hash, got, want);
+        }
+}
+
+static fn shell_asm_names(p8 address_to pages)
+{
+        static shell_asm_row table[300];
+        static p8 names[300][48];
+        static positive lengths[300], hashes[300];
+        static shell_asm_name_slot slots[512];
+        static p8 query[64];
+        static const p8 letters[] = "abc-_9";
+
+        for (positive round = 0; round < 3000; round++)
+        {
+                positive room = shell_asm_next() % 2 ? 512 : 256;
+                positive count = 1 + shell_asm_next() % (room / 2 + 40);
+                positive shape = shell_asm_next() % 5;
+
+                if (count >= room)
+                        count = room - 1;
+                if (count > 300)
+                        count = 300;
+                memory_fill(slots, 0, sizeof(slots));
+                for (positive i = 0; i < count; i++)
+                {
+                        positive length = shell_asm_next() % 4 ? 1 + shell_asm_next() % 12 : shell_asm_next() % 41;
+
+                        for (positive j = 0; j < length; j++)
+                                names[i][j] = letters[shell_asm_next() % (sizeof(letters) - 1)];
+                        names[i][length] = 0;
+                        lengths[i] = length;
+                        /* A real hash, one of four slots, one hash for every name
+                           of a length, a narrow hash, or one low half. */
+                        hashes[i] = shape == 0 ? memory_hash_33(names[i], length)
+                                  : shape == 1 ? (shell_asm_next() % 4) * room + (shell_asm_next() << 32)
+                                  : shape == 2 ? 77 + length
+                                  : shape == 3 ? memory_hash_33(names[i], length) & 0x3ff
+                                               : 0x1234 + (shell_asm_next() << 32);
+                        table[i] = (shell_asm_row){(string_address)names[i], null};
+                        positive at = hashes[i] & (room - 1);
+                        while (slots[at].index_plus_one)
+                                at = (at + 1) & (room - 1);
+                        slots[at] = (shell_asm_name_slot){(p32)hashes[i], (p8)length, 0, (p16)(i + 1)};
+                }
+                for (positive i = 0; i < count; i++)
+                {
+                        positive length = lengths[i];
+                        positive offset = shell_asm_next() % 16;
+
+                        memory_copy_apart(query + offset, names[i], length + 1);
+                        shell_asm_probe_one(query + offset, length, hashes[i], slots, room - 1, table);
+                        if (length)
+                        {
+                                /* One byte different, under the same hash and length. */
+                                positive at = shell_asm_next() % length;
+
+                                query[offset + at] ^= 0x20;
+                                shell_asm_probe_one(query + offset, length, hashes[i], slots, room - 1, table);
+                                query[offset + at] ^= 0x20;
+                        }
+                        /* A hash nothing has, a length nothing under this hash
+                           has, the high half changed, and too long a length. */
+                        shell_asm_probe_one(query + offset, length, hashes[i] ^ 0x5a5a0000ull, slots, room - 1, table);
+                        shell_asm_probe_one(query + offset, length + 1, hashes[i], slots, room - 1, table);
+                        shell_asm_probe_one(query + offset, length, hashes[i] ^ (0x77ull << 40), slots, room - 1, table);
+                        shell_asm_probe_one(query + offset, length + 256, hashes[i], slots, room - 1, table);
+                        if (pages && length < 48)
+                        {
+                                p8 address_to last = pages + 8192 - length;
+
+                                memory_copy_apart(last, names[i], length);
+                                shell_asm_probe_one(last, length, hashes[i], slots, room - 1, table);
+                        }
+                }
+        }
+}
+
 b32 main(void)
 {
         static p8 built[4096];
@@ -26949,6 +27093,7 @@ b32 main(void)
         shell_asm_arguments((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_binaries((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_writes((bipolar)(positive)pages > 0 ? pages : null);
+        shell_asm_names((bipolar)(positive)pages > 0 ? pages : null);
 
         string_format(log, "shell assembly: %p checks, %p failures\n", checks, failures);
         log_flush();
