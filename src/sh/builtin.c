@@ -1338,7 +1338,7 @@ static inline INLINE fn env_index_touch()
 // Rebuilt lazily for execve and the in-process utilities that spawn children.
 string_address address_to shell_envp;
 static positive shell_envp_room;
-static bool shell_envp_dirty = true;
+KEEP __attribute__((externally_visible)) bool shell_envp_dirty = true;
 static positive shell_envp_generation;
 static positive shell_envp_function_generation;
 static bool shell_env_initialized;
@@ -2389,7 +2389,7 @@ PURE bool shell_environment_is_initialized()
 static bool env_write_hashed_span(const_string name, positive name_len,
                                   positive hash, const_string value,
                                   bool assignment);
-static bool env_write_destination(const_string name, positive name_len,
+bool env_write_destination(const_string name, positive name_len,
     positive hash, positive idx, const_string value, bool assignment,
     env_variable address_to destination, bool protect);
 #define env_write_found_span(name, length, hash, index, value, assignment) \
@@ -3162,7 +3162,7 @@ static COLD b32 env_write_attributed(positive idx, const_string name,
         return 0;
 }
 
-static bool env_write_destination(const_string name, positive name_len,
+KEEP __attribute__((externally_visible)) bool env_write_whole(const_string name, positive name_len,
     positive hash, positive idx, const_string value, bool assignment,
     env_variable address_to destination, bool protect)
 {
@@ -3241,6 +3241,203 @@ static bool env_write_destination(const_string name, positive name_len,
         env_locale_touch(name, name_len);
         return true;
 }
+
+/*
+        An assignment to a variable that is already there, in assembly.
+
+        What a loop's `i=...` asks of the whole way above is nothing it can
+        refuse or reshape: a variable with no attribute and a cell of its own,
+        in a shell that is neither restricted nor bash, under a name that is
+        not PATH or a locale name (four, six and eight bytes: those go the
+        whole way). The name is in the cell already, since the variable was
+        found by it, so only the value moves. x86_64 and arm64 read the
+        value's first sixteen bytes as one vector unless they could run into
+        the next page, find its terminator there, and store all sixteen after
+        the = when the cell has room for them; a longer value is scanned in
+        aligned blocks as far as the cell could hold it and copied sixteen
+        bytes at a time. riscv64 walks the first sixteen bytes one at a time
+        and the rest a word at a time, and copies four bytes a turn. A value
+        from inside the same cell, one the cell cannot hold and everything
+        else jump to env_write_whole with every argument where it was.
+
+        The whole way took 95 instructions and 30 branches for y=abc after the
+        readonly gate went inline, 123 before, and a call to string_length
+        and one to memory_copy_end besides.
+*/
+bool env_write_whole(const_string name, positive name_len, positive hash,
+                     positive idx, const_string value, bool assignment,
+                     env_variable address_to destination, bool protect);
+
+_Static_assert(sizeof(env_variable) == 40 && __builtin_offsetof(env_variable, value_length) == 24 &&
+               __builtin_offsetof(env_variable, owned) == 32 &&
+               __builtin_offsetof(env_variable, permanent) == 33 &&
+               __builtin_offsetof(env_variable, declared) == 34 &&
+               __builtin_offsetof(env_variable, attributes) == 35,
+               "env_write_destination writes a variable at these offsets");
+_Static_assert(sizeof(env_cell) == 16 && __builtin_offsetof(env_cell, room) == 8,
+               "env_write_destination reads a cell's room eight bytes before its text");
+_Static_assert(SHELL_FLAG('a') == 1, "env_write_destination tests allexport as bit zero");
+
+#if X64
+__asm__(
+    ASM_FUNC(env_write_destination)
+    // The variable: the destination, or shell_vars[idx] while idx is one.
+    "mov 8(%rsp), %rax\n   test %rax, %rax\n   jnz 1f\n"
+    "cmp shell_var_count(%rip), %rcx\n   jae 9f\n"
+    "lea (%rcx,%rcx,4), %rax\n   shl $3, %rax\n   add shell_vars(%rip), %rax\n"
+    "1: cmpb $0, 35(%rax)\n   jne 9f\n"
+    "cmpb $0, 32(%rax)\n   je 9f\n"
+    "test %rdi, %rdi\n   jz 9f\n   test %r8, %r8\n   jz 9f\n"
+    "movzbl shell_restricted(%rip), %r10d\n   or shell_bash_compat(%rip), %r10b\n   jnz 9f\n"
+    "cmp $8, %rsi\n   ja 2f\n   mov $0x150, %r10d\n   bt %esi, %r10d\n   jc 9f\n"
+    // The cell: not the one the value is in, and room for sixteen bytes.
+    "2: mov (%rax), %r10\n"
+    "mov %r8, %r11\n   sub %r10, %r11\n   cmp -8(%r10), %r11\n   jb 9f\n"
+    "lea 17(%rsi), %r11\n   cmp -8(%r10), %r11\n   ja 9f\n"
+    // Sixteen bytes of the value when they are all on its page, stored
+    // whole when the terminator is among them.
+    "mov %r8d, %r11d\n   and $4095, %r11d\n   cmp $4080, %r11d\n   ja 9f\n"
+    "movdqu (%r8), %xmm0\n   pxor %xmm1, %xmm1\n   pcmpeqb %xmm0, %xmm1\n"
+    "pmovmskb %xmm1, %r11d\n   bsf %r11d, %r11d\n   jz 10f\n"
+    "movdqu %xmm0, 1(%r10,%rsi)\n"
+    "5: movb $0x3d, (%r10,%rsi)\n"
+    "mov %r11, 24(%rax)\n   movb $1, 34(%rax)\n"
+    "test %r9b, %r9b\n   jz 3f\n   testb $1, shell_options(%rip)\n   jz 3f\n   movb $1, 33(%rax)\n"
+    "3: cmpq $0, 8(%rsp)\n   jne 4f\n   cmpb $0, 33(%rax)\n   je 4f\n"
+    "movb $1, shell_envp_dirty(%rip)\n"
+    "4: mov $1, %eax\n"
+    ASM_RET
+    "9: jmp env_write_whole\n"
+    // Longer: aligned sixteen-byte blocks after the first sixteen, as far as
+    // the cell could hold, then sixteen at a time into it, the last sixteen
+    // ending on the terminator so nothing past it is read.
+    "10: push %rbx\n   push %r12\n"
+    "mov -8(%r10), %rbx\n   sub %rsi, %rbx\n   dec %rbx\n"
+    "lea 16(%r8), %r12\n   and $-16, %r12\n   pxor %xmm2, %xmm2\n"
+    "11: mov %r12, %r11\n   sub %r8, %r11\n   cmp %rbx, %r11\n   jae 19f\n"
+    "movdqa (%r12), %xmm1\n   pcmpeqb %xmm2, %xmm1\n   pmovmskb %xmm1, %r11d\n"
+    "add $16, %r12\n   test %r11d, %r11d\n   jz 11b\n"
+    "bsf %r11d, %r11d\n   lea -16(%r12,%r11), %r11\n   sub %r8, %r11\n"
+    "cmp %rbx, %r11\n   jae 19f\n"
+    "lea 1(%r10,%rsi), %r12\n   lea 1(%r11), %rbx\n   xor %ecx, %ecx\n"
+    "12: movdqu (%r8,%rcx), %xmm1\n   movdqu %xmm1, (%r12,%rcx)\n   add $16, %rcx\n"
+    "lea 16(%rcx), %rdx\n   cmp %rbx, %rdx\n   jb 12b\n"
+    "movdqu -16(%r8,%rbx), %xmm1\n   movdqu %xmm1, -16(%r12,%rbx)\n"
+    "pop %r12\n   pop %rbx\n   jmp 5b\n"
+    "19: pop %r12\n   pop %rbx\n   jmp 9b\n"
+    ASM_END(env_write_destination)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(env_write_destination)
+    // The variable: the destination, or shell_vars[idx] while idx is one.
+    "mov x9, x6\n   cbnz x6, 1f\n"
+    "adrp x10, shell_var_count\n   ldr x10, [x10, :lo12:shell_var_count]\n   cmp x3, x10\n   b.hs 9f\n"
+    "adrp x10, shell_vars\n   ldr x10, [x10, :lo12:shell_vars]\n   mov x11, #40\n   madd x9, x3, x11, x10\n"
+    "1: ldrb w10, [x9, #35]\n   cbnz w10, 9f\n"
+    "ldrb w10, [x9, #32]\n   cbz w10, 9f\n"
+    "cbz x0, 9f\n   cbz x4, 9f\n"
+    "adrp x10, shell_restricted\n   ldrb w10, [x10, :lo12:shell_restricted]\n"
+    "adrp x11, shell_bash_compat\n   ldrb w11, [x11, :lo12:shell_bash_compat]\n"
+    "orr w10, w10, w11\n   cbnz w10, 9f\n"
+    "cmp x1, #8\n   b.hi 2f\n   mov w10, #0x150\n   lsr w10, w10, w1\n   tbnz w10, #0, 9f\n"
+    // The cell: not the one the value is in, and room for sixteen bytes.
+    "2: ldr x10, [x9]\n   ldur x11, [x10, #-8]\n"
+    "sub x12, x4, x10\n   cmp x12, x11\n   b.lo 9f\n"
+    "add x12, x1, #17\n   cmp x12, x11\n   b.hi 9f\n"
+    // Sixteen bytes of the value when they are all on its page, stored
+    // whole when the terminator is among them.
+    "and x12, x4, #4095\n   cmp x12, #4080\n   b.hi 9f\n"
+    "ldr q0, [x4]\n   cmeq v1.16b, v0.16b, #0\n   shrn v1.8b, v1.8h, #4\n   fmov x12, d1\n"
+    "cbz x12, 10f\n   rbit x12, x12\n   clz x12, x12\n   lsr x12, x12, #2\n"
+    "add x13, x10, x1\n   stur q0, [x13, #1]\n"
+    "5: add x13, x10, x1\n   mov w14, #0x3d\n   strb w14, [x13]\n"
+    "str x12, [x9, #24]\n   mov w14, #1\n   strb w14, [x9, #34]\n"
+    "tst w5, #0xff\n   b.eq 3f\n"
+    "adrp x15, shell_options\n   ldr x15, [x15, :lo12:shell_options]\n   tbz x15, #0, 3f\n"
+    "strb w14, [x9, #33]\n"
+    "3: cbnz x6, 4f\n   ldrb w15, [x9, #33]\n   cbz w15, 4f\n"
+    "adrp x15, shell_envp_dirty\n   strb w14, [x15, :lo12:shell_envp_dirty]\n"
+    "4: mov w0, #1\n"
+    ASM_RET
+    "9: b env_write_whole\n"
+    // Longer: aligned sixteen-byte blocks after the first sixteen, as far as
+    // the cell could hold, then sixteen at a time into it, the last sixteen
+    // ending on the terminator so nothing past it is read.
+    "10: sub x15, x11, x1\n   sub x15, x15, #1\n"
+    "add x13, x4, #16\n   and x13, x13, #-16\n"
+    "11: sub x14, x13, x4\n   cmp x14, x15\n   b.hs 9b\n"
+    "ldr q1, [x13], #16\n   cmeq v1.16b, v1.16b, #0\n   shrn v1.8b, v1.8h, #4\n   fmov x14, d1\n"
+    "cbz x14, 11b\n"
+    "rbit x14, x14\n   clz x14, x14\n   sub x13, x13, #16\n   add x13, x13, x14, lsr #2\n   sub x12, x13, x4\n"
+    "cmp x12, x15\n   b.hs 9b\n"
+    "add x13, x10, x1\n   add x13, x13, #1\n   add x14, x12, #1\n   mov x16, #0\n"
+    "12: ldr q1, [x4, x16]\n   str q1, [x13, x16]\n   add x16, x16, #16\n"
+    "add x17, x16, #16\n   cmp x17, x14\n   b.lo 12b\n"
+    "sub x16, x14, #16\n   ldr q1, [x4, x16]\n   str q1, [x13, x16]\n"
+    "b 5b\n"
+    ASM_END(env_write_destination)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(env_write_destination)
+    // The variable: the destination, or shell_vars[idx] while idx is one.
+    "mv t0, a6\n   bnez a6, 1f\n"
+    "lla t1, shell_var_count\n   ld t1, 0(t1)\n   bgeu a3, t1, 9f\n"
+    "lla t1, shell_vars\n   ld t1, 0(t1)\n   li t2, 40\n   mul t0, a3, t2\n   add t0, t0, t1\n"
+    "1: lbu t1, 35(t0)\n   bnez t1, 9f\n"
+    "lbu t1, 32(t0)\n   beqz t1, 9f\n"
+    "beqz a0, 9f\n   beqz a4, 9f\n"
+    "lla t1, shell_restricted\n   lbu t1, 0(t1)\n"
+    "lla t2, shell_bash_compat\n   lbu t2, 0(t2)\n"
+    "or t1, t1, t2\n   bnez t1, 9f\n"
+    "li t1, 8\n   bgtu a1, t1, 2f\n   li t1, 0x150\n   srl t1, t1, a1\n   andi t1, t1, 1\n   bnez t1, 9f\n"
+    // The cell: not the one the value is in, and room for sixteen bytes.
+    "2: ld t1, 0(t0)\n   ld t2, -8(t1)\n"
+    "sub t3, a4, t1\n   bltu t3, t2, 9f\n"
+    "addi t3, a1, 17\n   bgtu t3, t2, 9f\n"
+    // The terminator within sixteen bytes, a byte at a time.
+    "mv t3, a4\n   addi t5, a4, 16\n"
+    "5: lbu t4, 0(t3)\n   beqz t4, 6f\n   addi t3, t3, 1\n   bne t3, t5, 5b\n"
+    "j 10f\n"
+    // The = and the value with its terminator, four bytes a turn.
+    "6: sub t3, t3, a4\n   add t4, t1, a1\n   li t5, 0x3d\n   sb t5, 0(t4)\n"
+    "addi t4, t4, 1\n   mv t5, a4\n   add t6, a4, t3\n   addi a3, t6, -3\n"
+    "bgtu t5, a3, 8f\n"
+    "7: lbu a0, 0(t5)\n   lbu a1, 1(t5)\n   lbu a2, 2(t5)\n   lbu a7, 3(t5)\n"
+    "sb a0, 0(t4)\n   sb a1, 1(t4)\n   sb a2, 2(t4)\n   sb a7, 3(t4)\n"
+    "addi t5, t5, 4\n   addi t4, t4, 4\n   bleu t5, a3, 7b\n"
+    "8: bgtu t5, t6, 20f\n   lbu a0, 0(t5)\n   sb a0, 0(t4)\n   addi t5, t5, 1\n   addi t4, t4, 1\n   j 8b\n"
+    "20: sd t3, 24(t0)\n   li t4, 1\n   sb t4, 34(t0)\n"
+    "andi a5, a5, 0xff\n   beqz a5, 3f\n"
+    "lla t5, shell_options\n   ld t5, 0(t5)\n   andi t5, t5, 1\n   beqz t5, 3f\n"
+    "sb t4, 33(t0)\n"
+    "3: bnez a6, 4f\n   lbu t5, 33(t0)\n   beqz t5, 4f\n"
+    "lla t5, shell_envp_dirty\n   sb t4, 0(t5)\n"
+    "4: li a0, 1\n"
+    ASM_RET
+    "9: tail env_write_whole\n"
+    // Longer: aligned words after the first sixteen bytes, as far as the
+    // cell could hold, a zero byte found by the borrow of a subtraction and
+    // then placed a byte at a time within its word.
+    "10: addi sp, sp, -32\n   sd s1, 0(sp)\n   sd s2, 8(sp)\n   sd s3, 16(sp)\n"
+    "sub s3, t2, a1\n   addi s3, s3, -1\n   add s3, s3, a4\n"
+    "lla t3, .Lenv_write_bytes\n   ld s1, 0(t3)\n   ld s2, 8(t3)\n"
+    "addi t3, a4, 16\n   andi t3, t3, -8\n"
+    "11: bgeu t3, s3, 19f\n"
+    "ld t4, 0(t3)\n   sub t5, t4, s1\n   not t6, t4\n   and t5, t5, t6\n   and t5, t5, s2\n"
+    "addi t3, t3, 8\n   beqz t5, 11b\n"
+    "addi t3, t3, -8\n"
+    "13: lbu t4, 0(t3)\n   beqz t4, 14f\n   addi t3, t3, 1\n   j 13b\n"
+    "14: bgeu t3, s3, 19f\n"
+    "ld s1, 0(sp)\n   ld s2, 8(sp)\n   ld s3, 16(sp)\n   addi sp, sp, 32\n   j 6b\n"
+    "19: ld s1, 0(sp)\n   ld s2, 8(sp)\n   ld s3, 16(sp)\n   addi sp, sp, 32\n   j 9b\n"
+    ".pushsection .rodata\n   .balign 8\n"
+    ".Lenv_write_bytes:\n   .quad 0x0101010101010101, 0x8080808080808080\n"
+    ".popsection\n"
+    ASM_END(env_write_destination)
+);
+#endif
 
 /* Every command-facing scalar writer enters through the protected wrapper.
    Startup's publication of Bash's own readonly identity cells uses the mode

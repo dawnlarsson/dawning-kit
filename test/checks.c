@@ -26692,6 +26692,207 @@ static fn shell_asm_binaries(p8 address_to pages)
         }
 }
 
+/*
+        env_write_destination from src/sh/builtin.c: the assignment it takes
+        and the ones it hands to the whole way. A variable, its cell and a
+        value are built each round -- attributes, ownership, rooms around
+        the sixteen bytes it stores and around what a long value needs, names
+        of every length and PATH's and the locale names' lengths among them,
+        values that are long, empty, inside the variable's own cell or ending
+        on the last bytes before a page nobody may read, restricted and bash
+        shells, allexport, a destination or an index past the table -- and
+        the answer is checked
+        against the rule: the cell's bytes up to the terminator, the fields,
+        the environment's dirty mark, and every byte outside what it may
+        write; or, for one it does not take, that env_write_whole was reached
+        with all eight arguments as they were and nothing was touched.
+*/
+bool shell_restricted, shell_bash_compat;
+KEEP bool shell_envp_dirty;
+positive shell_options;
+
+bool env_write_destination(const_string name, positive name_len, positive hash, positive idx,
+                           const_string value, bool assignment,
+                           shell_asm_variable address_to destination, bool protect);
+
+static struct
+{
+        bool called;
+        const_string name, value;
+        positive name_len, hash, idx;
+        bool assignment, protect;
+        shell_asm_variable address_to destination;
+} shell_asm_whole;
+
+bool env_write_whole(const_string name, positive name_len, positive hash, positive idx,
+                     const_string value, bool assignment,
+                     shell_asm_variable address_to destination, bool protect)
+{
+        shell_asm_whole.called = true;
+        shell_asm_whole.name = name;
+        shell_asm_whole.name_len = name_len;
+        shell_asm_whole.hash = hash;
+        shell_asm_whole.idx = idx;
+        shell_asm_whole.value = value;
+        shell_asm_whole.assignment = assignment;
+        shell_asm_whole.destination = destination;
+        shell_asm_whole.protect = protect;
+        return protect != assignment;
+}
+
+static fn shell_asm_write_fail(const char address_to what, positive round)
+{
+        failures++;
+        if (failures < 10)
+                string_format(log, "FAIL env_write_destination round %p: %s\n", round, what);
+}
+
+static fn shell_asm_writes(p8 address_to pages)
+{
+        static shell_asm_variable variables[8];
+        static shell_asm_variable spare;
+        static p8 cell[512];
+        static p8 before[512];
+        static p8 names[32];
+        static p8 values[128];
+        static const p8 letters[] = "abcPATHLC_xyz09";
+
+        shell_vars = variables;
+        for (positive round = 0; round < 400000; round++)
+        {
+                positive name_len = 1 + shell_asm_next() % 12;
+                positive old_len = shell_asm_next() % 24;
+                positive room = shell_asm_next() % 4 ? name_len + 10 + shell_asm_next() % 24
+                                                      : 64 + shell_asm_next() % 200;
+                positive where = shell_asm_next() % 16;
+                positive value_len = shell_asm_next() % 3 ? shell_asm_next() % 16 : shell_asm_next() % 60;
+                bool use_destination = shell_asm_next() % 4 == 0;
+                positive idx = shell_asm_next() % 10;
+                shell_asm_variable address_to held;
+                p8 address_to text;
+                p8 address_to value;
+                const p8 address_to name;
+                positive hash = shell_asm_next();
+                bool assignment = shell_asm_next() % 2, protect = shell_asm_next() % 2;
+                bool answer;
+
+                if (room < name_len + 1)
+                        room = name_len + 1;
+                if (room > sizeof(cell) - 64)
+                        room = sizeof(cell) - 64;
+                shell_var_count = shell_asm_next() % 9;
+                shell_restricted = shell_asm_next() % 16 == 0;
+                shell_bash_compat = shell_asm_next() % 16 == 0;
+                shell_options = shell_asm_next() % 4;
+                shell_envp_dirty = false;
+
+                /* The cell: its header, the name, = and an old value, filler
+                   to its room and a guard past it. */
+                memory_fill(cell, 'G', sizeof(cell));
+                ((positive address_to)(cell + 16))[0] = 0x1234;
+                ((positive address_to)(cell + 16))[1] = room;
+                text = cell + 32;
+                for (positive i = 0; i < name_len; i++)
+                        text[i] = letters[shell_asm_next() % (sizeof(letters) - 1)];
+                memory_fill(text + name_len, 'Z', room - name_len);
+                if (name_len + 1 + old_len < room)
+                {
+                        text[name_len] = '=';
+                        memory_fill(text + name_len + 1, 'o', old_len);
+                        text[name_len + 1 + old_len] = 0;
+                }
+                memory_copy_apart(names, text, name_len);
+                names[name_len] = 0;
+                name = shell_asm_next() % 64 ? names : null;
+
+                held = use_destination ? &spare : variables + (idx < 8 ? idx : 0);
+                for (positive i = 0; i < 8; i++)
+                        variables[i] = (shell_asm_variable){(string_address)"x=y", 1, 1, 1, true};
+                *held = (shell_asm_variable){(string_address)text, hash, name_len, old_len,
+                                             shell_asm_next() % 8 != 0, shell_asm_next() % 2 == 0,
+                                             shell_asm_next() % 2 == 0,
+                                             (p8)(shell_asm_next() % 6 == 0 ? 1 << (shell_asm_next() % 8) : 0), 0};
+
+                /* The value: in its own buffer, against the unreadable page,
+                   inside the cell, or none. */
+                if (where < 10)
+                        value = values + shell_asm_next() % 64;
+                else if (where < 13 && pages)
+                        value = pages + 8192 - value_len - 1 - shell_asm_next() % 20;
+                else if (where < 15)
+                        value = text + name_len + 1 + shell_asm_next() % 4;
+                else
+                        value = null;
+                if (value && (where < 13 || value + value_len + 1 <= text + room))
+                {
+                        for (positive i = 0; i < value_len; i++)
+                                value[i] = (p8)('A' + shell_asm_next() % 26);
+                        value[value_len] = 0;
+                }
+
+                /* The rule. */
+                shell_asm_variable address_to variable = use_destination ? &spare
+                    : idx < shell_var_count ? variables + idx : null;
+                bool fast = variable && !variable->attributes && variable->owned && name && value &&
+                            !shell_restricted && !shell_bash_compat &&
+                            !(name_len <= 8 && ((0x150u >> name_len) & 1));
+                positive length = 0;
+                if (fast)
+                {
+                        fast = (positive)(value - text) >= room && name_len + 17 <= room;
+#if !RISCV64
+                        fast = fast && ((positive)value & 4095) <= 4080;
+#endif
+                        while (fast && value[length])
+                                length++;
+                        fast = fast && name_len + 1 + length + 1 <= room;
+                }
+
+                shell_asm_variable kept = *held;
+                memory_copy_apart(before, cell, sizeof(cell));
+                shell_asm_whole.called = false;
+                answer = env_write_destination((const_string)name, name_len, hash, idx, (const_string)value,
+                                               assignment, use_destination ? &spare : null, protect);
+                checks++;
+                if (fast)
+                {
+                        bool permanent = kept.permanent || (assignment && (shell_options & 1));
+                        /* Up to sixteen bytes past the = may be stored whatever the length. */
+                        positive stored = length + 1 > 16 ? length + 1 : 16;
+
+                        if (!answer || shell_asm_whole.called)
+                                shell_asm_write_fail("an assignment it takes went the whole way", round);
+                        else if (text[name_len] != '=' || memory_compare(text + name_len + 1, value, length + 1))
+                                shell_asm_write_fail("the value is not in the cell", round);
+                        else if (memory_compare(cell, before, 32 + name_len) ||
+                                 memory_compare(text + name_len + 1 + stored, before + 32 + name_len + 1 + stored,
+                                                sizeof(cell) - 32 - name_len - 1 - stored))
+                                shell_asm_write_fail("a byte outside the value changed", round);
+                        else if (held->value_length != length || !held->declared ||
+                                 held->permanent != permanent || held->text != kept.text ||
+                                 held->owned != kept.owned || held->attributes != kept.attributes ||
+                                 held->hash != kept.hash || held->name_length != kept.name_length)
+                                shell_asm_write_fail("the variable's fields", round);
+                        else if (shell_envp_dirty != (!use_destination && permanent))
+                                shell_asm_write_fail("the environment's dirty mark", round);
+                }
+                else
+                {
+                        if (!shell_asm_whole.called || answer != (protect != assignment))
+                                shell_asm_write_fail("one it does not take was not handed on", round);
+                        else if (shell_asm_whole.name != (const_string)name || shell_asm_whole.name_len != name_len ||
+                                 shell_asm_whole.hash != hash || shell_asm_whole.idx != idx ||
+                                 shell_asm_whole.value != (const_string)value ||
+                                 shell_asm_whole.assignment != assignment || shell_asm_whole.protect != protect ||
+                                 shell_asm_whole.destination != (use_destination ? &spare : null))
+                                shell_asm_write_fail("the arguments handed on changed", round);
+                        else if (memory_compare(cell, before, sizeof(cell)) ||
+                                 memory_compare(held, &kept, sizeof(kept)) || shell_envp_dirty)
+                                shell_asm_write_fail("one it does not take was touched", round);
+                }
+        }
+}
+
 b32 main(void)
 {
         static p8 built[4096];
@@ -26747,6 +26948,7 @@ b32 main(void)
         shell_asm_assignments((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_arguments((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_binaries((bipolar)(positive)pages > 0 ? pages : null);
+        shell_asm_writes((bipolar)(positive)pages > 0 ? pages : null);
 
         string_format(log, "shell assembly: %p checks, %p failures\n", checks, failures);
         log_flush();
