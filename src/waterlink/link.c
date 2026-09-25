@@ -1210,6 +1210,44 @@ bool waterlink_paused(struct waterlink_link address_to link, p8 key)
         than an attack -- and is still a refusal, because a link that guesses
         is a link with two opinions.
 */
+bool waterlink_body_sane(address_any body, positive length)
+{
+        p8 address_to bytes = (p8 address_to)body;
+        positive at = 0;
+
+        if (length > WATERLINK_PAYLOAD)
+                return false;
+
+        while (at + 1 < length && bytes[at])
+        {
+                p8 flags = bytes[at];
+                p8 key = bytes[at + 1];
+                p64 first, second;
+
+                at += 2;
+                if (key >= WATERLINK_KEYS ||
+                    !waterlink_number_get(bytes, length, address_of at,
+                                          address_of first) ||
+                    !waterlink_number_get(bytes, length, address_of at,
+                                          address_of second))
+                        return false;
+
+                if (flags == WATERLINK_FRAME_ACK)
+                {
+                        if (first >= WATERLINK_NONE)
+                                return false;
+                        continue;
+                }
+                if (!waterlink_frame_sane(flags) || !first ||
+                    first >= WATERLINK_NONE || second > WATERLINK_FRAME_MAX ||
+                    second > length - at)
+                        return false;
+                at += (positive)second;
+        }
+
+        return memory_span_byte(bytes + at, 0, length - at) == length - at;
+}
+
 bool waterlink_deliver(struct waterlink_link address_to link,
                           address_any body, positive length, p64 now,
                           waterlink_sink sink, address_any context)
@@ -1221,7 +1259,10 @@ bool waterlink_deliver(struct waterlink_link address_to link,
         p64 newly = 0, latest = 0, sample = 0;
         bool good;
 
-        if (length > WATERLINK_PAYLOAD)
+        /* Parse the complete authenticated body before applying any of it.
+           Otherwise a valid request followed by a malformed frame can reach
+           the application even though the datagram as a whole is refused. */
+        if (!waterlink_body_sane(body, length))
                 return false;
 
         if (now > link->clock)

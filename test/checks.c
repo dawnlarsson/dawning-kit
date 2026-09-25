@@ -52018,6 +52018,276 @@ static fn malformed_bodies(void)
                                 sizeof widest, one.clock, hear, null) &&
                       heard == 1 && heard_key[0] == WATERLINK_KEYS - 1 &&
                       heard_sequence[0] == 0xfffffffeu && heard_first[0] == 'z');
+
+        /* A malformed suffix must make the entire authenticated body inert,
+           not deliver its valid prefix and only then report failure. */
+        {
+                static const p8 mixed[] = {
+                    WATERLINK_FRAME_DURABLE, 7, 1, 1, 'x',
+                    WATERLINK_FRAME_DURABLE, 7, 2, 9, 'y'};
+                struct waterlink_link before;
+
+                waterlink_link_reset(address_of one);
+                before = one;
+                heard = 0;
+                check("sec: a malformed body with a valid prefix is refused",
+                      !waterlink_deliver(address_of one,
+                                         (p8 address_to)mixed, sizeof mixed,
+                                         100, hear, null));
+                check("sec: refusing the malformed whole delivers no prefix",
+                      heard == 0);
+                check("sec: and changes none of the transport state",
+                      !memory_compare(address_of one, address_of before,
+                                      sizeof one));
+        }
+}
+
+/* Exhaust the complete zero-, one- and two-byte input space. No frame or
+   acknowledgement fits there, so exactly the all-zero padding strings are
+   grammatical. This is a bounded proof of the parser's shortest boundary,
+   including every possible flags and key byte, rather than a random sample. */
+static fn body_short_exhaustive(void)
+{
+        p8 body[2];
+        positive cases = 0;
+        positive wrong = 0;
+
+        wrong += !waterlink_body_sane(body, 0);
+        cases++;
+        for (positive first = 0; first < 256; first++)
+        {
+                body[0] = (p8)first;
+                wrong += waterlink_body_sane(body, 1) != (first == 0);
+                cases++;
+                for (positive second = 0; second < 256; second++)
+                {
+                        body[1] = (p8)second;
+                        wrong += waterlink_body_sane(body, 2) !=
+                                 (first == 0 && second == 0);
+                        cases++;
+                }
+        }
+        check("the body grammar agrees on every input through two bytes",
+              cases == 1 + 256 + 256 * 256 && wrong == 0);
+}
+
+/* Every cut through a compound frame/ack body. The only accepted prefixes
+   are the empty body, the exact end of the frame, the exact end of the ack,
+   and authenticated zero padding after it. Every other cut is inside a
+   header, varint or payload and must be both refused and state-atomic. */
+static fn body_prefix_boundaries(void)
+{
+        p8 body[26] = {WATERLINK_FRAME_DURABLE, 7, 1, 3, 'a', 'b', 'c',
+                       WATERLINK_FRAME_ACK, 7, 4, 0};
+        positive wrong = 0;
+        positive changed = 0;
+        positive delivered = 0;
+
+        for (positive length = 0; length <= sizeof body; length++)
+        {
+                bool want = length == 0 || length == 7 || length >= 11;
+                struct waterlink_link before;
+                bool got;
+
+                waterlink_link_reset(address_of one);
+                before = one;
+                heard = 0;
+                got = waterlink_deliver(address_of one, body, length, 100,
+                                        hear, null);
+                wrong += got != want;
+                if (!want)
+                        changed += heard || memory_compare(address_of one,
+                                                          address_of before,
+                                                          sizeof one);
+                else if (length >= 7)
+                        delivered += heard == 1 && heard_first[0] == 'a';
+        }
+
+        check("every cut through a frame, ack and padding has one answer",
+              wrong == 0);
+        check("every malformed cut is transport- and application-atomic",
+              changed == 0);
+        check("every complete-frame prefix delivers exactly that frame",
+              delivered == 1 + sizeof body - 11 + 1);
+}
+
+/* An independent body grammar for the procedural fuzzer below. It does not
+   call the production varint reader or frame validator: agreement therefore
+   checks two implementations of the wire rules rather than asking the code
+   under test to certify itself. */
+static bool body_model_number(p8 address_to body, positive length,
+                              positive address_to at, p64 address_to value)
+{
+        p64 got = 0;
+
+        for (positive byte = 0; byte < 10 && address_to at < length; byte++)
+        {
+                p8 one = body[(address_to at)++];
+
+                if (byte == 9 && one > 1)
+                        return false;
+                got |= (p64)(one & 0x7f) << (7 * byte);
+                if (!(one & 0x80))
+                {
+                        if (byte && !one)
+                                return false;
+                        address_to value = got;
+                        return true;
+                }
+        }
+        return false;
+}
+
+static bool body_model(p8 address_to body, positive length)
+{
+        positive at = 0;
+
+        if (length > WATERLINK_PAYLOAD)
+                return false;
+        while (at + 1 < length && body[at])
+        {
+                p8 flags = body[at++];
+                p8 key = body[at++];
+                p64 first, second;
+                bool replaceable = (flags & 1) != 0;
+                bool durable = (flags & 2) != 0;
+
+                if (key >= WATERLINK_KEYS ||
+                    !body_model_number(body, length, address_of at,
+                                       address_of first) ||
+                    !body_model_number(body, length, address_of at,
+                                       address_of second))
+                        return false;
+                if (flags == 8)
+                {
+                        if (first >= 0xffffffffu)
+                                return false;
+                        continue;
+                }
+                if (replaceable == durable || (flags & ~0x17u) || !first ||
+                    first >= 0xffffffffu || second > WATERLINK_FRAME_MAX ||
+                    second > length - at)
+                        return false;
+                at += (positive)second;
+        }
+        for (; at < length; at++)
+                if (body[at])
+                        return false;
+        return true;
+}
+
+static fn body_procedural_fuzz(void)
+{
+        p64 state = 0x6a09e667f3bcc909ull;
+        positive cases = 0, wrong = 0, valid = 0, malformed = 0, atomic = 0;
+
+        for (positive round = 0; round < 100000; round++)
+        {
+                p8 body[WATERLINK_PAYLOAD];
+                positive length;
+
+#define BODY_FUZZ_NEXT()                                                       \
+        (state ^= state << 13, state ^= state >> 7, state ^= state << 17, state)
+                memory_zero(body, sizeof body);
+                if (round % 4)
+                {
+                        positive used = 0;
+                        positive frames = (positive)(BODY_FUZZ_NEXT() % 6);
+
+                        for (positive frame = 0; frame < frames; frame++)
+                        {
+                                p8 number[20];
+                                positive number_length = 0;
+                                positive payload =
+                                        (positive)(BODY_FUZZ_NEXT() % 40);
+                                bool ack = BODY_FUZZ_NEXT() % 5 == 0;
+                                p8 flags = ack
+                                                   ? WATERLINK_FRAME_ACK
+                                                   : (BODY_FUZZ_NEXT() & 1
+                                                              ? WATERLINK_FRAME_DURABLE
+                                                              : WATERLINK_FRAME_REPLACEABLE) |
+                                                             (BODY_FUZZ_NEXT() & 1
+                                                                      ? WATERLINK_FRAME_URGENT
+                                                                      : 0);
+                                p64 first = ack
+                                                    ? BODY_FUZZ_NEXT() % WATERLINK_NONE
+                                                    : 1 + BODY_FUZZ_NEXT() %
+                                                                  (WATERLINK_NONE - 1);
+                                p64 second = ack ? BODY_FUZZ_NEXT() : payload;
+
+                                number_length += memory_vli_put(
+                                        number + number_length, first);
+                                number_length += memory_vli_put(
+                                        number + number_length, second);
+                                if (used + 2 + number_length +
+                                                    (ack ? 0 : payload) >
+                                    sizeof body)
+                                        break;
+                                body[used++] = flags;
+                                body[used++] = (p8)(BODY_FUZZ_NEXT() %
+                                                    WATERLINK_KEYS);
+                                memory_copy(body + used, number, number_length);
+                                used += number_length;
+                                if (!ack)
+                                        for (positive at = 0; at < payload; at++)
+                                                body[used++] =
+                                                        (p8)BODY_FUZZ_NEXT();
+                        }
+                        length = used +
+                                 (positive)(BODY_FUZZ_NEXT() %
+                                            (sizeof body - used + 1));
+                        if (BODY_FUZZ_NEXT() % 3)
+                                for (positive flips = 1 +
+                                                      BODY_FUZZ_NEXT() % 3;
+                                     flips; flips--)
+                                        if (length)
+                                                body[BODY_FUZZ_NEXT() % length] ^=
+                                                        (p8)(1u <<
+                                                             (BODY_FUZZ_NEXT() % 8));
+                }
+                else
+                {
+                        length = (positive)(BODY_FUZZ_NEXT() %
+                                            (sizeof body + 1));
+                        for (positive at = 0; at < length; at++)
+                                body[at] = (p8)BODY_FUZZ_NEXT();
+                }
+
+                {
+                        bool model = body_model(body, length);
+                        bool parsed = waterlink_body_sane(body, length);
+
+                        cases++;
+                        valid += model;
+                        malformed += !model;
+                        wrong += model != parsed;
+                        if (!model && atomic < 1024)
+                        {
+                                struct waterlink_link before;
+
+                                waterlink_link_reset(address_of one);
+                                before = one;
+                                heard = 0;
+                                if (!waterlink_deliver(address_of one, body,
+                                                       length, round, hear,
+                                                       null) &&
+                                    !heard &&
+                                    !memory_compare(address_of one,
+                                                    address_of before,
+                                                    sizeof one))
+                                        atomic++;
+                        }
+                }
+#undef BODY_FUZZ_NEXT
+        }
+
+        string_format(log, "  body fuzz: %p cases, %p grammatical, %p "
+                           "malformed, %p rejection snapshots\n",
+                      cases, valid, malformed, atomic);
+        check("procedural body fuzz agrees with the independent grammar",
+              cases == 100000 && wrong == 0 && valid && malformed);
+        check("procedural malformed bodies are state-atomic",
+              atomic == 1024);
 }
 
 static fn replay(void)
@@ -54211,6 +54481,9 @@ b32 main(void)
         stale_arrivals();
         durable_reordered();
         malformed_bodies();
+        body_short_exhaustive();
+        body_prefix_boundaries();
+        body_procedural_fuzz();
         replay();
         saturation();
         replay_generated();
@@ -54653,16 +54926,15 @@ static fn publication(void)
 static struct waterlink_identity wls_server, wls_client, wls_b;
 
 static fn wls_initiation(p8 address_to datagram, p64 conversation,
-                         p64 stamp_seconds)
+                         p64 stamp_seconds, p32 index)
 {
         struct waterlink_noise noise;
         p8 hello[WATERLINK_HELLO_BYTES];
         p8 ephemeral[32];
-        p32 ours = 0x01020304;
 
         waterlink_stamp(hello, stamp_seconds, 0);
         memory_copy(hello + WATERLINK_STAMP_BYTES, address_of conversation, 8);
-        memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of ours, 4);
+        memory_copy(hello + WATERLINK_STAMP_BYTES + 8, address_of index, 4);
         wls_seeded(ephemeral, 32, (p8)conversation);
         (void)waterlink_initiate(address_of noise, address_of wls_client,
                                  wls_server.public, null, ephemeral, hello, datagram);
@@ -54678,8 +54950,22 @@ static fn responder(bipolar listener, p16 port)
         memory_zero(address_of link_self.admission, sizeof link_self.admission);
         wls_drain(listener);
 
+        {
+                positive stamps = link_self.stamps;
+
+                wls_initiation(datagram, 10, 999, 0);
+                link_server_initiation(datagram, WATERLINK_DATAGRAM,
+                                       wls_loopback, port, 900000);
+                check("sec: an initiation with the reserved zero index holds "
+                      "no session and is not answered",
+                      wls_sessions_used() == 0 &&
+                              wls_heard(listener, answer) <= 0);
+                check("sec: a zero-index initiation spends no replay stamp",
+                      link_self.stamps == stamps);
+        }
+
         entropy_down = true;
-        wls_initiation(datagram, 11, 1000);
+        wls_initiation(datagram, 11, 1000, 0x01020304);
         link_server_initiation(datagram, WATERLINK_DATAGRAM, wls_loopback, port,
                                1000000);
         entropy_down = false;
@@ -54687,10 +54973,12 @@ static fn responder(bipolar listener, p16 port)
               wls_sessions_used() == 0);
         check("sec: and is not answered", wls_heard(listener, answer) <= 0);
 
-        wls_initiation(datagram, 12, 1001);
+        /* The same authenticated datagram is what a client retransmits when
+           no answer arrived. A local resource failure must not consume its
+           replay stamp. */
         link_server_initiation(datagram, WATERLINK_DATAGRAM, wls_loopback, port,
                                2000000);
-        check("an initiation from a paired peer is answered",
+        check("sec: after entropy returns the same initiation is answered",
               wls_heard(listener, answer) == WATERLINK_DATAGRAM &&
                       wls_sessions_used() == 1);
 
@@ -54749,6 +55037,123 @@ static fn initiator_answer(void)
                                  WATERLINK_DATAGRAM) &&
                       s->now.live);
         link_session_close(s);
+}
+
+/* A tag proves who sent bytes, not that those bytes are a Waterlink body.
+   Malformed authenticated traffic must spend neither its counter nor its
+   claimed roaming address before the body grammar accepts it. */
+static fn carried_is_atomic(void)
+{
+        struct link_session address_to s = link_self.session;
+        struct link_session before;
+        struct waterlink_link link_before;
+        struct waterlink_datagram head = {WATERLINK_KIND_CARRY, 0x10203040, 1};
+        crypto_aesgcm_key sealing_key;
+        p8 raw[16];
+        p8 datagram[WATERLINK_DATAGRAM];
+        p8 from[16];
+        static const p8 malformed[] = {
+            WATERLINK_FRAME_DURABLE, 7, 1, 1, 'x',
+            WATERLINK_FRAME_DURABLE, 7, 2, 9, 'y'};
+        positive length;
+        p64 now;
+
+        check("a session for authenticated-body atomicity opens",
+              link_session_open(s));
+        wls_seeded(raw, sizeof raw, 91);
+        link_keys_install(address_of s->now, raw, raw, head.receiver,
+                          0x50607080);
+        now = link_now();
+        crypto_aesgcm_prepare(address_of sealing_key, raw);
+        memory_copy(from, wls_loopback, sizeof from);
+        from[15] = 2;
+
+        {
+                p8 sealed[64];
+                positive sealed_length;
+                positive refused = 0;
+                positive unchanged = 0;
+
+                memory_copy(sealed, address_of head, sizeof head);
+                sealed_length = waterlink_seal(address_of sealing_key, sealed,
+                                                0);
+                for (positive cut = 0; cut < 48; cut++)
+                {
+                        before = *s;
+                        link_before = *s->link;
+                        refused += !link_carried(sealed, cut, from, 1234, now,
+                                                 null);
+                        unchanged +=
+                                !memory_compare(s, address_of before,
+                                                sizeof before) &&
+                                !memory_compare(s->link,
+                                                address_of link_before,
+                                                sizeof link_before);
+                }
+                for (positive bit = 0; bit < sealed_length * 8; bit++)
+                {
+                        memory_copy(datagram, sealed, sealed_length);
+                        datagram[bit / 8] ^= (p8)(1u << (bit % 8));
+                        before = *s;
+                        link_before = *s->link;
+                        refused += !link_carried(datagram, sealed_length, from,
+                                                 1234, now, null);
+                        unchanged +=
+                                !memory_compare(s, address_of before,
+                                                sizeof before) &&
+                                !memory_compare(s->link,
+                                                address_of link_before,
+                                                sizeof link_before);
+                }
+                check("sec: every short length and every one-bit authenticated "
+                      "datagram mutation is refused",
+                      refused == 48 + sealed_length * 8);
+                check("sec: all of those carriage refusals are state-atomic",
+                      unchanged == refused);
+        }
+
+        memory_copy(datagram, address_of head, sizeof head);
+        memory_copy(datagram + 16, malformed, sizeof malformed);
+        length = waterlink_seal(address_of sealing_key, datagram,
+                                sizeof malformed);
+        link_self.state_dirty = false;
+        before = *s;
+        link_before = *s->link;
+
+        check("sec: an authenticated malformed carried body is refused",
+              !link_carried(datagram, length, from, 1234, now, null));
+        check("sec: it changes no session, replay, roaming or link state",
+              !memory_compare(s, address_of before, sizeof before) &&
+                      !memory_compare(s->link, address_of link_before,
+                                      sizeof link_before) &&
+                      !link_self.state_dirty);
+
+        /* Seal a grammatical keepalive under the very same counter. If the
+           malformed datagram spent it, this valid datagram is a replay. */
+        memory_copy(datagram, address_of head, sizeof head);
+        length = waterlink_seal(address_of sealing_key, datagram, 0);
+        check("sec: the malformed datagram did not spend its counter",
+              link_carried(datagram, length, from, 1234, now + 1, null));
+
+        {
+                struct waterlink_replay replay_before = s->now.replay;
+                p64 expired = s->now.made +
+                              (p64)WATERLINK_REJECT_SECONDS * 1000000;
+
+                head.counter = 2;
+                memory_copy(datagram, address_of head, sizeof head);
+                length = waterlink_seal(address_of sealing_key, datagram, 0);
+                check("sec: an authenticated datagram under expired keys is "
+                      "refused",
+                      !link_carried(datagram, length, from, 1234, expired,
+                                    null));
+                check("sec: expired keys spend no replay counter",
+                      !memory_compare(address_of s->now.replay,
+                                      address_of replay_before,
+                                      sizeof replay_before));
+        }
+        link_session_close(s);
+        crypto_forget(address_of sealing_key, sizeof sealing_key);
 }
 
 /*
@@ -54866,13 +55271,20 @@ static fn greetings(bipolar listener, p16 port)
         check("a member greeting from somewhere new is followed there",
               peers.count == 1 && peers.peer[0].port == port + 1);
 
-        wls_greeting(address_of wls_b, address_of wls_office, "itself", 14,
-                     greeting);
-        link_server_initiation(greeting, WATERLINK_DATAGRAM, wls_loopback, port,
-                               1500000);
-        check("sec: this machine's own greeting, back through the loop, keeps "
-              "nothing",
-              wls_peers_count() == 1);
+        {
+                positive stamps = link_self.stamps;
+
+                wls_greeting(address_of wls_b, address_of wls_office, "itself",
+                             14, greeting);
+                link_server_initiation(greeting, WATERLINK_DATAGRAM,
+                                       wls_loopback, port, 1500000);
+                check("sec: this machine's own greeting, back through the "
+                      "loop, keeps nothing",
+                      wls_peers_count() == 1);
+                check("sec: a greeting refused by pairing spends no replay "
+                      "slot",
+                      link_self.stamps == stamps);
+        }
 
         wls_peers_with(wls_client.public, WATERLINK_MAY_VERBS);
         wls_greeting(address_of wls_client, address_of wls_office, "machine-a",
@@ -55147,6 +55559,69 @@ static fn indexes_and_commands(void)
         check("and with it one is", link_index_new() != 0);
 
         {
+                p8 key[32];
+                p8 stamp[WATERLINK_STAMP_BYTES];
+                p8 first[32];
+                struct waterlink_peer peers[LINK_PEERS_MAX];
+
+                link_self.stamps = 0;
+                memory_zero(peers, sizeof peers);
+                waterlink_stamp(stamp, 1000, 0);
+                for (positive at = 0; at < LINK_PEERS_MAX; at++)
+                {
+                        memory_zero(key, sizeof key);
+                        key[0] = (p8)at;
+                        key[1] = 1;
+                        if (!at)
+                                memory_copy(first, key, sizeof first);
+                        memory_copy(peers[at].key, key, sizeof key);
+                        string_copy(peers[at].name, "peer");
+                        if (link_stamp_new(key, stamp))
+                                link_stamp_keep(key, stamp);
+                }
+                (void)wls_write(LINK_PEERS_PATH, peers, sizeof peers, 0600);
+                memory_zero(key, sizeof key);
+                key[0] = 0xff;
+                key[1] = 1;
+                check("sec: a full replay table refuses an unknown identity",
+                      link_self.stamps == LINK_PEERS_MAX &&
+                              !link_stamp_new(key, stamp));
+                check("sec: filling the replay table does not evict its first "
+                      "peer's marker",
+                      !link_stamp_new(first, stamp));
+
+                (void)system_call_4(syscall(fchmodat),
+                                    (positive)(bipolar)AT_FDCWD,
+                                    (positive)LINK_PEERS_PATH, 0644, 0);
+                check("sec: an unreadable peer authority cannot erase replay "
+                      "markers",
+                      !link_stamp_new(key, stamp) &&
+                              link_self.stamps == LINK_PEERS_MAX &&
+                              !link_stamp_new(first, stamp));
+
+                (void)wls_write(LINK_PEERS_PATH, peers, sizeof peers[0], 0600);
+                check("a full replay table releases forgotten peers before "
+                      "refusing a new identity",
+                      link_stamp_new(key, stamp) && link_self.stamps == 1);
+        }
+
+        {
+                p8 request[6] = {LINK_ASK_SHELL, 0, 0, 0, 0, 0};
+
+                check("sec: a shell request without its complete window size "
+                      "is malformed",
+                      !link_request_well_formed(LINK_KIND_SHELL, request, 1) &&
+                              !link_request_well_formed(LINK_KIND_SHELL,
+                                                        request, 4));
+                check("sec: a shell request with its complete window size is "
+                      "well formed",
+                      link_request_well_formed(LINK_KIND_SHELL, request, 5));
+                check("sec: an oversized shell terminal name is malformed",
+                      !link_request_well_formed(LINK_KIND_SHELL, request,
+                                                5 + 32));
+        }
+
+        {
                 p8 zero[33];
                 p8 text[48];
 
@@ -55203,6 +55678,7 @@ b32 main(void)
         publication();
         responder(listener, port);
         initiator_answer();
+        carried_is_atomic();
         greetings(listener, port);
         labels();
         wpa_key();
