@@ -27198,6 +27198,154 @@ static fn shell_asm_naturals(p8 address_to pages)
                         }
 }
 
+/*
+        arith_plain_scalar from src/sh/expand.c against the C it replaced,
+        blanks, a sign, the former literal reader and blanks to the end:
+        every text of up to five bytes drawn from blanks, signs, digits and
+        the bytes that end a number, the signed-word boundaries with signs
+        and padding around them, random padded digit runs, a null text, at
+        every alignment and ending before an unreadable page.
+*/
+positive2 arith_plain_scalar(string_address text);
+
+static bool shell_asm_scalar_former(string_address text, bipolar address_to value)
+{
+        string_address step;
+        bool negative = false;
+        bipolar magnitude;
+
+        if (!text)
+                return false;
+
+        step = text + string_span(text, string_set_blanks);
+        if (!string_get(step))
+        {
+                address_to value = 0;
+                return true;
+        }
+
+        if (string_is(step, '-') || string_is(step, '+'))
+        {
+                negative = string_is(step, '-');
+                step++;
+        }
+
+        if (!shell_asm_natural_former(address_of step, address_of magnitude))
+                return false;
+
+        step += string_span(step, string_set_blanks);
+        if (string_get(step))
+                return false;
+
+        address_to value = negative ? (bipolar)(0 - (positive)magnitude) : magnitude;
+        return true;
+}
+
+static fn shell_asm_scalar_one(const p8 address_to text)
+{
+        bipolar want_value = 0;
+        bool want = shell_asm_scalar_former((string_address)text, address_of want_value);
+        positive2 answer = arith_plain_scalar((string_address)text);
+
+        checks++;
+        if (answer.y != (positive)want || (bipolar)answer.x != (want ? want_value : 0))
+        {
+                failures++;
+                if (failures < 10)
+                        string_format(log, "FAIL arith_plain_scalar [%s]: %p %p want %p %p\n",
+                                      text ? (string_address)text : (string_address)"(null)",
+                                      answer.y, answer.x, (positive)want, (positive)want_value);
+        }
+}
+
+static fn shell_asm_scalars(p8 address_to pages)
+{
+        static p8 room[96];
+        static const p8 bytes[] = " \t-+0179a#_x\n)";
+        static const char address_to edges[] = {
+                "9223372036854775807", "9223372036854775808", "9999999999999999999",
+                "10000000000000000000", "18446744073709551616", "999999999999999999",
+                "0", "00", "010",
+        };
+        positive count = sizeof(bytes) - 1;
+
+        shell_asm_scalar_one(null);
+        for (positive length = 0; length <= 5; length++)
+        {
+                positive total = 1;
+
+                for (positive i = 0; i < length; i++)
+                        total *= count;
+                for (positive n = 0; n < total; n++)
+                {
+                        positive left = n;
+
+                        for (positive i = 0; i < length; i++, left /= count)
+                                room[i] = bytes[left % count];
+                        room[length] = 0;
+                        shell_asm_scalar_one(room);
+                }
+        }
+
+        for (positive i = 0; i < array_count(edges); i++)
+                for (positive shape = 0; shape < 16; shape++)
+                {
+                        positive at = 0, length = string_length((string_address)edges[i]);
+
+                        if (shape & 1)
+                                room[at++] = ' ';
+                        if (shape & 2)
+                                room[at++] = '\t';
+                        if (shape & 4)
+                                room[at++] = shape & 8 ? '-' : '+';
+                        else if (shape & 8)
+                                room[at++] = '-';
+                        memory_copy_apart(room + at, edges[i], length);
+                        at += length;
+                        if (shape & 1)
+                                room[at++] = '\t';
+                        room[at] = 0;
+                        shell_asm_scalar_one(room);
+                }
+
+        for (positive round = 0; round < 200000; round++)
+        {
+                positive offset = shell_asm_next() % 16, at = 0;
+                p8 address_to text = room + offset;
+
+                for (positive n = shell_asm_next() % 3; n; n--)
+                        text[at++] = shell_asm_next() % 2 ? ' ' : '\t';
+                if (shell_asm_next() % 3 == 0)
+                        text[at++] = shell_asm_next() % 2 ? '-' : '+';
+                for (positive n = shell_asm_next() % 22; n; n--)
+                        text[at++] = (p8)('0' + shell_asm_next() % 10);
+                for (positive n = shell_asm_next() % 3; n; n--)
+                        text[at++] = bytes[shell_asm_next() % 3];
+                if (shell_asm_next() % 8 == 0)
+                        text[at++] = bytes[shell_asm_next() % count];
+                text[at] = 0;
+                shell_asm_scalar_one(text);
+        }
+
+        if (pages)
+                for (positive length = 0; length < 24; length++)
+                        for (positive shape = 0; shape < 4; shape++)
+                        {
+                                p8 address_to text = pages + 8192 - length - 1;
+
+                                for (positive i = 0; i < length; i++)
+                                        text[i] = (p8)('1' + (i + shape) % 9);
+                                if (length && shape == 1)
+                                        text[0] = '-';
+                                if (length && shape == 2)
+                                        text[length - 1] = ' ';
+                                if (length && shape == 3)
+                                        text[0] = ' ';
+                                text[length] = 0;
+                                shell_asm_scalar_one(text);
+                        }
+}
+
 b32 main(void)
 {
         static p8 built[4096];
@@ -27256,6 +27404,7 @@ b32 main(void)
         shell_asm_writes((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_names((bipolar)(positive)pages > 0 ? pages : null);
         shell_asm_naturals((bipolar)(positive)pages > 0 ? pages : null);
+        shell_asm_scalars((bipolar)(positive)pages > 0 ? pages : null);
 
         string_format(log, "shell assembly: %p checks, %p failures\n", checks, failures);
         log_flush();

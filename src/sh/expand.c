@@ -2538,55 +2538,132 @@ __asm__(
 );
 #endif
 
-// A value is seldom padded, so the byte in front decides before the scan.
-static PURE inline INLINE string_address arith_skip_blanks(string_address at)
-{
-        if (string_not(at, ' ') && string_not(at, '\t'))
-                return at;
+/*
+        A variable that already holds a decimal, the way a loop counter does
+        after the first assignment: blanks, a sign, a plain decimal as
+        arith_plain_natural reads one, blanks and the end. x is the value
+        and y is one when the text is that, both zero when it is not. Octal,
+        bases and nested expressions go through arith_value_of instead of
+        being guessed at here, and a null or empty text is zero, as an
+        unset or empty name is.
 
-        return at + string_span(at, string_set_blanks);
-}
+        Every read of a counter comes through here, and the C paid a call
+        to arith_plain_natural and a cursor and a value through the stack
+        on each side of it and of this. The digits are read in the same
+        body now, a digit in front goes straight to them with blanks and a
+        sign asked only when it is not one, and since only blanks and the
+        end may follow the digits, the name byte and the # the literal
+        reader refuses after a number are refused here by that rule and
+        never looked up.
+*/
+positive2 arith_plain_scalar(string_address text);
 
-// A variable that already holds a decimal, the way a loop counter does
-// after the first assignment. Octal, bases and nested expressions go
-// through arith_value_of instead of being guessed at here.
-static bool arith_plain_scalar(string_address text, bipolar address_to value)
-{
-        string_address step;
-        bool negative = false;
-        bipolar magnitude;
-
-        if (!text)
-                return false;
-
-        step = arith_skip_blanks(text);
-        if (!string_get(step))
-        {
-                address_to value = 0;
-                return true;
-        }
-
-        if (string_is(step, '-') || string_is(step, '+'))
-        {
-                negative = string_is(step, '-');
-                step++;
-        }
-
-        {
-                positive2 plain = arith_plain_natural(step);
-
-                if (!plain.y)
-                        return false;
-                step = (string_address)plain.y;
-                magnitude = (bipolar)plain.x;
-        }
-
-        if (string_get(arith_skip_blanks(step)))
-                return false;
-
-        address_to value = negative ? arith_negate(magnitude) : magnitude;
-        return true;
-}
+#if X64
+__asm__(
+    ASM_FUNC(arith_plain_scalar)
+    "test %rdi, %rdi\n   jz 9f\n   movzbl (%rdi), %eax\n   xor %r11d, %r11d\n"
+    "sub $48, %eax\n   cmp $9, %eax\n   ja 30f\n"
+    // The digits, the first one's value in %eax at %rdi.
+    "2:  lea 1(%rdi), %rdx\n   movzbl (%rdx), %ecx\n   test %eax, %eax\n   jz 4f\n"
+    "lea -48(%rcx), %r9d\n   cmp $9, %r9d\n   ja 4f\n"
+    "3:  lea (%rax,%rax,4), %rax\n   lea (%r9,%rax,2), %rax\n   inc %rdx\n"
+    "movzbl (%rdx), %ecx\n   lea -48(%rcx), %r9d\n   cmp $9, %r9d\n   jbe 3b\n"
+    // Nineteen digits are exact in 64 bits and fit when the sign is clear.
+    "mov %rdx, %r8\n   sub %rdi, %r8\n   cmp $18, %r8\n   jbe 4f\n"
+    "cmp $19, %r8\n   ja 9f\n   test %rax, %rax\n   js 9f\n"
+    // %ecx is the byte after the digits, or after a lone 0, at %rdx.
+    "4:  test %ecx, %ecx\n   jnz 12f\n"
+    "8:  test %r11d, %r11d\n   jnz 14f\n   mov $1, %edx\n"
+    ASM_RET
+    "14: neg %rax\n   mov $1, %edx\n"
+    ASM_RET
+    // Blanks after the number, then the end.
+    "12: cmp $32, %ecx\n   je 13f\n   cmp $9, %ecx\n   jne 9f\n"
+    "13: inc %rdx\n   movzbl (%rdx), %ecx\n   test %ecx, %ecx\n   jz 8b\n   jmp 12b\n"
+    // Not a digit in front: blanks, then the end, a sign or a digit.
+    "30: add $48, %eax\n"
+    "31: cmp $32, %eax\n   je 32f\n   cmp $9, %eax\n   jne 33f\n"
+    "32: inc %rdi\n   movzbl (%rdi), %eax\n   jmp 31b\n"
+    "33: test %eax, %eax\n   jz 7f\n   cmp $45, %eax\n   je 34f\n   cmp $43, %eax\n   je 35f\n"
+    "sub $48, %eax\n   cmp $9, %eax\n   jbe 2b\n   jmp 9f\n"
+    "34: mov $1, %r11d\n"
+    "35: inc %rdi\n   movzbl (%rdi), %eax\n   sub $48, %eax\n   cmp $9, %eax\n   jbe 2b\n"
+    "9:  xor %eax, %eax\n   xor %edx, %edx\n"
+    ASM_RET
+    "7:  xor %eax, %eax\n   mov $1, %edx\n"
+    ASM_RET
+    ASM_END(arith_plain_scalar)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(arith_plain_scalar)
+    "cbz x0, 9f\n   ldrb w2, [x0]\n   mov w11, #0\n"
+    "sub w2, w2, #48\n   cmp w2, #9\n   b.hi 30f\n"
+    // The digits, the first one's value in w2 at x0.
+    "2:  add x1, x0, #1\n   ldrb w4, [x1]\n   cbz w2, 4f\n"
+    "sub w5, w4, #48\n   cmp w5, #9\n   b.hi 4f\n"
+    "3:  add x2, x2, x2, lsl #2\n   add x2, x5, x2, lsl #1\n"
+    "ldrb w4, [x1, #1]!\n   sub w5, w4, #48\n   cmp w5, #9\n   b.ls 3b\n"
+    // Nineteen digits are exact in 64 bits and fit when the sign is clear.
+    "sub x6, x1, x0\n   cmp x6, #18\n   b.ls 4f\n   cmp x6, #19\n   b.hi 9f\n   tbnz x2, #63, 9f\n"
+    // w4 is the byte after the digits, or after a lone 0, at x1.
+    "4:  cbnz w4, 12f\n"
+    "8:  cbnz w11, 14f\n   mov x0, x2\n   mov x1, #1\n"
+    ASM_RET
+    "14: neg x0, x2\n   mov x1, #1\n"
+    ASM_RET
+    // Blanks after the number, then the end.
+    "12: cmp w4, #32\n   ccmp w4, #9, #4, ne\n   b.ne 9f\n"
+    "ldrb w4, [x1, #1]!\n   cbz w4, 8b\n   b 12b\n"
+    // Not a digit in front: blanks, then the end, a sign or a digit.
+    "30: add w2, w2, #48\n"
+    "31: cmp w2, #32\n   ccmp w2, #9, #4, ne\n   b.ne 33f\n   ldrb w2, [x0, #1]!\n   b 31b\n"
+    "33: cbz w2, 7f\n   cmp w2, #45\n   b.eq 34f\n   cmp w2, #43\n   b.eq 35f\n"
+    "sub w2, w2, #48\n   cmp w2, #9\n   b.ls 2b\n   b 9f\n"
+    "34: mov w11, #1\n"
+    "35: ldrb w2, [x0, #1]!\n   sub w2, w2, #48\n   cmp w2, #9\n   b.ls 2b\n"
+    "9:  mov x0, #0\n   mov x1, #0\n"
+    ASM_RET
+    "7:  mov x0, #0\n   mov x1, #1\n"
+    ASM_RET
+    ASM_END(arith_plain_scalar)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(arith_plain_scalar)
+    "beqz a0, 9f\n   lbu t0, 0(a0)\n   li a5, 0\n   li t6, 10\n"
+    "addi t0, t0, -48\n   bgeu t0, t6, 30f\n"
+    // The digits, the first one's value in t0 at a0.
+    "2:  addi a1, a0, 1\n   lbu t3, 0(a1)\n   beqz t0, 4f\n"
+    "addi t4, t3, -48\n   bgeu t4, t6, 4f\n"
+    "3:  slli t5, t0, 2\n   add t0, t0, t5\n   slli t0, t0, 1\n   add t0, t0, t4\n"
+    "addi a1, a1, 1\n   lbu t3, 0(a1)\n   addi t4, t3, -48\n   bltu t4, t6, 3b\n"
+    // Nineteen digits are exact in 64 bits and fit when the sign is clear.
+    "sub t5, a1, a0\n   li t4, 18\n   bleu t5, t4, 4f\n   li t4, 19\n   bgtu t5, t4, 9f\n   bltz t0, 9f\n"
+    // t3 is the byte after the digits, or after a lone 0, at a1.
+    "4:  bnez t3, 12f\n"
+    "8:  bnez a5, 14f\n   mv a0, t0\n   li a1, 1\n"
+    ASM_RET
+    "14: neg a0, t0\n   li a1, 1\n"
+    ASM_RET
+    // Blanks after the number, then the end.
+    "12: li t1, 32\n   beq t3, t1, 13f\n   li t1, 9\n   bne t3, t1, 9f\n"
+    "13: addi a1, a1, 1\n   lbu t3, 0(a1)\n   beqz t3, 8b\n   j 12b\n"
+    // Not a digit in front: blanks, then the end, a sign or a digit.
+    "30: addi t0, t0, 48\n"
+    "31: li t1, 32\n   beq t0, t1, 32f\n   li t1, 9\n   bne t0, t1, 33f\n"
+    "32: addi a0, a0, 1\n   lbu t0, 0(a0)\n   j 31b\n"
+    "33: beqz t0, 7f\n   li t1, 45\n   beq t0, t1, 34f\n   li t1, 43\n   beq t0, t1, 35f\n"
+    "addi t0, t0, -48\n   bltu t0, t6, 2b\n   j 9f\n"
+    "34: li a5, 1\n"
+    "35: addi a0, a0, 1\n   lbu t0, 0(a0)\n   addi t0, t0, -48\n   bltu t0, t6, 2b\n"
+    "9:  li a0, 0\n   li a1, 0\n"
+    ASM_RET
+    "7:  li a0, 0\n   li a1, 1\n"
+    ASM_RET
+    ASM_END(arith_plain_scalar)
+);
+#endif
 
 /*
         The number a name holds, and the value itself when it is not one.
@@ -2636,10 +2713,10 @@ static bipolar arith_number_of(expand_reference reference, p8 address_to scratch
 
         // A counter holds plain decimal digits, which is one pass here.
         {
-                bipolar plain;
+                positive2 plain = arith_plain_scalar(value);
 
-                if (arith_plain_scalar(value, address_of plain))
-                        return plain;
+                if (plain.y)
+                        return (bipolar)plain.x;
         }
 
         step = value + string_span(value, string_set_blanks);
@@ -3000,8 +3077,11 @@ static bipolar arith_lvalue(p8 prefix)
                         string_address raw = env_get_hashed_span(
                             start, length, named.x, null);
 
-                        if (raw && arith_plain_scalar(raw, address_of value))
+                        positive2 plain = arith_plain_scalar(raw);
+
+                        if (plain.y)
                         {
+                                value = (bipolar)plain.x;
                                 arith_at = after;
                                 name.name = start;
                                 name.name_length = length;
@@ -3568,8 +3648,8 @@ static HOT bool arith_increment_fast(bipolar address_to value)
                 string_address raw = env_get_hashed_span(name_local, hashed.y,
                                                          hashed.x, null);
 
-                if (!raw || !arith_plain_scalar(raw, address_of held))
-                        held = arith_value_of(name);
+                plain = arith_plain_scalar(raw);
+                held = plain.y ? (bipolar)plain.x : arith_value_of(name);
         }
 
         arith_at = at;

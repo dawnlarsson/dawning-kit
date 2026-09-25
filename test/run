@@ -2290,7 +2290,7 @@ shell_asm_one()
           python3 test/differential.py --harness native_extract --source \
                 src/sh/shell.c shell_assignment_kind &&
           python3 test/differential.py --harness native_extract --source \
-                src/sh/expand.c arith_plain_natural; } > "$work/shell_asm.h" || return 1
+                src/sh/expand.c arith_plain_natural arith_plain_scalar; } > "$work/shell_asm.h" || return 1
         target_build freestanding_check shell_asm "$work/shell_asm.$target" "$target" \
                 "-I$work" || return 1
         $target_runner "$work/shell_asm.$target" > "$work/shell_asm.$target.out" 2>&1
