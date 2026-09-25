@@ -434,9 +434,14 @@ freestanding_check()
         check_architecture=${3:-}
         if [ "$#" -gt 3 ]; then shift 3; else set --; fi
 
+        #       A check is the whole program, and saying so lets the
+        #       compiler drop whatever its main cannot reach before it
+        #       optimizes any of it. A section that includes the shell to
+        #       reach a few of its functions compiled all of the shell -- 37
+        #       seconds where this takes three -- once for each machine.
         build_label="test/checks.c -DCHECK_$check_name"
         freestanding test/checks.c "$check_output" "$check_architecture" \
-                "-DCHECK_$check_name" "$@"
+                "-DCHECK_$check_name" -fwhole-program "$@"
         check_status=$?
         build_label=
         return "$check_status"
@@ -452,9 +457,24 @@ utilities=$(awk -F '[(),[:space:]]+' \
 shell_binary=""
 farm=""
 
+#       Under run -j the parent builds the shell and the policy farm while
+#       the lanes that need neither are already running. A lane that needs
+#       them waits here until that build is done, rather than starting a
+#       second build of the same file beside it.
+need_shared_wait()
+{
+        [ -n "${TEST_SHARED_WORK:-}" ] && [ -e "$work/shared.building" ] ||
+                return 0
+        while [ ! -e "$work/shared.done" ]; do
+                sleep 0.2
+        done
+        [ ! -e "$work/shared.failed" ]
+}
+
 need_shell()
 {
         [ -z "$shell_binary" ] || return 0
+        need_shared_wait || return 1
 
         #       A lane is a subshell and cannot hand the shell it built back
         #       to the lanes after it, so the build is skipped when the
@@ -4291,7 +4311,28 @@ policy_farm=""
 need_policy_farm()
 {
         need_shell || return 1
+        need_policy_utilities || return 1
 
+        if [ ! -d "$work/policy-bin" ]; then
+                mkdir -p "$work/policy-bin" || return 1
+                for policy_name in $utilities; do
+                        ln -sf "$farm/$policy_name" \
+                                "$work/policy-bin/$policy_name" || return 1
+                done
+                ln -sf "$farm/bash" "$work/policy-bin/bash" || return 1
+                for policy_name in awk script setarch; do
+                        ln -sf "$work/policy-utilities" \
+                                "$work/policy-bin/$policy_name" || return 1
+                done
+        fi
+
+        policy_farm="$work/policy-bin"
+}
+
+#       The policy utilities are a second whole-shell build, needing nothing
+#       of the first, so run -j builds the two side by side.
+need_policy_utilities()
+{
         if [ ! -x "$work/policy-utilities" ]; then
                 cat > "$work/policy-utilities.c" <<POLICY_UTILITIES
 #include "$root/src/lib.util.c"
@@ -4319,21 +4360,6 @@ POLICY_UTILITIES
                 freestanding "$work/policy-utilities.c" \
                         "$work/policy-utilities" || return 1
         fi
-
-        if [ ! -d "$work/policy-bin" ]; then
-                mkdir -p "$work/policy-bin" || return 1
-                for policy_name in $utilities; do
-                        ln -sf "$farm/$policy_name" \
-                                "$work/policy-bin/$policy_name" || return 1
-                done
-                ln -sf "$farm/bash" "$work/policy-bin/bash" || return 1
-                for policy_name in awk script setarch; do
-                        ln -sf "$work/policy-utilities" \
-                                "$work/policy-bin/$policy_name" || return 1
-                done
-        fi
-
-        policy_farm="$work/policy-bin"
 }
 
 #       The self-test drives the engine end to end on a farm of its own, and
@@ -15775,8 +15801,22 @@ notrun=""
 if [ "$jobs" -gt 1 ]; then
         #       Built here, once: a lane would otherwise build them itself,
         #       and two lanes building one file at once is a torn binary.
-        need_shell || exit 1
-        need_policy_farm || exit 1
+        #       The shell and the policy utilities are each a whole-shell
+        #       compile of half a minute, so they build side by side, and in
+        #       the background: the lanes that need neither start at once,
+        #       and need_shell holds the ones that do until shared.done.
+        : > "$work/shared.building"
+        (
+                need_shell > "$work/shared.shell.log" 2>&1 &
+                shell_build=$!
+                need_policy_utilities > "$work/shared.policy.log" 2>&1 &
+                policy_build=$!
+                wait "$shell_build" && wait "$policy_build" &&
+                        need_policy_farm > "$work/shared.farm.log" 2>&1 ||
+                        : > "$work/shared.failed"
+                : > "$work/shared.done"
+        ) &
+        shared_build=$!
 
         TEST_SHARED_WORK=$work
         export TEST_SHARED_WORK
@@ -15801,6 +15841,12 @@ echo $? > "$TEST_SHARED_WORK/lane.$1.status"'
         for lane in $serial; do
                 sh -c "$one_lane" "$here/run" "$lane"
         done
+
+        wait "$shared_build"
+        if [ -e "$work/shared.failed" ]; then
+                cat "$work"/shared.*.log
+                exit 1
+        fi
 
         for lane in $requested; do
                 printf '\n%s -- %s\n' "$lane" "$(describe "$lane")"
