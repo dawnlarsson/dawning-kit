@@ -2341,21 +2341,26 @@ static bipolar arith_choose();
 static bipolar arith_assign();
 static bipolar arith_expression();
 
-static fn arith_keep_lvalue(expand_reference name, bipolar value)
+/* The name goes by address here, into arith_store and into arith_value_of:
+   passed whole it was four words stored to the stack and read back as two
+   pairs, a load across two stores that cannot be forwarded, at every
+   variable an expression reads. */
+static fn arith_keep_lvalue(const expand_reference address_to name,
+                            bipolar value)
 {
-        if (name.name_length >= EXPAND_LOCAL_NAME ||
-            (name.key && name.key_length >= sizeof(arith_held_key)))
+        if (name->name_length >= EXPAND_LOCAL_NAME ||
+            (name->key && name->key_length >= sizeof(arith_held_key)))
         {
                 arith_is_lvalue = false;
                 return;
         }
 
-        memory_copy_end(arith_held_name, name.name, name.name_length);
-        arith_held = name;
+        memory_copy_end(arith_held_name, name->name, name->name_length);
+        arith_held = address_to name;
         arith_held.name = arith_held_name;
-        if (name.key)
+        if (name->key)
         {
-                memory_copy_end(arith_held_key, name.key, name.key_length);
+                memory_copy_end(arith_held_key, name->key, name->key_length);
                 arith_held.key = arith_held_key;
         }
         arith_held_value = value;
@@ -2368,7 +2373,8 @@ static COLD bool expand_assign_named(expand_reference reference,
                                      string_address value);
 
 // Writing a name back, which every assigning form ends with.
-static bipolar arith_store(expand_reference reference, bipolar value)
+static bipolar arith_store(const expand_reference address_to reference,
+                           bipolar value)
 {
         p8 written[32];
 
@@ -2376,11 +2382,11 @@ static bipolar arith_store(expand_reference reference, bipolar value)
                 return 0;
 
         bipolar_into_string(written, value);
-        if (!expand_assign_named(reference, written))
+        if (!expand_assign_named(address_to reference, written))
         {
                 arith_bad = true;
                 arith_said = true;
-                expand_assign_refused(reference);
+                expand_assign_refused(address_to reference);
 
                 if (!arith_bash_mode)
                         expand_fatal_status(2);
@@ -2826,11 +2832,12 @@ static COLD fn arith_illegal_number(string_address value)
 // What a name is worth to the grammar, which is the number it holds or,
 // in bash, the answer to the expression it holds. dash stops: a value
 // that is not one number is not an expression.
-static bipolar arith_value_of(expand_reference reference)
+static bipolar arith_value_of(const expand_reference address_to reference)
 {
         p8 scratch[32];
         string_address expression;
-        bipolar value = arith_number_of(reference, scratch, address_of expression);
+        bipolar value = arith_number_of(address_to reference, scratch,
+                                        address_of expression);
 
         if (!expression)
                 return value;
@@ -3085,7 +3092,7 @@ static bipolar arith_lvalue(p8 prefix)
                                 arith_at = after;
                                 name.name = start;
                                 name.name_length = length;
-                                arith_keep_lvalue(name, value);
+                                arith_keep_lvalue(address_of name, value);
                                 return value;
                         }
                 }
@@ -3107,9 +3114,10 @@ static bipolar arith_lvalue(p8 prefix)
 
         if (prefix)
         {
-                value = arith_value_of(name);
-                value = arith_store(name, prefix == '+' ? arith_addition(value, 1)
-                                                       : arith_subtraction(value, 1));
+                value = arith_value_of(address_of name);
+                value = arith_store(address_of name,
+                                    prefix == '+' ? arith_addition(value, 1)
+                                                  : arith_subtraction(value, 1));
                 goto done;
         }
 
@@ -3119,15 +3127,16 @@ static bipolar arith_lvalue(p8 prefix)
         {
                 bool increment = string_is(arith_at, '+');
 
-                value = arith_value_of(name);
+                value = arith_value_of(address_of name);
                 arith_at += 2;
-                arith_store(name, increment ? arith_addition(value, 1)
-                                           : arith_subtraction(value, 1));
+                arith_store(address_of name,
+                            increment ? arith_addition(value, 1)
+                                      : arith_subtraction(value, 1));
         }
         else
         {
-                value = arith_value_of(name);
-                arith_keep_lvalue(name, value);
+                value = arith_value_of(address_of name);
+                arith_keep_lvalue(address_of name, value);
         }
 
 done:
@@ -3512,9 +3521,10 @@ static bipolar arith_assign()
                 right = arith_assign();
 
                 if (kind == '=')
-                        return arith_store(target, right);
+                        return arith_store(address_of target, right);
 
-                return arith_store(target, arith_combine(kind, left, right));
+                return arith_store(address_of target,
+                                   arith_combine(kind, left, right));
         }
 }
 
@@ -3649,7 +3659,8 @@ static HOT bool arith_increment_fast(bipolar address_to value)
                                                          hashed.x, null);
 
                 plain = arith_plain_scalar(raw);
-                held = plain.y ? (bipolar)plain.x : arith_value_of(name);
+                held = plain.y ? (bipolar)plain.x
+                               : arith_value_of(address_of name);
         }
 
         arith_at = at;
@@ -3668,20 +3679,20 @@ static HOT bool arith_increment_fast(bipolar address_to value)
 
         if (prefix || assign)
         {
-                address_to value = arith_store(name, next);
+                address_to value = arith_store(address_of name, next);
                 if (same && !arith_bad)
                         arith_assign_stored = true;
         }
         else if (postfix)
         {
-                arith_store(name, next);
+                arith_store(address_of name, next);
                 address_to value = held;
         }
         else if (same &&
                  !env_assignment_readonly_hashed_span(name_local, hashed.y,
                                                       hashed.x))
         {
-                address_to value = arith_store(name, next);
+                address_to value = arith_store(address_of name, next);
                 if (!arith_bad)
                         arith_assign_stored = true;
         }
