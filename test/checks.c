@@ -58533,6 +58533,129 @@ static fn carried_is_atomic(void)
 }
 
 /*
+        A run of full datagrams longer than one send carries: sent as
+        segments in sends the kernel takes, every datagram arriving whole.
+        A run of sixty four was refused as too long for one UDP datagram,
+        and the refusal turned segments off for good.
+*/
+static fn segment_runs(bipolar listener, p16 port)
+{
+        struct link_session address_to s = link_self.session;
+        p8 raw[16];
+        p8 frame[LINK_CHUNK];
+        p8 datagram[WATERLINK_DATAGRAM + 16];
+        positive runs = LINK_SEGMENTS + 6;
+        positive heard = 0, whole = 0;
+        timespec pause = {0, 20000000};
+        bipolar got;
+
+        check("a session for segment runs opens", link_session_open(s));
+        wls_seeded(raw, sizeof raw, 93);
+        link_keys_install(address_of s->now, raw, raw, 0x11223344, 0x55667788);
+        memory_copy(s->address, wls_loopback, 16);
+        s->port = port;
+        s->link->window = WATERLINK_WINDOW_MOST;
+        link_self.gso = true;
+        wls_drain(listener);
+        wls_seeded(frame, sizeof frame, 5);
+        for (positive at = 0; at < runs; at++)
+                (void)link_post(s, 9, WATERLINK_FRAME_DURABLE, LINK_DATA, frame,
+                                sizeof frame);
+        link_session_flush(s, link_now());
+        (void)system_call_2(syscall(nanosleep), (positive)address_of pause, 0);
+        while ((got = socket_receive((b32)listener, datagram, sizeof datagram,
+                                     MSG_DONTWAIT, null, null)) > 0)
+        {
+                heard++;
+                whole += got == WATERLINK_DATAGRAM;
+        }
+        check("a run longer than one send's segments leaves segments on",
+              link_self.gso);
+        check("and every datagram of it arrives whole",
+              heard == runs && whole == runs);
+        link_session_close(s);
+}
+
+/*
+        Runs read coalesced: the link's own socket takes a run of full
+        datagrams with a short one last as one read and the size of each,
+        and a run the link sends itself is taken frame by frame, in order.
+*/
+static fn coalesced_runs(void)
+{
+        struct link_session address_to s = link_self.session;
+        bipolar outer = link_self.socket;
+        socket_address_internet6 bound, to;
+        b32 bound_size = sizeof bound;
+        p8 run[3 * WATERLINK_DATAGRAM + 48];
+        p8 raw[16], frame[LINK_CHUNK], from[16];
+        positive each = 0, runs = LINK_SEGMENTS + 6;
+        p16 port, from_port = 0;
+        timespec pause = {0, 20000000};
+        link_iovec part = {run, sizeof run};
+        p64 control[3];
+        link_message message;
+        bipolar got;
+
+        link_self.socket = link_socket_open(0, true);
+        if (link_self.socket < 0 || link_self.v4 ||
+            socket_name((b32)link_self.socket, address_of bound,
+                        address_of bound_size) < 0)
+        {
+                check("the link's own socket opens for coalesced runs", false);
+                link_self.socket = outer;
+                return;
+        }
+        port = network_order_16(bound.port);
+
+        //      Three full datagrams and a short one, sent as segments.
+        wls_seeded(run, sizeof run, 7);
+        link_socket_address(address_of to, wls_loopback, port);
+        memory_zero(control, sizeof control);
+        control[0] = 18;                        // cmsg_len
+        ((b32 address_to)control)[2] = 17;      // SOL_UDP
+        ((b32 address_to)control)[3] = 103;     // UDP_SEGMENT
+        ((p16 address_to)control)[8] = WATERLINK_DATAGRAM;
+        memory_zero(address_of message, sizeof message);
+        message.name = address_of to;
+        message.name_length = sizeof to;
+        message.parts = address_of part;
+        message.part_count = 1;
+        message.control = control;
+        message.control_length = 24;
+        got = system_call_3(syscall(sendmsg), (positive)outer,
+                            (positive)address_of message, MSG_NOSIGNAL);
+        (void)system_call_2(syscall(nanosleep), (positive)address_of pause, 0);
+        check("a run of segments goes out as one send", got == sizeof run);
+        got = link_receive(from, address_of from_port, address_of each);
+        check("and is read as one run, told the size of each datagram",
+              got == sizeof run && each == WATERLINK_DATAGRAM &&
+                      !memory_compare(link_inbound, run, sizeof run) &&
+                      !memory_compare(from, wls_loopback, 16));
+
+        check("a session that talks to itself opens", link_session_open(s));
+        wls_seeded(raw, sizeof raw, 95);
+        link_keys_install(address_of s->now, raw, raw, 0x10111213, 0x10111213);
+        memory_copy(s->address, wls_loopback, 16);
+        s->port = port;
+        s->link->window = WATERLINK_WINDOW_MOST;
+        link_self.gso = true;
+        wls_seeded(frame, sizeof frame, 9);
+        for (positive at = 0; at < runs; at++)
+                (void)link_post(s, 9, WATERLINK_FRAME_DURABLE, LINK_DATA, frame,
+                                sizeof frame);
+        link_session_flush(s, link_now());
+        (void)system_call_2(syscall(nanosleep), (positive)address_of pause, 0);
+        link_receive_all(link_now());
+        check("a run it sent itself is taken, every frame in order",
+              s->link->delivered == runs &&
+                      s->link->receiving[9].delivered == runs);
+        link_session_close(s);
+        socket_close((b32)link_self.socket);
+        link_self.socket = outer;
+}
+
+/*
         Group pairing: the replay marker is spent last, follow-ups come only
         from where the pairing began, and replies are judged on a copy.
 */
@@ -58902,7 +59025,7 @@ static fn ipv4_only(void)
                 socket_address_internet bound;
                 b32 size = sizeof bound;
                 p8 loopback[16], sixth[16] = {0}, from[16];
-                p8 datagram[WATERLINK_DATAGRAM + 16];
+                positive each = 0;
                 p16 port, from_port = 0;
                 system_poll_descriptor wait;
                 b32 wrong = 0;
@@ -58926,8 +59049,9 @@ static fn ipv4_only(void)
                 wait = (system_poll_descriptor){(b32)link_self.socket,
                                                 SYSTEM_POLL_READ, 0};
                 link_wait(address_of wait, 1, link_now() + 2000000);
-                if (link_receive(datagram, from, address_of from_port) != 4 ||
-                    memory_compare(datagram, "ping", 4) ||
+                if (link_receive(from, address_of from_port,
+                                 address_of each) != 4 ||
+                    each != 4 || memory_compare(link_inbound, "ping", 4) ||
                     memory_compare(from, loopback, 16) || from_port != port)
                         wrong |= 8;
                 sixth[15] = 1;
@@ -59079,6 +59203,8 @@ b32 main(void)
         responder(listener, port);
         initiator_answer();
         carried_is_atomic();
+        segment_runs(listener, port);
+        coalesced_runs();
         greetings(listener, port);
         labels();
         wpa_key();

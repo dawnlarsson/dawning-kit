@@ -101,6 +101,15 @@
 #define LINK_EXIT_BUSY 3
 #define LINK_FAILED 255
 
+/*      The most full datagrams one segment send carries. The run goes to the
+        kernel as one UDP datagram before it is cut, and that datagram's
+        length has sixteen bits: 65535 less an IPv6 header and a UDP header,
+        over 1200, is fifty four, and IPv4's bound gives the same. A run of
+        sixty four was refused as too long, and the refusal turned segments
+        off for the life of the process, so every transfer sent one datagram
+        a call once its window passed fifty four. */
+#define LINK_SEGMENTS ((65535 - 40 - 8) / WATERLINK_DATAGRAM)
+
 /*      A grant by name, and what a request needs of one: ask is the
         request byte that needs this grant, 0 for a grant no request asks
         for yet. */
@@ -808,7 +817,7 @@ typedef struct
         p64 state_written;
         bool state_dirty;
         //      A run of full datagrams for one place, sent as segments.
-        p8 batch[64 * WATERLINK_DATAGRAM];
+        p8 batch[LINK_SEGMENTS * WATERLINK_DATAGRAM];
         positive batched;
         p8 batch_address[16];
         p16 batch_port;
@@ -1070,7 +1079,7 @@ static fn link_session_flush(struct link_session address_to s, p64 now)
                 positive used;
                 positive length;
 
-                if (link_self.batched == 64 ||
+                if (link_self.batched == LINK_SEGMENTS ||
                     (link_self.batched &&
                      (memory_compare(link_self.batch_address, s->address, 16) ||
                       link_self.batch_port != s->port)))
@@ -2166,17 +2175,57 @@ static bool link_carried(p8 address_to datagram, positive length,
         return true;
 }
 
-static bipolar link_receive(p8 address_to datagram, p8 address_to address,
-                            p16 address_to port)
+/*
+        What came, a run at a time, into link_inbound. The socket coalesces
+        (UDP_GRO) datagrams from one sender that are all one size but the
+        last -- what the far side sent as segments -- and says that size, so
+        a run of fifty four is one call where it was fifty four. Answers the
+        bytes read, with size set to each datagram's, or the error.
+*/
+static p8 link_inbound[65536];
+
+static bipolar link_receive(p8 address_to address, p16 address_to port,
+                            positive address_to size)
 {
         socket_address_internet6 from;
-        b32 size = sizeof from;
-        bipolar got = socket_receive((b32)link_self.socket, datagram,
-                                     WATERLINK_DATAGRAM + 16, MSG_DONTWAIT,
-                                     address_of from, address_of size);
+        link_iovec part = {link_inbound, sizeof link_inbound};
+        p64 control[4];
+        link_message message;
+        bipolar got;
 
+        memory_zero(address_of message, sizeof message);
+        message.name = address_of from;
+        message.name_length = sizeof from;
+        message.parts = address_of part;
+        message.part_count = 1;
+        message.control = control;
+        message.control_length = sizeof control;
+        got = system_call_3(syscall(recvmsg), (positive)link_self.socket,
+                            (positive)address_of message, MSG_DONTWAIT);
         if (got < 0)
                 return got;
+
+        //      cmsghdr: length, level, type, then the size as an int.
+        address_to size = (positive)got;
+        for (positive at = 0; at + 20 <= message.control_length &&
+                              at + 20 <= sizeof control;)
+        {
+                p64 length;
+                b32 level, type, segment;
+
+                memory_copy(address_of length, (p8 address_to)control + at, 8);
+                memory_copy(address_of level, (p8 address_to)control + at + 8, 4);
+                memory_copy(address_of type, (p8 address_to)control + at + 12, 4);
+                if (length < 20 || at + length > sizeof control)
+                        break;
+                memory_copy(address_of segment, (p8 address_to)control + at + 16,
+                            4);
+                if (level == 17 && type == 104 && segment > 0 &&
+                    (positive)segment < (positive)got) // SOL_UDP, UDP_GRO
+                        address_to size = (positive)segment;
+                at += (length + 7) & ~7ull;
+        }
+
         if (from.family == AF_INET6)
         {
                 memory_copy(address, from.host, 16);
@@ -2252,6 +2301,7 @@ static bipolar link_socket_open(p16 port, bool any)
 {
         p8 anywhere[16] = {0};
         b32 zero = 0;
+        b32 one = 1;
         b32 big = 4 << 20;
         socket_address_internet6 self;
         bipolar handle = socket_new(AF_INET6,
@@ -2272,6 +2322,8 @@ static bipolar link_socket_open(p16 port, bool any)
                                 address_of big, sizeof big);
         (void)socket_option_set((b32)handle, SOL_SOCKET, SO_SNDBUF,
                                 address_of big, sizeof big);
+        (void)socket_option_set((b32)handle, 17, 104, address_of one,
+                                sizeof one); // SOL_UDP, UDP_GRO: link_receive
         if (any && socket_bind((b32)handle, address_of self,
                                link_destination(address_of self, anywhere,
                                                 port)) < 0)
@@ -2381,34 +2433,45 @@ static positive link_sessions_watch(system_poll_descriptor address_to watch,
 
 static fn link_client_answered(p8 address_to datagram, positive length);
 
+static fn link_datagram(p8 address_to datagram, positive length,
+                        p8 address_to address, p16 port, p64 now)
+{
+        struct waterlink_datagram head;
+
+        if (length < 16)
+                return;
+        memory_copy(address_of head, datagram, 16);
+        if (head.kind == WATERLINK_KIND_CARRY || head.kind == WATERLINK_KIND_CLOSE)
+                (void)link_carried(datagram, length, address, port, now,
+                                   link_hear);
+        else if (!link_self.server)
+        {
+                if (head.kind == WATERLINK_KIND_RESPOND)
+                        link_client_answered(datagram, length);
+        }
+        else if (head.kind == WATERLINK_KIND_INITIATE)
+                link_server_initiation(datagram, length, address, port, now);
+}
+
 static fn link_receive_all(p64 now)
 {
-        p8 datagram[WATERLINK_DATAGRAM + 16];
-
-        for (positive turn = 0; turn < 256; turn++)
+        for (positive turn = 0; turn < 256;)
         {
                 p8 address[16];
                 p16 port;
-                bipolar got = link_receive(datagram, address, address_of port);
-                struct waterlink_datagram head;
+                positive size;
+                bipolar got = link_receive(address, address_of port,
+                                           address_of size);
 
                 if (got < 0)
                         break;
-                if (got < 16)
-                        continue;
-                memory_copy(address_of head, datagram, 16);
-                if (head.kind == WATERLINK_KIND_CARRY ||
-                    head.kind == WATERLINK_KIND_CLOSE)
-                        (void)link_carried(datagram, (positive)got, address,
-                                           port, now, link_hear);
-                else if (!link_self.server)
-                {
-                        if (head.kind == WATERLINK_KIND_RESPOND)
-                                link_client_answered(datagram, (positive)got);
-                }
-                else if (head.kind == WATERLINK_KIND_INITIATE)
-                        link_server_initiation(datagram, (positive)got, address,
-                                               port, now);
+                turn++;
+                for (positive at = 0; at < (positive)got; at += size, turn++)
+                        link_datagram(link_inbound + at,
+                                      (positive)got - at < size
+                                              ? (positive)got - at
+                                              : size,
+                                      address, port, now);
         }
 }
 
