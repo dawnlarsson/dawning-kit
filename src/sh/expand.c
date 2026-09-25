@@ -9981,9 +9981,17 @@ static inline INLINE positive expand_simple_dollar_shape(string_address word,
         if (!byte_is_alpha(first) && first != '_')
                 return 0;
 
-        named = expand_name_hash(name);
-        length = named.y;
-        address_to hash = named.x;
+        /* The field path hashes after the shape is known, out of line: its
+           caller is inlined into the executor, where a hash loop of its own
+           costs every other command registers. */
+        if (hash)
+        {
+                named = expand_name_hash(name);
+                length = named.y;
+                address_to hash = named.x;
+        }
+        else
+                length = string_span(name, string_set_name);
 
         if (address_to quoted)
         {
@@ -10000,17 +10008,18 @@ static inline INLINE bool expand_simple_dollar_word(string_address word,
                                       shell_words address_to out, bool borrow)
 {
         bool quoted;
-        positive hash;
         positive length = expand_simple_dollar_shape(word, address_of quoted,
-                                                     address_of hash);
+                                                     null);
         string_address name;
         string_address value;
         positive value_length;
+        positive hash;
 
         if (!length)
                 return false;
 
         name = word + (quoted ? 2 : 1);
+        hash = memory_hash_33((address_any)name, length);
         value = env_get_hashed_span(name, length, hash, address_of value_length);
 
         /* Absent includes nameref-to-element, associative $name and the
