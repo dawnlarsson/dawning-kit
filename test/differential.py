@@ -36459,6 +36459,26 @@ int main(int argc, char **argv)
                 for (int k = 0; k < 6; k++)
                         if (waterlink_paused(&link_b, k))
                                 waterlink_resume(&link_b, k, sink_hear, 0);
+                /*      Treat the application-facing key byte as hostile as
+                        well as the authenticated body.  Every invalid value
+                        is sampled across the run; ASan turns an unchecked
+                        receiving-table subscript into a hard failure. */
+                {
+                        p8 hostile_key = (p8)(WATERLINK_KEYS +
+                                judge_next() % (256 - WATERLINK_KEYS));
+                        struct waterlink_link before = link_b;
+
+                        if (waterlink_paused(&link_b, hostile_key))
+                                inv_bad++;
+                        waterlink_resume(&link_b, hostile_key, sink_hear, 0);
+                        if (waterlink_post(&link_b, hostile_key,
+                                           WATERLINK_FRAME_DURABLE, 0,
+                                           WATERLINK_FRAME_MAX, ~0ull))
+                                inv_bad++;
+                        before.refused++;
+                        if (memcmp(&before, &link_b, sizeof before))
+                                inv_bad++;
+                }
                 {
                         p8 back[WATERLINK_PAYLOAD];
                         bool alone = false;

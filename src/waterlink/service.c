@@ -145,6 +145,15 @@ static p64 link_now(void)
         return system_clock_ns(1) / 1000;
 }
 
+/*      Elapsed monotonic time, including a timestamp made after the caller's
+        snapshot.  The receive loop can install keys while draining one batch;
+        a later datagram in that batch must not turn the small ordering gap
+        into nearly 2^64 microseconds through unsigned subtraction. */
+static p64 link_age(p64 now, p64 then)
+{
+        return now > then ? now - then : 0;
+}
+
 // All digits and nothing else, below a million; -1 otherwise.
 static bipolar link_decimal(string_address text)
 {
@@ -1693,6 +1702,17 @@ static bool link_stream_take(struct link_session address_to s,
                              struct link_stream address_to stream,
                              p8 address_to payload, positive length)
 {
+        /*      Stream control words are directional and canonical.  In
+                particular, an input stream must not accept the output-only
+                exit record and let a peer impersonate the local waitid result. */
+        if (!length ||
+            (payload[0] == LINK_DATA ? false
+             : payload[0] == LINK_END ? length != 1
+             : payload[0] == LINK_EXIT ? length != 5 ||
+                                                stream->key != LINK_KEY_OUTPUT
+                                       : true))
+                return true;
+
         if (payload[0] == LINK_DATA)
         {
                 while (stream->fd >= 0 && stream->skip < length - 1)
@@ -1718,7 +1738,7 @@ static bool link_stream_take(struct link_session address_to s,
                 }
                 stream->skip = 0;
         }
-        else if (payload[0] == LINK_EXIT && length >= 5)
+        else if (payload[0] == LINK_EXIT)
         {
                 memory_copy(address_of s->status, payload + 1, 4);
                 s->exited = true;
@@ -1761,6 +1781,9 @@ static bool link_hear(address_any context, struct waterlink_frame address_to hea
         case LINK_KEY_ANSWER:
                 if (link_self.server)
                         break;
+                if ((payload[0] == 'O' && length != 1) ||
+                    (payload[0] != 'O' && payload[0] != 'N'))
+                        break;
                 s->answered = true;
                 if (payload[0] == 'N')
                 {
@@ -1779,7 +1802,7 @@ static bool link_hear(address_any context, struct waterlink_frame address_to hea
                 }
                 break;
         case LINK_KEY_SIZE:
-                if (length >= 5 && s->terminal >= 0)
+                if (length == 5 && payload[0] == 'W' && s->terminal >= 0)
                 {
                         winsize size = link_size_unpack(payload + 1);
 
@@ -1788,7 +1811,8 @@ static bool link_hear(address_any context, struct waterlink_frame address_to hea
                 }
                 break;
         case LINK_KEY_SIGNAL:
-                if (length >= 2 && s->pid > 0 && !s->exited &&
+                if (length == 2 && payload[0] == 'K' && s->pid > 0 &&
+                    !s->exited &&
                     (payload[1] == 1 || payload[1] == 2 || payload[1] == 3 ||
                      payload[1] == 9 || payload[1] == 15))
                         (void)system_call_2(syscall(kill), (positive)-s->pid,
@@ -1845,7 +1869,7 @@ static fn link_session_streams(struct link_session address_to s, p64 now)
         //      A terminal can stay open behind a command that left something
         //      running in the background; a moment after the command ends, the
         //      session ends with it, as ssh's does.
-        if (s->exited && now - s->exited_at > 300000)
+        if (s->exited && link_age(now, s->exited_at) > 300000)
                 s->reads[0].done = s->reads[1].done = true;
 
         if (s->exited && s->reads[0].done && s->reads[1].done && !s->exit_sent &&
@@ -2152,7 +2176,7 @@ static fn link_note_seen(struct link_session address_to s, p64 wall);
         datagram, which it was, a system call each. */
 static p64 link_wall(p64 now)
 {
-        if (!link_self.wall_read || now - link_self.wall_read >= 1000000)
+        if (!link_self.wall_read || link_age(now, link_self.wall_read) >= 1000000)
         {
                 link_self.wall = system_clock_ns(0) / 1000000000ull;
                 link_self.wall_read = now;
@@ -2191,9 +2215,14 @@ static bool link_carried(p8 address_to datagram, positive length,
         if (count < 0)
                 return false;
 
-        if (waterlink_session_spent(now - keys->made, keys->counter))
+        /*      The received counter is the peer's use of this receiving key.
+                Our sending counter can remain small while a one-way peer
+                exhausts the AEAD message limit, so it cannot enforce the
+                receiving half's nonce budget. */
+        if (waterlink_session_spent(link_age(now, keys->made), head.counter))
                 return false;
-        if (keys == address_of s->before && now - s->now.made > LINK_GRACE)
+        if (keys == address_of s->before &&
+            link_age(now, s->now.made) > LINK_GRACE)
                 return false;
         if (!waterlink_replay_new(address_of keys->replay, head.counter))
                 return false;
@@ -2347,7 +2376,8 @@ static fn link_state_write(p64 now)
 {
         link_state address_to state = address_of link_self.state;
 
-        if (!link_self.state_dirty || now - link_self.state_written < 200000)
+        if (!link_self.state_dirty ||
+            link_age(now, link_self.state_written) < 200000)
                 return;
         link_self.state_dirty = false;
         link_self.state_written = now;
@@ -2364,7 +2394,7 @@ static fn link_state_write(p64 now)
                 open->kind = s->kind;
                 memory_copy(open->address, s->address, 16);
                 open->port = s->port;
-                open->seconds = (now - s->opened) / 1000000;
+                open->seconds = link_age(now, s->opened) / 1000000;
                 open->rtt = s->link->smoothed;
                 state->open_count++;
         }
@@ -2462,9 +2492,9 @@ static p64 link_sessions_turn(p64 now)
                 {
                         if (s->exit_sent && waterlink_idle(s->link))
                                 s->finished = true;
-                        if (now - s->heard > LINK_DEAD ||
+                        if (link_age(now, s->heard) > LINK_DEAD ||
                             (s->now.live &&
-                             waterlink_session_spent(now - s->now.made,
+                             waterlink_session_spent(link_age(now, s->now.made),
                                                      s->now.counter)))
                                 s->finished = true;
                         if (s->finished)
@@ -2479,7 +2509,7 @@ static p64 link_sessions_turn(p64 now)
                 if (s->now.live)
                 {
                         link_session_flush(s, now);
-                        if (now - s->spoke > LINK_KEEPALIVE)
+                        if (link_age(now, s->spoke) > LINK_KEEPALIVE)
                                 link_session_say(s, WATERLINK_KIND_CARRY);
                 }
 
@@ -2907,7 +2937,7 @@ static b32 link_client_run(string_address name, p8 kind,
                 if (!s->now.live)
                 {
                         if (!link_client.ours ||
-                            now - link_client.initiated >= LINK_ATTEMPT)
+                            link_age(now, link_client.initiated) >= LINK_ATTEMPT)
                         {
                                 p8 place[64];
 
@@ -2961,9 +2991,9 @@ static b32 link_client_run(string_address name, p8 kind,
                                 (void)edit_terminal_raw();
                         asked = true;
                 }
-                else if (now - s->now.made >= rekey_after &&
+                else if (link_age(now, s->now.made) >= rekey_after &&
                          (!link_client.ours ||
-                          now - link_client.initiated > LINK_ATTEMPT) &&
+                          link_age(now, link_client.initiated) > LINK_ATTEMPT) &&
                          !link_client_initiate(s, now))
                         break;
 
@@ -3022,7 +3052,8 @@ static b32 link_client_run(string_address name, p8 kind,
                         answer = s->status;
                         break;
                 }
-                if (s->now.live && (now - s->heard > LINK_DEAD || s->finished))
+                if (s->now.live &&
+                    (link_age(now, s->heard) > LINK_DEAD || s->finished))
                 {
                         edit_terminal_restore();
                         string_format(log_error,
