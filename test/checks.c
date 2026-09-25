@@ -26864,9 +26864,9 @@ static fn shell_asm_binaries(p8 address_to pages)
         write; or, for one it does not take, that env_write_whole was reached
         with all eight arguments as they were and nothing was touched.
 */
-bool shell_restricted, shell_bash_compat;
+KEEP bool shell_restricted, shell_bash_compat;
 KEEP bool shell_envp_dirty;
-positive shell_options;
+KEEP positive shell_options;
 
 bool env_write_destination(const_string name, positive name_len, positive hash, positive idx,
                            const_string value, bool assignment,
@@ -26881,7 +26881,7 @@ static struct
         shell_asm_variable address_to destination;
 } shell_asm_whole;
 
-bool env_write_whole(const_string name, positive name_len, positive hash, positive idx,
+KEEP bool env_write_whole(const_string name, positive name_len, positive hash, positive idx,
                      const_string value, bool assignment,
                      shell_asm_variable address_to destination, bool protect)
 {
@@ -27192,6 +27192,9 @@ static fn shell_asm_names(p8 address_to pages)
                         }
                 }
         }
+}
+
+/*
         arith_plain_natural from src/sh/expand.c against the C it replaced,
         which asked at every digit whether the next would overflow: every
         byte after 7, 0 and 123, every pair and triple of bytes a literal,

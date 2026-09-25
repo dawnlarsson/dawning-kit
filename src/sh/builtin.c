@@ -1217,7 +1217,7 @@ bool shell_here(p8 address_to into, positive room);
         that was never set: all of that happens where commands are run. This is
         only where the letters are kept so that code there can ask.
 */
-positive shell_options;
+KEEP __attribute__((externally_visible)) positive shell_options;
 
 #define SHELL_FLAG(letter) ((positive)1 << ((letter) - 'a'))
 
@@ -3264,7 +3264,7 @@ KEEP __attribute__((externally_visible)) bool env_write_whole(const_string name,
         readonly gate went inline, 123 before, and a call to string_length
         and one to memory_copy_end besides.
 */
-bool env_write_whole(const_string name, positive name_len, positive hash,
+KEEP __attribute__((externally_visible)) bool env_write_whole(const_string name, positive name_len, positive hash,
                      positive idx, const_string value, bool assignment,
                      env_variable address_to destination, bool protect);
 

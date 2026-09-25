@@ -191,7 +191,7 @@ b32 shell_is_interactive;
 /* One implementation, two conflicting shell policies. The standalone entry
    selects Bash policy only when invoked as bash; sh/dash and embedded callers
    retain Moonwater's existing dash-compatible defaults. */
-bool shell_bash_compat;
+KEEP __attribute__((externally_visible)) bool shell_bash_compat;
 bool shell_dash_compat;
 /* Set by the reader when more source remains after this physical line,
    ignoring trailing newlines. Dash's runtime "Bad fd number" names that
@@ -208,7 +208,7 @@ bool shell_line_has_more;
         its own is what that shape wants; a table entry would have brought
         the three spellings it does not have with it.
 */
-bool shell_restricted;
+KEEP __attribute__((externally_visible)) bool shell_restricted;
 /* -r and --restricted, as opposed to the name rbash: the restriction
    stays even when -c's $0 operand is not rbash. */
 bool shell_restricted_sticky;
