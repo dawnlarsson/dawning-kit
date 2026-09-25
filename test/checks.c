@@ -53708,7 +53708,7 @@ static fn random_seeded(p8 address_to into, positive length, p8 seed)
 static fn handshake(void)
 {
         struct waterlink_identity alice, bob, eve;
-        struct waterlink_noise starting, answering;
+        struct waterlink_noise starting, answering, starting_kept;
         p8 first[WATERLINK_DATAGRAM];
         p8 second[WATERLINK_DATAGRAM];
         p8 kept[WATERLINK_DATAGRAM];
@@ -53761,6 +53761,96 @@ static fn handshake(void)
         check("and names the initiator's index",
               ((struct waterlink_datagram address_to)second)->receiver ==
                       0x11223344);
+        starting_kept = starting;
+
+        /* Every individual bit is authenticated by mac1, including header,
+           ciphertext, tag and padding. This is exhaustive over both full
+           handshake datagrams rather than a sample of interesting offsets. */
+        {
+                p8 changed[WATERLINK_DATAGRAM];
+                positive first_refused = 0;
+                positive second_refused = 0;
+
+                for (positive bit = 0; bit < WATERLINK_DATAGRAM * 8; bit++)
+                {
+                        memory_copy(changed, kept, sizeof changed);
+                        changed[bit / 8] ^= (p8)(1u << (bit % 8));
+                        first_refused +=
+                                !waterlink_gate_passes(address_of bob, changed,
+                                                       sizeof changed);
+
+                        memory_copy(changed, second, sizeof changed);
+                        changed[bit / 8] ^= (p8)(1u << (bit % 8));
+                        second_refused +=
+                                !waterlink_gate_passes(address_of alice, changed,
+                                                       sizeof changed);
+                }
+                check("sec: every one-bit initiation mutation fails its gate",
+                      first_refused == WATERLINK_DATAGRAM * 8);
+                check("sec: every one-bit answer mutation fails its gate",
+                      second_refused == WATERLINK_DATAGRAM * 8);
+        }
+
+        /* mac1 is keyed only by a public identity and is deliberately not
+           authentication. Give each encrypted-field mutation a freshly
+           correct mac1 and require Noise's DH/transcript tag to reject it. */
+        {
+                p8 changed[WATERLINK_DATAGRAM];
+                p8 gate[32];
+                positive first_refused = 0;
+                positive second_refused = 0;
+                positive first_bits =
+                        (WATERLINK_INITIATE_BYTES - 16) * 8;
+                positive second_bits =
+                        (WATERLINK_RESPOND_BYTES - 16) * 8;
+
+                waterlink_gate_of(bob.public, gate);
+                for (positive bit = 0; bit < first_bits; bit++)
+                {
+                        struct waterlink_noise candidate;
+
+                        memory_copy(changed, kept, sizeof changed);
+                        changed[16 + bit / 8] ^= (p8)(1u << (bit % 8));
+                        waterlink_mac1(gate, changed,
+                                       16 + WATERLINK_INITIATE_BYTES - 16,
+                                       changed + 16 +
+                                               WATERLINK_INITIATE_BYTES - 16);
+                        first_refused +=
+                                waterlink_gate_passes(address_of bob, changed,
+                                                      sizeof changed) &&
+                                !waterlink_accept(address_of candidate,
+                                                  address_of bob, null, changed,
+                                                  who, heard_hello);
+                        crypto_forget(address_of candidate, sizeof candidate);
+                }
+
+                waterlink_gate_of(alice.public, gate);
+                for (positive bit = 0; bit < second_bits; bit++)
+                {
+                        struct waterlink_noise candidate = starting_kept;
+
+                        memory_copy(changed, second, sizeof changed);
+                        changed[16 + bit / 8] ^= (p8)(1u << (bit % 8));
+                        waterlink_mac1(gate, changed,
+                                       16 + WATERLINK_RESPOND_BYTES - 16,
+                                       changed + 16 +
+                                               WATERLINK_RESPOND_BYTES - 16);
+                        second_refused +=
+                                waterlink_gate_passes(address_of alice, changed,
+                                                      sizeof changed) &&
+                                !waterlink_answered(address_of candidate,
+                                                    address_of alice, changed,
+                                                    address_of index);
+                        crypto_forget(address_of candidate, sizeof candidate);
+                }
+                check("sec: Noise rejects every one-bit initiation mutation "
+                      "behind a repaired gate",
+                      first_refused == first_bits);
+                check("sec: Noise rejects every one-bit answer mutation behind "
+                      "a repaired gate",
+                      second_refused == second_bits);
+        }
+
         check("the initiator reads the answer",
               waterlink_answered(address_of starting, address_of alice, second,
                                  address_of index) &&
