@@ -21761,11 +21761,11 @@ int main(void) {
                             "-Wl,--build-id=none", "-Wl,--no-warn-rwx-segments",
                             "-DCHECK_spark_entry", str(root / "test/checks.c"),
                             "-o", str(binary)], check=True)
-            passed = sum(subprocess.run([str(binary), str(mode)]).returncode == 0
-                         for mode in range(10))
-            print(f"spark old/new/fallback entry: {passed} of 10")
-            write_tally("spark-entry", passed, 10)
-            return 0 if passed == 10 else 1
+            passed = sum(subprocess.run([str(binary), chr(48 + mode)]).returncode == 0
+                         for mode in range(14))
+            print(f"spark old/new/fallback entry: {passed} of 14")
+            write_tally("spark-entry", passed, 14)
+            return 0 if passed == 14 else 1
         print("spark x86 entry: not run (requires native Linux x86-64)")
     return 0
 
@@ -25393,6 +25393,9 @@ typedef unsigned int p32;
 typedef int b32;
 typedef unsigned long positive;
 typedef long bipolar;
+/* What a Spark loader hands the proof at exec; nothing starts this so. */
+static p8 program_entry_facts;
+#define SPARK_ENTRY_UNFILTERED 0x01UL
 typedef char *string_address;
 typedef void *address_any;
 #define DEAD_END __attribute__((noreturn))
@@ -25871,6 +25874,17 @@ int main(void)
                 return 82;
         fake_status_mount = 0;
 
+        /* Under a Spark loader's word the proof reads nothing: the status
+           file, forged or not, is never asked. Cleared, it is read again. */
+        program_entry_facts = SPARK_ENTRY_UNFILTERED;
+        fake_status_mount = 1;
+        if (!floodlight_entry_prove())
+                return 83;
+        program_entry_facts = 0;
+        if (floodlight_entry_prove())
+                return 84;
+        fake_status_mount = 0;
+
         fail_call = 1;
         if (floodlight_confine(refused, 2, false))
                 return 8;
@@ -25975,8 +25989,12 @@ int main(void)
                         SYS_process_vm_writev,
                 };
                 capget_seen = capset_seen = capset_bad_mask = 0;
+                /* What the loader said at exec stops holding at the install. */
+                program_entry_facts = SPARK_ENTRY_UNFILTERED;
                 if (!floodlight_apply(false, true, false))
                         _exit(33);
+                if (program_entry_facts)
+                        _exit(78);
                 /* The installed filter is visible to the entry guard, but
                    interpreter recursion may trust the provenance bit set by
                    this image after that exact installation succeeded. */

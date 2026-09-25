@@ -831,6 +831,22 @@ static atomic_long_t stat_map_ns = ATOMIC_LONG_INIT(0);
 
 static int execute_spark(struct linux_binprm *bprm);
 
+/*
+        The entry facts a loaded program is handed (SPARK_ENTRY_*): read at
+        load, when the task is single-threaded and past the point of no
+        return, so nothing can change them before the program's first
+        instruction.
+*/
+static unsigned long spark_entry_facts(void)
+{
+#ifdef CONFIG_SECCOMP
+        return current->seccomp.mode == SECCOMP_MODE_DISABLED
+                   ? SPARK_ENTRY_UNFILTERED : 0;
+#else
+        return SPARK_ENTRY_UNFILTERED;
+#endif
+}
+
 #ifdef CONFIG_X86_64
 static unsigned long __ro_after_init spark_cpu_features;
 
@@ -1210,9 +1226,10 @@ int execute_spark(struct linux_binprm *bprm)
            kernel already has.  Spark's private entry ABI hands that answer
            to _start; an image run by an older loader simply misses the magic
            and retains its userspace detection fallback. */
-        regs->r12 = SPARK_START_MAGIC;
+        regs->r12 = SPARK_START_MAGIC_FACTS;
         regs->r13 = spark_cpu_features;
         regs->r14 = task_pid_nr(current);
+        regs->r15 = spark_entry_facts();
 
         regs->ip = header->entry;
         regs->sp = stack_addr;
@@ -1220,9 +1237,10 @@ int execute_spark(struct linux_binprm *bprm)
         regs->cs = __USER_CS;
         regs->ss = __USER_DS;
 #elif defined(CONFIG_ARM64)
-        regs->regs[19] = SPARK_START_MAGIC;
+        regs->regs[19] = SPARK_START_MAGIC_FACTS;
         regs->regs[20] = spark_cpu_features;
         regs->regs[21] = task_pid_nr(current);
+        regs->regs[22] = spark_entry_facts();
         regs->pc = header->entry;
         regs->sp = stack_addr;
         regs->pstate = PSR_MODE_EL0t;
@@ -1235,9 +1253,10 @@ int execute_spark(struct linux_binprm *bprm)
                 shell's included, was an illegal instruction and SIGILL.
         */
         start_thread(regs, header->entry, stack_addr);
-        regs->s2 = SPARK_START_MAGIC;
+        regs->s2 = SPARK_START_MAGIC_FACTS;
         regs->s3 = spark_cpu_features_now();
         regs->s4 = task_pid_nr(current);
+        regs->s5 = spark_entry_facts();
 #endif
 
         finalize_exec(bprm);

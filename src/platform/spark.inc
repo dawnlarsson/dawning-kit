@@ -3,6 +3,18 @@
 #define MOONWATER_SPARK_ENTRY_INCLUDED
 
 #define SPARK_START_MAGIC 0x5350524b53544132UL /* "SPRKSTA2" */
+/* Version 3 is version 2 and one more register, the entry facts: what the
+   kernel knows about a program's start that the program could only find out
+   at a cost. r15 on x86_64, x22 on arm64, s5 on riscv64. The two magics
+   differ in their last byte alone, so _start takes both in one compare and
+   trusts the facts only under version 3: an older loader leaves that
+   register holding whatever it held. */
+#define SPARK_START_MAGIC_FACTS 0x5350524b53544133UL /* "SPRKSTA3" */
+/* No seccomp filter is on the program: its mode was disabled at exec. A
+   filter survives exec and only the task itself adds one, so this holds
+   until the program installs one of its own, and saves it reading and
+   authenticating /proc/self/status to prove the same. */
+#define SPARK_ENTRY_UNFILTERED 0x01UL
 /* Version 2 changes the feature word from packed bits to Boolean byte lanes.
    Keeping that change in the magic makes either side of a mixed old/new pair
    reject the private handoff and use the ordinary CPUID fallback instead of

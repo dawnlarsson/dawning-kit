@@ -49156,6 +49156,8 @@ bipolar system_call_6(positive syscall, positive argument_1,
 
 extern p8 address_to program_stack_base;
 extern positive program_entry_identity;
+// SPARK_ENTRY_* bits the loader handed over, zero unless it spoke version 3.
+extern p8 program_entry_facts;
 
 __asm__(
     ASM_BSS_OBJECT_BEGIN(program_stack_base, 8)
@@ -49164,6 +49166,9 @@ __asm__(
     ASM_HIDDEN_BSS_OBJECT_BEGIN(program_entry_identity, 8)
     ".zero 8\n"
     ASM_OBJECT_END(program_entry_identity)
+    ASM_HIDDEN_BSS_OBJECT_BEGIN(program_entry_facts, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(program_entry_facts)
 );
 
 /*
@@ -52670,8 +52675,13 @@ __asm__(
     /* A Spark loader supplies the already enabled CPU feature set.  Keep the
        complete detector as the stock-kernel/ELF fallback rather than making
        the runtime depend on Moonwater merely to start. */
+    /* Version 2 or 3: the magics differ in their last byte, so r12 xor
+       the version 2 magic is 0 or 1 for a Spark loader and anything else
+       for none. Only version 3 carries the entry facts in r15; under 2
+       the mask is zero and so are they. */
     "movabs $" LINUX_RUNTIME_TEXT(SPARK_START_MAGIC) ", %rax\n"
-    "cmp %rax, %r12\n   jne .Lstart_x64_detect\n"
+    "xor %r12, %rax\n   cmp $1, %rax\n   ja .Lstart_x64_detect\n"
+    "neg %rax\n   and %r15, %rax\n   mov %al, program_entry_facts(%rip)\n"
     "mov %r14, program_entry_identity(%rip)\n"
     /* The private feature word carries one already-normalised Boolean byte
        for each public runtime flag.  Publishing those bytes directly is the
@@ -52814,10 +52824,14 @@ __asm__(
     "adrp x1, thread_main\n   add x1, x1, :lo12:thread_main\n"
     "str x1, [x1]\n   msr tpidr_el0, x1\n"
     "adrp x1, program_stack_base\n   str x0, [x1, :lo12:program_stack_base]\n"
-    /* SPARK_START_MAGIC, "SPRKSTA2", sixteen bits at a time. */
+    /* SPARK_START_MAGIC, "SPRKSTA2", sixteen bits at a time; version 3
+       differs in the last byte, so x19 xor it is 0 or 1 for a Spark
+       loader, and only under 3 do the entry facts in x22 count. */
     "movz x1, #0x4132\n   movk x1, #0x5354, lsl #16\n"
     "movk x1, #0x524b, lsl #32\n   movk x1, #0x5350, lsl #48\n"
-    "cmp x19, x1\n   b.ne .Lstart_arm64_detect\n"
+    "eor x1, x19, x1\n   cmp x1, #1\n   b.hi .Lstart_arm64_detect\n"
+    "neg x1, x1\n   and x1, x1, x22\n"
+    "adrp x2, program_entry_facts\n   strb w1, [x2, :lo12:program_entry_facts]\n"
     "adrp x1, program_entry_identity\n"
     "str x21, [x1, :lo12:program_entry_identity]\n"
     /* The Spark feature word: the carry-less multiply in the low byte, AES
@@ -52956,8 +52970,12 @@ __asm__(
     /* The first thread's block: tp is an ordinary register here. */
     "lla tp, thread_main\n   sd tp, 0(tp)\n"
     "lla t0, program_stack_base\n   sd a0, 0(t0)\n"
+    /* Version 2 or 3, as on x86_64: s2 xor the version 2 magic is 0 or 1,
+       and only under 3 do the entry facts in s5 count. */
     "li t1, " LINUX_RUNTIME_TEXT(SPARK_START_MAGIC) "\n"
-    "bne s2, t1, .Lstart_riscv64_detect\n"
+    "xor t1, s2, t1\n   li t2, 1\n   bgtu t1, t2, .Lstart_riscv64_detect\n"
+    "neg t1, t1\n   and t1, t1, s5\n"
+    "lla t0, program_entry_facts\n   sb t1, 0(t0)\n"
     "lla t0, program_entry_identity\n   sd s4, 0(t0)\n"
     /* The Spark feature word: Zbc in the low byte, Zvkned with usable V in
        the next, published as they come. */

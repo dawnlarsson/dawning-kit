@@ -49,6 +49,7 @@
 #include <linux/reboot.h>
 #include <linux/kmod.h>
 #include <linux/sched/signal.h>
+#include <linux/seccomp.h>
 #include <linux/notifier.h>
 #include <linux/workqueue.h>
 #ifdef CONFIG_VT

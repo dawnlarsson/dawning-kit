@@ -66280,22 +66280,39 @@ b32 main(void)
 #define SPARK_TEST_TEXT_(value) #value
 #define SPARK_TEST_TEXT(value) SPARK_TEST_TEXT_(value)
 /* Arrive at the real _start with the original Linux stack and a simulated
-   loader handoff. The zero-flag case proves CPUID was actually bypassed. */
+   loader handoff, one mode a digit from '0' on: the feature word, the magic
+   and the entry facts each from a table. Modes 7 and 13 carry no Spark magic
+   and prove CPUID was actually run; 10 and 11 are version 3 with and without
+   the facts, and 12 is version 2 with garbage where version 3 keeps them. */
 __asm__(
     ASM_SECTION
     ASM_FUNC(spark_entry_probe)
     "mov 16(%rsp), %rax\n   movzbl (%rax), %eax\n   sub $48, %eax\n"
-    "cmp $9, %eax\n   ja 1f\n"
+    "cmp $13, %eax\n   ja 1f\n"
     "lea spark_entry_words(%rip), %rcx\n   mov (%rcx,%rax,8), %r13\n"
-    "movabs $" SPARK_TEST_TEXT(SPARK_START_MAGIC) ", %r12\n"
-    "mov $123456789, %r14\n   cmp $7, %eax\n   jne 2f\n"
-    "1: xor %r12d, %r12d\n"
-    "2: jmp _start\n"
+    "lea spark_entry_magics(%rip), %rcx\n   mov (%rcx,%rax,8), %r12\n"
+    "lea spark_entry_facts_in(%rip), %rcx\n   mov (%rcx,%rax,8), %r15\n"
+    "mov $123456789, %r14\n   jmp _start\n"
+    "1: xor %r12d, %r12d\n   jmp _start\n"
     ASM_END(spark_entry_probe)
     ASM_RODATA_OBJECT_BEGIN(spark_entry_words, 8)
     ".quad 0, 1, 257, 16777216, 16777217, 16777473, 16843009, 0\n"
     ".quad 0x0101010101010101, 0x0101010100000000\n"
+    ".quad 0x0101010101010101, 257, 16777217, 0\n"
     ASM_OBJECT_END(spark_entry_words)
+    ASM_RODATA_OBJECT_BEGIN(spark_entry_magics, 8)
+    ".quad " SPARK_TEST_TEXT(SPARK_START_MAGIC) ", " SPARK_TEST_TEXT(SPARK_START_MAGIC)
+    ", " SPARK_TEST_TEXT(SPARK_START_MAGIC) ", " SPARK_TEST_TEXT(SPARK_START_MAGIC) "\n"
+    ".quad " SPARK_TEST_TEXT(SPARK_START_MAGIC) ", " SPARK_TEST_TEXT(SPARK_START_MAGIC)
+    ", " SPARK_TEST_TEXT(SPARK_START_MAGIC) ", 0\n"
+    ".quad " SPARK_TEST_TEXT(SPARK_START_MAGIC) ", " SPARK_TEST_TEXT(SPARK_START_MAGIC) "\n"
+    ".quad " SPARK_TEST_TEXT(SPARK_START_MAGIC_FACTS) ", " SPARK_TEST_TEXT(SPARK_START_MAGIC_FACTS)
+    ", " SPARK_TEST_TEXT(SPARK_START_MAGIC) ", " SPARK_TEST_TEXT(SPARK_START_MAGIC_FACTS) " + 1\n"
+    ASM_OBJECT_END(spark_entry_magics)
+    ASM_RODATA_OBJECT_BEGIN(spark_entry_facts_in, 8)
+    ".quad 0, 0, 0, 0, 0, 0, 0, 0, 0, 0\n"
+    ".quad 1, 0, 0xff, 1\n"
+    ASM_OBJECT_END(spark_entry_facts_in)
 );
 
 static positive spark_entry_published(void)
@@ -66314,21 +66331,25 @@ b32 main(void)
         static positive words[] = {0, 1, 257, 16777216, 16777217,
                                     16777473, 16843009, 0,
                                     0x0101010101010101ull,
-                                    0x0101010100000000ull};
+                                    0x0101010100000000ull,
+                                    0x0101010101010101ull, 257, 16777217, 0};
         positive mode = program_argument(1)[0] - '0';
         positive got = spark_entry_published();
-        if (mode == 7)
+        p8 facts = program_entry_facts;
+        if (mode == 7 || mode == 13)
         {
                 cpu_has_avx2 = cpu_has_avx512 = cpu_has_avx512_vbmi = cpu_has_fma = 0;
                 cpu_has_pclmul = cpu_has_aes = cpu_has_vpclmul = cpu_has_vaes = 0;
                 moonwater_cpu_detect();
                 positive detected = spark_entry_published();
-                return got != detected || program_initial_identity() !=
-                    (positive)system_call_1(syscall(getpid), 0);
+                return got != detected || facts != 0 ||
+                       program_initial_identity() !=
+                           (positive)system_call_1(syscall(getpid), 0);
         }
         // Do not execute instructions advertised by a synthetic handoff:
         // scalar-only CPUs can still verify every publication combination.
         return mode >= array_count(words) || got != words[mode] ||
+               facts != (mode == 10 ? SPARK_ENTRY_UNFILTERED : 0) ||
                program_initial_identity() != 123456789 ||
                program_argument_count() != 2 || !program_environment_list();
 }

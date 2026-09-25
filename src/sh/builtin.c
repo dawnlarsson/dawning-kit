@@ -15677,6 +15677,12 @@ static bool floodlight_entry_prove()
         bipolar got;
         positive total = 0;
 
+        /* A Spark loader said so at exec (SPARK_ENTRY_UNFILTERED): the kernel,
+           not a system call a filter could answer, which is the whole of what
+           the proof below goes to such lengths to trust. */
+        if (program_entry_facts & SPARK_ENTRY_UNFILTERED)
+                return true;
+
         if (system_call_5(syscall(prctl), FLOODLIGHT_PR_GET_SECCOMP,
                           0, 0, 0, 0) != 0)
                 return false;
@@ -16483,8 +16489,10 @@ static bool floodlight_confine(const p32 address_to numbers, positive count,
                 return false;
 
         /* From here the entry proof no longer says anything about this
-           process, installed or not, so it is made again when next asked. */
+           process, installed or not, and neither does what the loader said
+           at exec, so it is made again, from /proc, when next asked. */
         floodlight_entry_proved = false;
+        program_entry_facts = 0;
         if (system_call_3(syscall(seccomp), SECCOMP_SET_MODE_FILTER, 0,
                           (positive)address_of program) < 0)
                 return false;
