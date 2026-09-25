@@ -1811,9 +1811,10 @@ static fn tar_ring_start(const tar_codec address_to codec)
                 tar_ring_finish(ring->codec);
         if (!ring->storage)
         {
-                p8 address_to const at = memory(TAR_RING_SPANS * TAR_RING_SPAN);
+                p8 address_to const at =
+                    memory_checked(TAR_RING_SPANS * TAR_RING_SPAN);
 
-                if (!at || system_failed(at))
+                if (!at)
                         return;
                 ring->storage = at;
         }

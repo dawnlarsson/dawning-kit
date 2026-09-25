@@ -5158,7 +5158,7 @@ static bipolar storage_format_zero(bipolar handle, p64 offset, p64 length)
         if (!length)
                 return 0;
 
-        zeros = memory(STORAGE_FORMAT_ZERO_CHUNK);
+        zeros = memory_checked(STORAGE_FORMAT_ZERO_CHUNK);
         if (!zeros)
                 return -ERROR_NO_MEMORY;
 
@@ -5310,7 +5310,7 @@ static bipolar storage_format_gpt(bipolar handle, p64 sectors, p32 sector_size,
 
         table_sectors = storage_gpt_table_sectors(sector_size);
         table_bytes = (positive)(table_sectors * sector_size);
-        table = memory(table_bytes + sector_size);
+        table = memory_checked(table_bytes + sector_size);
         if (!table)
                 return -ERROR_NO_MEMORY;
 
@@ -5434,7 +5434,7 @@ static bipolar storage_format_fat32(bipolar handle, p64 offset, p64 bytes,
         if (failed)
                 return failed;
 
-        sector = memory(sector_size);
+        sector = memory_checked(sector_size);
         if (!sector)
                 return -ERROR_NO_MEMORY;
 
@@ -5870,7 +5870,7 @@ static bipolar storage_format_ext4(bipolar handle, p64 offset, p64 bytes,
 
         seed = storage_crc32c(~(p32)0, identity->uuid, 16);
         descriptor_bytes = (positive)plan.descriptor_blocks * STORAGE_EXT4_BLOCK;
-        descriptors = memory(descriptor_bytes + STORAGE_EXT4_BLOCK);
+        descriptors = memory_checked(descriptor_bytes + STORAGE_EXT4_BLOCK);
         if (!descriptors)
                 return -ERROR_NO_MEMORY;
 

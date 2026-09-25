@@ -752,7 +752,7 @@ typedef struct
 static inline INLINE bool terminal_parameters_take(
     terminal_parameters address_to sequence, unsigned int byte)
 {
-        if (byte >= '0' && byte <= '9')
+        if (byte_is_digit((b32)byte))
         {
                 unsigned int digit = byte - '0';
                 unsigned int address_to value;
@@ -841,16 +841,18 @@ static CONST unsigned int acs_character(unsigned int c)
 // question was.
 static fn osc_colour(unsigned int colour, b32 bell)
 {
-        static const char hex[] = "0123456789abcdef";
         p8 text[] = "rgb:0000/0000/0000";
 
         for (unsigned int channel = 0; channel < 3; channel++)
         {
-                unsigned int value = colour >> (16 - channel * 8) & 255;
+                p8 value = (p8)(colour >> (16 - channel * 8) & 255);
                 p8 address_to at = text + 4 + channel * 5;
 
-                at[0] = at[2] = (p8)hex[value >> 4];
-                at[1] = at[3] = (p8)hex[value & 15];
+                //      Eight bits a channel written sixteen bits wide, which
+                //      xterm reads as the byte repeated.
+                memory_into_hex(at, address_of value, 1);
+                at[2] = at[0];
+                at[3] = at[1];
         }
 
         emit_bytes(text, sizeof(text) - 1);

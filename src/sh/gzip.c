@@ -1838,7 +1838,7 @@ static bool gzip_encode_setup(p8 level)
         gzip_writer.store = gzip_output.bytes ? address_of gzip_output : null;
         gzip_writer.fd = gzip_out_fd;
         gzip_writer.slot_count = parallel_slots();
-        gzip_writer.slots = (gzip_encoder address_to address_to)memory(
+        gzip_writer.slots = (gzip_encoder address_to address_to)memory_checked(
             gzip_writer.slot_count * sizeof(gzip_encoder address_to));
         {
                 positive width = parallel_width();
@@ -1847,21 +1847,11 @@ static bool gzip_encode_setup(p8 level)
                     width == 1 ? 1
                     : min(width * GZIP_BATCH_PER_WORKER, (positive)GZIP_BATCH_BLOCKS);
         }
-        gzip_writer.done = (p8 address_to)memory(gzip_writer.batch_blocks);
+        gzip_writer.done = (p8 address_to)memory_checked(gzip_writer.batch_blocks);
         gzip_writer.input_room = GZIP_WINDOW + gzip_writer.batch_blocks * GZIP_BLOCK;
-        gzip_writer.input = (p8 address_to)memory(gzip_writer.input_room);
-        if (!gzip_writer.slots || system_failed(gzip_writer.slots) || !gzip_writer.done ||
-            system_failed(gzip_writer.done) || !gzip_writer.input ||
-            system_failed(gzip_writer.input))
-        {
-                if (system_failed(gzip_writer.slots))
-                        gzip_writer.slots = null;
-                if (system_failed(gzip_writer.done))
-                        gzip_writer.done = null;
-                if (system_failed(gzip_writer.input))
-                        gzip_writer.input = null;
+        gzip_writer.input = (p8 address_to)memory_checked(gzip_writer.input_room);
+        if (!gzip_writer.slots || !gzip_writer.done || !gzip_writer.input)
                 return gzip_fail("gzip cannot map the block input");
-        }
         return gzip_writer_emit(header, sizeof(header));
 }
 

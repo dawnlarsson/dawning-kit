@@ -204,12 +204,10 @@ static bool monitor_word(string_address path, p8 address_to into,
         if (got <= 0)
                 return false;
 
-        for (bipolar at = 0; at < got; at++)
-                if (into[at] == '\n')
-                {
-                        into[at] = end;
-                        break;
-                }
+        p8 address_to line_end = memory_first_of(into, '\n', (positive)got);
+
+        if (line_end)
+                address_to line_end = end;
 
         return into[0] != end;
 }
@@ -791,10 +789,8 @@ static bool monitor_hardware_row(monitor_hardware address_to hardware,
                                         //      Charging, Not charging: the
                                         //      kernel's words, in the case
                                         //      the rest of the row is in.
-                                        byte = byte >= 'A' && byte <= 'Z'
-                                                   ? byte + 32
-                                               : byte >= 'a' && byte <= 'z'
-                                                   ? byte
+                                        byte = byte_is_alpha(byte)
+                                                   ? (p8)byte_to_lower(byte)
                                                    : ' ';
                                         write(address_of byte, 1);
                                 }

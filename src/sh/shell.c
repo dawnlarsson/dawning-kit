@@ -295,15 +295,13 @@ static bool shell_large_request;
 
 static address_any shell_map(positive size)
 {
-        address_any got = memory(size);
+        //      memory_checked answers null for the kernel's own negative
+        //      errno as well, which as an address is the top page of the
+        //      space and never a mapping.
+        address_any got = memory_checked(size);
 
-        //      memory answers with the kernel's own negative errno, which as
-        //      an address is the top page of the space and never a mapping.
-        if (!got || system_failed(got))
-        {
+        if (!got)
                 shell_memory_failed = true;
-                return null;
-        }
 
         return got;
 }

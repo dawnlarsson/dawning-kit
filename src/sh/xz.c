@@ -3363,23 +3363,14 @@ static bool xz_encode_setup(p8 level)
         xz_writer.store = xz_output.bytes ? address_of xz_output : null;
         xz_writer.fd = xz_out_fd;
         xz_writer.slot_count = parallel_slots();
-        xz_writer.slots = (xz_encoder address_to address_to)memory(
+        xz_writer.slots = (xz_encoder address_to address_to)memory_checked(
             xz_writer.slot_count * sizeof(xz_encoder address_to));
-        xz_writer.unpadded = (p64 address_to)memory(xz_writer.batch_blocks * sizeof(p64));
+        xz_writer.unpadded =
+            (p64 address_to)memory_checked(xz_writer.batch_blocks * sizeof(p64));
         xz_writer.input_room = xz_writer.batch_blocks * xz_writer.block + XZ_SLACK;
-        xz_writer.input = (p8 address_to)memory(xz_writer.input_room);
-        if (!xz_writer.slots || system_failed(xz_writer.slots) || !xz_writer.unpadded ||
-            system_failed(xz_writer.unpadded) || !xz_writer.input ||
-            system_failed(xz_writer.input))
-        {
-                if (system_failed(xz_writer.slots))
-                        xz_writer.slots = null;
-                if (system_failed(xz_writer.unpadded))
-                        xz_writer.unpadded = null;
-                if (system_failed(xz_writer.input))
-                        xz_writer.input = null;
+        xz_writer.input = (p8 address_to)memory_checked(xz_writer.input_room);
+        if (!xz_writer.slots || !xz_writer.unpadded || !xz_writer.input)
                 return xz_fail("xz cannot map the block input");
-        }
         memory_store_unaligned(p32, header + 8, ~hash_crc32(0xffffffffu, header + 6, 2));
         return xz_writer_emit(header, sizeof(header));
 }

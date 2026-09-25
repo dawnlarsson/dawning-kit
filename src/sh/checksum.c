@@ -448,7 +448,7 @@ static p8 address_to checksum_slot_block(p8 address_to address_to blocks,
         if (!blocks || slot >= slots)
                 return null;
         if (!blocks[slot])
-                blocks[slot] = memory(FILE_TRANSFER_SIZE);
+                blocks[slot] = memory_checked(FILE_TRANSFER_SIZE);
         return blocks[slot];
 }
 
@@ -598,7 +598,7 @@ static b32 checksum_generate(const checksum_algorithm address_to algorithm,
         // One thread, or too little to share: the jobs run inline in order
         // on the caller and need neither worker blocks nor the stat test.
         if (inputs > 1 && batch.width > 1 && weight >= PARALLEL_MINIMUM_BYTES)
-                batch.blocks = memory(batch.slots * sizeof(p8 address_to));
+                batch.blocks = memory_checked(batch.slots * sizeof(p8 address_to));
         if (!batch.blocks)
                 weight = 0;
         batch.spread = batch.blocks != null;
@@ -651,13 +651,14 @@ static positive checksum_tag_parse(positive at,
 
                 if (one->variable_length && text_line[from] == '-')
                 {
-                        positive bits = 0;
                         positive digits = 0;
+                        positive bits;
 
-                        for (from++; from < text_line_length &&
-                                     text_line[from] >= '0' && text_line[from] <= '9';
-                             from++, digits++)
-                                bits = bits * 10 + (positive)(text_line[from] - '0');
+                        from++;
+                        bits = string_digits_max(text_line + from,
+                                                 text_line_length - from,
+                                                 address_of digits);
+                        from += digits;
                         if (!digits || digits > 3 || !bits || bits > 512 || bits % 8)
                                 continue;
                         width = bits / 8;
@@ -959,7 +960,7 @@ static bool checksum_region_grow(p8 address_to address_to region,
         while (larger < wanted)
                 larger *= 2;
 
-        p8 address_to fresh = memory(larger);
+        p8 address_to fresh = memory_checked(larger);
 
         if (!fresh)
                 return false;
@@ -1148,7 +1149,7 @@ static fn checksum_check_records(checksum_check_run address_to run)
         positive weight = checksum_weigh(total, sampled, run->count, address_of run->group);
 
         if (run->count > 1 && run->width > 1 && weight >= PARALLEL_MINIMUM_BYTES)
-                run->blocks = memory(run->slots * sizeof(p8 address_to));
+                run->blocks = memory_checked(run->slots * sizeof(p8 address_to));
         run->spread = run->blocks != null;
         if (!run->spread)
                 run->group = 1;

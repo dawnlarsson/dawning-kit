@@ -796,14 +796,12 @@ static bool logger_stream(logger_control address_to control,
                 if (control->priority_prefix && text_line_length &&
                     text_line[0] == '<')
                 {
-                        positive at = 1;
-                        positive prefixed = 0;
-                        while (at < text_line_length && at <= 3 &&
-                               byte_is_digit(text_line[at]))
-                        {
-                                prefixed = prefixed * 10 + text_line[at] - '0';
-                                at++;
-                        }
+                        positive taken = 0;
+                        positive room = text_line_length - 1;
+                        positive prefixed = string_digits_max(
+                            text_line + 1, room < 3 ? room : 3,
+                            address_of taken);
+                        positive at = 1 + taken;
                         if (at < text_line_length && text_line[at] == '>' &&
                             at > 1 && prefixed <= 191)
                         {

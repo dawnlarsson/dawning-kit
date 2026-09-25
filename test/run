@@ -10538,6 +10538,16 @@ hook_gates=$(grep -E -c 'if \(build_shell_key\("(pre|post)"\)\)' \
         src/build/build.c)
 same 'build hooks gate success' '1:2' "$hook_return:$hook_gates"
 
+#       memory() is the mmap itself and answers a refusal with -errno in the
+#       pointer, never with null, so a caller that tests only for null keeps
+#       an address just below the top of the space and writes through it.
+#       Seven call sites did exactly that. memory_checked in src/lib.util.c
+#       is now the one place that spells the pair, and nothing else may call
+#       memory directly -- a new call site here is the bug coming back.
+memory_raw=$(grep -rn '= memory(' --include='*.c' src \
+        | grep -cv '^src/lib\.util\.c:' || true)
+same 'every mapping is taken through memory_checked' '0' "$memory_raw"
+
 group config
 common_path=$(pwd)/src/build/host.sh
 mkdir -p "$work/config/artifacts"

@@ -1574,6 +1574,7 @@ static b32 encoding_encode(const encoding_codec address_to codec,
 
                 if (writing && left)
                 {
+                        /* A byte loop again, for the reason above it. */
                         for (positive i = 0; i < left; i++)
                                 pending[i] = at[i];
                         held = left;
@@ -10306,7 +10307,7 @@ static b32 text_ptx()
                         ptx_word_bytes[character] =
                             ptx_alpha_word || ptx_fold
                                 ? byte_is_alpha((p8)character)
-                                : character >= 'a' && character <= 'z';
+                                : byte_is_lower((p8)character);
         }
         else if (flags & FILE_FLAG('b'))
         {
@@ -14686,9 +14687,9 @@ static bool text_tr_parallel(bool remove, p8 address_to table)
         };
         positive count = (run.size + TR_CHUNK - 1) / TR_CHUNK;
         positive ledger = count * (sizeof(positive) + 1);
-        p8 address_to held = memory(ledger);
+        p8 address_to held = memory_checked(ledger);
 
-        if ((bipolar)(positive)held <= 0)
+        if (!held)
                 return false;
 
         // One mapping, zeroed by the kernel: the kept lengths, then the
@@ -18979,13 +18980,6 @@ static fn grep_slots_release(void)
         }
 }
 
-static address_any grep_slot_memory(positive bytes)
-{
-        address_any made = memory(bytes);
-
-        return made && !system_failed(made) ? made : null;
-}
-
 static grep_slot address_to grep_slot_take(void)
 {
         positive slot = parallel_slot();
@@ -18997,7 +18991,7 @@ static grep_slot address_to grep_slot_take(void)
 
         if (!scratch->buffer)
         {
-                scratch->buffer = grep_slot_memory(GREP_LEAF_BYTES);
+                scratch->buffer = memory_checked(GREP_LEAF_BYTES);
                 scratch->bytes = GREP_LEAF_BYTES;
         }
 
@@ -19012,7 +19006,7 @@ static rx_match address_to grep_slot_match(grep_slot address_to scratch)
 
         if (!scratch->match)
         {
-                rx_match address_to match = grep_slot_memory(GREP_MATCH_BYTES);
+                rx_match address_to match = memory_checked(GREP_MATCH_BYTES);
 
                 if (!match)
                         return null;
@@ -19048,7 +19042,7 @@ static rx_dfa_cache address_to grep_slot_dfa(grep_slot address_to scratch)
 
         if (!scratch->dfa)
         {
-                rx_dfa_cache address_to dfa = grep_slot_memory(sizeof(rx_dfa_cache));
+                rx_dfa_cache address_to dfa = memory_checked(sizeof(rx_dfa_cache));
 
                 if (!dfa)
                         return null;
@@ -19327,7 +19321,7 @@ static bool grep_leaf_file(grep_run address_to run, string_address path,
                         if (room < kept + GREP_LEAF_READ + 1)
                                 room = kept + GREP_LEAF_READ + 1;
 
-                        if (kept > GREP_LEAF_LONGEST || !(grown = grep_slot_memory(room)))
+                        if (kept > GREP_LEAF_LONGEST || !(grown = memory_checked(room)))
                                 return false;
 
                         memory_copy(grown, buffer, kept);
@@ -19624,7 +19618,7 @@ static fn grep_tree_leaf(address_any context, address_any node_address,
                 if (scratch && scratch->bytes > GREP_LEAF_BYTES)
                 {
                         memory_free(scratch->buffer, scratch->bytes);
-                        scratch->buffer = grep_slot_memory(GREP_LEAF_BYTES);
+                        scratch->buffer = memory_checked(GREP_LEAF_BYTES);
                         scratch->bytes = scratch->buffer ? GREP_LEAF_BYTES : 0;
                 }
         }
@@ -20795,11 +20789,11 @@ static p8 sed_case_apply(p8 value)
 
         sed_case_once = 0;
 
-        if (how == 'U' && value >= 'a' && value <= 'z')
-                return (p8)(value - ('a' - 'A'));
+        if (how == 'U')
+                return (p8)byte_to_upper(value);
 
-        if (how == 'L' && value >= 'A' && value <= 'Z')
-                return (p8)(value + ('a' - 'A'));
+        if (how == 'L')
+                return (p8)byte_to_lower(value);
 
         return value;
 }
@@ -23195,8 +23189,8 @@ static PURE bipolar sort_compare_bytes(p8 address_to a, positive la, p8 address_
 
                 if (how & SORT_FOLD)
                 {
-                        one = one >= 'a' && one <= 'z' ? (p8)(one - 32) : one;
-                        two = two >= 'a' && two <= 'z' ? (p8)(two - 32) : two;
+                        one = (p8)byte_to_upper(one);
+                        two = (p8)byte_to_upper(two);
                 }
 
                 if (one != two)
@@ -23335,8 +23329,7 @@ static b32 sort_version_order(p8 character)
         if (byte_is_digit(character))
                 return 0;
 
-        if ((character >= 'a' && character <= 'z') ||
-            (character >= 'A' && character <= 'Z'))
+        if (byte_is_alpha(character))
                 return (b32)character;
 
         if (character == '~')

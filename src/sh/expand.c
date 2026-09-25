@@ -3018,9 +3018,9 @@ static bipolar arith_based(string_address hash)
 
                 if (byte_is_digit(seen))
                         digit = (positive)(seen - '0');
-                else if (seen >= 'a' && seen <= 'z')
+                else if (byte_is_lower(seen))
                         digit = (positive)(seen - 'a') + 10;
-                else if (seen >= 'A' && seen <= 'Z')
+                else if (byte_is_upper(seen))
                         digit = (positive)(seen - 'A') + (base <= 36 ? 10 : 36);
                 else if (seen == '@')
                         digit = 62;

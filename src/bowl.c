@@ -2825,15 +2825,13 @@ static b32 bowl_write_pacman(string_address root)
 
 static bool bowl_hex_digest(string_address text, positive length)
 {
-        if (length != BOWL_DIGEST_HEX)
-                return false;
+        //      Lower case only: a digest spelled any other way is not the
+        //      one an OCI layout names.
+        static const b8 bowl_set_lower_hex[STRING_SET_BYTES] = {
+            ['0' ... '9'] = 1, ['a' ... 'f'] = 1};
 
-        for (positive at = 0; at < length; at++)
-                if (!((text[at] >= '0' && text[at] <= '9') ||
-                      (text[at] >= 'a' && text[at] <= 'f')))
-                        return false;
-
-        return true;
+        return length == BOWL_DIGEST_HEX &&
+               string_span_max(text, length, bowl_set_lower_hex) == length;
 }
 
 /* The SHA-256 of what a descriptor reads, as lower-case hex, with how many
@@ -2841,7 +2839,6 @@ static bool bowl_hex_digest(string_address text, positive length)
 static bool bowl_sha256_of(bipolar handle, p8 address_to hex, p64 address_to size)
 {
         static p8 chunk[65536];
-        static const p8 digits[] = "0123456789abcdef";
         digest_state digest;
         p8 sum[32];
         bipolar got;
@@ -2857,11 +2854,7 @@ static bool bowl_sha256_of(bipolar handle, p8 address_to hex, p64 address_to siz
         if (got < 0)
                 return false;
 
-        for (positive at = 0; at < sizeof(sum); at++)
-        {
-                hex[2 * at] = digits[sum[at] >> 4];
-                hex[2 * at + 1] = digits[sum[at] & 15];
-        }
+        memory_into_hex(hex, sum, sizeof(sum));
         hex[BOWL_DIGEST_HEX] = end;
         if (size)
                 address_to size = total;
@@ -3083,17 +3076,6 @@ static string_address bowl_json_next(string_address address_to cursor,
         return element;
 }
 
-static bipolar bowl_json_hex(p8 digit)
-{
-        if (digit >= '0' && digit <= '9')
-                return digit - '0';
-        if (digit >= 'a' && digit <= 'f')
-                return digit - 'a' + 10;
-        if (digit >= 'A' && digit <= 'F')
-                return digit - 'A' + 10;
-        return -1;
-}
-
 /* A string value into out: printable ASCII only, which is all a media type,
    a digest or a platform name is. */
 static bool bowl_json_text(string_address at, string_address stop,
@@ -3115,18 +3097,18 @@ static bool bowl_json_text(string_address at, string_address stop,
                         byte = *at;
                         if (byte == 'u')
                         {
-                                positive value = 0;
+                                positive taken = 0;
+                                positive value;
 
                                 if (stop - at < 5)
                                         return false;
-                                for (positive digit = 1; digit <= 4; digit++)
-                                {
-                                        bipolar nibble = bowl_json_hex(at[digit]);
-
-                                        if (nibble < 0)
-                                                return false;
-                                        value = value * 16 + (positive)nibble;
-                                }
+                                //      Exactly four, and the escape reader
+                                //      stops at the first byte that is not a
+                                //      digit, so a short count is a refusal.
+                                value = string_digits_hexadecimal_escape_max(
+                                    at + 1, 4, address_of taken);
+                                if (taken != 4)
+                                        return false;
                                 at += 4;
                                 byte = value < 0x80 ? (p8)value : 0;
                         }

@@ -4289,13 +4289,6 @@ static fn zstd_encoder_close(zstd_encoder address_to e)
         e->filled = 0;
 }
 
-static address_any zstd_encoder_map(positive bytes)
-{
-        address_any const at = memory(bytes);
-
-        return !at || system_failed(at) ? null : at;
-}
-
 /*
         The window and tables for these parameters, kept from the last frame
         when they are the same size.  A frame's indices start a window past
@@ -4319,16 +4312,16 @@ static bool zstd_encoder_open(zstd_encoder address_to e,
             e->chain_bytes != chain_bytes || e->hash3_bytes != hash3_bytes)
         {
                 zstd_encoder_close(e);
-                if (!(e->storage = zstd_encoder_map(room)))
+                if (!(e->storage = memory_checked(room)))
                         return zstd_fail("zstd cannot map its window");
                 e->storage_room = room;
-                if (!(e->hash = zstd_encoder_map(hash_bytes)))
+                if (!(e->hash = memory_checked(hash_bytes)))
                         return zstd_encoder_close(e), zstd_fail("zstd cannot map its tables");
                 e->hash_bytes = hash_bytes;
-                if (chain_bytes && !(e->chain = zstd_encoder_map(chain_bytes)))
+                if (chain_bytes && !(e->chain = memory_checked(chain_bytes)))
                         return zstd_encoder_close(e), zstd_fail("zstd cannot map its tables");
                 e->chain_bytes = chain_bytes;
-                if (hash3_bytes && !(e->hash3 = zstd_encoder_map(hash3_bytes)))
+                if (hash3_bytes && !(e->hash3 = memory_checked(hash3_bytes)))
                         return zstd_encoder_close(e), zstd_fail("zstd cannot map its tables");
                 e->hash3_bytes = hash3_bytes;
         }
@@ -4577,15 +4570,15 @@ static bool zstd_encoder_job_tables(zstd_encoder address_to e,
                                          : 0;
 
         if (!e->seqs &&
-            (!(e->lits = zstd_encoder_map(ZSTD_BLOCK_MAX + 64)) ||
-             !(e->bits = zstd_encoder_map(ZSTD_BLOCK_MAX + 256)) ||
-             !(e->block_out = zstd_encoder_map(ZSTD_BLOCK_MAX + 2048)) ||
-             !(e->packed = zstd_encoder_map(ZSTD_BLOCK_MAX * 2 + 512)) ||
-             !(e->lit_table_new = zstd_encoder_map(sizeof(p32) * 256)) ||
-             !(e->lit_length_new = zstd_encoder_map(256)) ||
-             !(e->opt = zstd_encoder_map(sizeof(zstd_opt_node) * (ZSTD_OPT_NUM + 3))) ||
-             !(e->matches = zstd_encoder_map(sizeof(zstd_opt_match) * (ZSTD_OPT_NUM + 3))) ||
-             !(e->seqs = zstd_encoder_map(sizeof(zstd_enc_seq) * ZSTD_ENC_SEQ_MAX))))
+            (!(e->lits = memory_checked(ZSTD_BLOCK_MAX + 64)) ||
+             !(e->bits = memory_checked(ZSTD_BLOCK_MAX + 256)) ||
+             !(e->block_out = memory_checked(ZSTD_BLOCK_MAX + 2048)) ||
+             !(e->packed = memory_checked(ZSTD_BLOCK_MAX * 2 + 512)) ||
+             !(e->lit_table_new = memory_checked(sizeof(p32) * 256)) ||
+             !(e->lit_length_new = memory_checked(256)) ||
+             !(e->opt = memory_checked(sizeof(zstd_opt_node) * (ZSTD_OPT_NUM + 3))) ||
+             !(e->matches = memory_checked(sizeof(zstd_opt_match) * (ZSTD_OPT_NUM + 3))) ||
+             !(e->seqs = memory_checked(sizeof(zstd_enc_seq) * ZSTD_ENC_SEQ_MAX))))
                 return false;
         if (e->hash_bytes != hash_bytes || e->chain_bytes != chain_bytes ||
             e->hash3_bytes != hash3_bytes)
@@ -4602,13 +4595,13 @@ static bool zstd_encoder_job_tables(zstd_encoder address_to e,
                 e->hash_bytes = 0;
                 e->chain_bytes = 0;
                 e->hash3_bytes = 0;
-                if (!(e->hash = zstd_encoder_map(hash_bytes)))
+                if (!(e->hash = memory_checked(hash_bytes)))
                         return false;
                 e->hash_bytes = hash_bytes;
-                if (chain_bytes && !(e->chain = zstd_encoder_map(chain_bytes)))
+                if (chain_bytes && !(e->chain = memory_checked(chain_bytes)))
                         return false;
                 e->chain_bytes = chain_bytes;
-                if (hash3_bytes && !(e->hash3 = zstd_encoder_map(hash3_bytes)))
+                if (hash3_bytes && !(e->hash3 = memory_checked(hash3_bytes)))
                         return false;
                 e->hash3_bytes = hash3_bytes;
         }
@@ -4746,13 +4739,13 @@ static b32 zstd_jobs_open(const zstd_params address_to p)
                 if (zstd_jobs.buffer)
                         memory_free(zstd_jobs.buffer, zstd_jobs.buffer_room);
                 zstd_jobs.buffer_room = 0;
-                if (!(zstd_jobs.buffer = zstd_encoder_map(room)))
+                if (!(zstd_jobs.buffer = memory_checked(room)))
                         return -1;
                 zstd_jobs.buffer_room = room;
         }
         if (zstd_jobs.slot_count < slots)
         {
-                if (!(zstd_jobs.slots = zstd_encoder_map(slots * sizeof(zstd_encoder))))
+                if (!(zstd_jobs.slots = memory_checked(slots * sizeof(zstd_encoder))))
                         return -1;
                 zstd_jobs.slot_count = slots;
         }

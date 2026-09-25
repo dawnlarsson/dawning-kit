@@ -3584,12 +3584,8 @@ static string_address address_to build_environment_with(string_address address_t
         answer = (string_address address_to)build_text_take(
                 (have + count + 1) * sizeof(string_address));
 
-        for (positive at = 0; at < have; at++)
-                answer[at] = environ[at];
-
-        for (positive at = 0; at < count; at++)
-                answer[have + at] = extra[at];
-
+        memory_copy(answer, environ, have * sizeof(string_address));
+        memory_copy(answer + have, extra, count * sizeof(string_address));
         answer[have + count] = null;
 
         return answer;

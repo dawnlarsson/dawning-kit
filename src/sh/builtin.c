@@ -2469,9 +2469,10 @@ static PURE bool env_function_assignment(string_address entry)
 
         if (!shell_bash_compat || !entry)
                 return false;
-        for (positive at = 0; at < sizeof(prefix) - 1; at++)
-                if (entry[at] != prefix[at])
-                        return false;
+        //      Bounded, not counted: a name shorter than the prefix ends at
+        //      its terminator, which no prefix byte is.
+        if (string_compare_max(entry, prefix, sizeof(prefix) - 1))
+                return false;
 
         at = entry + sizeof(prefix) - 1;
         if (!string_get(at) || string_is(at, '='))
@@ -15162,7 +15163,7 @@ static COLD fn shell_name_index_build(address_any table, positive stride,
                 positive at;
 
                 if (hashes)
-                        answer = (positive2){hashes[index], keys[index][1]};
+                        answer = (positive2){{hashes[index], keys[index][1]}};
                 else
                         answer = string_hash_33_length(
                             *(string_address address_to)((p8 address_to)table +
@@ -15774,6 +15775,9 @@ static bool floodlight_report_number(floodlight_token word, bool seconds)
         if (!digits || (seconds && word.at[word.length - 1] != 's'))
                 return false;
 
+        //      Written out rather than over string_set_digits: the floodlight
+        //      harness lifts this function into a file of its own with a
+        //      prelude that has none of the library's names in it.
         for (positive at = 0; at < digits; at++)
                 if (word.at[at] < '0' || word.at[at] > '9')
                         return false;

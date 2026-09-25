@@ -523,6 +523,27 @@ static inline INLINE bool size_scale_power_checked(
    a null address check it separately. Evaluate the raw result once. */
 #define system_failed(result) ((positive)(result) >= (positive)-4095)
 
+/*
+        memory() is the mmap itself, so a refusal arrives as -errno in the
+        pointer and never as null. A caller that tests only for null keeps an
+        address a handful of bytes below the top of the space and writes
+        through it, which is the one failure a system under memory pressure
+        is certain to reach. Four places in the tree wrote the pair out and
+        seven wrote only half of it, so the pair is spelled once here: the
+        mapping, or null.
+
+        Behind the same guard memory() itself is declared behind: a kernel
+        object has no mmap of its own and never sees either name.
+*/
+#if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM) && !defined(WINDOWS)
+static inline INLINE address_any memory_checked(positive size)
+{
+        address_any at = memory(size);
+
+        return at && !system_failed(at) ? at : null;
+}
+#endif
+
 /* Cleanup paths neither need nor want close(2)'s errno translation. */
 #define system_close(handle)                                                 \
         system_call_1(syscall(close), (positive)(handle))
@@ -15762,7 +15783,7 @@ extern p8 __bss_end[] WEAK;
 fn stdlib_program_starting(void)
 {
 #if defined(LINUX) && !defined(KERNEL_MODE)
-        if (__bss_start && __bss_end > __bss_start)
+        if (__bss_start && &__bss_end[0] > &__bss_start[0])
                 system_call_3(syscall(madvise),
                               (positive)(address_any)__bss_start,
                               (positive)(__bss_end - __bss_start),

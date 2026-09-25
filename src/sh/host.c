@@ -3042,22 +3042,6 @@ static string_address address_to host_event_environment(void)
         return bowl_environment(seed);
 }
 
-static fn host_decimal(p8 address_to into, positive room, positive value)
-{
-        p8 digits[24];
-        positive used = 0;
-        positive at = 0;
-
-        do
-                digits[used++] = (p8)('0' + value % 10);
-        while ((value /= 10) && used < sizeof(digits));
-
-        while (used && at + 1 < room)
-                into[at++] = digits[--used];
-
-        into[at] = end;
-}
-
 /* A command as one short line: control bytes as spaces, and cut with ... past eighty. */
 static fn host_event_shown(p8 address_to into, string_address text)
 {
@@ -3075,8 +3059,8 @@ static fn host_event_ending(p8 address_to into, positive room, positive status)
 {
         p8 number[24];
 
-        host_decimal(number, sizeof(number),
-                     status & 0x7f ? status & 0x7f : status >> 8 & 0xff);
+        positive_into_string(number,
+                             status & 0x7f ? status & 0x7f : status >> 8 & 0xff);
         string_copy_bounded(into, status & 0x7f ? "killed by signal " : "exited ", room);
         string_append_bounded(into, number, room);
 }
@@ -3213,7 +3197,7 @@ static fn host_events_boot(host_settings address_to settings)
 
                 host_settings_text(text, address_of setting);
                 host_event_shown(shown, text);
-                host_decimal(id, sizeof(id), setting.entry.id);
+                positive_into_string(id, setting.entry.id);
 
                 if (!host_join(path, sizeof(path), HOST_EVENTS_INIT "/", id) ||
                     !host_join(status_path, sizeof(status_path), path, ".status") ||
@@ -5144,22 +5128,20 @@ static fn radio_line(p8 address_to into, positive room, string_address a,
 
 static p32 radio_hex(p8 address_to text)
 {
-        p32 value = 0;
-
+        //      The text is terminated, and a terminator is not a hexadecimal
+        //      digit, so the run ends at the terminator whatever the bound
+        //      is and there is no length to measure first.
         if (text[0] == '0' && (text[1] | 32) == 'x')
                 text += 2;
-        for (; byte_is_hexadecimal(*text); text++)
-                value = value * 16 + (byte_is_digit(*text) ? (p32)(*text - '0')
-                                                           : (p32)((*text | 32) - 'a' + 10));
-        return value;
+        return (p32)string_digits_hexadecimal_max(text, (positive)-1, null);
 }
 
 static fn radio_hex4(p8 address_to into, p32 value)
 {
-        static const p8 digits[] = "0123456789abcdef";
+        p8 wire[2];
 
-        for (positive at = 0; at < 4; at++)
-                into[at] = digits[(value >> (12 - 4 * at)) & 15];
+        network_store_16(wire, (p16)value);
+        memory_into_hex(into, wire, sizeof(wire));
         into[4] = end;
 }
 
@@ -5721,14 +5703,8 @@ static bool radio_air_seen(netlink_header address_to header, address_any context
                 one.security = wpa ? RADIO_WPA : (capability & 0x10) ? RADIO_WEP : RADIO_OPEN;
 
         // A hidden network's name is empty or zeros; it has no row.
-        {
-                bool named = false;
-
-                for (positive at = 0; at < one.ssid_length; at++)
-                        named |= one.ssid[at] != 0;
-                if (!named)
-                        return true;
-        }
+        if (memory_span_byte(one.ssid, 0, one.ssid_length) == one.ssid_length)
+                return true;
 
         for (positive at = 0; at < air->count; at++)
         {
@@ -5749,25 +5725,6 @@ static bool radio_air_seen(netlink_header address_to header, address_any context
         if (air->count < RADIO_AIR_MOST)
                 air->heard[air->count++] = one;
         return true;
-}
-
-static fn radio_number(p8 address_to into, bipolar value)
-{
-        p8 digits[24];
-        positive count = 0;
-        positive used = 0;
-        positive magnitude = value < 0 ? (positive)(-value) : (positive)value;
-
-        do
-        {
-                digits[count++] = (p8)('0' + magnitude % 10);
-                magnitude /= 10;
-        } while (magnitude);
-        if (value < 0)
-                into[used++] = '-';
-        while (count)
-                into[used++] = digits[--count];
-        into[used] = end;
 }
 
 /* Whether the station the machine is associated through is authorized: a
@@ -5904,7 +5861,11 @@ static fn radio_air_scan(nl80211 address_to session, p32 index)
                                 {
                                         p8 number[24];
 
-                                        radio_number(number, (bipolar)(system_clock_ns(HOST_CLOCK_BOOTTIME) / 1000000));
+                                        bipolar_into_string(
+                                            number,
+                                            (bipolar)(system_clock_ns(
+                                                          HOST_CLOCK_BOOTTIME) /
+                                                      1000000));
                                         host_state_ready();
                                         host_write_file(RADIO_SCAN_PATH, number, string_length(number),
                                                         0644, false);
@@ -5996,7 +5957,6 @@ static radio_heard address_to radio_air_find(radio_air address_to air, string_ad
 static positive radio_display(p8 address_to into, positive room, p8 address_to name,
                               positive length)
 {
-        static const p8 digits[] = "0123456789abcdef";
         positive used = 0;
         positive columns = 0;
         positive at = 0;
@@ -6037,8 +5997,7 @@ static positive radio_display(p8 address_to into, positive room, p8 address_to n
                 }
                 into[used++] = '\\';
                 into[used++] = 'x';
-                into[used++] = digits[byte >> 4];
-                into[used++] = digits[byte & 15];
+                used += memory_into_hex(into + used, address_of byte, 1);
                 columns += 4;
                 at++;
         }
@@ -6071,7 +6030,7 @@ static fn radio_air_row(radio_heard address_to heard, positive width, bool saved
                    name, null, null, null);
         for (; columns < width + 2; columns++)
                 string_append_bounded(line, (string_address) " ", sizeof(line));
-        radio_number(number, dbm);
+        bipolar_into_string(number, dbm);
         for (positive pad = string_length(number); pad < 4; pad++)
                 string_append_bounded(line, (string_address) " ", sizeof(line));
         radio_line(line + string_length(line), sizeof(line) - string_length(line), number,
@@ -6084,7 +6043,7 @@ static fn radio_air_row(radio_heard address_to heard, positive width, bool saved
         for (positive pad = string_length(radio_security_words[heard->security]); pad < 8;
              pad++)
                 string_append_bounded(line, (string_address) " ", sizeof(line));
-        radio_number(number, (bipolar)channel);
+        bipolar_into_string(number, (bipolar)channel);
         radio_line(line + string_length(line), sizeof(line) - string_length(line), band,
                    (string_address) " ch ", number, null, null);
         string_format(log, host_label "%s\n", line);
@@ -6119,7 +6078,7 @@ static fn radio_last_set(string_address ssid, bipolar failed)
                 system_remove_at(AT_FDCWD, RADIO_LAST_PATH, 0);
                 return;
         }
-        radio_number(number, -failed);
+        bipolar_into_string(number, -failed);
         radio_line(text, sizeof(text), ssid, (string_address) "\n", number,
                    (string_address) "\n", null);
         host_state_ready();

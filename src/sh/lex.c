@@ -257,105 +257,6 @@ fn lex_prepare()
         lex_ready = true;
 }
 
-// Which operator starts here, and how long it is. Longest forms are tested
-// first, so &>> is never &> followed by > and >> is never two > tokens.
-static b32 lex_operator_at(string_address at, positive address_to length)
-{
-        p8 a = string_get(at);
-
-        if (!lex_operator[a])
-        {
-                address_to length = 0;
-                return 0;
-        }
-
-        p8 b = string_get(at + 1);
-
-        /* <( and >( begin a process substitution, which is part of the word
-           in front of it and not an operator at all: cat 2>(x) is one word
-           reading 2/dev/fd/N, exactly as Bash reads it. */
-        if (b == '(' && (a == '<' || a == '>'))
-        {
-                address_to length = 0;
-                return 0;
-        }
-
-        if (a == '<' && b == '<' && string_is(at + 2, '<'))
-        {
-                address_to length = 3;
-                return OP_HERESTRING;
-        }
-
-        // These must be single operators. Reading '&' as a background
-        // separator first silently runs a different command graph.
-        if (a == '&' && b == '>')
-        {
-                if (string_is(at + 2, '>'))
-                {
-                        address_to length = 3;
-                        return OP_ANDDGREAT;
-                }
-
-                address_to length = 2;
-                return OP_ANDGREAT;
-        }
-
-        address_to length = 2;
-
-        if (a == '&' && b == '&')
-                return OP_AND_IF;
-        if (a == '|' && b == '|')
-                return OP_OR_IF;
-        // Both streams into the pipe, and a case item that carries on. Read
-        // where the doubled forms already are, so no byte pays for them.
-        if (a == '|' && b == '&')
-                return OP_PIPEAND;
-        if (a == ';' && b == '&')
-                return OP_SEMIAND;
-        if (a == ';' && b == ';')
-        {
-                if (string_is(at + 2, '&'))
-                {
-                        address_to length = 3;
-                        return OP_DSEMIAND;
-                }
-
-                return OP_DSEMI;
-        }
-        if (a == '<' && b == '<')
-                return OP_DLESS;
-        if (a == '>' && b == '>')
-                return OP_DGREAT;
-        if (a == '<' && b == '&')
-                return OP_LESSAND;
-        if (a == '>' && b == '&')
-                return OP_GREATAND;
-        if (a == '<' && b == '>')
-                return OP_LESSGREAT;
-        if (a == '>' && b == '|')
-                return OP_CLOBBER;
-
-        address_to length = 1;
-
-        if (a == ';')
-                return OP_SEMI;
-        if (a == '|')
-                return OP_PIPE;
-        if (a == '&')
-                return OP_AMP;
-        if (a == '<')
-                return OP_LESS;
-        if (a == '>')
-                return OP_GREAT;
-        if (a == '(')
-                return OP_LPAREN;
-        if (a == ')')
-                return OP_RPAREN;
-
-        address_to length = 0;
-        return 0;
-}
-
 static KEEP positive lex_at;
 
 static KEEP b32 lex_add(b32 kind, b32 op, string_address text, positive length)
@@ -1533,9 +1434,24 @@ static KEEP b32 lex_word(string_address address_to at)
         blanks; stop at the end, a newline, or a # where a word could begin
         while comments are on; then at each position try, in order, a [[
         conditional followed by a blank (lex_conditional_end), a (( arithmetic
-        command (lex_arithmetic_end), an operator (lex_operator_at), and
-        otherwise a word (lex_word), recording lex_at before each; close with
-        LEX_END and answer the count before it.
+        command (lex_arithmetic_end), an operator, and otherwise a word
+        (lex_word), recording lex_at before each; close with LEX_END and
+        answer the count before it.
+
+        The operator rules, which each machine's block spells for itself and
+        no C here spells any more, longest form first so &>> is never &>
+        followed by > and >> is never two > tokens:
+
+            lex_operator decides whether a byte can begin one at all;
+            <( and >( are not operators -- they begin a process substitution
+            that belongs to the word in front of it, so cat 2>(x) is the one
+            word Bash reads it as;
+            three bytes: <<< &>> ;;&
+            two bytes:   && || |& ;& ;; << >> <& >& <> >|
+            one byte:    ; | & < > ( )
+
+        A change to any of them is a change in three places, and the shell
+        and builtins differentials are what says the three still agree.
 */
 b32 lex_line_floor(string_address line, b32 comments);
 

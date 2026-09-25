@@ -2370,174 +2370,174 @@ static bool file_moment_read_local(string_address text, b64 now, positive fracti
                         if (!digits)
                                 return false;
 
-                                if (!marked && string_is(text + at, '-'))
+                        if (!marked && string_is(text + at, '-'))
+                        {
+                                positive wide;
+                                b64 rest;
+
+                                if (dated)
+                                        return false;
+
+                                at = file_read_number(text, at + 1, address_of rest,
+                                                      address_of wide);
+
+                                if (!wide || !string_is(text + at, '-'))
+                                        return false;
+
+                                b64 which;
+
+                                at = file_read_number(text, at + 1, address_of which,
+                                                      address_of wide);
+
+                                if (!wide || rest < 1 || rest > 12 || which < 1)
+                                        return false;
+
+                                year = digits <= 2 ? (value <= 68 ? 2000 + value : 1900 + value)
+                                                   : value;
+
+                                if (which > file_month_days(year, rest))
+                                        return false;
+
+                                month = (positive)rest;
+                                day = (positive)which;
+                                dated = true;
+
+                                // A clock time already read stands; the day
+                                // is midnight only when no time was said.
+                                if (!timed)
                                 {
-                                        positive wide;
-                                        b64 rest;
+                                        hour = 0;
+                                        minute = 0;
+                                        second = 0;
+                                        address_to nanoseconds = 0;
+                                }
 
-                                        if (dated)
+                                if (string_is(text + at, 'T') || string_is(text + at, 't'))
+                                        at++;
+
+                                continue;
+                        }
+
+                        /* GNU 9.11: N/N/N. Four or more leading digits
+                           are YYYY/MM/DD; otherwise MM/DD/YY[YY]. */
+                        if (!marked && string_is(text + at, '/'))
+                        {
+                                positive wide;
+                                b64 rest;
+                                b64 which;
+
+                                if (dated)
+                                        return false;
+
+                                at = file_read_number(text, at + 1,
+                                                      address_of rest,
+                                                      address_of wide);
+
+                                if (!wide || !string_is(text + at, '/'))
+                                        return false;
+
+                                at = file_read_number(text, at + 1,
+                                                      address_of which,
+                                                      address_of wide);
+
+                                if (!wide)
+                                        return false;
+
+                                if (digits >= 4)
+                                {
+                                        year = value;
+                                        if (rest < 1 || rest > 12 ||
+                                            which < 1 ||
+                                            which > file_month_days(
+                                                        year, rest))
                                                 return false;
-
-                                        at = file_read_number(text, at + 1, address_of rest,
-                                                              address_of wide);
-
-                                        if (!wide || !string_is(text + at, '-'))
-                                                return false;
-
-                                        b64 which;
-
-                                        at = file_read_number(text, at + 1, address_of which,
-                                                              address_of wide);
-
-                                        if (!wide || rest < 1 || rest > 12 || which < 1)
-                                                return false;
-
-                                        year = digits <= 2 ? (value <= 68 ? 2000 + value : 1900 + value)
-                                                           : value;
-
-                                        if (which > file_month_days(year, rest))
-                                                return false;
-
                                         month = (positive)rest;
                                         day = (positive)which;
-                                        dated = true;
-
-                                        // A clock time already read stands; the day
-                                        // is midnight only when no time was said.
-                                        if (!timed)
-                                        {
-                                                hour = 0;
-                                                minute = 0;
-                                                second = 0;
-                                                address_to nanoseconds = 0;
-                                        }
-
-                                        if (string_is(text + at, 'T') || string_is(text + at, 't'))
-                                                at++;
-
-                                        continue;
+                                }
+                                else
+                                {
+                                        if (value < 1 || value > 12 ||
+                                            rest < 1)
+                                                return false;
+                                        year = wide <= 2
+                                                   ? (which <= 68
+                                                          ? 2000 + which
+                                                          : 1900 + which)
+                                                   : which;
+                                        if (rest > file_month_days(
+                                                       year, value))
+                                                return false;
+                                        month = (positive)value;
+                                        day = (positive)rest;
                                 }
 
-                                /* GNU 9.11: N/N/N. Four or more leading digits
-                                   are YYYY/MM/DD; otherwise MM/DD/YY[YY]. */
-                                if (!marked && string_is(text + at, '/'))
+                                dated = true;
+                                if (!timed)
                                 {
-                                        positive wide;
-                                        b64 rest;
+                                        hour = 0;
+                                        minute = 0;
+                                        second = 0;
+                                        address_to nanoseconds = 0;
+                                }
+                                continue;
+                        }
+
+                        /* GNU 9.11: dd.mm.yy / dd.mm.yyyy, the European
+                           dotted form. Two dots are required so a
+                           fractional 1.5 is not stolen as a date. */
+                        if (!marked && string_is(text + at, '.'))
+                        {
+                                positive wide;
+                                b64 rest;
+                                positive after = file_read_number(
+                                    text, at + 1, address_of rest,
+                                    address_of wide);
+
+                                if (wide && string_is(text + after, '.'))
+                                {
                                         b64 which;
+                                        positive end_at;
 
                                         if (dated)
                                                 return false;
 
-                                        at = file_read_number(text, at + 1,
-                                                              address_of rest,
-                                                              address_of wide);
+                                        end_at = file_read_number(
+                                            text, after + 1,
+                                            address_of which,
+                                            address_of wide);
 
-                                        if (!wide || !string_is(text + at, '/'))
+                                        if (!wide || value < 1 ||
+                                            value > 31 || rest < 1 ||
+                                            rest > 12)
                                                 return false;
 
-                                        at = file_read_number(text, at + 1,
-                                                              address_of which,
-                                                              address_of wide);
+                                        year = wide <= 2
+                                                   ? (which <= 68
+                                                          ? 2000 + which
+                                                          : 1900 + which)
+                                                   : which;
 
-                                        if (!wide)
+                                        if (value > file_month_days(
+                                                        year, rest))
                                                 return false;
 
-                                        if (digits >= 4)
-                                        {
-                                                year = value;
-                                                if (rest < 1 || rest > 12 ||
-                                                    which < 1 ||
-                                                    which > file_month_days(
-                                                                year, rest))
-                                                        return false;
-                                                month = (positive)rest;
-                                                day = (positive)which;
-                                        }
-                                        else
-                                        {
-                                                if (value < 1 || value > 12 ||
-                                                    rest < 1)
-                                                        return false;
-                                                year = wide <= 2
-                                                           ? (which <= 68
-                                                                  ? 2000 + which
-                                                                  : 1900 + which)
-                                                           : which;
-                                                if (rest > file_month_days(
-                                                               year, value))
-                                                        return false;
-                                                month = (positive)value;
-                                                day = (positive)rest;
-                                        }
-
+                                        day = (positive)value;
+                                        month = (positive)rest;
                                         dated = true;
+                                        at = end_at;
+
                                         if (!timed)
                                         {
                                                 hour = 0;
                                                 minute = 0;
                                                 second = 0;
-                                                address_to nanoseconds = 0;
+                                                address_to nanoseconds =
+                                                    0;
                                         }
+
                                         continue;
                                 }
-
-                                /* GNU 9.11: dd.mm.yy / dd.mm.yyyy, the European
-                                   dotted form. Two dots are required so a
-                                   fractional 1.5 is not stolen as a date. */
-                                if (!marked && string_is(text + at, '.'))
-                                {
-                                        positive wide;
-                                        b64 rest;
-                                        positive after = file_read_number(
-                                            text, at + 1, address_of rest,
-                                            address_of wide);
-
-                                        if (wide && string_is(text + after, '.'))
-                                        {
-                                                b64 which;
-                                                positive end_at;
-
-                                                if (dated)
-                                                        return false;
-
-                                                end_at = file_read_number(
-                                                    text, after + 1,
-                                                    address_of which,
-                                                    address_of wide);
-
-                                                if (!wide || value < 1 ||
-                                                    value > 31 || rest < 1 ||
-                                                    rest > 12)
-                                                        return false;
-
-                                                year = wide <= 2
-                                                           ? (which <= 68
-                                                                  ? 2000 + which
-                                                                  : 1900 + which)
-                                                           : which;
-
-                                                if (value > file_month_days(
-                                                                year, rest))
-                                                        return false;
-
-                                                day = (positive)value;
-                                                month = (positive)rest;
-                                                dated = true;
-                                                at = end_at;
-
-                                                if (!timed)
-                                                {
-                                                        hour = 0;
-                                                        minute = 0;
-                                                        second = 0;
-                                                        address_to nanoseconds =
-                                                            0;
-                                                }
-
-                                                continue;
-                                        }
-                                }
+                        }
 
                         if (!marked && string_is(text + at, ':'))
                         {
@@ -4041,13 +4041,13 @@ static fn file_change_paths(positive first, positive count, bool recursive,
 
 CONST positive file_letter_bit(p8 letter)
 {
-        if (letter >= 'a' && letter <= 'z')
+        if (byte_is_lower(letter))
                 return (positive)(letter - 'a');
 
-        if (letter >= 'A' && letter <= 'Z')
+        if (byte_is_upper(letter))
                 return 26 + (positive)(letter - 'A');
 
-        if (letter >= '0' && letter <= '9')
+        if (byte_is_digit(letter))
                 return 52 + (positive)(letter - '0');
 
         return 62;
@@ -4797,9 +4797,9 @@ static p8 address_to file_transfer_buffer(void)
                 return null;
         if (!file_transfer_slots[slot])
         {
-                address_any made = memory(FILE_TRANSFER_SIZE);
+                address_any made = memory_checked(FILE_TRANSFER_SIZE);
 
-                if (!made || system_failed(made))
+                if (!made)
                         return null;
                 file_transfer_slots[slot] = (p8 address_to)made;
         }
@@ -7549,11 +7549,12 @@ static fn ls_url_bytes(string_address text)
                         continue;
                 }
 
-                //      The reference spells the two digits in lower case.
-                p8 escaped[3] = {'%', (p8)"0123456789abcdef"[byte >> 4],
-                                 (p8)"0123456789abcdef"[byte & 15]};
+                //      The reference spells the two digits in lower case,
+                //      which is what memory_into_hex writes.
+                p8 escaped[3] = {'%'};
 
-                ls_out(escaped, 3);
+                memory_into_hex(escaped + 1, address_of byte, 1);
+                ls_out(escaped, sizeof(escaped));
         }
 }
 
@@ -13885,6 +13886,7 @@ static b64 du_grand_stamp;
 */
 static p8 du_suffix[8];
 
+#if !defined(LIBRARY_THREAD_RUNTIME)
 static bool du_already(file_facts address_to facts)
 {
         if (du_count_links || facts->hard_links < 2)
@@ -13907,6 +13909,7 @@ static bool du_already(file_facts address_to facts)
            this table avoids. */
         return seen != 0;
 }
+#endif
 
 // The system's du takes a pattern against the whole path it built and
 // against the last component of it, so --exclude=b and --exclude=a/b both
@@ -14017,6 +14020,7 @@ enum
         DU_DEEP,
 };
 
+#if !defined(LIBRARY_THREAD_RUNTIME)
 static fn du_look_job(address_any context, positive index)
 {
         walk_batch address_to batch = (walk_batch address_to)context;
@@ -14027,6 +14031,7 @@ static fn du_look_job(address_any context, positive index)
                     item->directory, (string_address)batch->text + item->name,
                     du_follow ? 0 : AT_SYMLINK_NOFOLLOW, batch->facts + index);
 }
+#endif
 
 #if defined(LIBRARY_THREAD_RUNTIME)
 /*
@@ -35477,21 +35482,14 @@ static bool kill_status_mask(string_address text, string_address label,
 
                 from += string_span_of_set(text + from, " \t");
 
-                positive value = 0;
-                bool any = false;
+                positive digits = 0;
+                //      The text is terminated, and a terminator is not a
+                //      hexadecimal digit, so the run ends at the terminator
+                //      whatever the bound is.
+                positive value = string_digits_hexadecimal_max(
+                    text + from, (positive)-1, address_of digits);
 
-                for (; byte_is_hexadecimal(text[from]); from++)
-                {
-                        p8 byte = text[from];
-                        positive digit = byte_is_digit(byte) ? (positive)(byte - '0')
-                                         : byte >= 'a'       ? (positive)(byte - 'a' + 10)
-                                                             : (positive)(byte - 'A' + 10);
-
-                        value = value * 16 + digit;
-                        any = true;
-                }
-
-                if (!any)
+                if (!digits)
                         return false;
 
                 address_to mask = value;
