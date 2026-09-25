@@ -58588,9 +58588,10 @@ static fn coalesced_runs(void)
         socket_address_internet6 bound, to;
         b32 bound_size = sizeof bound;
         p8 run[3 * WATERLINK_DATAGRAM + 48];
-        p8 raw[16], frame[LINK_CHUNK], from[16];
-        positive each = 0, runs = LINK_SEGMENTS + 6;
-        p16 port, from_port = 0;
+        p8 raw[16], frame[LINK_CHUNK];
+        link_run ran[2];
+        positive runs = LINK_SEGMENTS + 6;
+        p16 port;
         timespec pause = {0, 20000000};
         link_iovec part = {run, sizeof run};
         p64 control[3];
@@ -58627,11 +58628,32 @@ static fn coalesced_runs(void)
                             (positive)address_of message, MSG_NOSIGNAL);
         (void)system_call_2(syscall(nanosleep), (positive)address_of pause, 0);
         check("a run of segments goes out as one send", got == sizeof run);
-        got = link_receive(from, address_of from_port, address_of each);
-        check("and is read as one run, told the size of each datagram",
-              got == sizeof run && each == WATERLINK_DATAGRAM &&
-                      !memory_compare(link_inbound, run, sizeof run) &&
-                      !memory_compare(from, wls_loopback, 16));
+        got = link_receive(ran);
+        check("and is read as one run, told the size of each datagram, in a "
+              "call that says the socket had no more",
+              got == 1 && ran[0].length == sizeof run &&
+                      ran[0].size == WATERLINK_DATAGRAM &&
+                      !memory_compare(link_inbound[0], run, sizeof run) &&
+                      !memory_compare(ran[0].address, wls_loopback, 16));
+
+        //      Two runs waiting: one call brings both, the next says "not now".
+        run[0] ^= 1;
+        (void)system_call_3(syscall(sendmsg), (positive)outer,
+                            (positive)address_of message, MSG_NOSIGNAL);
+        run[0] ^= 1;
+        (void)system_call_3(syscall(sendmsg), (positive)outer,
+                            (positive)address_of message, MSG_NOSIGNAL);
+        (void)system_call_2(syscall(nanosleep), (positive)address_of pause, 0);
+        got = link_receive(ran);
+        check("two runs waiting are both read in one call, each whole",
+              got == 2 && ran[0].length == sizeof run &&
+                      ran[1].length == sizeof run &&
+                      ran[1].size == WATERLINK_DATAGRAM &&
+                      link_inbound[0][0] == (p8)(run[0] ^ 1) &&
+                      !memory_compare(link_inbound[1], run, sizeof run) &&
+                      !memory_compare(ran[1].address, wls_loopback, 16));
+        check("and the call after them says the socket is empty",
+              link_receive(ran) == -EAGAIN);
 
         check("a session that talks to itself opens", link_session_open(s));
         wls_seeded(raw, sizeof raw, 95);
@@ -59068,9 +59090,9 @@ static fn ipv4_only(void)
                 floodlight_program program = {array_count(filter), filter};
                 socket_address_internet bound;
                 b32 size = sizeof bound;
-                p8 loopback[16], sixth[16] = {0}, from[16];
-                positive each = 0;
-                p16 port, from_port = 0;
+                p8 loopback[16], sixth[16] = {0};
+                link_run ran[2];
+                p16 port;
                 system_poll_descriptor wait;
                 b32 wrong = 0;
 
@@ -59094,10 +59116,11 @@ static fn ipv4_only(void)
                                                 SYSTEM_POLL_READ, 0};
                 link_wait(address_of wait, null, 1, link_now() + 2000000,
                           link_now());
-                if (link_receive(from, address_of from_port,
-                                 address_of each) != 4 ||
-                    each != 4 || memory_compare(link_inbound, "ping", 4) ||
-                    memory_compare(from, loopback, 16) || from_port != port)
+                if (link_receive(ran) != 1 || ran[0].length != 4 ||
+                    ran[0].size != 4 ||
+                    memory_compare(link_inbound[0], "ping", 4) ||
+                    memory_compare(ran[0].address, loopback, 16) ||
+                    ran[0].port != port)
                         wrong |= 8;
                 sixth[15] = 1;
                 if (link_send_to((p8 address_to) "ping", 4, sixth, port) != -97)

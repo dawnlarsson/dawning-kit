@@ -2231,67 +2231,93 @@ static bool link_carried(p8 address_to datagram, positive length,
         What came, a run at a time, into link_inbound. The socket coalesces
         (UDP_GRO) datagrams from one sender that are all one size but the
         last -- what the far side sent as segments -- and says that size, so
-        a run of fifty four is one call where it was fifty four. Answers the
-        bytes read, with size set to each datagram's, or the error.
+        a run of fifty four is one read where it was fifty four. Two runs are
+        asked for in one call (recvmmsg), and a call that brings back one has
+        found the socket empty: a keystroke's datagram is one call, not a
+        second to hear "not now". Answers how many runs, or the error.
 */
-static p8 link_inbound[65536];
-
-static bipolar link_receive(p8 address_to address, p16 address_to port,
-                            positive address_to size)
+typedef struct
 {
-        socket_address_internet6 from;
-        link_iovec part = {link_inbound, sizeof link_inbound};
-        p64 control[4];
         link_message message;
-        bipolar got;
+        b32 length;
+        b32 padding;
+} link_received;
 
-        memory_zero(address_of message, sizeof message);
-        message.name = address_of from;
-        message.name_length = sizeof from;
-        message.parts = address_of part;
-        message.part_count = 1;
-        message.control = control;
-        message.control_length = sizeof control;
-        got = system_call_3(syscall(recvmsg), (positive)link_self.socket,
-                            (positive)address_of message, MSG_DONTWAIT);
-        if (got < 0)
-                return got;
+typedef struct
+{
+        p8 address[16];
+        p16 port;
+        positive length; // the run's bytes
+        positive size;   // each datagram's, the last perhaps shorter
+} link_run;
 
-        //      cmsghdr: length, level, type, then the size as an int.
-        address_to size = (positive)got;
-        for (positive at = 0; at + 20 <= message.control_length &&
-                              at + 20 <= sizeof control;)
+static p8 link_inbound[2][65536];
+
+static bipolar link_receive(link_run address_to run)
+{
+        socket_address_internet6 from[2];
+        link_iovec part[2];
+        p64 control[2][4];
+        link_received got[2];
+        bipolar count;
+
+        memory_zero(got, sizeof got);
+        for (positive at = 0; at < 2; at++)
         {
-                p64 length;
-                b32 level, type, segment;
-
-                memory_copy(address_of length, (p8 address_to)control + at, 8);
-                memory_copy(address_of level, (p8 address_to)control + at + 8, 4);
-                memory_copy(address_of type, (p8 address_to)control + at + 12, 4);
-                if (length < 20 || at + length > sizeof control)
-                        break;
-                memory_copy(address_of segment, (p8 address_to)control + at + 16,
-                            4);
-                if (level == 17 && type == 104 && segment > 0 &&
-                    (positive)segment < (positive)got) // SOL_UDP, UDP_GRO
-                        address_to size = (positive)segment;
-                at += (length + 7) & ~7ull;
+                part[at] = (link_iovec){link_inbound[at], sizeof link_inbound[at]};
+                got[at].message.name = from + at;
+                got[at].message.name_length = sizeof from[at];
+                got[at].message.parts = part + at;
+                got[at].message.part_count = 1;
+                got[at].message.control = control[at];
+                got[at].message.control_length = sizeof control[at];
         }
+        count = system_call_5(syscall(recvmmsg), (positive)link_self.socket,
+                              (positive)got, 2, MSG_DONTWAIT, 0);
 
-        if (from.family == AF_INET6)
+        for (bipolar at = 0; at < count; at++)
         {
-                memory_copy(address, from.host, 16);
-                address_to port = network_order_16(from.port);
-        }
-        else
-        {
-                socket_address_internet address_to v4 =
-                        (socket_address_internet address_to)address_of from;
+                link_message address_to message = address_of got[at].message;
+                p8 address_to cmsg = (p8 address_to)control[at];
 
-                link_address_v4(address, network_order_32(v4->host));
-                address_to port = network_order_16(v4->port);
+                run[at].length = got[at].length;
+                run[at].size = got[at].length;
+                //      cmsghdr: length, level, type, then the size as an int.
+                for (positive place = 0;
+                     place + 20 <= message->control_length &&
+                     place + 20 <= sizeof control[at];)
+                {
+                        p64 length;
+                        b32 level, type, segment;
+
+                        memory_copy(address_of length, cmsg + place, 8);
+                        memory_copy(address_of level, cmsg + place + 8, 4);
+                        memory_copy(address_of type, cmsg + place + 12, 4);
+                        if (length < 20 || place + length > sizeof control[at])
+                                break;
+                        memory_copy(address_of segment, cmsg + place + 16, 4);
+                        if (level == 17 && type == 104 && segment > 0 &&
+                            (positive)segment < run[at].length) // SOL_UDP, UDP_GRO
+                                run[at].size = (positive)segment;
+                        place += (length + 7) & ~7ull;
+                }
+
+                if (from[at].family == AF_INET6)
+                {
+                        memory_copy(run[at].address, from[at].host, 16);
+                        run[at].port = network_order_16(from[at].port);
+                }
+                else
+                {
+                        socket_address_internet address_to v4 =
+                                (socket_address_internet address_to)(from + at);
+
+                        link_address_v4(run[at].address,
+                                        network_order_32(v4->host));
+                        run[at].port = network_order_16(v4->port);
+                }
         }
-        return got;
+        return count;
 }
 
 // The state file, for `moonwater link` -----------------------------------------
@@ -2512,24 +2538,27 @@ static fn link_receive_all(p64 now)
 {
         for (positive turn = 0; turn < 256 && !link_self.socket_quiet;)
         {
-                p8 address[16];
-                p16 port;
-                positive size;
-                bipolar got = link_receive(address, address_of port,
-                                           address_of size);
+                link_run run[2];
+                bipolar count = link_receive(run);
 
-                if (got < 0)
-                {
+                if (count < 2)
                         link_self.socket_quiet = true;
-                        break;
+                for (bipolar at = 0; at < count; at++)
+                {
+                        p8 address_to bytes = link_inbound[at];
+                        positive length = run[at].length;
+                        positive size = run[at].size;
+
+                        turn++;
+                        for (positive from = 0; from < length;
+                             from += size, turn++)
+                                link_datagram(bytes + from,
+                                              length - from < size
+                                                      ? length - from
+                                                      : size,
+                                              run[at].address, run[at].port,
+                                              now);
                 }
-                turn++;
-                for (positive at = 0; at < (positive)got; at += size, turn++)
-                        link_datagram(link_inbound + at,
-                                      (positive)got - at < size
-                                              ? (positive)got - at
-                                              : size,
-                                      address, port, now);
         }
 }
 
