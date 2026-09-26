@@ -6222,12 +6222,17 @@ static fn text_head_short(positive count, bool by_bytes)
 static bool text_count_parse(string_address said, p8 marked,
                              bool address_to special, positive address_to count)
 {
+        // The tool reads its own sign and steps over a -; a + it only
+        // notes. The rest is GNU's strtoumax, which takes white space and
+        // then one +: head -n ' 2' is two lines, tail -n -+2 two from the
+        // end, and head -n ++2 and tail -n '+ 2' are refused.
         if (said[0] == marked)
-        {
                 address_to special = true;
+        if (said[0] == '-')
                 said++;
-        }
-        else if (said[0] == '+' || said[0] == '-')
+
+        said += string_span(said, string_set_space);
+        if (said[0] == '+')
                 said++;
 
         return text_count_suffixed(said, count);
