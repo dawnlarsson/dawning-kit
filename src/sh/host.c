@@ -8196,12 +8196,18 @@ static COLD bipolar sntp_query(string_address name, bool filter, bool tight,
 #define LOCALE_NTP_RETRY_LEAST 1
 #define LOCALE_NTP_RETRY_MOST 8
 #define LOCALE_NTP_AGAIN 1800
+#define LOCALE_NTP_AGAIN_FIRST 256
+#define LOCALE_NTP_LEARN_LEAST_NS ((bipolar)60 * 1000000000)
+#define LOCALE_NTP_FREQ_MOST ((bipolar)500 << 16)
+#define LOCALE_NTP_NOISE_NS ((bipolar)500000)
 #define LOCALE_WAIT_NOHANG 1
 #define LOCALE_NTP_RATE_AGAIN 300
 #define LOCALE_NTP_EXIT_RATE 2
 #define LOCALE_NTP_STEP_NS ((bipolar)128 * 1000000)
+#define LOCALE_NTP_STEP_FIRST_NS ((bipolar)1000000)
 #define LOCALE_NTP_TIMECONST 6
 #define LOCALE_TIMEX_OFFSET 1
+#define LOCALE_TIMEX_FREQUENCY 2
 #define LOCALE_TIMEX_CONSTANT 6
 /*
         The kernel's own numbering, from uapi/linux/timex.h. ADJ_SETOFFSET
@@ -8225,6 +8231,7 @@ static COLD bipolar sntp_query(string_address name, bool filter, bool tight,
 #define ADJ_NANO 0x2000
 #define STA_PLL 0x0001
 #define STA_UNSYNC 0x0040
+#define STA_FREQHOLD 0x0080
 #define STA_NANO 0x2000
 
 /*
@@ -8307,6 +8314,14 @@ static bipolar locale_child_poll(locale_child address_to child)
 
 static p64 locale_ntp_next;
 static positive locale_ntp_retry = LOCALE_NTP_RETRY_LEAST;
+/*
+        When the query in flight was asked, when the last one that set the
+        clock was, and how long until the next: the forked query reads the
+        last, which the fork hands it, to tell how fast the clock ran.
+*/
+static p64 locale_ntp_asked;
+static p64 locale_ntp_synced;
+static positive locale_ntp_every = LOCALE_NTP_AGAIN_FIRST;
 static locale_child locale_ntp_child = {0, -1};
 
 static fn locale_ntp_keep(void);
@@ -9344,7 +9359,7 @@ static fn locale_clock_mark_synced(positive error_us)
         positive words[LOGGER_TIMEX_WORDS] = {0};
 
         words[0] = ADJ_STATUS | ADJ_MAXERROR | ADJ_ESTERROR;
-        words[LOGGER_TIMEX_STATUS] = STA_PLL;
+        words[LOGGER_TIMEX_STATUS] = STA_PLL | STA_FREQHOLD;
         words[LOGGER_TIMEX_MAXERROR] = error_us;
         words[LOCALE_TIMEX_ESTERROR] = error_us;
         system_call_1(syscall(adjtimex), (positive)words);
@@ -9366,10 +9381,10 @@ static fn locale_clock_mark_synced(positive error_us)
         this program needs, because the query runs in a forked child
         that exits, so nothing held in memory survives to the next one.
         Handing the offset to that loop with ADJ_OFFSET and STA_PLL lets
-        the kernel both steer the clock and learn how fast it runs; a
-        poll interval longer than MINSEC puts it in the frequency-locked
-        regime, which is the one that estimates rate from samples as far
-        apart as ours.
+        the kernel steer the clock's phase; how fast it runs is learned
+        below instead (locale_ntp_learned), since the loop was measured
+        learning it far too slowly, and polls start at four minutes and
+        double to half an hour while that is being learned.
 
         A step is still right when the clock is far out. Slewing never
         moves time backwards, which is what a log, a build and a file
@@ -9382,10 +9397,69 @@ static fn locale_clock_mark_synced(positive error_us)
         adjustment was computed against a clock this request is about to
         move, and applying both would correct twice.
 */
-static CONST bool locale_ntp_wants_step(bipolar offset_ns)
+/*
+        The first answer after boot is stepped to from a millisecond out,
+        not slewed to: the clock then was set from a real-time clock that
+        keeps whole seconds, so it starts some tens of milliseconds wrong,
+        and the kernel slews those away at its own pace -- measured, 86 ms
+        took nineteen minutes to come within one. Nothing has read the time
+        yet to see it move, which is when ntpd -g and chrony's makestep
+        step too. After that, only 128 ms is worth a step.
+*/
+static bool locale_ntp_first;
+
+static bool locale_ntp_wants_step(bipolar offset_ns)
 {
-        return offset_ns >= LOCALE_NTP_STEP_NS ||
-               offset_ns <= -LOCALE_NTP_STEP_NS;
+        bipolar most = locale_ntp_first ? LOCALE_NTP_STEP_FIRST_NS
+                                        : LOCALE_NTP_STEP_NS;
+
+        return offset_ns >= most || offset_ns <= -most;
+}
+
+/*
+        How fast the clock runs is learned here, at every poll, and not by
+        the kernel's loop. The loop learned too slowly to matter: handed a
+        guest whose tick ran 96 ppm fast, it had learned 31 of them after
+        thirteen minutes, and a step -- which ADJ_SETOFFSET makes without
+        touching the frequency at all -- taught it nothing, so a crystal
+        fast enough to be stepped at every poll, 71 ppm at half an hour,
+        was stepped at every poll for ever and ran up its whole drift
+        between them: 144 ms, measured, every time.
+
+        What a poll finds past the slew the kernel still has in hand ran up
+        since the last poll that set the clock, and over that time is the
+        rate the clock is off by. It is learned in the proportion it stands
+        above the measurement's own noise, some hundreds of microseconds:
+        a clock 20 ms out is learned almost whole at once, and 150 us is
+        under a quarter learned, so a reading that is mostly noise moves
+        the frequency little. STA_FREQHOLD keeps the kernel's loop to the
+        phase, so the two do not both answer the same offset. Not learned:
+        an elapsed shorter than a minute, and an offset past a thousand
+        parts per million of it, which is a clock that was set wrong
+        rather than one that ran fast. Against a panel of stratum-1
+        servers, in time compressed four times, a guest whose tick ran 400
+        ppm fast was held within 0.2 ms after its second poll, where
+        without this it ran 168 ms out before every step; an ordinary
+        clock was a median 136 us out against 604.
+*/
+static CONST bipolar locale_ntp_learned(bipolar offset_ns, bipolar elapsed_ns,
+                                        bipolar frequency)
+{
+        bipolar learned;
+
+        if (elapsed_ns < LOCALE_NTP_LEARN_LEAST_NS ||
+            offset_ns > elapsed_ns / 1000 || offset_ns < -(elapsed_ns / 1000))
+                return frequency;
+        learned = offset_ns * 65536 / (elapsed_ns / 1000000);
+        learned = learned * (offset_ns < 0 ? -offset_ns : offset_ns) /
+                  ((offset_ns < 0 ? -offset_ns : offset_ns) +
+                   LOCALE_NTP_NOISE_NS);
+        learned += frequency;
+        if (learned > LOCALE_NTP_FREQ_MOST)
+                return LOCALE_NTP_FREQ_MOST;
+        if (learned < -LOCALE_NTP_FREQ_MOST)
+                return -LOCALE_NTP_FREQ_MOST;
+        return learned;
 }
 
 static fn locale_ntp_discipline_words(bipolar offset_ns, bipolar seconds,
@@ -9393,7 +9467,7 @@ static fn locale_ntp_discipline_words(bipolar offset_ns, bipolar seconds,
                                       positive address_to words)
 {
         memory_zero(words, LOGGER_TIMEX_WORDS * sizeof(positive));
-        words[LOGGER_TIMEX_STATUS] = STA_PLL;
+        words[LOGGER_TIMEX_STATUS] = STA_PLL | STA_FREQHOLD;
         words[LOGGER_TIMEX_MAXERROR] = error_us;
         words[LOCALE_TIMEX_ESTERROR] = error_us;
         if (locale_ntp_wants_step(offset_ns))
@@ -9455,7 +9529,7 @@ static COLD bool locale_discipline_ok(void)
                         return false;
                 /* the loop is enabled either way, and the clock counts as
                    set either way, so STA_UNSYNC never survives a reply */
-                if (words[LOGGER_TIMEX_STATUS] != STA_PLL)
+                if (words[LOGGER_TIMEX_STATUS] != (STA_PLL | STA_FREQHOLD))
                         return false;
                 if (words[0] & ADJ_STATUS ? false : true)
                         return false;
@@ -9492,6 +9566,31 @@ static COLD bool locale_discipline_ok(void)
                 if (!(words[0] & ADJ_NANO) || !(words[0] & ADJ_OFFSET))
                         return false;
         }
+        /* the first answer after boot steps from a millisecond out, and a
+           later one only from 128 ms */
+        locale_ntp_first = true;
+        if (!locale_ntp_wants_step(1000000) || !locale_ntp_wants_step(-1000000) ||
+            locale_ntp_wants_step(999999) || locale_ntp_wants_step(-999999))
+                return false;
+        locale_ntp_first = false;
+        if (locale_ntp_wants_step(1000000) || locale_ntp_wants_step(-86000000))
+                return false;
+        /* a poll learns offset over elapsed, trusted as far as the offset
+           stands above the noise: 144 ms slow after half an hour is -80
+           ppm, nearly all of it learned; 150 us after 256 s is under a
+           quarter of its 0.58 ppm; held within the kernel's 500, and under
+           a minute, or past 1000 ppm, learns nothing */
+        if (locale_ntp_learned(-144000000, (bipolar)1800 * 1000000000, 0) !=
+                -5224738 ||
+            locale_ntp_learned(36000000, (bipolar)1800 * 1000000000,
+                               (bipolar)7 << 16) != 1751516 ||
+            locale_ntp_learned(150000, (bipolar)256 * 1000000000, 0) !=
+                (bipolar)150000 * 65536 / 256000 * 150000 / 650000 ||
+            locale_ntp_learned(-144000000, (bipolar)1800 * 1000000000,
+                               -((bipolar)490 << 16)) != -LOCALE_NTP_FREQ_MOST ||
+            locale_ntp_learned(-144000000, (bipolar)30 * 1000000000, 5) != 5 ||
+            locale_ntp_learned(-5000000000, (bipolar)1800 * 1000000000, 5) != 5)
+                return false;
         /* a 10 ms distance is 10 ms, rounded up a microsecond; a negative
            or absurd one still gives a bound the kernel accepts */
         return locale_ntp_error_us((bipolar)10 * 1000000) == 10001 &&
@@ -9527,8 +9626,32 @@ static bipolar locale_ntp_apply_offset(bipolar offset_ns, bipolar distance_ns)
                 return SNTP_MALFORMED;
 
         sntp_split_offset(offset_ns, address_of sec, address_of nsec);
+        locale_ntp_first = !locale_ntp_synced;
         locale_ntp_discipline_words(offset_ns, sec, nsec,
                                     locale_ntp_error_us(distance_ns), words);
+        if (locale_ntp_synced)
+        {
+                positive state[LOGGER_TIMEX_WORDS] = {0};
+                bipolar elapsed = (bipolar)(system_clock_ns(HOST_CLOCK_BOOTTIME) -
+                                            locale_ntp_synced);
+                bipolar frequency;
+
+                if (system_call_1(syscall(adjtimex), (positive)state) >= 0)
+                {
+                        bipolar pending = (bipolar)state[LOCALE_TIMEX_OFFSET];
+
+                        if (!(state[LOGGER_TIMEX_STATUS] & STA_NANO))
+                                pending *= 1000;
+                        frequency = locale_ntp_learned(
+                            offset_ns - pending, elapsed,
+                            (bipolar)state[LOCALE_TIMEX_FREQUENCY]);
+                        if (frequency != (bipolar)state[LOCALE_TIMEX_FREQUENCY])
+                        {
+                                words[0] |= ADJ_FREQUENCY;
+                                words[LOCALE_TIMEX_FREQUENCY] = (positive)frequency;
+                        }
+                }
+        }
         failed = system_call_1(syscall(adjtimex), (positive)words);
         if_common (failed >= 0)
                 return 0;
@@ -9795,6 +9918,8 @@ static fn locale_restore(void)
 
         locale_ntp_next = 0;
         locale_ntp_retry = LOCALE_NTP_RETRY_LEAST;
+        locale_ntp_synced = 0;
+        locale_ntp_every = LOCALE_NTP_AGAIN_FIRST;
         locale_auto_next = 0;
         locale_auto_wait = LOCALE_AUTO_LEAST;
         if (locale_ntp_wanted())
@@ -9812,9 +9937,16 @@ static fn locale_ntp_keep(void)
         {
                 if (!ended)
                 {
+                        //      Soon at first, while the loop has not
+                        //      learned how fast this clock runs, and
+                        //      half-hourly once it has had the time to.
                         locale_ntp_retry = LOCALE_NTP_RETRY_LEAST;
+                        locale_ntp_synced = locale_ntp_asked;
                         locale_ntp_next =
-                            now + (p64)LOCALE_NTP_AGAIN * 1000000000ull;
+                            now + (p64)locale_ntp_every * 1000000000ull;
+                        locale_ntp_every = locale_ntp_every * 2 < LOCALE_NTP_AGAIN
+                                                   ? locale_ntp_every * 2
+                                                   : LOCALE_NTP_AGAIN;
                 }
                 else if (ended == LOCALE_NTP_EXIT_RATE)
                 {
@@ -9835,6 +9967,7 @@ static fn locale_ntp_keep(void)
         if (locale_ntp_next && now < locale_ntp_next)
                 return;
 
+        locale_ntp_asked = now;
         if (!locale_child_fork(address_of locale_ntp_child))
         {
                 bipolar failed = locale_ntp_apply();
