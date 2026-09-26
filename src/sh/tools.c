@@ -5066,9 +5066,7 @@ static fn numfmt_body_out(p8 address_to number, positive number_length,
 static fn numfmt_short_form(p8 address_to digits, positive length,
                             bool negative, p8 address_to into)
 {
-        positive at = 0;
-        while (at < length && digits[at] == '0')
-                at++;
+        positive at = memory_span_byte(digits, '0', length);
         p8 kept[8];
         positive have = 0;
         positive exponent = length > at ? length - at - 1 : 0;
@@ -5257,9 +5255,7 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
                 positive whole = string_span_max(bytes + sign,
                                                  numeric_length - sign,
                                                  string_set_digits);
-                positive leading = 0;
-                while (leading < whole && bytes[sign + leading] == '0')
-                        leading++;
+                positive leading = memory_span_byte(bytes + sign, '0', whole);
                 if (tail == stop && !power && numfmt.to == NUMFMT_SCALE_NONE &&
                     whole - leading >= 20)
                 {
@@ -5288,15 +5284,12 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
         if (numfmt.debug)
         {
                 positive at = numeric_length && bytes[0] == '-';
-                positive digits = 0;
+                at += memory_span_byte(bytes + at, '0', numeric_length - at);
 
-                while (at < numeric_length && bytes[at] == '0')
-                        at++;
-                while (at < numeric_length && byte_is_digit(bytes[at]))
-                {
-                        digits++;
-                        at++;
-                }
+                positive digits = string_span_max(bytes + at, numeric_length - at,
+                                                  string_set_digits);
+
+                at += digits;
 
                 if (digits > 18)
                 {
@@ -6394,9 +6387,9 @@ invalid:
 
                 // Digits alone overflowed the native word, this factor's
                 // stated ceiling; anything else is GNU's own complaint.
-                positive digits = start;
-                while (digits < length && byte_is_digit(bytes[digits]))
-                        digits++;
+                positive digits = start + string_span_max(bytes + start,
+                                                          length - start,
+                                                          string_set_digits);
 
                 text_flush();
                 if (digits == length && length > start)
@@ -6878,10 +6871,9 @@ static fn tools_uuid_record_read(string_address text,
         }
         else if (version == 7)
         {
-                p64 milliseconds = 0;
-                for (positive at = 0; at < 6; at++)
-                        milliseconds = (milliseconds << 8) |
-                                       record->uuid.bytes[at];
+                p64 milliseconds =
+                    (p64)network_load_32(record->uuid.bytes) << 16 |
+                    network_load_16(record->uuid.bytes + 4);
                 seconds = milliseconds / 1000;
                 microseconds = (positive)(milliseconds % 1000) * 1000;
         }
@@ -13434,9 +13426,8 @@ static bool tools_dmesg_kmsg_record(p8 address_to bytes, positive length,
                 return false;
         (void)sequence;
 
-        while (at < stop && *at != ';')
-                at++;
-        if (at == stop)
+        at = memory_first_of(at, ';', (positive)(stop - at));
+        if (!at)
                 return false;
         at++;
 
@@ -27439,9 +27430,7 @@ static fn tools_fincore_human(p8 address_to into, p64 value)
         p8 made[24];
         positive length = positive_into_human_nearest_string(
             made, (positive)value, true);
-        positive space = 0;
-        while (space < length && made[space] != ' ')
-                space++;
+        positive space = memory_span_without_byte(made, ' ', length);
 
         static const p8 units[] = "BKMGTPE";
         p8 actual = space + 1 < length ? made[space + 1] : 'B';
