@@ -622,9 +622,11 @@ static string_address expand_hold(string_address text, positive length,
         reads a literal out of the middle of an expression and a variable is
         read whole -- and both have to agree about what 010 is worth.
 
-        empty_hex_ok is the one personality the two shells split on here.
+        empty_hex_ok is one personality the two shells split on here.
         Bash reads a bare 0x as zero. dash refuses it, both as a literal
-        and as the whole value of a name.
+        and as the whole value of a name. The other is overflow: a limit of
+        nought wraps the digits modulo 2^64, as bash reads them, where dash
+        stops at the limit.
 */
 static positive expand_base_positive(string_address address_to at,
                                      bool address_to valid, positive limit,
@@ -670,7 +672,7 @@ static positive expand_base_positive(string_address address_to at,
                         every digit after saturation so the parser still lands
                         at the real operator or end of the expression.
                 */
-                if (value > cutoff || (value == cutoff && digit > last))
+                if (limit && (value > cutoff || (value == cutoff && digit > last)))
                         value = limit;
                 else
                         value = value * base + digit;
@@ -695,7 +697,8 @@ static positive expand_base_positive(string_address address_to at,
 static bipolar expand_base_number(string_address address_to at, bool address_to valid,
                                   bool empty_hex_ok)
 {
-        return (bipolar)expand_base_positive(at, valid, (positive)bipolar_max,
+        return (bipolar)expand_base_positive(at, valid,
+                                             empty_hex_ok ? 0 : (positive)bipolar_max,
                                              empty_hex_ok);
 }
 
@@ -2738,7 +2741,7 @@ static bipolar arith_number_of(expand_reference reference, p8 address_to scratch
 
         digits = step;
         magnitude = expand_base_positive(address_of step, address_of valid,
-                                         (positive)bipolar_max + 1,
+                                         arith_bash_mode ? 0 : (positive)bipolar_max + 1,
                                          arith_bash_mode);
 
         if (step == digits || !valid)
@@ -2755,8 +2758,10 @@ static bipolar arith_number_of(expand_reference reference, p8 address_to scratch
                 return 0;
         }
 
+        // Bash's digits have already wrapped; dash's stopped at the limit.
         return bipolar_from_magnitude(
-            negative ? magnitude : min(magnitude, (positive)bipolar_max),
+            negative || arith_bash_mode ? magnitude
+                                        : min(magnitude, (positive)bipolar_max),
             negative);
 }
 
@@ -2985,8 +2990,25 @@ static bipolar arith_combine(p8 op, bipolar left, bipolar right)
         it, because the caller found it while deciding this was not an
         ordinary number.
 */
+static COLD fn arith_based_refused(string_address start, string_address why)
+{
+        string_address held = arith_at;
+
+        if (!arith_bash_mode)
+        {
+                arith_bad = true;
+                return;
+        }
+
+        // Bash names the literal, from its first digit, and says why.
+        arith_at = start;
+        arith_fail(why);
+        arith_at = held;
+}
+
 static bipolar arith_based(string_address hash)
 {
+        string_address start = arith_at;
         positive base = 0;
         positive value = 0;
         bool any = false;
@@ -3007,7 +3029,7 @@ static bipolar arith_based(string_address hash)
 
         if (base < 2 || base > 64)
         {
-                arith_bad = true;
+                arith_based_refused(start, "invalid arithmetic base");
                 return 0;
         }
 
@@ -3031,7 +3053,7 @@ static bipolar arith_based(string_address hash)
 
                 if (digit >= base)
                 {
-                        arith_bad = true;
+                        arith_based_refused(start, "value too great for base");
                         return 0;
                 }
 
@@ -3041,7 +3063,7 @@ static bipolar arith_based(string_address hash)
         }
 
         if (!any)
-                arith_bad = true;
+                arith_based_refused(start, "invalid integer constant");
 
         return (bipolar)value;
 }
