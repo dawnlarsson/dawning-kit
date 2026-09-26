@@ -7071,10 +7071,8 @@ static PURE b32 ls_version_run(string_address left, positive left_length, string
                         r++;
                 }
 
-                while (l < left_length && string_is(left + l, '0'))
-                        l++;
-                while (r < right_length && string_is(right + r, '0'))
-                        r++;
+                l += memory_span_byte(left + l, '0', left_length - l);
+                r += memory_span_byte(right + r, '0', right_length - r);
 
                 while (l < left_length && byte_is_digit(string_get(left + l)) &&
                        r < right_length && byte_is_digit(string_get(right + r)))
@@ -12565,10 +12563,9 @@ static file_facts find_tree_facts;
 
 static bool find_tree_kind_in(string_address kinds, p8 kind)
 {
-        for (; string_get(kinds); kinds++)
-                if (string_get(kinds) == kind)
-                        return true;
-        return false;
+        // A kind is never nought, which string_first_of would find as the
+        // terminator.
+        return kind && string_first_of(kinds, kind);
 }
 
 //      Whether this expression can be walked on the pool at all, and which
@@ -18987,14 +18984,12 @@ static bool realpath_relative(string_address from, string_address path,
 
         while (string_get(step))
         {
-                while (string_is(step, '/'))
-                        step++;
+                step += string_span_of_set(step, "/");
 
                 if (string_is(step, end))
                         break;
 
-                while (string_get(step) && !string_is(step, '/'))
-                        step++;
+                step += string_span_without_set(step, "/");
 
                 positive need = 2 + (length != 0);
 
