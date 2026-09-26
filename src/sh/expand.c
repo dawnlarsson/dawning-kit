@@ -3135,7 +3135,10 @@ static bipolar arith_lvalue(p8 prefix)
         }
         else
         {
-                value = arith_value_of(address_of name);
+                // A plain = never reads what it replaces: x=hello, or x
+                // unset under set -u, takes $((x=3)) as dash and bash do.
+                if (!(string_is(arith_at, '=') && string_not(arith_at + 1, '=')))
+                        value = arith_value_of(address_of name);
                 arith_keep_lvalue(address_of name, value);
         }
 
@@ -3596,6 +3599,13 @@ static HOT bool arith_increment_fast(bipolar address_to value)
 
         at += name_length;
         if (string_is(at, '['))
+                return false;
+
+        /* Bash's PIPESTATUS may still be deferred in the executor, and the
+           table holds the vector before it: arith_lvalue's walk asks for it
+           by name, and so must a counter read here. */
+        if (shell_bash_compat &&
+            memory_is_word(name_start, name_length, "PIPESTATUS"))
                 return false;
 
         at = arith_skip_space(at);
@@ -9946,8 +9956,10 @@ static positive shell_expand_braces(string_address word,
 
         Ordinary POSIX names only: no braces, no subscript, no $1/$#/$@.
         Quoted, or unquoted with nothing to split or glob, the environment
-        value is already the field -- argv can hold that pointer instead of
-        walking expand_into. Unquoted empty vanishes; quoted empty is one
+        value is already the field -- a copy of its bytes, never the pointer:
+        the table rewrites a value in place when the new one fits its cell,
+        so `echo $i $((i=7))` and `export i=m $i` saw a later assignment in
+        the word they had already expanded. It still skips expand_into. Unquoted empty vanishes; quoted empty is one
         empty field. Unset, arrays that are not their own scalar, IFS split
         and glob stay on the general expander, which is also where nounset
         still diagnoses.
@@ -10005,7 +10017,7 @@ static inline INLINE positive expand_simple_dollar_shape(string_address word,
 }
 
 static inline INLINE bool expand_simple_dollar_word(string_address word,
-                                      shell_words address_to out, bool borrow)
+                                      shell_words address_to out)
 {
         bool quoted;
         positive length = expand_simple_dollar_shape(word, address_of quoted,
@@ -10045,12 +10057,9 @@ static inline INLINE bool expand_simple_dollar_word(string_address word,
         else if (!value_length)
                 value = (string_address) "";
 
-        if (!borrow)
-        {
-                value = expand_keep_bytes(value, value_length);
-                if (expand_failed)
-                        return true;
-        }
+        value = expand_keep_bytes(value, value_length);
+        if (expand_failed)
+                return true;
 
         if (!shell_words_add(out, value))
         {
@@ -10074,7 +10083,7 @@ positive shell_expand_fields(string_address word, shell_words address_to out)
 {
         positive count;
 
-        if (expand_simple_dollar_word(word, out, false))
+        if (expand_simple_dollar_word(word, out))
                 return out->count;
 
         count = shell_braceexpand_on()

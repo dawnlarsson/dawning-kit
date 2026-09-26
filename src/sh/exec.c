@@ -10239,8 +10239,7 @@ static b32 exec_simple(b32 index)
 
                         count = (b32)arguments.count;
                 }
-                else if (expand_simple_dollar_word(word, address_of arguments,
-                                                    !leading))
+                else if (expand_simple_dollar_word(word, address_of arguments))
                         count = (b32)arguments.count;
                 else
                         count = (b32)shell_expand_fields(word,
@@ -13929,9 +13928,16 @@ static b32 exec_node_kind(b32 index)
         if (conditional_syntax)
                 conditional_syntax_finish();
 
+        /* The three compounds bash runs as one command of their own each
+           replace its PIPESTATUS, just as a simple command does: after
+           `false | true; ((0))` it is (1), not the pipeline's (1 0). */
         if (node->kind == NODE_SUBSHELL || node->kind == NODE_ARITHMETIC ||
             node->kind == NODE_CONDITIONAL)
+        {
+                if (shell_bash_compat)
+                        exec_pipe_status_one(status);
                 exec_errexit(status);
+        }
 
         return status;
 }
