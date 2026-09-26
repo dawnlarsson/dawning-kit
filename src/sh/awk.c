@@ -3131,6 +3131,7 @@ static fn awk_next_token()
         {
                 awk_builder build;
                 bool inside = false;
+                positive members = 0;
 
                 awk_builder_start(address_of build);
                 awk_source_at++;
@@ -3163,12 +3164,55 @@ static fn awk_next_token()
                                 continue;
                         }
 
-                        if (here == '[')
-                                inside = true;
-                        else if (here == ']')
+                        /*
+                                A slash in a bracket is a member. The bracket
+                                is closed by a ] that is not its first member
+                                (after an optional ^) and not the end of a
+                                [: :], [. .] or [= =] inside it, which is why
+                                /[[:alpha:]/]+/ and /[]/]/ were cut short at
+                                their slash as invalid expressions.
+                        */
+                        if (!inside)
+                        {
+                                if (here == '/')
+                                        break;
+                                if (here == '[')
+                                {
+                                        inside = true;
+                                        members = awk_source_at + 1;
+                                        if (members < awk_source_length &&
+                                            awk_source[members] == '^')
+                                                members++;
+                                }
+                        }
+                        else if (here == '[' &&
+                                 awk_source_at + 1 < awk_source_length &&
+                                 (awk_source[awk_source_at + 1] == ':' ||
+                                  awk_source[awk_source_at + 1] == '.' ||
+                                  awk_source[awk_source_at + 1] == '='))
+                        {
+                                p8 kind = awk_source[awk_source_at + 1];
+
+                                awk_builder_char(address_of build, here);
+                                awk_builder_char(address_of build, kind);
+                                awk_source_at += 2;
+                                while (awk_source_at + 1 < awk_source_length &&
+                                       awk_source[awk_source_at] != '\n' &&
+                                       !(awk_source[awk_source_at] == kind &&
+                                         awk_source[awk_source_at + 1] == ']'))
+                                        awk_builder_char(address_of build,
+                                                         awk_source[awk_source_at++]);
+                                if (awk_source_at + 1 < awk_source_length &&
+                                    awk_source[awk_source_at] == kind)
+                                {
+                                        awk_builder_char(address_of build, kind);
+                                        awk_builder_char(address_of build, ']');
+                                        awk_source_at += 2;
+                                }
+                                continue;
+                        }
+                        else if (here == ']' && awk_source_at != members)
                                 inside = false;
-                        else if (here == '/' && !inside)
-                                break;
 
                         awk_builder_char(address_of build, here);
                         awk_source_at++;
