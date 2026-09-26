@@ -20813,12 +20813,37 @@ static bool sed_transfer(sed_buffer address_to into,
         return true;
 }
 
+/*
+        Whether any operand after this one can still give a line. GNU sed
+        looks past the files that have none, so $ is the last line of the
+        last file with data: `sed -n '$p' a empty` prints a's last line, and
+        this took $ to be a line of the final operand, which an empty file
+        never gives. A file that is not regular, and standard input, may
+        still give one, so they count; one that cannot be looked at gives
+        nothing and is reported when it is reached.
+*/
+static bool sed_input_later(b32 i, b32 inputs)
+{
+        for (b32 later = i + 1; later < inputs; later++)
+        {
+                string_address name = text_file_name(later);
+                file_facts facts;
+
+                if (!name || string_equals(name, "-") ||
+                    (file_look_at(name, address_of facts) &&
+                     ((facts.mode & MODE_FORMAT) != MODE_FILE || facts.size)))
+                        return true;
+        }
+
+        return false;
+}
+
 // Whether the line just read was the last: of everything, or of this file
 // when -s makes each file its own stream. n and N used to ask without the
 // -s half and never saw the last line of any file but the last.
 static bool sed_input_ends(b32 i, b32 inputs)
 {
-        return !text_fill() && (sed_separate || i == inputs - 1);
+        return !text_fill() && (sed_separate || !sed_input_later(i, inputs));
 }
 
 /*
@@ -22684,7 +22709,10 @@ static b32 text_sed()
                                         {
                                                 if (!sed_quiet)
                                                         sed_put_space();
-                                                if (!text_line_next(text_line, 0))
+                                                // n reads on into the next
+                                                // file, as N does: without -s
+                                                // the input is one stream.
+                                                if (!sed_line_across(address_of i, inputs))
                                                         goto drop_cycle;
                                                 sed_replaced = false;
                                         }
@@ -22693,6 +22721,10 @@ static b32 text_sed()
                                                 sed_last = true;
                                                 goto cycle_done;
                                         }
+                                        // F names the file this line came
+                                        // from, which the crossing may have
+                                        // changed.
+                                        called = text_file_name(i);
                                         sed_buffer input = {text_line, text_line_length,
                                                             text_line_ended};
                                         if (!sed_transfer(address_of sed_pattern, address_of input,
