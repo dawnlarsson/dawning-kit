@@ -17074,7 +17074,15 @@ CONST decimal difftime(time_t later, time_t earlier)
         daylight saving and so no ambiguous hour. mktime, further down beside
         localtime, is the one that answers in the machine's zone.
 */
-time_t timegm(tm address_to broken)
+/*
+        The answer and whether there is one are two results, because -1 is
+        both timegm's failure and the last second of 1969. mktime reads a
+        local time through here, and when it took -1 for the failure it
+        handed 23:59:59 on 1969-12-31 back unconverted in every zone but UTC:
+        -1 where CET says -3601, with the structure left normalised as UTC.
+*/
+static bool clock_seconds_from_broken(tm address_to broken,
+                                      bipolar address_to answer)
 {
         bipolar year;
         bipolar month;
@@ -17083,7 +17091,7 @@ time_t timegm(tm address_to broken)
         bipolar seconds;
 
         if (is_null(broken))
-                return (time_t)-1;
+                return false;
 
         year = (bipolar)broken->tm_year + 1900;
         month = (bipolar)broken->tm_mon;
@@ -17099,6 +17107,17 @@ time_t timegm(tm address_to broken)
                   (bipolar)broken->tm_min * 60 + (bipolar)broken->tm_sec;
 
         if (!clock_break_down(seconds, broken))
+                return false;
+
+        address_to answer = seconds;
+        return true;
+}
+
+time_t timegm(tm address_to broken)
+{
+        bipolar seconds;
+
+        if (!clock_seconds_from_broken(broken, address_of seconds))
                 return (time_t)-1;
 
         return (time_t)seconds;
@@ -17631,30 +17650,78 @@ static fn clock_format_name(clock_format_state address_to state, b32 index,
         the year before, and the last days of December can be week 1 of the
         year after.
 
-        Written through the day count rather than through a table of cases,
-        because with clock_days_from_civil already here the definition is
-        directly executable: find the Thursday of this week, ask which year it
-        is in, and count weeks from the first of January of that year.
+        C names the fields these read -- tm_year, tm_wday and tm_yday, and not
+        tm_mon or tm_mday -- and glibc reads exactly those. Working from the
+        month and the day instead agreed wherever the structure was
+        consistent and answered a different week for one that carried only a
+        day of the year and a weekday, which is the part strptime fills from
+        %j and %a. So this is glibc's arithmetic: how far into the year the
+        Monday of week one lies is a function of the day of the year and the
+        weekday, and a week before it or at the next year's belongs there.
+
+        clock_iso_week_days is the day of the year counted from that Monday.
+        The 378 is a multiple of seven large enough to keep the remainder's
+        operand positive for any day of the year from -366 up.
 */
+static bool clock_year_leap(bipolar year)
+{
+        return clock_days_from_civil(year, 3, 1) -
+                   clock_days_from_civil(year, 2, 1) ==
+               29;
+}
+
+static bipolar clock_iso_week_days(bipolar yday, bipolar wday)
+{
+        return yday - (yday - wday + 4 + 378) % 7 + 3;
+}
+
 static fn clock_iso_week(const tm address_to broken, bipolar address_to year,
                          bipolar address_to week)
 {
-        bipolar days = clock_days_from_civil((bipolar)broken->tm_year + 1900,
-                                             (bipolar)broken->tm_mon + 1,
-                                             (bipolar)broken->tm_mday);
-        bipolar weekday = clock_weekday_from_days(days);
-        bipolar thursday = days - (weekday == 0 ? 7 : weekday) + 4;
-        bipolar thursday_year;
-        bipolar thursday_month;
-        bipolar thursday_day;
+        bipolar civil = (bipolar)broken->tm_year + 1900;
+        bipolar yday = broken->tm_yday;
+        bipolar wday = broken->tm_wday;
+        bipolar days = clock_iso_week_days(yday, wday);
 
-        clock_civil_from_days(thursday, address_of thursday_year,
-                              address_of thursday_month,
-                              address_of thursday_day);
+        address_to year = civil;
 
-        address_to year = thursday_year;
-        address_to week =
-                (thursday - clock_days_from_civil(thursday_year, 1, 1)) / 7 + 1;
+        if (days < 0)
+        {
+                address_to year = civil - 1;
+                days = clock_iso_week_days(
+                        yday + 365 + clock_year_leap(civil - 1), wday);
+        }
+        else
+        {
+                bipolar next = clock_iso_week_days(
+                        yday - 365 - clock_year_leap(civil), wday);
+
+                if (next >= 0)
+                {
+                        address_to year = civil + 1;
+                        days = next;
+                }
+        }
+
+        address_to week = days / 7 + 1;
+}
+
+/*
+        %I and %l's hour, which is glibc's: twelve off anything past noon and
+        twelve for midnight. It is not the hour modulo twelve, and the two
+        part only for an hour out of its range, where glibc's %I of 25 is 13
+        and the week and weekday numbers above likewise keep glibc's
+        arithmetic rather than a tidier one, since C leaves those bytes
+        unspecified and the lane's reference is glibc.
+*/
+static bipolar clock_hour_twelve(const tm address_to broken)
+{
+        bipolar hour = broken->tm_hour;
+
+        if (hour > 12)
+                return hour - 12;
+
+        return hour == 0 ? 12 : hour;
 }
 
 /* The composite grammar is shared by strftime and strptime. */
@@ -17955,12 +18022,8 @@ static fn clock_format_core(clock_format_state address_to state,
                         break;
 
                 case 'I':
-                {
-                        bipolar hour = broken->tm_hour % 12;
-
-                        clock_format_number(state, hour == 0 ? 12 : hour, 2);
+                        clock_format_number(state, clock_hour_twelve(broken), 2);
                         break;
-                }
 
                 case 'j':
                         clock_format_number(state, (bipolar)broken->tm_yday + 1,
@@ -17979,13 +18042,9 @@ static fn clock_format_core(clock_format_state address_to state,
                         break;
 
                 case 'l':
-                {
-                        bipolar hour = broken->tm_hour % 12;
-
                         clock_format_number_spaced(state,
-                                                   hour == 0 ? 12 : hour, 2);
+                                                   clock_hour_twelve(broken), 2);
                         break;
-                }
 
                 case 'm':
                         clock_format_number(state, (bipolar)broken->tm_mon + 1,
@@ -18081,9 +18140,7 @@ static fn clock_format_core(clock_format_state address_to state,
 
                 case 'u':
                         clock_format_number(state,
-                                            broken->tm_wday == 0
-                                                    ? 7
-                                                    : broken->tm_wday,
+                                            ((bipolar)broken->tm_wday + 6) % 7 + 1,
                                             1);
                         break;
 
@@ -18103,9 +18160,7 @@ static fn clock_format_core(clock_format_state address_to state,
                         clock_format_number(
                                 state,
                                 ((bipolar)broken->tm_yday + 7 -
-                                 (broken->tm_wday == 0
-                                          ? 6
-                                          : (bipolar)broken->tm_wday - 1)) /
+                                 ((bipolar)broken->tm_wday + 6) % 7) /
                                         7,
                                 2);
                         break;
@@ -20255,13 +20310,6 @@ static bool clock_tz_parse(string_address text)
         return true;
 }
 
-static bool clock_year_leap(bipolar year)
-{
-        return clock_days_from_civil(year, 3, 1) -
-                   clock_days_from_civil(year, 2, 1) ==
-               29;
-}
-
 static bipolar clock_tz_local_seconds(bipolar year, p8 which)
 {
         bipolar days;
@@ -20674,14 +20722,11 @@ bool clock_local_exists(b64 civil)
 
 time_t mktime(tm address_to broken)
 {
-        time_t civil;
+        bipolar civil;
         time_t utc;
 
-        if (is_null(broken))
+        if (!clock_seconds_from_broken(broken, address_of civil))
                 return (time_t)-1;
-        civil = timegm(broken);
-        if (civil == (time_t)-1)
-                return civil;
         utc = (time_t)clock_local_to_utc((b64)civil);
         if (!localtime_r(address_of utc, broken))
                 return (time_t)-1;
