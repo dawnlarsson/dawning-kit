@@ -404,15 +404,14 @@ static bool host_parent(string_address name, p8 address_to into, positive room)
         if (file_link_text(sysfs, link, sizeof(link)) <= 0)
                 return false;
 
-        last = string_length(link);
-        while (last && link[last - 1] != '/')
-                last--;
-        if (!last)
+        p8 address_to slash = memory_last_of(link, '/', string_length(link));
+
+        if (!slash)
                 return false;
 
-        before = --last;
-        while (before && link[before - 1] != '/')
-                before--;
+        last = (positive)(slash - link);
+        slash = memory_last_of(link, '/', last);
+        before = slash ? (positive)(slash - link) + 1 : 0;
 
         if (last - before >= room || last == before)
                 return false;
@@ -625,8 +624,7 @@ static bool host_running_build(p8 address_to into, positive room)
                 return false;
 
         who = banner + prefix;
-        while (who[who_length] && who[who_length] != ')')
-                who_length++;
+        who_length = (positive)(string_first_of_or_end(who, ')') - who);
 
         if (!who[who_length] || release + who_length + version + 5 > room)
                 return false;
@@ -1157,6 +1155,21 @@ static b32 host_attach(host_install address_to install)
         return 0;
 }
 
+/*
+        A medium identity that is still all nought has never been drawn; the
+        first writer to find it so draws it.
+*/
+static PURE bool host_medium_blank(const p8 address_to medium, positive size)
+{
+        return memory_span_byte((address_any)medium, 0, size) == size;
+}
+
+static fn host_medium_fresh(p8 address_to medium, positive size)
+{
+        if (host_medium_blank(medium, size))
+                system_random_fill(medium, size, 0);
+}
+
 static b32 host_update(host_install address_to install)
 {
         p8 running[HOST_BUILD_ROOM];
@@ -1193,17 +1206,13 @@ static b32 host_update(host_install address_to install)
                 host_settings disk;
                 host_settings session;
                 p8 path[HOST_PATH_ROOM];
-                bool blank = true;
 
                 host_settings_empty(address_of disk);
                 if (host_join(path, sizeof(path), HOST_SYSTEM, HOST_IMAGE))
                         host_settings_image(path, address_of disk);
 
                 disk.generation++;
-                for (positive at = 0; at < sizeof(disk.medium); at++)
-                        blank &= !disk.medium[at];
-                if (blank)
-                        system_random_fill(disk.medium, sizeof(disk.medium), 0);
+                host_medium_fresh(disk.medium, sizeof(disk.medium));
 
                 failed = host_place_image(HOST_SYSTEM, running, address_of disk);
 
@@ -2546,7 +2555,6 @@ static string_address host_settings_write(string_address name,
         bipolar handle;
         p64 offset = 0;
         b32 newest;
-        bool blank = true;
 
         if (!host_join(device, sizeof(device), "/dev/", name) ||
             !host_join(path, sizeof(path), "/sys/class/block/", name) ||
@@ -2575,22 +2583,14 @@ static string_address host_settings_write(string_address name,
         memory_copy_apart(address_of slot, settings, SPARK_SETTINGS_SLOT);
         slot.generation = host_settings_generation(place.slots);
 
-        for (positive at = 0; at < sizeof(slot.medium); at++)
-                blank &= !slot.medium[at];
-
-        if (blank)
+        if (host_medium_blank(slot.medium, sizeof(slot.medium)))
         {
                 newest = spark_settings_newest(place.slots);
                 if (newest >= 0)
                         memory_copy_apart(slot.medium, place.slots[newest].medium,
                                           sizeof(slot.medium));
 
-                blank = true;
-                for (positive at = 0; at < sizeof(slot.medium); at++)
-                        blank &= !slot.medium[at];
-
-                if (blank)
-                        system_random_fill(slot.medium, sizeof(slot.medium), 0);
+                host_medium_fresh(slot.medium, sizeof(slot.medium));
         }
 
         host_settings_seal(address_of slot);
@@ -3368,10 +3368,8 @@ static bool host_console_is_screen(void)
                     at[3] >= '0' && at[3] <= '9')
                         return true;
 
-                while (*at && *at != ' ')
-                        at++;
-                while (*at == ' ')
-                        at++;
+                at = string_first_of_or_end(at, ' ');
+                at += string_span_of_set(at, " ");
         }
 
         return false;
@@ -4917,8 +4915,7 @@ static bool radio_line_has(p8 address_to text, positive got, string_address want
         {
                 positive start = at;
 
-                while (at < got && text[at] != '\n')
-                        at++;
+                at += memory_span_without_byte(text + at, '\n', got - at);
                 if (at - start == want_length &&
                     !memory_compare(text + start, want, want_length))
                         return true;
@@ -5183,9 +5180,10 @@ static fn radio_sys_driver(string_address directory, string_address name,
         got = system_read_link_at(AT_FDCWD, path, target, sizeof(target) - 1);
         if (got <= 0)
                 return;
-        for (positive at = 0; at < (positive)got; at++)
-                if (target[at] == '/')
-                        from = at + 1;
+        p8 address_to slash = memory_last_of(target, '/', (positive)got);
+
+        if (slash)
+                from = (positive)(slash - target) + 1;
         target[got] = end;
         string_copy_bounded(into, target + from, room);
 }
@@ -5357,8 +5355,7 @@ static fn radio_kernel_said(string_address address, radio_said address_to said)
                 if (!text)
                         continue;
                 text++;
-                for (at = 0; text[at] && text[at] != '\n'; at++)
-                        ;
+                at = (positive)(string_first_of_or_end(text, '\n') - text);
                 text[at] = end;
 
                 found = string_find(text, load);
@@ -6092,8 +6089,7 @@ static bool radio_last_get(p8 address_to ssid, positive room, bipolar address_to
 
         if (host_read_text(RADIO_LAST_PATH, text, sizeof(text)) <= 0)
                 return false;
-        while (text[at] && text[at] != '\n')
-                at++;
+        at = (positive)(string_first_of_or_end(text, '\n') - text);
         if (!text[at] || at > RADIO_SSID_MOST)
                 return false;
         text[at] = end;
@@ -6663,8 +6659,8 @@ static b32 radio_bluetooth_status(void)
                 {
                         positive start = at;
 
-                        while (at < (positive)got && text[at] != '\n')
-                                at++;
+                        at += memory_span_without_byte(text + at, '\n',
+                                                       (positive)got - at);
                         if (at > start)
                         {
                                 p8 name[129];
@@ -8713,8 +8709,7 @@ static fn locale_network(p8 address_to into, positive room)
                 {
                         positive length = 0;
 
-                        while (at[0] == ' ' || at[0] == '\t')
-                                at++;
+                        at += string_span(at, string_set_blanks);
                         while (at[0] && at[0] != ' ' && at[0] != '\t' &&
                                length + 1 < sizeof(word[0]))
                                 word[words][length++] = (p8)(at++)[0];
@@ -8898,9 +8893,7 @@ static bool locale_auto_country(string_address code,
         string_copy_bounded(answer->zone, zone, sizeof(answer->zone));
         string_copy_bounded(answer->mode, "auto country ", sizeof(answer->mode));
         string_append_bounded(answer->mode, code, sizeof(answer->mode));
-        for (positive at = 13; answer->mode[at]; at++)
-                if (answer->mode[at] >= 'a' && answer->mode[at] <= 'z')
-                        answer->mode[at] -= 32;
+        memory_to_upper_ascii(answer->mode + 13, string_length(answer->mode + 13));
         return true;
 }
 
@@ -8942,10 +8935,9 @@ static bool locale_auto_from_trace(p8 address_to body, positive length,
 
         while (at + 4 <= length)
         {
-                positive stop = at;
+                positive stop = at + memory_span_without_byte(body + at, '\n',
+                                                              length - at);
 
-                while (stop < length && body[stop] != '\n')
-                        stop++;
                 if (!memory_compare(body + at, "loc=", 4))
                 {
                         positive size = stop - at - 4;
