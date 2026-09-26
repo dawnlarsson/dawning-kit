@@ -887,14 +887,18 @@ static bool xz_dec_block(xz_decoder address_to d)
                         return xz_dec_fail(d, "xz filter chain");
                 if (flags & 0x40)
                 {
-                        while (at < header_size - 4 && (header[at] & 0x80))
-                                at++;
+                        if (at < header_size - 4)
+                                at += string_span_max(header + at,
+                                                      header_size - 4 - at,
+                                                      string_set_high);
                         at++;
                 }
                 if (flags & 0x80)
                 {
-                        while (at < header_size - 4 && (header[at] & 0x80))
-                                at++;
+                        if (at < header_size - 4)
+                                at += string_span_max(header + at,
+                                                      header_size - 4 - at,
+                                                      string_set_high);
                         at++;
                 }
                 if (at + 2 >= header_size - 4)
@@ -3193,16 +3197,18 @@ static bool xz_block_encode(xz_encoder address_to e, p8 address_to input, p32 n)
         header[h++] = 0x21;
         header[h++] = 1;
         header[h++] = xz_prop_from_dict(e->dict);
-        while ((h + 4) & 3)
-                header[h++] = 0;
+        positive header_padding = (0 - (h + 4)) & 3;
+        memory_zero(header + h, header_padding);
+        h += header_padding;
         header[0] = (p8)((h + 4) / 4 - 1);
         memory_store_unaligned(p32, header + h, ~hash_crc32(0xffffffffu, header, h));
         h += 4;
         memory_copy_apart(e->out + XZ_BLOCK_HEADER_MAX - h, header, h);
 
         e->unpadded = h + at + 4;
-        while (at & 3)
-                out[at++] = 0;
+        positive data_padding = (0 - at) & 3;
+        memory_zero(out + at, data_padding);
+        at += data_padding;
         memory_store_unaligned(p32, out + at, ~hash_crc32(0xffffffffu, input, n));
         e->out_at = XZ_BLOCK_HEADER_MAX - h;
         e->out_n = h + at + 4;

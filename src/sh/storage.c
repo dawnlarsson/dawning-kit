@@ -211,11 +211,9 @@ static positive storage_hex_padded(p8 address_to into, positive value,
 {
         p8 digits[2 * sizeof(positive)];
         positive count = positive_into_base(digits, value, 16, upper);
-        positive padding = 0;
+        positive padding = difference_or_zero(width, count);
 
-        // At most fifteen zeros, one at a time where the bound is visible.
-        while (padding + count < width)
-                into[padding++] = '0';
+        memory_fill(into, '0', padding);
         memory_copy(into + padding, digits, count);
         into[padding + count] = end;
         return padding + count;
@@ -3533,14 +3531,13 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                 {
                         positive length = string_length(resolved);
 
-                        while (length > 1 && resolved[length - 1] == '/')
-                                resolved[--length] = end;
+                        length -= path_trailing_slashes(resolved, length);
 
-                        while (length > 1 && resolved[length - 1] != '/')
-                                length--;
+                        p8 address_to slash = memory_last_of(
+                            resolved + 1, '/', length - 1);
+                        length = slash ? (positive)(slash - resolved) + 1 : 1;
 
-                        while (length > 1 && resolved[length - 1] == '/')
-                                length--;
+                        length -= path_trailing_slashes(resolved, length);
 
                         resolved[length] = end;
 

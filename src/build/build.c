@@ -969,8 +969,9 @@ static positive build_words_of(string_address line, positive bound,
         {
                 positive length = 0;
 
-                while (at < bound && (line[at] == ' ' || line[at] == '\t'))
-                        at++;
+                if (at < bound)
+                        at += string_span_max(line + at, bound - at,
+                                              string_set_blanks);
 
                 while (at + length < bound && line[at + length] != ' ' &&
                        line[at + length] != '\t')
@@ -1040,8 +1041,10 @@ static fn build_settings_read()
                 string_address name;
                 string_address value;
 
-                while (at < walk.length && byte_is_blank(walk.line[at]))
-                        at++;
+                if (at < walk.length)
+                        at += string_span_max(walk.line + at,
+                                              walk.length - at,
+                                              string_set_blanks);
 
                 if (at >= walk.length || walk.line[at] == '#')
                         continue;
@@ -1055,8 +1058,10 @@ static fn build_settings_read()
                 name = build_text_keep(walk.line + at, name_length);
                 at += name_length;
 
-                while (at < walk.length && byte_is_blank(walk.line[at]))
-                        at++;
+                if (at < walk.length)
+                        at += string_span_max(walk.line + at,
+                                              walk.length - at,
+                                              string_set_blanks);
 
                 value = build_text_keep(walk.line + at, walk.length - at);
                 build_setting_set(name, value);
@@ -1972,8 +1977,10 @@ static bool build_asm_pass(string_address text, string_address target,
 
                 line_number++;
 
-                while (lead < walk.length && byte_is_blank(walk.line[lead]))
-                        lead++;
+                if (lead < walk.length)
+                        lead += string_span_max(walk.line + lead,
+                                                walk.length - lead,
+                                                string_set_blanks);
 
                 //      A directive is any line whose first non blank is "#>".
                 //      Keying on that rather than on column one lets a block be
@@ -1988,8 +1995,10 @@ static bool build_asm_pass(string_address text, string_address target,
                         positive count;
                         bool claimed = false;
 
-                        while (at < stop && byte_is_blank(walk.line[at]))
-                                at++;
+                        if (at < stop)
+                                at += string_span_max(walk.line + at,
+                                                      stop - at,
+                                                      string_set_blanks);
 
                         while (stop > at && byte_is_blank(walk.line[stop - 1]))
                                 stop--;
@@ -3240,28 +3249,23 @@ static bool build_isa_holds(string_address isa, string_address name)
         {
                 at = 2;
 
-                while (at < length && byte_is_digit(isa[at]))
-                        at++;
+                if (at < length)
+                        at += string_span_max(isa + at, length - at,
+                                              string_set_digits);
         }
 
         while (at < length)
         {
-                positive letters = 0;
-
-                while (at + letters < length &&
-                       ((isa[at + letters] >= 'a' && isa[at + letters] <= 'z') ||
-                        (isa[at + letters] >= 'A' && isa[at + letters] <= 'Z')))
-                        letters++;
+                positive letters = string_span_max(isa + at, length - at,
+                                                   string_set_alpha);
 
                 if (letters == want && !memory_compare(isa + at, name, want))
                         return true;
 
                 //      On to the next underscore, or the end.
-                while (at < length && isa[at] != '_')
-                        at++;
+                at += memory_span_without_byte(isa + at, '_', length - at);
 
-                while (at < length && isa[at] == '_')
-                        at++;
+                at += memory_span_byte(isa + at, '_', length - at);
         }
 
         return false;

@@ -2497,9 +2497,7 @@ static bool tools_span_ends(string_address bytes, positive length,
 static positive login_address_text(p8 address_to into,
                                    p8 address_to address)
 {
-        bool ipv4 = true;
-        for (positive at = 4; at < 16; at++)
-                ipv4 &= address[at] == 0;
+        bool ipv4 = memory_sum_bytes(address + 4, 12) == 0;
 
         positive made = 0;
         if (ipv4)
@@ -5071,10 +5069,10 @@ static fn numfmt_short_form(p8 address_to digits, positive length,
         positive have = 0;
         positive exponent = length > at ? length - at - 1 : 0;
 
-        for (positive from = at; from < length && have < 7; from++)
-                kept[have++] = digits[from];
-        while (have < 7)
-                kept[have++] = '0';
+        have = min(length - at, (positive)7);
+        memory_copy(kept, digits + at, have);
+        memory_fill(kept + have, '0', 7 - have);
+        have = 7;
         if (kept[6] >= '5')
         {
                 positive carry = 6;
@@ -5094,8 +5092,7 @@ static fn numfmt_short_form(p8 address_to digits, positive length,
                 }
         }
         positive shown = 6;
-        while (shown > 1 && kept[shown - 1] == '0')
-                shown--;
+        shown -= memory_span_byte_reverse(kept + 1, '0', shown - 1);
 
         positive used = 0;
         if (negative)
@@ -5104,8 +5101,8 @@ static fn numfmt_short_form(p8 address_to digits, positive length,
         if (shown > 1)
         {
                 into[used++] = '.';
-                for (positive from = 1; from < shown; from++)
-                        into[used++] = kept[from];
+                memory_copy(into + used, kept + 1, shown - 1);
+                used += shown - 1;
         }
         into[used++] = 'e';
         into[used++] = '+';
@@ -10311,8 +10308,10 @@ static bool diff_scan_next(diff_scan address_to scan, p8 address_to out)
         if (diff_space != DIFF_SPACE_NONE)
         {
                 p8 address_to first = scan->at;
-                while (scan->at < scan->stop && byte_is_space(*scan->at))
-                        scan->at++;
+                if (scan->at < scan->stop)
+                        scan->at += string_span_max(
+                            scan->at, (positive)(scan->stop - scan->at),
+                            string_set_space);
                 if (scan->at == scan->stop)
                         return false;
                 *out = first != scan->at && diff_space == DIFF_SPACE_CHANGE
@@ -12224,8 +12223,7 @@ static string_address ps_arguments(struct snapshot_process address_to process)
                 for (positive i = 0; i < got; i++)
                         command[i] = command[i] ? command[i] : ' ';
 
-                while (got && command[got - 1] == ' ')
-                        got--;
+                got -= memory_span_byte_reverse(command, ' ', got);
 
                 command[got] = end;
                 return (string_address)command;
@@ -13430,9 +13428,10 @@ static bool tools_dmesg_kmsg_record(p8 address_to bytes, positive length,
                 return false;
         at++;
 
-        p8 address_to message_stop = at;
-        while (message_stop < stop && *message_stop != '\n' && *message_stop)
-                message_stop++;
+        positive message_length = string_length_max(at, (positive)(stop - at));
+        p8 address_to newline = memory_first_of(at, '\n', message_length);
+        if (newline)
+                message_length = (positive)(newline - at);
 
         record->priority = (p32)priority;
         record->priority_known = true;
@@ -13440,7 +13439,7 @@ static bool tools_dmesg_kmsg_record(p8 address_to bytes, positive length,
         record->time_known = true;
         record->timestamp_present = true;
         record->message = at;
-        record->message_length = (positive)(message_stop - at);
+        record->message_length = message_length;
         return true;
 }
 
@@ -17192,9 +17191,9 @@ static b32 util_linux_setpriv()
                 return string_report(log_error, 1, "%s: %s\n", "setpriv", "--[re]gid requires a supplementary group option");
         if (set.groups == 's')
         {
-                group_count = 1;
-                for (string_address p = set.group_list; string_get(p); p++)
-                        group_count += string_is(p, ',');
+                group_count = 1 + memory_count(set.group_list,
+                                                string_length(set.group_list),
+                                                ',');
                 if (!shell_array_room(file_id_scratch, file_id_scratch_room, group_count))
                         return 127;
                 string_address p = set.group_list;
@@ -21198,15 +21197,12 @@ static fn ul_getopt_long_each(string_address list,
 
         while (string_get(at))
         {
-                while (string_is(at, ',') || byte_is_space(string_get(at)))
-                        at++;
+                at += string_span_of_set(at, ", \t\n\v\f\r");
                 if (!string_get(at))
                         break;
 
                 string_address first = at;
-                while (string_get(at) && !string_is(at, ',') &&
-                       !byte_is_space(string_get(at)))
-                        at++;
+                at += string_span_without_set(at, ", \t\n\v\f\r");
 
                 positive length = (positive)(at - first);
                 p8 argument = 0;
@@ -25970,9 +25966,8 @@ static bool ul_ipc_snapshot_load(positive types)
                         okay = false;
                         break;
                 }
-                positive lines = 0;
-                for (positive at = 0; at < stores[type].used; at++)
-                        lines += stores[type].bytes[at] == '\n';
+                positive lines = memory_count(stores[type].bytes,
+                                              stores[type].used, '\n');
                 if (lines)
                         ul_ipc.capacity += lines - 1;
         }

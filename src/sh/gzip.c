@@ -1390,14 +1390,11 @@ static fn gzip_block_emit(gzip_encoder address_to e, p8 address_to src, positive
         positive hlit = 286, hdist = 30, hclen = 19;
         p8 here;
 
-        while (hlit > 257 && !lit_len[hlit - 1])
-                hlit--;
-        while (hdist > 1 && !dist_len[hdist - 1])
-                hdist--;
-        for (i = 0; i < hlit; i++)
-                seq[nseq++] = lit_len[i];
-        for (i = 0; i < hdist; i++)
-                seq[nseq++] = dist_len[i];
+        hlit -= memory_span_byte_reverse(lit_len + 257, 0, hlit - 257);
+        hdist -= memory_span_byte_reverse(dist_len + 1, 0, hdist - 1);
+        memory_copy(seq, lit_len, hlit);
+        memory_copy(seq + hlit, dist_len, hdist);
+        nseq = hlit + hdist;
 
         memory_fill(cfreq, 0, sizeof(cfreq));
         i = 0;

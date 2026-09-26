@@ -11515,6 +11515,79 @@ test(memory_span_byte) {
 }
 
 /*
+        The same from the other end: the run of the value that ends the block,
+        with the first byte that differs anywhere in it, every value, every
+        start residue, every length to 33 and the page-ish lengths the vector
+        body steps over, and the bytes either side left alone. Called by its
+        parenthesised name, which is the assembly rather than lib.util.c's
+        inline check of the last byte in front of it.
+*/
+test(memory_span_byte_reverse) {
+        p8 bytes[4128];
+        positive page_lengths[] = {15, 16, 17, 31, 32, 33, 127, 128, 129,
+                                   255, 256, 257, 4095};
+
+        for (positive value = 0; value < 256; value++)
+                for (positive offset = 0; offset < 16; offset++)
+                        for (positive length = 0; length <= 33; length++)
+                                for (positive mismatch = 0; mismatch <= length; mismatch++)
+                                {
+                                        // mismatch is how long the suffix is;
+                                        // the byte before it differs.
+                                        if (offset)
+                                                bytes[offset - 1] = 0xa5;
+                                        memory_fill(bytes + offset, (p8)value, length);
+                                        bytes[offset + length] = 0xa5;
+
+                                        if (mismatch < length)
+                                                bytes[offset + length - 1 - mismatch] =
+                                                    (p8)(value + 1);
+
+                                        fail((memory_span_byte_reverse)(
+                                                 bytes + offset, (p8)value, length) ==
+                                             mismatch);
+                                        fail(memory_span_byte_reverse(
+                                                 bytes + offset, (p8)value, length) ==
+                                             mismatch);
+                                        if (offset)
+                                                fail(bytes[offset - 1] == 0xa5);
+                                        fail(bytes[offset + length] == 0xa5);
+                                }
+
+        for (positive value = 0; value < 256; value += 51)
+                for (positive offset = 0; offset < 16; offset++)
+                        for (positive li = 0;
+                             li < sizeof(page_lengths) / sizeof(*page_lengths); li++)
+                        {
+                                positive length = page_lengths[li];
+                                positive suffixes[] = {0, 1, 15, 16, 17, length / 2,
+                                                       length - 1, length};
+
+                                if (offset + length >= sizeof(bytes))
+                                        continue;
+
+                                for (positive si = 0;
+                                     si < sizeof(suffixes) / sizeof(*suffixes); si++)
+                                {
+                                        positive suffix = suffixes[si];
+
+                                        if (suffix > length)
+                                                continue;
+                                        memory_fill(bytes + offset, (p8)value, length);
+                                        if (suffix < length)
+                                                bytes[offset + length - 1 - suffix] =
+                                                    (p8)(value + 1);
+
+                                        fail((memory_span_byte_reverse)(
+                                                 bytes + offset, (p8)value, length) ==
+                                             suffix);
+                                }
+                        }
+
+        return true;
+}
+
+/*
         Square root, which is the hardware's own instruction.
 
         Exact powers of four have exact roots in binary floating point, so
@@ -11851,6 +11924,7 @@ test_case test_cases[] = {
         case(memory_ascii_case),
         case(memory_hash_33),
         case(memory_span_byte),
+        case(memory_span_byte_reverse),
         case(absolute_whole_and_wide),
         case(square_root_is_exact),
         case(absolute_value),
@@ -13430,7 +13504,8 @@ fn check_span_byte()
 */
 #define DIRTY_LIBRARY(X)                                                       \
         X(memory_first_of) X(memory_last_of) X(memory_count)                  \
-        X(memory_span_byte) X(memory_first_of_ascii_case) X(memory_fill)      \
+        X(memory_span_byte) X(memory_span_byte_reverse)                       \
+        X(memory_first_of_ascii_case) X(memory_fill)                          \
         X(memory_fill_32) X(memory_fill_u32) X(memory_copy_until)             \
         X(memory_offsets_of_either) X(memory_offsets_between)                 \
         X(memory_offsets_outside) X(memory_escape_index)                      \
@@ -13846,6 +13921,17 @@ static fn dirty_hunts_one(positive size, positive residue, positive turn)
                 AGREE(memory_span_byte,
                       DIRTY_ROUTINE(memory_span_byte)(at, C8(value), size),
                       DIRTY(3, memory_span_byte)(P(at), D8(value), size), where);
+
+        //      And a run of the value to the end, for the suffix span.
+        for (positive i = place; i < size; i++)
+                at[i] = value;
+        if (place && place <= size)
+                at[place - 1] = dirty_other(value, false);
+        if (DIRTY_HAS(memory_span_byte_reverse))
+                AGREE(memory_span_byte_reverse,
+                      DIRTY_ROUTINE(memory_span_byte_reverse)(at, C8(value), size),
+                      DIRTY(3, memory_span_byte_reverse)(P(at), D8(value), size),
+                      where);
 }
 
 static fn dirty_hunts(void) { dirty_plane(dirty_hunts_one, 4000); }
@@ -79118,8 +79204,22 @@ NOT_INLINED static positive former_span(address_any address, p8 value,
         return at;
 }
 
+NOT_INLINED static positive former_span_reverse(address_any address, p8 value,
+                                                positive length)
+{
+        p8 address_to bytes = address;
+        positive at = length;
+
+        while (at && bytes[at - 1] == value)
+                at--;
+
+        return length - at;
+}
+
 typedef positive (*span_call)(address_any, p8, positive);
 static span_call volatile span_calls[2] = {former_span, memory_span_byte};
+static span_call volatile reverse_span_calls[2] = {
+    former_span_reverse, memory_span_byte_reverse};
 
 static bool correctness(void)
 {
@@ -79135,6 +79235,13 @@ static bool correctness(void)
                                                 block[offset + mismatch] = (p8)(value + 1);
                                         if (memory_span_byte(block + offset, (p8)value,
                                                              length) != mismatch)
+                                                return false;
+                                        positive suffix = mismatch < length
+                                                              ? length - mismatch - 1
+                                                              : length;
+                                        if ((memory_span_byte_reverse)(
+                                                block + offset, (p8)value,
+                                                length) != suffix)
                                                 return false;
                                 }
 
@@ -79158,6 +79265,13 @@ static bool correctness(void)
                                         if (memory_span_byte(block + offset, (p8)value,
                                                              length) != mismatch)
                                                 return false;
+                                        positive suffix = mismatch < length
+                                                              ? length - mismatch - 1
+                                                              : length;
+                                        if ((memory_span_byte_reverse)(
+                                                block + offset, (p8)value,
+                                                length) != suffix)
+                                                return false;
                                 }
                         }
         return true;
@@ -79168,6 +79282,13 @@ static p64 run(positive implementation, positive n, positive rounds)
 {
         p64 start = get_cpu_time();
         while (rounds--) sink += span_calls[implementation](block, '0', n);
+        return get_cpu_time() - start;
+}
+static p64 run_reverse(positive implementation, positive n, positive rounds)
+{
+        p64 start = get_cpu_time();
+        while (rounds--)
+                sink += reverse_span_calls[implementation](block, '0', n);
         return get_cpu_time() - start;
 }
 
@@ -79192,6 +79313,28 @@ static fn row(positive n, positive shape)
                       raw[TRIES / 2] / 100, raw[TRIES / 2] % 100);
 }
 
+static fn reverse_row(positive n, positive shape)
+{
+        positive raw[TRIES], rounds = rounds_for(n);
+        memory_fill(block, '0', n);
+        if (shape && n)
+                block[shape == 1 ? 0 : n - 1] = '1';
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 elapsed[2];
+                for (positive i = 0; i < 2; i++)
+                {
+                        positive which = (i + trial) % 2;
+                        elapsed[which] = run_reverse(which, n, rounds);
+                }
+                raw[trial] = elapsed[1] * 10000 / max(elapsed[0], (p64)1);
+        }
+        order(raw, TRIES);
+        string_format(log, "  %s %p bytes  asm/C %p.%p%%\n",
+                      shape == 2 ? "last" : shape ? "early" : "equal", n,
+                      raw[TRIES / 2] / 100, raw[TRIES / 2] % 100);
+}
+
 b32 main(void)
 {
         static const positive sizes[]={0,1,2,4,8,16,24,32,64,128,256,4096,MAXIMUM};
@@ -79199,6 +79342,11 @@ b32 main(void)
         string_format(log,"memory_span_byte, paired median of %p\n",(positive)TRIES);
         for (positive i = 0; i < array_count(sizes); i++)
                 for (positive shape = 0; shape < 3; shape++) row(sizes[i], shape);
+        string_format(log, "memory_span_byte_reverse, paired median of %p\n",
+                      (positive)TRIES);
+        for (positive i = 0; i < array_count(sizes); i++)
+                for (positive shape = 0; shape < 3; shape++)
+                        reverse_row(sizes[i], shape);
         log_flush();return 0;
 }
 #endif /* BENCH_span_byte */
@@ -81164,6 +81312,92 @@ static p64 prefix_once(bool folded)
         return get_cpu_time() - start;
 }
 
+NOT_INLINED static positive former_alpha(p8 address_to data, positive length)
+{
+        positive at = 0;
+
+        while (at < length && byte_is_alpha(data[at]))
+                at++;
+
+        return at;
+}
+
+NOT_INLINED static positive former_digit(p8 address_to data, positive length)
+{
+        positive at = 0;
+
+        while (at < length && (p8)(data[at] - '0') < 10)
+                at++;
+
+        return at;
+}
+
+NOT_INLINED static positive former_high(p8 address_to data, positive length)
+{
+        positive at = 0;
+
+        while (at < length && (data[at] & 0x80))
+                at++;
+
+        return at;
+}
+
+NOT_INLINED static positive former_ascii(p8 address_to data, positive length)
+{
+        positive at = 0;
+
+        while (at < length && data[at] < 0x80)
+                at++;
+
+        return at;
+}
+
+static p64 class_once(bool folded, const b8 address_to set, positive length,
+                      positive (*former)(p8 address_to, positive))
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < ROUNDS; round++)
+                sink += folded ? string_span_max(one, length, set)
+                               : former(one, length);
+
+        return get_cpu_time() - start;
+}
+
+static p64 alpha_short_once(bool folded)
+{
+        return class_once(folded, string_set_alpha, 6, former_alpha);
+}
+
+static p64 digit_short_once(bool folded)
+{
+        return class_once(folded, string_set_digits, 8, former_digit);
+}
+
+static p64 high_short_once(bool folded)
+{
+        return class_once(folded, string_set_high, 5, former_high);
+}
+
+static p64 ascii_medium_once(bool folded)
+{
+        return class_once(folded, string_set_ascii, 128, former_ascii);
+}
+
+static bool class_boundaries(void)
+{
+        for (positive byte = 0; byte < 256; byte++)
+                if (string_set_alpha[byte] != byte_is_alpha((p8)byte) ||
+                    string_set_digits[byte] != ((p8)(byte - '0') < 10) ||
+                    string_set_ascii[byte] != (byte < 0x80) ||
+                    string_set_high[byte] != (byte >= 0x80) ||
+                    string_set_printable[byte] !=
+                        (byte >= ' ' && byte < 0x7f))
+                        return false;
+
+        return true;
+}
+
 static fn row(string_address name, p64 (*run)(bool))
 {
         positive ratios[TRIES];
@@ -81195,9 +81429,9 @@ static fn row(string_address name, p64 (*run)(bool))
 
 b32 main(void)
 {
-        if (!prefix_boundaries())
+        if (!prefix_boundaries() || !class_boundaries())
         {
-                string_format(log, "memory_common_prefix boundary check failed\n");
+                string_format(log, "text-fold boundary check failed\n");
                 log_flush();
                 return 1;
         }
@@ -81226,6 +81460,25 @@ b32 main(void)
                 one[at] = 'x';
         one[BLOCK - 1] = '\n';
         row((string_address)"sed newline late 4K", newline_once);
+
+        for (positive at = 0; at < BLOCK; at++)
+                one[at] = 'a';
+        row((string_address)"alpha class 6", alpha_short_once);
+        for (positive at = 0; at < BLOCK; at++)
+                one[at] = '7';
+        row((string_address)"digit class 8", digit_short_once);
+        one[0] = 'x';
+        row((string_address)"digit class 8, first outside", digit_short_once);
+        for (positive at = 0; at < BLOCK; at++)
+                one[at] = 0x80;
+        row((string_address)"high-bit class 5", high_short_once);
+        one[0] = 'x';
+        row((string_address)"high-bit class 5, first outside", high_short_once);
+        for (positive at = 0; at < BLOCK; at++)
+                one[at] = 'x';
+        row((string_address)"ASCII class 128", ascii_medium_once);
+        one[0] = 0x80;
+        row((string_address)"ASCII class 128, first outside", ascii_medium_once);
 
         log_flush();
         return 0;

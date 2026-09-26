@@ -2720,8 +2720,7 @@ static b32 process_replay_timing(string_address line, bool address_to advanced,
                 at += 2;
         }
 
-        while (string_is(at, ' '))
-                at++;
+        at += string_span_of_set(at, " ");
         string_address gap = string_first_of(at, ' ');
         if (!gap)
                 return PROCESS_REPLAY_NOT_TIMING;
@@ -2741,8 +2740,7 @@ static b32 process_replay_timing(string_address line, bool address_to advanced,
                 address_to text = at;
         else
         {
-                while (string_is(at, ' '))
-                        at++;
+                at += string_span_of_set(at, " ");
                 if (!file_unsigned_decimal(at, address_of bytes))
                         return PROCESS_REPLAY_LINE_BROKEN;
         }
@@ -2826,8 +2824,10 @@ static bool process_replay_named(string_address name, positive length,
         p8 room[PROCESS_REPLAY_LINE + 32];
         positive used = 0;
         if (padded)
-                while (used + length < 10)
-                        room[used++] = ' ';
+        {
+                used = difference_or_zero(10, length);
+                memory_fill(room, ' ', used);
+        }
         memory_copy(room + used, name, length);
         used += length;
         if (padded)

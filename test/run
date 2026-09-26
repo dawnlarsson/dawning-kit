@@ -14617,7 +14617,7 @@ bench_about()
         hash-33) bench_section=BENCH_hash_33
                  bench_line="the DJB2 byte hash: dependent scalar loop against four-byte assembly" ;;
         span-byte) bench_section=BENCH_span_byte
-                 bench_line="bounded equal-byte prefix: a scalar caller loop against the assembly" ;;
+                 bench_line="bounded equal-byte prefix and suffix: scalar caller loops against the assembly" ;;
         cells-ascii) bench_section=BENCH_cells_ascii
                  bench_line="terminal cells from a printable run: term.c's C loop against the assembly" ;;
         fill-u32) bench_section=BENCH_fill_u32

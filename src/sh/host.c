@@ -738,8 +738,9 @@ static bool host_banner_parse(p8 address_to at, positive length,
 
         version = compiler + 1;
         stop = version;
-        while (stop < length && at[stop] >= ' ' && at[stop] < 0x7f)
-                stop++;
+        if (stop < length)
+                stop += string_span_max(at + stop, length - stop,
+                                        string_set_printable);
         if (stop >= length || at[stop] != '\n')
                 return false;
 
@@ -4947,8 +4948,8 @@ static positive radio_wifi_load(radio_network address_to into, positive room)
                 positive start = at;
                 positive length;
 
-                while (at < (positive)got && text[at] != '\n')
-                        at++;
+                at += memory_span_without_byte(text + at, '\n',
+                                               (positive)got - at);
                 length = at - start;
                 if (at < (positive)got)
                         at++;
@@ -10210,8 +10211,8 @@ static b32 host_bind(string_address address_to arguments, positive count)
         if (string_equals(arguments[2], "init") || string_equals(arguments[2], "exit"))
         {
                 arguments[1] = arguments[2];
-                for (positive at = 3; at < count; at++)
-                        arguments[at - 1] = arguments[at];
+                memory_copy(arguments + 2, arguments + 3,
+                            (count - 3) * sizeof(*arguments));
                 return host_settings_command(arguments, count - 1);
         }
 

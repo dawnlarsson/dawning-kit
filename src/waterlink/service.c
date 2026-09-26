@@ -501,8 +501,7 @@ static bool link_parse_v6(string_address text, positive length,
         {
                 positive start = at;
 
-                while (at < length && text[at] != ':')
-                        at++;
+                at += memory_span_without_byte(text + at, ':', length - at);
                 if (count == 8 ||
                     !link_hex_group(text + start, at - start, group + count++))
                         return false;
