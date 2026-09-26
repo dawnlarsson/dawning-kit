@@ -1031,20 +1031,76 @@ static bipolar file_staged_name_finish(file_staged_name address_to stage,
    is taken from it; the bytes never depend on it. */
 static positive file_codec_threads;
 
-static bool file_codec_thread_count(string_address text)
-{
-        positive value = 0;
+#define FILE_CODEC_THREADS_MOST 16384
 
-        if (!text || !*text)
-                return false;
-        for (; *text; text++)
+/*
+        Read as xz's str_to_uint64 reads it, after the + xz 5.4 steps over:
+        blanks, then max or decimal digits and a k, M or G (either case)
+        standing for a power of 1024 with an optional i, iB or B after it; then the range,
+        0 to 16384. This took only digits and anything up to ten million, so
+        -T 5k, -T +5 and -T ' 3' were refused and -T 20000 taken, where xz
+        takes the first three and refuses the last -- with status 1 and its
+        own words, which these are.
+*/
+static bool file_codec_thread_count(string_address name, string_address text)
+{
+        positive value;
+        positive used;
+
+        if (!text)
+                text = (string_address) "";
+        if (text[0] == '+')
+                text++;
+        text += string_span_of_set(text, " \t");
+
+        if (string_equals(text, "max"))
         {
-                if (*text < '0' || *text > '9' || value > 1000000)
-                        return false;
-                value = value * 10 + (positive)(*text - '0');
+                file_codec_threads = FILE_CODEC_THREADS_MOST;
+                return true;
         }
+
+        if (!byte_is_digit(text[0]))
+                return string_format(log_error,
+                                     "%s: %s: Value is not a non-negative decimal integer\n",
+                                     name, text),
+                       false;
+
+        value = string_digits(text, address_of used);
+        text += used;
+
+        if (used > 19)
+                goto range;
+
+        if (text[0])
+        {
+                p8 letter = byte_to_lower(text[0]);
+                positive shift = letter == 'k' ? 10 : letter == 'm' ? 20
+                               : letter == 'g' ? 30 : 0;
+
+                if (!shift || (text[1] && !string_equals(text + 1, "i") &&
+                               !string_equals(text + 1, "iB") &&
+                               !string_equals(text + 1, "B")))
+                        return string_format(log_error,
+                                             "%s: %s: Invalid multiplier suffix\n"
+                                             "%s: Valid suffixes are `KiB' (2^10), `MiB' (2^20), and `GiB' (2^30).\n",
+                                             name, text, name),
+                               false;
+                if (value > FILE_CODEC_THREADS_MOST >> shift)
+                        goto range;
+                value <<= shift;
+        }
+
+        if (value > FILE_CODEC_THREADS_MOST)
+                goto range;
+
         file_codec_threads = value;
         return true;
+
+range:
+        string_format(log_error,
+                      "%s: Value of the option `threads' must be in the range [0, 16384]\n",
+                      name);
+        return false;
 }
 
 static fn file_codec_print(string_address text)
@@ -1141,12 +1197,9 @@ static bool file_codec_parse(file_codec_cli address_to codec,
                         else if ((codec->features & FILE_CODEC_THREADS) &&
                                  string_has_prefix(word, "--threads="))
                         {
-                                if (!file_codec_thread_count(word + 10))
+                                if (!file_codec_thread_count(codec->name, word + 10))
                                 {
-                                        string_format(log_error,
-                                                      "%s: invalid thread count '%s'\n",
-                                                      codec->name, word + 10);
-                                        *result = 2;
+                                        *result = 1;
                                         return false;
                                 }
                         }
@@ -1234,12 +1287,9 @@ static bool file_codec_parse(file_codec_cli address_to codec,
                                         ? program_argument((b32)++*first)
                                         : null;
 
-                                if (!file_codec_thread_count(count))
+                                if (!file_codec_thread_count(codec->name, count))
                                 {
-                                        string_format(log_error,
-                                                      "%s: invalid thread count '%s'\n",
-                                                      codec->name, count ? count : (string_address)"");
-                                        *result = 2;
+                                        *result = 1;
                                         return false;
                                 }
                                 break;
