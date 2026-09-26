@@ -8203,6 +8203,7 @@ static COLD bipolar sntp_query(string_address name, bool filter, bool tight,
 #define LOCALE_NTP_RATE_AGAIN 300
 #define LOCALE_NTP_EXIT_RATE 2
 #define LOCALE_NTP_STEP_NS ((bipolar)128 * 1000000)
+#define LOCALE_NTP_STEP_FIRST_NS ((bipolar)1000000)
 #define LOCALE_NTP_TIMECONST 6
 #define LOCALE_TIMEX_OFFSET 1
 #define LOCALE_TIMEX_FREQUENCY 2
@@ -9395,10 +9396,23 @@ static fn locale_clock_mark_synced(positive error_us)
         adjustment was computed against a clock this request is about to
         move, and applying both would correct twice.
 */
-static CONST bool locale_ntp_wants_step(bipolar offset_ns)
+/*
+        The first answer after boot is stepped to from a millisecond out,
+        not slewed to: the clock then was set from a real-time clock that
+        keeps whole seconds, so it starts some tens of milliseconds wrong,
+        and the kernel slews those away at its own pace -- measured, 86 ms
+        took nineteen minutes to come within one. Nothing has read the time
+        yet to see it move, which is when ntpd -g and chrony's makestep
+        step too. After that, only 128 ms is worth a step.
+*/
+static bool locale_ntp_first;
+
+static bool locale_ntp_wants_step(bipolar offset_ns)
 {
-        return offset_ns >= LOCALE_NTP_STEP_NS ||
-               offset_ns <= -LOCALE_NTP_STEP_NS;
+        bipolar most = locale_ntp_first ? LOCALE_NTP_STEP_FIRST_NS
+                                        : LOCALE_NTP_STEP_NS;
+
+        return offset_ns >= most || offset_ns <= -most;
 }
 
 /*
@@ -9551,6 +9565,15 @@ static COLD bool locale_discipline_ok(void)
                 if (!(words[0] & ADJ_NANO) || !(words[0] & ADJ_OFFSET))
                         return false;
         }
+        /* the first answer after boot steps from a millisecond out, and a
+           later one only from 128 ms */
+        locale_ntp_first = true;
+        if (!locale_ntp_wants_step(1000000) || !locale_ntp_wants_step(-1000000) ||
+            locale_ntp_wants_step(999999) || locale_ntp_wants_step(-999999))
+                return false;
+        locale_ntp_first = false;
+        if (locale_ntp_wants_step(1000000) || locale_ntp_wants_step(-86000000))
+                return false;
         /* a poll learns offset over elapsed, trusted as far as the offset
            stands above the noise: 144 ms slow after half an hour is -80
            ppm, nearly all of it learned; 150 us after 256 s is under a
@@ -9602,6 +9625,7 @@ static bipolar locale_ntp_apply_offset(bipolar offset_ns, bipolar distance_ns)
                 return SNTP_MALFORMED;
 
         sntp_split_offset(offset_ns, address_of sec, address_of nsec);
+        locale_ntp_first = !locale_ntp_synced;
         locale_ntp_discipline_words(offset_ns, sec, nsec,
                                     locale_ntp_error_us(distance_ns), words);
         if (locale_ntp_synced)
