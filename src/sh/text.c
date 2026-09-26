@@ -1915,10 +1915,8 @@ static b32 z85_decode(bool ignore_garbage)
                                 break;
                         }
 
-                        text_line[made++] = (p8)(accumulator >> 24);
-                        text_line[made++] = (p8)(accumulator >> 16);
-                        text_line[made++] = (p8)(accumulator >> 8);
-                        text_line[made++] = (p8)accumulator;
+                        network_store_32(text_line + made, (p32)accumulator);
+                        made += 4;
                         accumulator = 0;
                         held = 0;
 
@@ -2812,8 +2810,7 @@ static bool join_output_add(string_address word)
 
         while (word[at])
         {
-                while (word[at] == ',' || byte_is_blank(word[at]))
-                        at++;
+                at += string_span_of_set(word + at, ", \t");
 
                 if (!word[at])
                         break;
@@ -7090,8 +7087,7 @@ static bool text_tab_parse(string_address list)
 
         while (list[at])
         {
-                while (list[at] == ',' || byte_is_space(list[at]))
-                        at++;
+                at += string_span_of_set(list + at, ", \t\n\v\f\r");
 
                 if (!list[at])
                         break;
@@ -10753,10 +10749,7 @@ static bool column_apply_list(string_address list, p8 flag,
                                 properties[col] |= flag;
                 else
                 {
-                        positive dash = 0;
-
-                        while (dash < length && item[dash] != '-')
-                                dash++;
+                        positive dash = memory_span_without_byte(item, '-', length);
 
                         positive low;
                         positive high;
@@ -16118,8 +16111,7 @@ static bool grep_glob_add(grep_glob address_to address_to list,
                         close++;
                 if (close < length && room[close] == ']')
                         close++;
-                while (close < length && room[close] != ']')
-                        close++;
+                close += memory_span_without_byte(room + close, ']', length - close);
 
                 if (close == length)
                         continue;
@@ -20604,12 +20596,7 @@ static inline INLINE fn sed_stdio(positive length)
 // = prints its number and delimiter through one unchecked printf.
 static COLD fn sed_stdio_number(positive number)
 {
-        positive digits = 1;
-
-        for (; number >= 10; number /= 10)
-                digits++;
-
-        sed_stdio_follow(digits + 1, false);
+        sed_stdio_follow(positive_digits(number) + 1, false);
 }
 
 // A checked write of a whole string and its delimiter, whose length is only
@@ -20622,7 +20609,6 @@ static COLD fn sed_stdio_line(string_address line)
 static fn sed_write_diagnostic(bipolar reason, positive buffer)
 {
         p8 said[64];
-        positive at = 0;
         positive items = sed_stdio_items[buffer == TEXT_STDIO_UNSIZED];
 
         if (!items)
@@ -20635,24 +20621,11 @@ static fn sed_write_diagnostic(bipolar reason, positive buffer)
                 return;
         }
 
-        p8 digits[24];
-        positive width = 0;
+        p8 address_to at = string_copy_end(said, (string_address) "couldn't write ");
 
-        for (positive n = items; n; n /= 10)
-                digits[width++] = (p8)('0' + n % 10);
-
-        for (string_address s = (string_address) "couldn't write "; *s; s++)
-                said[at++] = (p8)*s;
-
-        while (width)
-                said[at++] = digits[--width];
-
-        for (string_address s = items == 1 ? (string_address) " item to stdout"
-                                           : (string_address) " items to stdout";
-             *s; s++)
-                said[at++] = (p8)*s;
-
-        said[at] = 0;
+        at += positive_into(at, items);
+        string_copy(at, items == 1 ? (string_address) " item to stdout"
+                                   : (string_address) " items to stdout");
         string_diagnostic(&text_diagnostic, 0, (string_address)said, file_reason(reason));
 }
 
@@ -27984,8 +27957,7 @@ static bool expr_integer(expr_value address_to value, bipolar address_to out)
         if (!byte_is_digit(value->text[at]))
                 return false;
 
-        while (byte_is_digit(value->text[at]))
-                at++;
+        at += string_span(value->text + at, string_set_digits);
 
         if (value->text[at])
                 return false;
