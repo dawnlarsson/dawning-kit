@@ -35421,16 +35421,26 @@ static bipolar kill_signal_of(string_address word)
 }
 
 // Bash's own table: every number it can name, five to a line, the
-// columns tab-separated and the last line ended with a tab as well.
+// columns tab-separated and the last line ended with a tab as well. Under
+// --posix it is the names alone, on one line between spaces.
 static fn kill_names_bash()
 {
         p8 name[16];
         positive written = 0;
+        bool posix = shell_posix_on();
 
         for (positive number = 1; number <= KILL_MOST; number++)
         {
                 if (!kill_number_named(number, name))
                         continue;
+
+                if (posix)
+                {
+                        if (written++)
+                                log(" ", 1);
+                        log(name, string_length(name));
+                        continue;
+                }
 
                 positive_to_padded(log, number, 2, ' ', 0);
                 log(") SIG", 5);
@@ -35438,7 +35448,7 @@ static fn kill_names_bash()
                 log(++written % 5 ? "\t" : "\n", 1);
         }
 
-        if (written % 5)
+        if (posix || written % 5)
                 log("\n", 1);
 }
 
