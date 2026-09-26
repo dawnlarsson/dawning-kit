@@ -13747,7 +13747,11 @@ COLD fn shell_umask(writer write, string_address input)
 
                         word += used;
 
-                        if (string_get(word))
+                        //      Bash takes four octal digits and no more:
+                        //      10000 is out of range there, and dash keeps
+                        //      its low bits.
+                        if (string_get(word) ||
+                            (shell_bash_compat && value > 07777))
                         {
                                 return shell_refuse(refused,
                                     shell_bash_compat
