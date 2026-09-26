@@ -48532,8 +48532,15 @@ PURE address_any memory_search(address_any block, positive size,
 extern const b8 string_set_blanks[STRING_SET_BYTES];
 extern const b8 string_set_name[STRING_SET_BYTES];
 extern const b8 string_set_digits[STRING_SET_BYTES];
+/* What byte_is_space answers: tab, newline, vertical tab, form feed,
+   carriage return and space. */
+extern const b8 string_set_space[STRING_SET_BYTES];
 
 __asm__(
+    ASM_RODATA_OBJECT_BEGIN(string_set_space, 16)
+    ".zero 9\n   .fill 5,1,1\n   .zero 18\n   .byte 1\n"
+    ".zero 223\n"
+    ASM_OBJECT_END(string_set_space)
     ASM_RODATA_OBJECT_BEGIN(string_set_blanks, 16)
     ".zero 9\n   .byte 1\n   .zero 22\n   .byte 1\n"
     ".zero 223\n"

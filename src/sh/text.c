@@ -1022,8 +1022,7 @@ static bool text_unsigned_option(string_address source, bool saturate,
         if (!source)
                 return false;
 
-        while (byte_is_space(string_get(source)))
-                source++;
+        source += string_span(source, string_set_space);
         if (string_is(source, '+'))
                 source++;
 
@@ -8524,8 +8523,7 @@ static bool pr_signed(string_address value, bipolar address_to into)
 {
         if (!value)
                 return false;
-        while (byte_is_space(string_get(value)))
-                value++;
+        value += string_span(value, string_set_space);
         bipolar made;
         if (!file_signed_decimal(value, address_of made) ||
             made < b32_min || made > b32_max)
@@ -27573,8 +27571,7 @@ static bool cmp_count_of(string_address value, positive address_to result)
         if (!value)
                 return false;
 
-        while (byte_is_space(*value))
-                value++;
+        value += string_span(value, string_set_space);
 
         value += *value == '+';
 

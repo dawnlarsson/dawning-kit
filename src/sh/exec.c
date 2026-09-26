@@ -9460,8 +9460,7 @@ static bool exec_control_integer(string_address word, bipolar address_to answer)
 
         if (overflow || stopped == word)
                 return false;
-        while (byte_is_space(*stopped))
-                stopped++;
+        stopped += string_span(stopped, string_set_space);
         if (*stopped)
                 return false;
 

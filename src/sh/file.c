@@ -20531,8 +20531,7 @@ static bool split_chunk_decimal(string_address text, string_address address_to r
 
 static bool split_chunks(string_address text, split_chunk address_to chunk)
 {
-        while (byte_is_space(string_get(text)))
-                text++;
+        text += string_span(text, string_set_space);
 
         p8 kind = SPLIT_CHUNK_BYTES;
 
@@ -22007,8 +22006,7 @@ static bool truncate_too_large;
 static bool truncate_size(string_address text, b64 address_to out,
                           p8 address_to relation)
 {
-        while (byte_is_space(string_get(text)))
-                text++;
+        text += string_span(text, string_set_space);
 
         p8 mode = address_to relation;
         p8 lead = string_get(text);
@@ -22024,8 +22022,7 @@ static bool truncate_size(string_address text, b64 address_to out,
                                      : TRUNCATE_ROUND_UP;
                 text++;
 
-                while (byte_is_space(string_get(text)))
-                        text++;
+                text += string_span(text, string_set_space);
         }
 
         bool negative = string_is(text, '-');
@@ -31454,8 +31451,7 @@ static bool file_duration_read(string_address text, bool units,
         bool point = false;
         bool any = false;
 
-        while (byte_is_space(string_get(at)))
-                at++;
+        at += string_span(at, string_set_space);
         if (string_is(at, '+'))
                 at++;
 
@@ -34201,8 +34197,7 @@ static b32 file_hostname()
                 if (taking.flags & FILE_FLAG('s'))
                         return file_hostname_usage();
 
-                while (byte_is_space(*name))
-                        name++;
+                name += string_span(name, string_set_space);
                 length = string_length(name);
                 while (length && byte_is_space(name[length - 1]))
                         length--;
@@ -34353,8 +34348,7 @@ static bool nproc_decimal(string_address text, bool plus, bool trailing,
         if (!text)
                 return false;
 
-        while (byte_is_space(string_get(text)))
-                text++;
+        text += string_span(text, string_set_space);
 
         if (plus && string_is(text, '+'))
                 text++;
@@ -34364,8 +34358,7 @@ static bool nproc_decimal(string_address text, bool plus, bool trailing,
                 return false;
 
         if (trailing)
-                while (byte_is_space(string_get(text)))
-                        text++;
+                text += string_span(text, string_set_space);
 
         if (string_get(text) && !(comma && string_is(text, ',')))
                 return false;
@@ -34386,8 +34379,7 @@ static positive nproc_cpu_list(string_address path)
 
         while (text[at])
         {
-                while (byte_is_space(text[at]))
-                        at++;
+                at += string_span(text + at, string_set_space);
 
                 positive used = 0;
                 positive first = string_digits(text + at, address_of used);
@@ -34418,8 +34410,7 @@ static positive nproc_cpu_list(string_address path)
 
                 if (text[at] != ',')
                 {
-                        while (byte_is_space(text[at]))
-                                at++;
+                        at += string_span(text + at, string_set_space);
 
                         return text[at] ? 0 : total;
                 }
@@ -34562,8 +34553,7 @@ static positive nproc_cgroup_quota()
                         positive quota = string_digits(limit, address_of used);
                         positive at = used;
 
-                        while (byte_is_space(limit[at]))
-                                at++;
+                        at += string_span(limit + at, string_set_space);
 
                         positive period_used = 0;
                         positive period =

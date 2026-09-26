@@ -8639,8 +8639,7 @@ static p8 dump_od_number(string_address text, positive address_to out)
         if (!text)
                 return DUMP_OD_NUMBER_INVALID;
 
-        while (byte_is_space(string_get(at)))
-                at++;
+        at += string_span(at, string_set_space);
 
         if (string_get(at) == '-')
                 return DUMP_OD_NUMBER_INVALID;
@@ -13486,8 +13485,7 @@ static bool tools_dmesg_mask(string_address list,
                 if (string_is(list + at, ','))
                 {
                         positive next = at + 1;
-                        while (byte_is_space(string_get(list + next)))
-                                next++;
+                        next += string_span(list + next, string_set_space);
                         if (!string_get(list + next) ||
                             string_is(list + next, ','))
                                 return false;
@@ -14127,8 +14125,7 @@ static bool ul_unsigned(string_address text, positive maximum,
 static bool ul_signed(string_address text, bipolar minimum, bipolar maximum,
                       bipolar address_to value)
 {
-        while (byte_is_space(string_get(text)))
-                text++;
+        text += string_span(text, string_set_space);
         bipolar got;
         if (!file_signed_decimal(text, address_of got) ||
             got < minimum || got > maximum)
@@ -14345,8 +14342,7 @@ static bool ul_bit_list_read(string_address text, positive address_to set,
                         return true;
                 if (clipped && byte_is_space(string_get(at)))
                 {
-                        while (byte_is_space(string_get(at)))
-                                at++;
+                        at += string_span(at, string_set_space);
                         return !string_get(at);
                 }
                 if (!string_is(at, ','))
@@ -14662,8 +14658,7 @@ static bool ul_size(string_address text, positive address_to value)
         positive power;
         bool fractional = false;
 
-        while (byte_is_space(string_get(at)))
-                at++;
+        at += string_span(at, string_set_space);
         if (string_is(at, '-'))
                 return false;
         if (string_is(at, '+'))
@@ -16150,8 +16145,7 @@ static bool ul_flock_seen(p8 letter, string_address value)
         {
                 string_address text = value;
 
-                while (byte_is_space(string_get(text)))
-                        text++;
+                text += string_span(text, string_set_space);
                 if (string_is(text, '-') && text[1] >= '0' && text[1] <= '9')
                         return true;
                 if (!file_duration_read(text, false, address_of parsed))
@@ -16215,8 +16209,7 @@ static b32 util_linux_flock()
         if (timed)
         {
                 string_address text = file_option_value(address_of taking, 'w');
-                while (byte_is_space(string_get(text)))
-                        text++;
+                text += string_span(text, string_set_space);
                 /* util-linux hands a negative timeout to the timer, which
                    refuses it: an operating system error, not a usage one. */
                 if (string_is(text, '-') && text[1] >= '0' && text[1] <= '9')
@@ -16493,8 +16486,7 @@ static bool ul_personality_number(string_address text, p32 address_to out)
         string_address at = text;
         positive value;
 
-        while (byte_is_space(string_get(at)))
-                at++;
+        at += string_span(at, string_set_space);
         bool negative = string_is(at, '-');
         if (negative || string_is(at, '+'))
                 at++;
@@ -18876,8 +18868,7 @@ static fn ul_lsfd_fdinfo_parse(ul_lsfd_entry address_to descriptor,
                         continue;
                 seen |= 1 << field;
                 string_address number = colon + 1;
-                while (byte_is_space(*number))
-                        number++;
+                number += string_span(number, string_set_space);
                 positive value;
                 if (!string_digits_checked(address_of number, field ? 10 : 8,
                                              address_of value) ||
@@ -23222,8 +23213,7 @@ static fn ul_lscpu_info_read()
                 while (key_length && byte_is_space(key[key_length - 1]))
                         key_length--;
                 p8 address_to value = colon + 1;
-                while (byte_is_space(*value))
-                        value++;
+                value += string_span(value, string_set_space);
 
 #define UL_LSCPU_INFO(member, spelling)                                     \
                 if (!info->member &&                                        \
