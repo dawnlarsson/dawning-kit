@@ -12010,9 +12010,14 @@ static b32 tools_diff(void)
                 memory_copy_apart(diff_switches + diff_switches_used, word, length);
                 diff_switches_used += length;
 
-                if (word[length - 1] == 'U' && i + 1 < taking.first)
+                // Only a bundle of short options can end in -U, and the
+                // context it takes is copied here once: it is skipped below,
+                // or a following word would be copied twice into room that
+                // counted it once (--label=U --label=... did that).
+                if (word[length - 1] == 'U' && string_not(word + 1, '-') &&
+                    i + 1 < taking.first)
                 {
-                        string_address context = program_argument((b32)(i + 1));
+                        string_address context = program_argument((b32)++i);
                         positive context_length = string_length(context);
 
                         diff_switches[diff_switches_used++] = ' ';
