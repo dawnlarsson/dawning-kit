@@ -330,8 +330,8 @@ static bool xz_dec_dict_open(xz_decoder address_to d, positive size)
         {
                 if (d->dict)
                         memory_free(d->dict, d->dict_cap);
-                d->dict = (p8 address_to)memory(cap);
-                if (!d->dict || system_failed(d->dict))
+                d->dict = (p8 address_to)memory_checked(cap);
+                if (!d->dict)
                 {
                         d->dict = null;
                         d->dict_cap = 0;
@@ -1062,9 +1062,9 @@ static bool xz_dec_stream(xz_decoder address_to d)
 /* A decoder with nothing mapped but itself. */
 static xz_decoder address_to xz_dec_new(void)
 {
-        xz_decoder address_to d = (xz_decoder address_to)memory(sizeof(xz_decoder));
+        xz_decoder address_to d = (xz_decoder address_to)memory_checked(sizeof(xz_decoder));
 
-        if (!d || system_failed(d))
+        if (!d)
                 return null;
         memory_fill(d, 0, __builtin_offsetof(xz_decoder, in_buf));
         d->job.model = address_of d->models;
@@ -1479,8 +1479,8 @@ static bool xz_area(p8 address_to address_to area, positive address_to room,
                 memory_free(address_to area, address_to room);
         address_to area = null;
         address_to room = 0;
-        p8 address_to bytes = (p8 address_to)memory(need);
-        if (!bytes || system_failed(bytes))
+        p8 address_to bytes = (p8 address_to)memory_checked(need);
+        if (!bytes)
                 return false;
         address_to area = bytes;
         address_to room = need;
@@ -1490,9 +1490,9 @@ static bool xz_area(p8 address_to address_to area, positive address_to room,
 
 static xz_encoder address_to xz_encoder_open(p8 level)
 {
-        xz_encoder address_to e = (xz_encoder address_to)memory(sizeof(xz_encoder));
+        xz_encoder address_to e = (xz_encoder address_to)memory_checked(sizeof(xz_encoder));
 
-        if (!e || system_failed(e))
+        if (!e)
                 return null;
         e->preset = xz_presets + (level > 9 ? 9 : level);
         e->lc = 3;
@@ -3241,9 +3241,9 @@ static bool xz_writer_record(p64 unpadded, p64 uncompressed)
         if (xz_writer.index_n + 20 > xz_writer.index_room)
         {
                 positive room = xz_writer.index_room ? 2 * xz_writer.index_room : 4096;
-                p8 address_to grown = (p8 address_to)memory(room);
+                p8 address_to grown = (p8 address_to)memory_checked(room);
 
-                if (!grown || system_failed(grown))
+                if (!grown)
                         return xz_fail("xz cannot map the index");
                 if (xz_writer.index)
                 {
@@ -3623,14 +3623,17 @@ static bool xz_par_grow(p8 address_to address_to area, positive address_to room,
         if (address_to room >= need)
                 return true;
 
-        positive grown = address_to room ? address_to room : 1u << 20;
+        // Doubling from a megabyte, and no answer once doubling would wrap:
+        // a block header may claim a compressed size near 2^63, and the
+        // loop this was spun forever when grown wrapped to nought.
+        positive grown = memory_growth(address_to room, need, (positive)1 << 20);
 
-        while (grown < need)
-                grown *= 2;
+        if (!grown)
+                return false;
 
-        p8 address_to bytes = (p8 address_to)memory(grown);
+        p8 address_to bytes = (p8 address_to)memory_checked(grown);
 
-        if (!bytes || system_failed(bytes))
+        if (!bytes)
                 return false;
         if (address_to area)
         {
@@ -3980,18 +3983,18 @@ static bool xz_par_serial_rest(xz_par address_to r)
 
 static bool xz_par_decode(bipolar in, bipolar out)
 {
-        xz_par address_to r = (xz_par address_to)memory(sizeof(xz_par));
+        xz_par address_to r = (xz_par address_to)memory_checked(sizeof(xz_par));
 
-        if (!r || system_failed(r))
+        if (!r)
                 return xz_fail("xz cannot map the decoder");
         r->in = in;
         r->out = out;
         r->slot_count = parallel_slots();
-        r->slots = (address_any address_to)memory(r->slot_count * sizeof(address_any));
+        r->slots = (address_any address_to)memory_checked(r->slot_count * sizeof(address_any));
 
         bool ok = false;
 
-        if (r->slots && !system_failed(r->slots))
+        if (r->slots)
         {
                 bipolar got = xz_par_walk(r, xz_batch_room((positive)1 << 20));
 

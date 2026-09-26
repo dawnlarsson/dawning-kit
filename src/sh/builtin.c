@@ -1056,8 +1056,8 @@ static bipolar floodlight_exec_interpreter(
                 return -ERROR_ARGUMENT_LIST;
 
         bytes = entries * sizeof(next[0]);
-        next = (string_address address_to)memory(bytes);
-        if (!next || system_failed(next))
+        next = (string_address address_to)memory_checked(bytes);
+        if (!next)
                 return -ERROR_NO_MEMORY;
 
         next[at++] = interpreter;

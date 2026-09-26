@@ -1413,8 +1413,8 @@ static bool zstd_window_open(positive window)
                 return true;
         }
 
-        zstd_window = (p8 address_to)memory(cap);
-        if (!zstd_window || system_failed(zstd_window))
+        zstd_window = (p8 address_to)memory_checked(cap);
+        if (!zstd_window)
         {
                 zstd_window = null;
                 return zstd_fail("zstd cannot map the window");

@@ -6529,9 +6529,9 @@ static b32 text_tee()
                         return text_done(string_diagnostic(&text_diagnostic, 1, null, "too many operands"));
 
                 positive mapped =
-                    (positive)memory(text_files_count * sizeof(positive));
+                    (positive)memory_checked(text_files_count * sizeof(positive));
 
-                if (!mapped || system_failed(mapped))
+                if (!mapped)
                         return text_done(string_diagnostic(&text_diagnostic, 1, null, "too many operands"));
 
                 handles = (positive address_to)mapped;

@@ -10544,8 +10544,12 @@ same 'build hooks gate success' '1:2' "$hook_return:$hook_gates"
 #       Seven call sites did exactly that. memory_checked in src/lib.util.c
 #       is now the one place that spells the pair, and nothing else may call
 #       memory directly -- a new call site here is the bug coming back.
-memory_raw=$(grep -rn '= memory(' --include='*.c' src \
-        | grep -cv '^src/lib\.util\.c:' || true)
+#       A cast in front hides the call from '= memory(' alone, and nineteen
+#       were written that way; utility_arena_take is the one left, because
+#       the lscpu harness lifts it into a prelude without memory_checked.
+memory_raw=$(grep -rnE '(= |\))memory\(' --include='*.c' src \
+        | grep -v '^src/lib\.util\.c:' \
+        | grep -cv '(positive)memory(UTILITY_ARENA_BYTES)' || true)
 same 'every mapping is taken through memory_checked' '0' "$memory_raw"
 
 group config

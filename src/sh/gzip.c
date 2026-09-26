@@ -387,10 +387,10 @@ typedef struct
 
 static gzip_inflater address_to gzip_inflater_new(void)
 {
-        gzip_inflater address_to z = (gzip_inflater address_to)memory(GZIP_INFLATER_SIZE);
+        gzip_inflater address_to z = (gzip_inflater address_to)memory_checked(GZIP_INFLATER_SIZE);
         p8 address_to tail;
 
-        if (!z || system_failed(z))
+        if (!z)
                 return null;
         tail = (p8 address_to)(z + 1);
         z->bits = 0;
@@ -1717,13 +1717,13 @@ static bool gzip_writer_emit(p8 address_to bytes, positive n)
 
 static gzip_encoder address_to gzip_encoder_open(p8 level)
 {
-        gzip_encoder address_to e = (gzip_encoder address_to)memory(sizeof(gzip_encoder));
+        gzip_encoder address_to e = (gzip_encoder address_to)memory_checked(sizeof(gzip_encoder));
 
-        if (!e || system_failed(e))
+        if (!e)
                 return null;
         e->out_room = GZIP_BLOCK + GZIP_BLOCK / 8 + 4096;
-        e->out = (p8 address_to)memory(e->out_room);
-        if (!e->out || system_failed(e->out))
+        e->out = (p8 address_to)memory_checked(e->out_room);
+        if (!e->out)
         {
                 memory_free(e, sizeof(gzip_encoder));
                 return null;

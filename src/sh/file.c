@@ -24,6 +24,8 @@ static address_any utility_arena_take(positive bytes)
                 goto full;
         if (!utility_arena.bytes)
         {
+                // memory() and not memory_checked: the lscpu harness lifts
+                // this function into a prelude that has only the first.
                 positive got = (positive)memory(UTILITY_ARENA_BYTES);
                 if (!got || system_failed(got))
                 {
@@ -8467,10 +8469,10 @@ static bipolar file_identity_seen(file_identity_set address_to set,
                 positive room = set->room ? set->room << 1 : 64;
                 file_identity address_to made =
                     room > set->room && room <= positive_max / sizeof(file_identity)
-                        ? (file_identity address_to)memory(room * sizeof(file_identity))
+                        ? (file_identity address_to)memory_checked(room * sizeof(file_identity))
                         : null;
 
-                if (!made || system_failed(made))
+                if (!made)
                         return -ERROR_NO_MEMORY;
 
                 memory_fill(made, 0, room * sizeof(file_identity));
@@ -32510,9 +32512,9 @@ static b32 file_yes()
                 }
         }
 
-        positive mapped = (positive)memory(length);
+        positive mapped = (positive)memory_checked(length);
 
-        if (!mapped || system_failed(mapped))
+        if (!mapped)
                 return string_report(log_error, 1, "yes: out of memory\n");
 
         p8 address_to line = (p8 address_to)mapped;
@@ -37514,9 +37516,9 @@ static bipolar xargs_exec_with_slot(string_address address_to words,
                 return XARGS_EXEC_SYSTEM;
 
         positive bytes = vector_bytes + assignment_bytes;
-        positive mapped = (positive)memory(bytes);
+        positive mapped = (positive)memory_checked(bytes);
 
-        if (!mapped || system_failed(mapped))
+        if (!mapped)
                 return XARGS_EXEC_SYSTEM;
 
         string_address address_to environment =
@@ -37574,9 +37576,9 @@ static positive xargs_job_take(string_address command)
                 return positive_max;
 
         positive wanted = length + 1;
-        positive mapped = (positive)memory(wanted);
+        positive mapped = (positive)memory_checked(wanted);
 
-        if (!mapped || system_failed(mapped))
+        if (!mapped)
                 return positive_max;
 
         job->command = (p8 address_to)mapped;
