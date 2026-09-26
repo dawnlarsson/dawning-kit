@@ -1416,7 +1416,6 @@ static bool zstd_window_open(positive window)
         zstd_window = (p8 address_to)memory_checked(cap);
         if (!zstd_window)
         {
-                zstd_window = null;
                 return zstd_fail("zstd cannot map the window");
         }
         zstd_window_cap = cap;
@@ -1543,8 +1542,10 @@ static bool zstd_frame(void)
         if (window > ZSTD_WINDOW_MAX)
                 return zstd_fail("zstd window larger than 128 MiB");
 
-        zstd_block_limit = window && window < ZSTD_BLOCK_MAX ? window
-                                                             : ZSTD_BLOCK_MAX;
+        // A single segment of no bytes has a window of none, and no block
+        // may carry anything: this read it as the full 128 KiB and wrote the
+        // block into the previous frame's window before the size said no.
+        zstd_block_limit = window < ZSTD_BLOCK_MAX ? window : ZSTD_BLOCK_MAX;
         if (!zstd_window_open(window))
                 return false;
 

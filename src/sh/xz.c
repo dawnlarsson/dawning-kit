@@ -333,7 +333,6 @@ static bool xz_dec_dict_open(xz_decoder address_to d, positive size)
                 d->dict = (p8 address_to)memory_checked(cap);
                 if (!d->dict)
                 {
-                        d->dict = null;
                         d->dict_cap = 0;
                         return xz_dec_fail(d, "xz cannot map the dictionary");
                 }
