@@ -35379,6 +35379,28 @@ static bipolar kill_signal_of(string_address word)
         return -1;
 }
 
+// Bash's own table: every number it can name, five to a line, the
+// columns tab-separated and the last line ended with a tab as well.
+static fn kill_names_bash()
+{
+        p8 name[16];
+        positive written = 0;
+
+        for (positive number = 1; number <= KILL_MOST; number++)
+        {
+                if (!kill_number_named(number, name))
+                        continue;
+
+                positive_to_padded(log, number, 2, ' ', 0);
+                log(") SIG", 5);
+                log(name, string_length(name));
+                log(++written % 5 ? "\t" : "\n", 1);
+        }
+
+        if (written % 5)
+                log("\n", 1);
+}
+
 static b32 kill_listed(string_address word)
 {
         p8 name[16];
@@ -35391,7 +35413,19 @@ static b32 kill_listed(string_address word)
                 if (number > 128)
                         number -= 128;
 
-                if (!kill_number_named(number, name))
+                // The shells have no signal zero to name: bash calls it
+                // EXIT, the trap it stands for, and dash refuses it.
+                if (!number && kill_shell_spelling)
+                {
+                        if (!shell_bash_compat)
+                        {
+                                string_format(log_error, "kill: unknown signal: %s\n", word);
+                                return 2;
+                        }
+
+                        string_copy(name, (string_address) "EXIT");
+                }
+                else if (!kill_number_named(number, name))
                 {
                         string_format(log_error, "kill: unknown signal: %s\n", word);
                         //      Dash answers two for a number that is not a
@@ -35422,22 +35456,42 @@ static b32 kill_listed(string_address word)
         }
 
         // A name given to -l is answered with the name, which is what
-        // util-linux answers with.
-        file_line(!string_compare_folded_max(word, "SIG", 3) ? word + 3 : word);
+        // util-linux answers with. Bash answers it with the number.
+        if (shell_bash_compat && kill_shell_spelling)
+        {
+                positive_into_string(name, (positive)found);
+                file_line(name);
+        }
+        else
+                file_line(!string_compare_folded_max(word, "SIG", 3) ? word + 3 : word);
         log_flush();
         return 0;
 }
 
 static b32 kill_list(positive count, positive index)
 {
+        b32 status = 0;
+
         if (index >= count)
         {
-                kill_names_listed();
+                if (shell_bash_compat && kill_shell_spelling)
+                        kill_names_bash();
+                else
+                        kill_names_listed();
                 log_flush();
                 return 0;
         }
 
-        return kill_listed(program_argument((b32)index));
+        // Bash answers every operand in turn and fails if any one did.
+        do
+        {
+                b32 one = kill_listed(program_argument((b32)index));
+
+                if (one)
+                        status = one;
+        } while (shell_bash_compat && kill_shell_spelling && ++index < count);
+
+        return status;
 }
 
 #define KILL_PIDFD_OPEN 434
@@ -35640,14 +35694,7 @@ static b32 file_kill()
                 {
                         positive left = count - index;
 
-                        if (left < 2)
-                        {
-                                kill_names_listed();
-                                log_flush();
-                                return 0;
-                        }
-
-                        if (left > 2)
+                        if (left > 2 && !kill_shell_spelling)
                                 return string_report(log_error, 1,
                                                      "kill: too many arguments\n");
 
