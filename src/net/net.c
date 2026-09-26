@@ -5985,6 +5985,12 @@ static COLD bool tls_issuer_authorized(tls_cert address_to cert, positive ca_bel
                (!cert->path_length_present || ca_below <= cert->path_length);
 }
 
+// A TLS handshake length: three bytes, most significant first.
+static PURE positive tls_load_24(p8 address_to at)
+{
+        return (positive)network_load_16(at) << 8 | at[2];
+}
+
 static COLD bool tls_certificate_body_open(p8 address_to body,
                                       positive body_length,
                                       positive address_to entries_at,
@@ -5999,8 +6005,7 @@ static COLD bool tls_certificate_body_open(p8 address_to body,
         if (body_length < 4 || body[0] != 0 || at + 3 > body_length)
                 return false;
 
-        list_length = ((positive)body[at] << 16) |
-                      ((positive)body[at + 1] << 8) | body[at + 2];
+        list_length = tls_load_24(body + at);
         at += 3;
         if (list_length != body_length - at)
                 return false;
@@ -6026,8 +6031,7 @@ static COLD bool tls_verify_chain(p8 address_to body, positive body_length,
 
         while (at + 3 <= list_end && count < 8)
         {
-                positive cert_length = ((positive)body[at] << 16) |
-                                       ((positive)body[at + 1] << 8) | body[at + 2];
+                positive cert_length = tls_load_24(body + at);
                 positive ext_length;
 
                 at += 3;
@@ -6247,8 +6251,7 @@ static COLD bipolar tls_server_hello_keys(p8 address_to hello, positive length,
         if (length < 44 || hello[0] != TLS_HS_SERVER_HELLO)
                 return TLS_FAIL;
         {
-                positive hs = ((positive)hello[1] << 16) | ((positive)hello[2] << 8) |
-                              hello[3];
+                positive hs = tls_load_24(hello + 1);
                 if (hs + 4 != length)
                         return TLS_FAIL;
         }
@@ -6352,8 +6355,7 @@ static COLD bipolar tls_handshake_one_append(p8 address_to held, positive room,
         if (address_to held_length < 4)
                 return TLS_HANDSHAKE_MORE;
 
-        body_length = ((positive)held[1] << 16) |
-                      ((positive)held[2] << 8) | held[3];
+        body_length = tls_load_24(held + 1);
         if (body_length > room - 4)
                 return TLS_FAIL;
         complete = 4 + body_length;
@@ -6692,9 +6694,7 @@ static COLD bipolar tls_post_handshake_append(p8 address_to held,
                 if (held[at] != TLS_HS_NEW_SESSION_TICKET)
                         return TLS_FAIL;
 
-                body_length = ((positive)held[at + 1] << 16) |
-                              ((positive)held[at + 2] << 8) |
-                              held[at + 3];
+                body_length = tls_load_24(held + at + 1);
                 if (body_length > TLS_HS_MAX - 4)
                         return TLS_FAIL;
 
@@ -6851,9 +6851,7 @@ static COLD bipolar tls_handshake(
                 while (msg_at + 4 <= hs_used)
                 {
                         p8 hs_type = hs[msg_at];
-                        positive hs_len = ((positive)hs[msg_at + 1] << 16) |
-                                          ((positive)hs[msg_at + 2] << 8) |
-                                          hs[msg_at + 3];
+                        positive hs_len = tls_load_24(hs + msg_at + 1);
                         if (msg_at + 4 + hs_len > hs_used)
                                 break;
 

@@ -201,10 +201,7 @@ static bool tar_size_fits(p64 size)
 static fn tar_field_text(p8 address_to field, positive width,
                          p8 address_to into, positive room)
 {
-        positive keep = 0;
-
-        while (keep < width && field[keep])
-                keep++;
+        positive keep = string_length_max(field, width);
 
         if (keep >= room)
                 keep = room ? room - 1 : 0;

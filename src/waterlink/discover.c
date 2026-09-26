@@ -348,16 +348,16 @@ bool waterlink_mdns_read(const p8 address_to packet, positive length,
         if (length < 12 || length > WATERLINK_MDNS_MAX)
                 return false;
 
-        found->id = (p16)(packet[0] << 8 | packet[1]);
+        found->id = network_load_16(packet);
         found->response = (packet[2] & 0x80) != 0;
         //      Opcode, and rcode in a response, must be zero.
         if ((packet[2] & 0x78) || (found->response && (packet[3] & 0x0f)))
                 return false;
 
-        questions = (p32)packet[4] << 8 | packet[5];
-        records = ((p32)packet[6] << 8 | packet[7]) +
-                  ((p32)packet[8] << 8 | packet[9]) +
-                  ((p32)packet[10] << 8 | packet[11]);
+        questions = network_load_16(packet + 4);
+        records = network_load_16(packet + 6) +
+                  network_load_16(packet + 8) +
+                  network_load_16(packet + 10);
 
         //      Each question is at least five bytes and each record eleven:
         //      a count the packet cannot hold is refused before any is read.
@@ -373,7 +373,7 @@ bool waterlink_mdns_read(const p8 address_to packet, positive length,
 
                 if (!next || next + 4 > length)
                         return false;
-                type = (p32)packet[next] << 8 | packet[next + 1];
+                type = network_load_16(packet + next);
                 if (!found->response && waterlink_is_service(name, name_length) &&
                     (type == 12 || type == 255))
                 {
@@ -404,8 +404,8 @@ bool waterlink_mdns_read(const p8 address_to packet, positive length,
 
                 if (!next || next + 10 > length)
                         return false;
-                type = (p32)packet[next] << 8 | packet[next + 1];
-                rdlength = (positive)packet[next + 8] << 8 | packet[next + 9];
+                type = network_load_16(packet + next);
+                rdlength = network_load_16(packet + next + 8);
                 rdata = next + 10;
                 if (rdata + rdlength > length)
                         return false;
@@ -423,8 +423,7 @@ bool waterlink_mdns_read(const p8 address_to packet, positive length,
                         if (instance)
                         {
                                 instance->port =
-                                        (p16)(packet[rdata + 4] << 8 |
-                                              packet[rdata + 5]);
+                                        network_load_16(packet + rdata + 4);
                                 instance->has_port = true;
                         }
                 }
