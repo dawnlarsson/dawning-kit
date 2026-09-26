@@ -197,6 +197,10 @@ typedef struct
         p64 pack_from;
         p64 pack_want;
         p64 block_body_abs;
+        p64 block_packed;
+        p64 block_out;
+        p64 index_blocks;
+        p64 index_digest;
         positive block_hdr_size;
         p8 check;
         p8 check_bytes[32];
@@ -262,6 +266,7 @@ static fn xz_dec_hash(xz_decoder address_to d)
 
         if (!n)
                 return;
+        d->block_out += n;
         if (d->check == XZ_CHECK_CRC32)
                 d->crc32 = hash_crc32(d->crc32, d->hashed, n);
         else if (d->check == XZ_CHECK_CRC64)
@@ -820,6 +825,30 @@ static bool xz_dec_check(xz_decoder address_to d)
         return true;
 }
 
+/*
+        What the index must say, gathered as the blocks end: how many there
+        were, and a digest of each one's unpadded and uncompressed sizes in
+        order. The serial decoder read the index's records and threw them
+        away, so an index that disagreed with its blocks -- or a footer whose
+        backward size did not measure the index -- passed here and was
+        refused by the parallel reader, which checks both, and whether a file
+        decoded came down to the thread count.
+*/
+static fn xz_dec_index_digest(p64 address_to digest, p64 unpadded,
+                              p64 uncompressed)
+{
+        p64 pair[2] = {unpadded, uncompressed};
+
+        address_to digest = hash_crc64(address_to digest, pair, sizeof(pair));
+}
+
+static fn xz_dec_index_note(xz_decoder address_to d, p64 unpadded,
+                            p64 uncompressed)
+{
+        d->index_blocks++;
+        xz_dec_index_digest(address_of d->index_digest, unpadded, uncompressed);
+}
+
 static bool xz_dec_block(xz_decoder address_to d)
 {
         if (!d->block_live)
@@ -892,6 +921,7 @@ static bool xz_dec_block(xz_decoder address_to d)
                 if (d->check == XZ_CHECK_SHA256)
                         digest_open(address_of d->sha256, DIGEST_SHA256, 32);
                 d->hashed = d->job.out;
+                d->block_out = 0;
                 d->need_reset = true;
                 d->need_props = true;
                 d->lz2_kind = 0;
@@ -901,12 +931,15 @@ static bool xz_dec_block(xz_decoder address_to d)
                 return false;
         if (d->paused)
                 return true;
-        if (!xz_dec_pad4(d, d->block_hdr_size +
-                                (positive)(d->in_abs - d->block_body_abs)))
+        d->block_packed = d->in_abs - d->block_body_abs;
+        if (!xz_dec_pad4(d, d->block_hdr_size + (positive)d->block_packed))
                 return false;
         xz_dec_hash(d);
         if (!xz_dec_check(d))
                 return false;
+        xz_dec_index_note(d, d->block_hdr_size + d->block_packed +
+                                 (p64)xz_check_size(d->check),
+                          d->block_out);
         d->block_live = false;
         return true;
 }
@@ -914,31 +947,32 @@ static bool xz_dec_block(xz_decoder address_to d)
 static bipolar xz_dec_vli(xz_decoder address_to d, p32 address_to crc,
                           positive address_to hashed)
 {
-        p64 v = 0;
-        p8 shift = 0;
+        p8 bytes[9];
+        positive n = 0;
+        p64 v;
 
-        for (;;)
+        // The bytes are gathered and read by memory_vli_get, as the parallel
+        // reader reads them: nine at most, and no trailing zero byte, so a
+        // padded encoding is refused on both paths alike.
+        do
         {
                 bipolar byte = xz_dec_byte(d);
 
                 if (byte < 0)
                         return -1;
+                bytes[n++] = (p8)byte;
+        } while ((bytes[n - 1] & 0x80) && n < sizeof(bytes));
 
-                p8 read = (p8)byte;
-
-                address_to crc = hash_crc32(address_to crc, address_of read, 1);
-                address_to hashed += 1;
-                v |= (p64)(read & 0x7f) << shift;
-                if (!(read & 0x80))
-                        return (bipolar)v;
-                shift += 7;
-                if (shift >= 63)
-                        return xz_dec_fail(d, "xz VLI"), -1;
-        }
+        address_to crc = hash_crc32(address_to crc, bytes, n);
+        address_to hashed += n;
+        if (memory_vli_get(bytes, n, 9, address_of v) != n || v > (p64)bipolar_max)
+                return xz_dec_fail(d, "xz VLI"), -1;
+        return (bipolar)v;
 }
 
 static bool xz_dec_index_and_footer(xz_decoder address_to d)
 {
+        p64 digest = 0;
         p8 zero = 0;
         p8 body[6];
         positive hashed = 1;
@@ -953,12 +987,21 @@ static bool xz_dec_index_and_footer(xz_decoder address_to d)
 
         if (records < 0)
                 return xz_dec_fail(d, "xz truncated index");
+        if ((p64)records != d->index_blocks)
+                return xz_dec_fail(d, "xz index does not match the blocks");
         while (records--)
         {
-                if (xz_dec_vli(d, address_of crc, address_of hashed) < 0 ||
-                    xz_dec_vli(d, address_of crc, address_of hashed) < 0)
+                bipolar unpadded = xz_dec_vli(d, address_of crc, address_of hashed);
+                bipolar uncompressed = unpadded < 0 ? -1
+                    : xz_dec_vli(d, address_of crc, address_of hashed);
+
+                if (uncompressed < 0)
                         return xz_dec_fail(d, "xz truncated index");
+                xz_dec_index_digest(address_of digest, (p64)unpadded,
+                                    (p64)uncompressed);
         }
+        if (digest != d->index_digest)
+                return xz_dec_fail(d, "xz index does not match the blocks");
         while (hashed & 3)
         {
                 bipolar byte = xz_dec_byte(d);
@@ -991,6 +1034,11 @@ static bool xz_dec_index_and_footer(xz_decoder address_to d)
         body[5] = (p8)fb1;
         if (got != (p32)~hash_crc32(0xffffffffu, body, 6))
                 return xz_dec_fail(d, "xz footer CRC");
+        // The backward size measures the index, its CRC included, in fours.
+        if (back != (hashed + 4) / 4 - 1)
+                return xz_dec_fail(d, "xz footer");
+        d->index_blocks = 0;
+        d->index_digest = 0;
         return true;
 }
 
