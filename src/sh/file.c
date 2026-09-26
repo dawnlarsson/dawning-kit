@@ -35501,7 +35501,11 @@ static b32 kill_listed(string_address word)
 
         bipolar found = kill_signal_of(word);
 
-        if (found < 0 || found >= KILL_LEAST_REAL)
+        // bash --posix names a signal without its SIG: SIGTERM there is no
+        // signal at all.
+        if (found < 0 || found >= KILL_LEAST_REAL ||
+            (kill_shell_spelling && shell_posix_on() &&
+             !string_compare_folded_max(word, "SIG", 3)))
         {
                 return string_report(log_error, 1, "kill: unknown signal: %s\n", word);
         }
