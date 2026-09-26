@@ -6230,6 +6230,9 @@ COLD fn shell_clear(writer write, string_address input)
 // and final newline.
 static bool printf_cut;
 static bool printf_in_b;
+// bash's echo -e takes only \0nnn as octal: \101 and \1 are the bytes as
+// written, where its printf %b and dash's echo read them as octal too.
+static bool printf_in_echo_bash;
 fn printf_escaped(writer write, string_address text);
 
 /*
@@ -6451,7 +6454,9 @@ fn shell_echo(writer write, string_address input)
                         write(" ", 1);
 
                 printf_in_b = true;
+                printf_in_echo_bash = shell_bash_compat;
                 printf_escaped(write, shell_argv[index]);
+                printf_in_echo_bash = false;
                 printf_in_b = false;
 
                 if (printf_cut)
@@ -11441,6 +11446,13 @@ RETURNS_NONNULL string_address printf_escape(writer write, string_address step)
 {
         p8 value;
 
+        if (printf_in_echo_bash && string_get(step) >= '1' &&
+            string_get(step) <= '7')
+        {
+                write("\\", 1);
+                return step;
+        }
+
         if (string_is(step, '0') || (string_get(step) >= '1' && string_get(step) <= '7'))
         {
                 // \0ddd is the %b argument's spelling; in the format itself
@@ -11843,6 +11855,7 @@ fn printf_one(writer write, string_address format)
 
                 step++;
 
+                string_address directive = step;
                 conversion_spec parsed = conversion_spec_take_max(&step, positive_max);
                 //      An overflowed field is not a width; see awk_sprintf.
                 positive width = (parsed.overflow & 1) ? 0 : parsed.field[0];
@@ -11871,8 +11884,10 @@ fn printf_one(writer write, string_address format)
                 bool alternate = (parsed.flags & CONVERSION_FLAG_ALTERNATE) != 0;
 
                 // The length modifiers say nothing here: every number this
-                // reads is already as wide as the machine.
-                step += string_span_of_set(step, "lhzj");
+                // reads is already as wide as the machine. Bash also takes
+                // L and t, as C does.
+                step += string_span_of_set(step, shell_bash_compat ? "lhzjLt"
+                                                                   : "lhzj");
 
                 conversion = string_get(step);
 
@@ -11885,7 +11900,10 @@ fn printf_one(writer write, string_address format)
 
                 step++;
 
-                if (conversion == '%')
+                // %% is two bytes and nothing between: a flag, a width or
+                // a precision in front of the second makes it a directive
+                // neither shell has, and both refuse it.
+                if (conversion == '%' && step - 1 == directive)
                 {
                         write("%", 1);
                         continue;
@@ -12107,8 +12125,15 @@ fn printf_one(writer write, string_address format)
                 }
 
                 {
-                        p8 said[3] = {'%', conversion, end};
+                        // The directive as it was written, flags and width
+                        // and all, as dash names it.
+                        p8 said[24];
+                        positive length = (positive)(step - directive) + 1;
 
+                        if (length > sizeof(said) - 1)
+                                length = sizeof(said) - 1;
+                        memory_copy(said, directive - 1, length);
+                        said[length] = end;
                         shell_told("printf: %s: invalid directive\n", said);
                 }
 
