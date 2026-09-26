@@ -1788,10 +1788,8 @@ static RETURNS_NONNULL p8 address_to file_account_text(positive which)
                                 is printed, because the lookup finds nothing
                                 rather than finding something wrong.
                         */
-                        positive kept = (positive)got;
-
-                        while (kept && cache->text[kept - 1] != '\n')
-                                kept--;
+                        p8 address_to line_end = memory_last_of(cache->text, '\n', (positive)got);
+                        positive kept = line_end ? (positive)(line_end - cache->text) + 1 : 0;
 
                         cache->text[kept] = end;
                 }
@@ -15365,8 +15363,7 @@ static fn file_write_controls_hidden(writer output, string_address text,
         }
         if (length > plain)
                 output(text + plain, length - plain);
-        for (; length < width; length++)
-                output(" ", 1);
+        writer_fill(output, width > length ? width - length : 0, ' ');
 }
 
 static fn df_row(string_address device, string_address type, string_address where,
@@ -23159,9 +23156,6 @@ static b32 file_hardlink()
         hardlink_temp_number = 0;
         hardlink_process = system_nonce();
         hardlink_io_size = (positive)parsed_io_size;
-        if (hardlink_seen && hardlink_seen_room)
-                memory_fill(hardlink_seen, 0,
-                            hardlink_seen_room * sizeof(positive));
 
         for (positive i = 0; i < file_operand_count; i++)
         {
@@ -24649,10 +24643,8 @@ static string_address dircolors_parse(string_address input, positive length,
 
         for (positive at = 0; at < length;)
         {
-                positive stop = at;
-
-                while (stop < length && !string_is(input + stop, '\n'))
-                        stop++;
+                positive stop = at + memory_span_without_byte(input + at, '\n',
+                                                              length - at);
 
                 line_number++;
                 positive first = at;
@@ -25065,9 +25057,9 @@ static b32 file_rmdir()
                         while (cut && parent[cut - 1] == '/')
                                 cut--;
 
-                        while (cut && parent[cut - 1] != '/')
-                                cut--;
+                        p8 address_to slash = memory_last_of(parent, '/', cut);
 
+                        cut = slash ? (positive)(slash - parent) + 1 : 0;
                         if (!cut)
                                 break;
 
@@ -31897,8 +31889,7 @@ static bool seq_decimal_number(string_address text, seq_decimal address_to out)
         // The exponent was included in at; find the mantissa end directly.
         positive finish = mantissa;
 
-        while (text[finish] && text[finish] != 'e' && text[finish] != 'E')
-                finish++;
+        finish += string_span_without_set(text + finish, "eE");
 
         positive removable = effective > 0 ? (positive)effective : 0;
         positive trim = 0;
@@ -33556,8 +33547,7 @@ static bool id_groups_named(string_address name, positive primary,
                 {
                         positive from = i;
 
-                        while (i < stop && members[i] != ',')
-                                i++;
+                        i += memory_span_without_byte(members + i, ',', stop - i);
 
                         if (i - from == wanted &&
                             !memory_compare(members + from, name, wanted))
@@ -34529,8 +34519,7 @@ static positive nproc_cgroup_quota()
                         break;
                 }
 
-                while (record[at] && record[at] != '\n')
-                        at++;
+                at = (positive)(string_first_of_or_end(record + at, '\n') - record);
 
                 if (record[at])
                         at++;
@@ -34893,10 +34882,8 @@ static b32 file_mktemp()
                                              writer_terminal_quoted_name, suffix);
         }
 
-        positive run_end = template_length;
-
-        while (run_end && template[run_end - 1] != 'X')
-                run_end--;
+        p8 address_to last_x = memory_last_of(template, 'X', template_length);
+        positive run_end = last_x ? (positive)(last_x - template) + 1 : 0;
 
         positive run_at = run_end;
 
@@ -37127,8 +37114,7 @@ static bool date_batch(string_address path, string_address format, b64 now)
                 b64 when;
                 positive ns = 0;
 
-                while (at < length && input[at] != '\n')
-                        at++;
+                at += memory_span_without_byte(input + at, '\n', length - at);
 
                 p8 saved = input[at];
                 input[at] = end;
