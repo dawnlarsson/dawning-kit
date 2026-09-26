@@ -10127,9 +10127,13 @@ static bool find_type_mask(string_address value, string_address word,
                 kind = letter < 128 ? file_kind_from_letter[letter] : 0;
                 if (!kind)
                 {
+                        p8 shown[2] = {letter, end};
+
+                        // string_format has no %c: the letter goes as a
+                        // string of one, or it is dropped.
                         string_format(log_error,
-                                      "find: Unknown argument to %s: %c\n", word,
-                                      letter);
+                                      "find: Unknown argument to %s: %s\n", word,
+                                      shown);
                         return false;
                 }
                 bits |= (b64)1 << kind;
@@ -10138,8 +10142,8 @@ static bool find_type_mask(string_address value, string_address word,
 
         if (!any)
         {
-                string_format(log_error, "find: Unknown argument to %s: %c\n",
-                              word, ',');
+                string_format(log_error, "find: Unknown argument to %s: ,\n",
+                              word);
                 return false;
         }
 
@@ -10720,9 +10724,11 @@ static b32 find_parse_primary(positive depth)
                                 if (directive == '{' || directive == '[' ||
                                     directive == '(')
                                 {
+                                        p8 shown[2] = {directive, end};
+
                                         string_format(log_error,
-                                                      "find: error: the format directive `%%%c' is reserved for future use\n",
-                                                      directive);
+                                                      "find: error: the format directive `%%%s' is reserved for future use\n",
+                                                      shown);
                                         goto bad;
                                 }
                         }
@@ -11848,6 +11854,11 @@ static bool find_printf_one(p8 letter, string_address format, positive address_t
         return false;
 }
 
+static CONST bool find_octal_digit(p8 byte)
+{
+        return (p8)(byte - '0') < 8;
+}
+
 static fn find_printf_walk(string_address format, bipolar handle)
 {
         p8 line[FILE_PATH_MAX * 2];
@@ -11862,22 +11873,28 @@ static fn find_printf_walk(string_address format, bipolar handle)
                         p8 next = string_get(format + at);
                         p8 named = byte_from_escape_letter(next);
 
+                        // \c ends this format's output where it stands,
+                        // whatever follows it.
+                        if (next == 'c')
+                                break;
+
                         // \NNN before the letters: \0 is where \033
                         // starts, and read as the letter it wrote a NUL
-                        // and then "33".
-                        if (next && named != 0xff && !byte_is_digit(next))
+                        // and then "33". Only 0 to 7 are octal: \8 is a
+                        // backslash and an 8, and \18 is \1 and an 8.
+                        if (next && named != 0xff && !find_octal_digit(next))
                         {
                                 line[used++] = named;
                                 at++;
                                 continue;
                         }
 
-                        if (byte_is_digit(next))
+                        if (find_octal_digit(next))
                         {
                                 positive number = 0;
                                 positive digits = 0;
 
-                                while (digits < 3 && byte_is_digit(string_get(format + at)))
+                                while (digits < 3 && find_octal_digit(string_get(format + at)))
                                 {
                                         number = number * 8 +
                                                  (positive)(string_get(format + at) - '0');
