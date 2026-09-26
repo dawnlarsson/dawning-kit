@@ -1242,11 +1242,8 @@ static fn storage_probe_iso9660(bipolar handle,
            storage_read zeroes unread tail bytes, so a short descriptor cannot
            accidentally satisfy the digit check. */
         {
-                bool digits = true;
-
-                for (positive at = 813; at < 829; at++)
-                        if (bytes[at] < '0' || bytes[at] > '9')
-                                digits = false;
+                bool digits = string_span_max(bytes + 813, 16,
+                                              string_set_digits) == 16;
 
                 if (digits)
                 {

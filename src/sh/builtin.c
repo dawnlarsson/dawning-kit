@@ -4923,13 +4923,9 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
                         // what a script cutting on the dot is measuring in.
                         shell_dynamic_text[used++] = '.';
 
-                        for (positive place = 100000; place; place /= 10)
-                        {
-                                shell_dynamic_text[used++] =
-                                    (p8)('0' + (p8)((nanoseconds / 1000 /
-                                                     place) %
-                                                    10));
-                        }
+                        used += positive_into_padded(shell_dynamic_text + used,
+                                                     (positive)(nanoseconds / 1000 % 1000000),
+                                                     6, '0');
 
                         shell_dynamic_text[used] = end;
 
@@ -5242,10 +5238,12 @@ fn shell_path_tidy(p8 address_to path)
 
                 if (memory_is_word(path + begin, length, ".."))
                 {
-                        positive back = write_at;
-
-                        while (back > (rooted ? 1 : 0) && path[back - 1] != '/')
-                                back--;
+                        positive floor = rooted ? 1 : 0;
+                        p8 address_to slash = write_at > floor
+                                                  ? memory_last_of(path + floor, '/',
+                                                                   write_at - floor)
+                                                  : null;
+                        positive back = slash ? (positive)(slash - path) + 1 : floor;
 
                         // A leading ".." in a relative name has nothing above
                         // it to take away, so it stays.

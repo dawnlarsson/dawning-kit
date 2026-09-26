@@ -130,21 +130,16 @@ static positive term_oom_kills(void)
         // The name and its digits both have to fit in what was read: the
         // compare walks nine bytes and the digits walked until one was not
         // one, which off the end of a full buffer is a read past it.
-        for (positive at = 0; at + 9 <= held; at++)
-        {
-                positive count = 0;
+        p8 address_to line = held >= 9 && !memory_compare(text, "oom_kill ", 9)
+                                 ? text
+                                 : memory_search(text, held, "\noom_kill ", 10);
 
-                if ((at && text[at - 1] != '\n') ||
-                    string_compare_max(text + at, (string_address) "oom_kill ", 9))
-                        continue;
+        if (!line)
+                return positive_max;
 
-                for (at += 9; at < held && text[at] >= '0' && text[at] <= '9'; at++)
-                        count = count * 10 + (text[at] - '0');
+        line += 9 + (line[0] == '\n');
 
-                return count;
-        }
-
-        return positive_max;
+        return string_digits_max(line, held - (positive)(line - text), null);
 }
 
 /*
