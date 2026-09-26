@@ -192,8 +192,7 @@ static bipolar bowl_open_directory(string_address path, p8 create,
                 positive n = 0;
                 bipolar next;
 
-                while (string_is(at, '/'))
-                        at++;
+                at += string_span_of_set(at, "/");
                 if (!string_get(at))
                         break;
                 while (string_get(at) && string_not(at, '/') &&
@@ -216,8 +215,7 @@ static bipolar bowl_open_directory(string_address path, p8 create,
                 bool here = false;
                 bool last;
 
-                while (string_is(after, '/'))
-                        after++;
+                after += string_span_of_set(after, "/");
                 last = !string_get(after);
 
                 next = system_open_at(held, name, flags);
@@ -441,8 +439,8 @@ static bool bowl_shebang_target(string_address line, p8 address_to root,
         if (!line)
                 return false;
 
-        while (*line && *line != '@')
-                line++;
+        string_address marker = string_first_of(line, '@');
+        line = marker ? marker : line + string_length(line);
 
         return bowl_launcher(line, root, room, program_out);
 }
@@ -849,7 +847,6 @@ static bool bowl_wrap_command(string_address path, string_address cwd,
 {
         string_address address_to old;
         positive count;
-        positive at;
 
         if (!argv || !argc || !bowl_guest_elf_command(path, cwd))
                 return false;
@@ -862,8 +859,9 @@ static bool bowl_wrap_command(string_address path, string_address cwd,
         bowl_wrap_vector[0] = BOWL_PROGRAM;
         bowl_wrap_vector[1] = bowl_wrap_root;
         bowl_wrap_vector[2] = bowl_wrap_program;
-        for (at = 1; at < count; at++)
-                bowl_wrap_vector[at + 2] = old[at];
+        if (count > 1)
+                memory_copy(bowl_wrap_vector + 3, old + 1,
+                            (count - 1) * sizeof(*old));
         bowl_wrap_vector[count + 2] = null;
         address_to argv = bowl_wrap_vector;
         address_to argc = count + 2;
@@ -874,14 +872,11 @@ static bool bowl_wrap_words(string_address cwd,
                            string_address address_to words, positive count,
                            positive room)
 {
-        positive at;
-
         if (!words || count < 1 || count + 2 >= room ||
             !bowl_guest_elf_command(words[0], cwd))
                 return false;
 
-        for (at = count; at >= 1; at--)
-                words[at + 2] = words[at];
+        memory_copy(words + 3, words + 1, count * sizeof(*words));
         words[0] = BOWL_PROGRAM;
         words[1] = bowl_wrap_root;
         words[2] = bowl_wrap_program;

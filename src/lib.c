@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        353 routines (339 public, 14 local), 351 of them on all three and 2 local to one.
+        354 routines (340 public, 14 local), 352 of them on all three and 2 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -241,6 +241,7 @@
           memory_search_prepared         public  yes     yes     yes
           memory_search_prepared_core    local   yes     yes     yes
           memory_span_byte               public  yes     yes     yes
+          memory_span_byte_reverse       public  yes     yes     yes
           memory_span_byte_wide          local   yes     --      --
           memory_squeeze_bytes           public  yes     yes     yes
           memory_sum_bytes               public  yes     yes     yes
@@ -11062,6 +11063,40 @@ __asm__(
 #endif
 #endif
     ASM_END(memory_span_byte)
+
+    // The equal-byte suffix, read from the end without touching before the
+    // block. The vector body makes long padding and path runs one mask per
+    // sixteen bytes; kernel builds retain the integer-register byte floor.
+    ASM_FUNC(memory_span_byte_reverse)
+    "xor %eax, %eax\n   test %rdx, %rdx\n"
+    "jz .Lmemory_span_byte_reverse_x64_done\n"
+    "cmp %sil, -1(%rdi,%rdx)\n"
+    "jne .Lmemory_span_byte_reverse_x64_done\n"
+    "inc %rax\n   dec %rdx\n"
+#ifndef KERNEL_MODE
+    "movd %esi, %xmm1\n   punpcklbw %xmm1, %xmm1\n"
+    "punpcklwd %xmm1, %xmm1\n   pshufd $0, %xmm1, %xmm1\n"
+    ".Lmemory_span_byte_reverse_x64_block:\n   cmp $16, %rdx\n"
+    "jb .Lmemory_span_byte_reverse_x64_tail\n"
+    "movdqu -16(%rdi,%rdx), %xmm0\n   pcmpeqb %xmm1, %xmm0\n"
+    "pmovmskb %xmm0, %ecx\n   cmp $65535, %ecx\n"
+    "jne .Lmemory_span_byte_reverse_x64_found\n"
+    "add $16, %rax\n   sub $16, %rdx\n"
+    "jmp .Lmemory_span_byte_reverse_x64_block\n"
+#endif
+    ".Lmemory_span_byte_reverse_x64_tail:\n   test %rdx, %rdx\n"
+    "jz .Lmemory_span_byte_reverse_x64_done\n"
+    "cmp %sil, -1(%rdi,%rdx)\n"
+    "jne .Lmemory_span_byte_reverse_x64_done\n"
+    "inc %rax\n   dec %rdx\n   jmp .Lmemory_span_byte_reverse_x64_tail\n"
+#ifndef KERNEL_MODE
+    ".Lmemory_span_byte_reverse_x64_found:\n   xor $65535, %ecx\n"
+    "bsr %ecx, %ecx\n   mov $15, %r8d\n   sub %ecx, %r8d\n"
+    "add %r8, %rax\n"
+#endif
+    ".Lmemory_span_byte_reverse_x64_done:\n"
+    ASM_RET
+    ASM_END(memory_span_byte_reverse)
 #if !defined(KERNEL_MODE) && defined(__ELF__)
     // Keep short spans and following hot floors in place. The bulk section
     // shares the broadcast and tail; Spark also includes it in its text image.
@@ -24880,6 +24915,16 @@ __asm__(
     ASM_RET
     ASM_END(memory_span_byte)
 
+    ASM_FUNC(memory_span_byte_reverse)
+    "mov x3, #0\n   and w1, w1, #255\n"
+    ".Lmemory_span_byte_reverse_arm64_one:\n   cbz x2, 1f\n"
+    "sub x2, x2, #1\n   ldrb w4, [x0, x2]\n"
+    "cmp w4, w1\n   b.ne 1f\n   add x3, x3, #1\n"
+    "b .Lmemory_span_byte_reverse_arm64_one\n"
+    "1:  mov x0, x3\n"
+    ASM_RET
+    ASM_END(memory_span_byte_reverse)
+
     // cells_from_ascii: the x86_64 body carries the shared contract. The same
     // word test and the same or of eight guard cells, with the stores in
     // pairs because stp takes two.
@@ -38637,6 +38682,16 @@ __asm__(
     ASM_RET
     ASM_END(memory_span_byte)
 
+    ASM_FUNC(memory_span_byte_reverse)
+    "li t0, 0\n   andi a1, a1, 255\n"
+    ".Lmemory_span_byte_reverse_rv_one:\n   beqz a2, 1f\n"
+    "addi a2, a2, -1\n   add t1, a0, a2\n   lbu t1, 0(t1)\n"
+    "bne t1, a1, 1f\n   addi t0, t0, 1\n"
+    "j .Lmemory_span_byte_reverse_rv_one\n"
+    "1:  mv a0, t0\n"
+    ASM_RET
+    ASM_END(memory_span_byte_reverse)
+
     // cells_from_ascii: the x86_64 body carries the shared contract. RV64 may
     // trap on an unaligned wide load, so the word of bytes is only read where
     // the byte pointer is aligned: a cell at a time until it is, and then the
@@ -48262,6 +48317,8 @@ bipolar zstd_huffman_4x(address_any dest, positive need, address_any src,
 WRITES(1) bipolar zstd_sequences_run(address_any job);
 PURE positive2 string_hash_33_length(string_address source);
 PURE positive memory_span_byte(address_any block, p8 value, positive size);
+PURE positive memory_span_byte_reverse(address_any block, p8 value,
+                                       positive size);
 // A run of printable ASCII as eight-byte terminal cells, attribute | byte
 // each: from the first, until limit, a byte outside 0x20..0x7e, or a cell
 // below guarded holding any bit of stop, which is left unwritten. Answers
@@ -48532,11 +48589,28 @@ PURE address_any memory_search(address_any block, positive size,
 extern const b8 string_set_blanks[STRING_SET_BYTES];
 extern const b8 string_set_name[STRING_SET_BYTES];
 extern const b8 string_set_digits[STRING_SET_BYTES];
+extern const b8 string_set_alpha[STRING_SET_BYTES];
+extern const b8 string_set_ascii[STRING_SET_BYTES];
+extern const b8 string_set_printable[STRING_SET_BYTES];
+extern const b8 string_set_high[STRING_SET_BYTES];
 /* What byte_is_space answers: tab, newline, vertical tab, form feed,
    carriage return and space. */
 extern const b8 string_set_space[STRING_SET_BYTES];
 
 __asm__(
+    ASM_RODATA_OBJECT_BEGIN(string_set_high, 16)
+    ".zero 128\n   .fill 128,1,1\n"
+    ASM_OBJECT_END(string_set_high)
+    ASM_RODATA_OBJECT_BEGIN(string_set_printable, 16)
+    ".zero 32\n   .fill 95,1,1\n   .zero 129\n"
+    ASM_OBJECT_END(string_set_printable)
+    ASM_RODATA_OBJECT_BEGIN(string_set_ascii, 16)
+    ".fill 128,1,1\n   .zero 128\n"
+    ASM_OBJECT_END(string_set_ascii)
+    ASM_RODATA_OBJECT_BEGIN(string_set_alpha, 16)
+    ".zero 65\n   .fill 26,1,1\n   .zero 6\n   .fill 26,1,1\n"
+    ".zero 133\n"
+    ASM_OBJECT_END(string_set_alpha)
     ASM_RODATA_OBJECT_BEGIN(string_set_space, 16)
     ".zero 9\n   .fill 5,1,1\n   .zero 18\n   .byte 1\n"
     ".zero 223\n"

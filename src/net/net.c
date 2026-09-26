@@ -4227,8 +4227,7 @@ static bool crypto_rsa_pkcs1(p8 address_to n_bytes, positive n_length,
                 return false;
 
         i = 2;
-        while (i < k && em[i] == 0xff)
-                i++;
+        i += memory_span_byte(em + i, 0xff, k - i);
         if (i < 10 || i >= k || em[i] != 0x00)
                 return false;
         i++;
@@ -4374,8 +4373,7 @@ static bool crypto_rsa_pss_sha256(p8 address_to n_bytes, positive n_length,
                 em[0] &= (p8)(0xff >> unused);
 
         at = 0;
-        while (at < masked && em[at] == 0)
-                at++;
+        at += memory_span_byte(em + at, 0, masked - at);
         if (at >= masked || em[at] != 0x01)
                 return false;
         at++;

@@ -3643,14 +3643,6 @@ static bool history_substitution_known;
 #define HISTORY_EXPAND_RUN 0
 #define HISTORY_EXPAND_PRINT 1
 
-static PURE bool history_event_end(p8 value)
-{
-        return !value || value == ' ' || value == '\t' || value == '\n' ||
-               value == ':' || value == '=' || value == '(' || value == ')' ||
-               value == ';' || value == '&' || value == '|' || value == '-' ||
-               value == '\'' || value == '"' || value == '\\';
-}
-
 /* `%` names the word containing the last `?text?` match.  Find that word
    with the shell lexer so quote/operator boundaries stay the same as every
    other history word designator. */
@@ -3734,8 +3726,8 @@ static bool history_event_at(string_address bang,
                 if (close)
                         at = close + 1;
                 else
-                        while (!history_event_end(string_get(at)))
-                                at++;
+                        at += string_span_without_set(
+                            at, " \t\n:=();&|-'\"\\");
 
                 wanted_length = (positive)((close ? close : at) - wanted);
                 if (!wanted_length)
@@ -3779,8 +3771,7 @@ static bool history_event_at(string_address bang,
                 string_address prefix = at;
                 positive length;
 
-                while (!history_event_end(string_get(at)))
-                        at++;
+                at += string_span_without_set(at, " \t\n:=();&|-'\"\\");
                 length = (positive)(at - prefix);
                 if (!length)
                         goto missing;
@@ -8309,8 +8300,7 @@ b32 shell_call_slot(positive slot, string_address name,
                 count = 6;
 
         words[0] = name;
-        for (at = 0; at < count; at++)
-                words[at + 1] = arguments[at];
+        memory_copy(words + 1, arguments, count * sizeof(*arguments));
         words[count + 1] = null;
 
         shell_argv = words;
@@ -10164,8 +10154,8 @@ static b32 exec_simple(b32 index)
                                 goto fail;
                         }
 
-                        for (step = 0; step < words; step++)
-                                shell_argv[step] = parse_words[word + step];
+                        memory_copy(shell_argv, parse_words + word,
+                                    words * sizeof(*parse_words));
 
                         count = words;
                         first = 0;

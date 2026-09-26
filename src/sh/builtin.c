@@ -2477,8 +2477,7 @@ static PURE bool env_function_assignment(string_address entry)
         at = entry + sizeof(prefix) - 1;
         if (!string_get(at) || string_is(at, '='))
                 return false;
-        while (string_get(at) && string_not(at, '='))
-                at++;
+        at = string_first_of_or_end(at, '=');
 
         return string_is(at, '=') && at >= entry + sizeof(prefix) + 2 &&
                at[-1] == '%' && at[-2] == '%';
@@ -5065,8 +5064,7 @@ fn shell_quoted(writer write, string_address value)
                 write("'", 1);
                 value = stop;
 
-                while (string_is(value + quotes, '\''))
-                        quotes++;
+                quotes = string_span_of_set(value, "'");
 
                 if (!quotes)
                         return;
@@ -6019,8 +6017,9 @@ COLD fn shell_pushd(writer write, string_address input)
 
                         kept[used++] = named;
 
-                        for (positive at = 1; at < count; at++)
-                                kept[used++] = list[at];
+                        memory_copy(kept + used, list + 1,
+                                    (count - 1) * sizeof(*list));
+                        used += count - 1;
 
                         if (!shell_dirstack_write(kept, used))
                                 return shell_answered(1, "pushd: directory stack full\n");

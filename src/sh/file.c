@@ -710,8 +710,7 @@ static bool file_name_without_trailing_slashes(p8 address_to into,
         if (length >= FILE_PATH_MAX)
                 return false;
         memory_copy_apart(into, path, length);
-        while (length > 1 && into[length - 1] == '/')
-                length--;
+        length -= memory_span_byte_reverse(into + 1, '/', length - 1);
         into[length] = end;
         return true;
 }
@@ -1628,11 +1627,9 @@ static bool file_resolve_as(string_address path, p8 address_to into,
                         if (missing_walk)
                                 return false;
 
-                        while (length > 1 && into[length - 1] != '/')
-                                length--;
-
-                        if (length > 1)
-                                length--;
+                        p8 address_to slash = memory_last_of(
+                            into + 1, '/', length - 1);
+                        length = slash ? (positive)(slash - into) : 1;
 
                         into[length] = end;
                         continue;
@@ -1750,11 +1747,9 @@ static bool file_resolve_as(string_address path, p8 address_to into,
                 }
                 else
                 {
-                        while (length > 1 && into[length - 1] != '/')
-                                length--;
-
-                        if (length > 1)
-                                length--;
+                        p8 address_to slash = memory_last_of(
+                            into + 1, '/', length - 1);
+                        length = slash ? (positive)(slash - into) : 1;
                 }
 
                 into[length] = end;
@@ -2632,8 +2627,8 @@ static bool file_moment_read_local(string_address text, b64 now, positive fracti
 
                         positive length = 0;
 
-                        while (byte_is_alpha(string_get(text + at + length)))
-                                length++;
+                        length += string_span(text + at + length,
+                                              string_set_alpha);
 
                         const file_unit address_to unit = file_unit_of(text + at, length);
 
@@ -2795,8 +2790,7 @@ static bool file_moment_read_local(string_address text, b64 now, positive fracti
 
                 positive length = 0;
 
-                while (byte_is_alpha(string_get(text + at + length)))
-                        length++;
+                length += string_span(text + at + length, string_set_alpha);
 
                 string_address word = text + at;
 
@@ -2913,8 +2907,8 @@ static bool file_moment_read_local(string_address text, b64 now, positive fracti
 
                         positive wide = 0;
 
-                        while (byte_is_alpha(string_get(text + at + wide)))
-                                wide++;
+                        wide += string_span(text + at + wide,
+                                            string_set_alpha);
 
                         const file_unit address_to unit = file_unit_of(text + at, wide);
 
@@ -4389,8 +4383,7 @@ static bool file_take_from(file_taking address_to taking, positive index)
                                 string_address at = cursor.letters;
                                 positive bit = file_letter_bit(taking->digits);
 
-                                while (byte_is_digit(string_get(at)))
-                                        at++;
+                                at += string_span(at, string_set_digits);
                                 cursor.letters = string_get(at) ? at : null;
                                 taking->repeated |= taking->flags & ((positive)1 << bit);
                                 taking->flags |= (positive)1 << bit;
@@ -11237,8 +11230,7 @@ static bipolar find_exec_directory_hold()
         if (length >= sizeof(trimmed))
                 return -ERROR_NAME_TOO_LONG;
         memory_copy_apart(trimmed, find_path, length);
-        while (length > 1 && trimmed[length - 1] == '/')
-                length--;
+        length -= memory_span_byte_reverse(trimmed + 1, '/', length - 1);
         trimmed[length] = end;
 
         if (length == 1 && trimmed[0] == '/')
@@ -11558,8 +11550,7 @@ static string_address find_below_root()
         {
                 path += length;
 
-                while (string_is(path, '/'))
-                        path++;
+                path += string_span_of_set(path, "/");
         }
 
         return path;
@@ -12001,8 +11992,8 @@ static fn find_printf_walk(string_address format, bipolar handle)
 
                 if (letter == '{')
                 {
-                        while (string_get(format + at) && !string_is(format + at, '}'))
-                                at++;
+                        at = (positive)(string_first_of_or_end(format + at, '}') -
+                                        format);
                         if (string_get(format + at))
                                 at++;
                         continue;
@@ -12032,15 +12023,23 @@ static fn find_printf_walk(string_address format, bipolar handle)
                 positive pad = difference_or_zero(width, length);
 
                 if (!left)
-                        while (pad-- && used + 1 < sizeof(line))
-                                line[used++] = ' ';
+                {
+                        positive filling = min(pad, sizeof(line) - 1 - used);
+                        memory_fill(line + used, ' ', filling);
+                        used += filling;
+                        pad -= filling;
+                }
 
-                for (positive i = 0; i < length && used + 1 < sizeof(line); i++)
-                        line[used++] = find_field[i];
+                positive copying = min(length, sizeof(line) - 1 - used);
+                memory_copy(line + used, find_field, copying);
+                used += copying;
 
                 if (left)
-                        while (pad-- && used + 1 < sizeof(line))
-                                line[used++] = ' ';
+                {
+                        positive filling = min(pad, sizeof(line) - 1 - used);
+                        memory_fill(line + used, ' ', filling);
+                        used += filling;
+                }
         }
 
         if (handle >= 0)
@@ -13209,8 +13208,7 @@ static fn find_walk_root(string_address root)
 
         memory_copy_apart(path, root, length);
         bool trailing = length > 1 && path[length - 1] == '/';
-        while (length > 1 && path[length - 1] == '/')
-                length--;
+        length -= memory_span_byte_reverse(path + 1, '/', length - 1);
         path[length] = end;
 
         bipolar parent;
@@ -18911,8 +18909,7 @@ static fn dirname_one(string_address name, bool zero)
 
         positive stop = (positive)(path_found - name);
 
-        while (stop > 1 && name[stop - 1] == '/')
-                stop--;
+        stop -= memory_span_byte_reverse(name + 1, '/', stop - 1);
 
         if (stop)
                 log(name, stop);
@@ -24691,8 +24688,9 @@ static string_address dircolors_parse(string_address input, positive length,
                 line_number++;
                 positive first = at;
 
-                while (first < stop && byte_is_space(string_get(input + first)))
-                        first++;
+                if (first < stop)
+                        first += string_span_max(input + first, stop - first,
+                                                 string_set_space);
 
                 positive finish = stop;
 
@@ -25096,8 +25094,7 @@ static b32 file_rmdir()
 
                         positive cut = string_length(parent);
 
-                        while (cut && parent[cut - 1] == '/')
-                                cut--;
+                        cut -= memory_span_byte_reverse(parent, '/', cut);
 
                         p8 address_to slash = memory_last_of(parent, '/', cut);
 
@@ -25105,8 +25102,8 @@ static b32 file_rmdir()
                         if (!cut)
                                 break;
 
-                        while (cut > 1 && parent[cut - 1] == '/')
-                                cut--;
+                        cut -= memory_span_byte_reverse(parent + 1, '/',
+                                                        cut - 1);
 
                         memory_copy_apart_end(above, parent, cut);
                         path = above;
@@ -25729,8 +25726,7 @@ static bool cp_link_here(string_address destination)
 
         positive length = (positive)(last - (string_address)parent);
 
-        while (length > 1 && parent[length - 1] == '/')
-                length--;
+        length -= memory_span_byte_reverse(parent + 1, '/', length - 1);
         parent[length ? length : 1] = end;
         return file_look(AT_FDCWD, parent, 0, address_of there) &&
                file_look(AT_FDCWD, (string_address) ".", 0, address_of here) &&
@@ -26206,8 +26202,9 @@ static bipolar cp_tree_open_below(bipolar root, string_address path, positive le
                 if (take > CP_TREE_OPEN_ROOM)
                 {
                         take = CP_TREE_OPEN_ROOM;
-                        while (take && path[done + take] != '/')
-                                take--;
+                        string_address slash = memory_last_of(
+                            path + done + 1, '/', take);
+                        take = slash ? (positive)(slash - path - done) : 0;
                         if (!take)
                         {
                                 if (at >= 0)
@@ -30089,8 +30086,7 @@ static bool rm_through_link(string_address path)
 
         if (!length || length >= sizeof(bare) || path[length - 1] != '/')
                 return false;
-        while (length > 1 && path[length - 1] == '/')
-                length--;
+        length -= memory_span_byte_reverse(path + 1, '/', length - 1);
         memory_copy_apart(bare, path, length);
         bare[length] = end;
 
@@ -32873,8 +32869,8 @@ static b32 env_signals_apply(void)
                 env_signal_name(number, name);
                 at = string_length(name);
                 memory_copy(line, name, at);
-                while (at < 10)
-                        line[at++] = ' ';
+                memory_fill(line + at, ' ', 10 - at);
+                at = 10;
                 line[at++] = ' ';
                 line[at++] = '(';
                 line[at++] = number < 10 ? ' ' : (p8)('0' + number / 10);
@@ -33108,8 +33104,8 @@ static bool env_split(string_address text, positive address_to have)
                                 string_address name = text + 2;
                                 positive length = 0;
 
-                                while (byte_is_alnum(name[length]) || name[length] == '_')
-                                        length++;
+                                length += string_span(name + length,
+                                                      string_set_name);
 
                                 if (name[length] != '}')
                                         return string_report(log_error, false,
@@ -34986,8 +34982,7 @@ static b32 file_mktemp()
 
                 memory_copy_apart(path, base, length);
 
-                while (length > 1 && path[length - 1] == '/')
-                        length--;
+                length -= memory_span_byte_reverse(path + 1, '/', length - 1);
 
                 path[length++] = '/';
         }

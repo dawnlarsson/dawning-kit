@@ -203,8 +203,9 @@ cover('direct_benchmark', 'test/checks.c#BENCH_string_copy', 'string_copy',
 cover('direct_benchmark', 'test/checks.c#BENCH_hash_33',
       'memory_hash_33 string_hash_33_length',
       'bounded/string verifier and paired scalar/four-byte or one-pass/two-pass timing')
-cover('direct_benchmark', 'test/checks.c#BENCH_span_byte', 'memory_span_byte',
-      'page-edge verifier and paired scalar/vector equal-run timing')
+cover('direct_benchmark', 'test/checks.c#BENCH_span_byte',
+      'memory_span_byte memory_span_byte_reverse',
+      'page-edge verifier and paired scalar/vector equal-run timing in both directions')
 cover('direct_benchmark', 'test/checks.c#BENCH_cells_ascii', 'cells_from_ascii',
       'guard and page-edge verifier, and term.c\'s C cell loop against the '
       'assembly in cycles and instructions per cell over fresh and guarded runs')

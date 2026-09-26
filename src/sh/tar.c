@@ -257,8 +257,7 @@ static bool tar_safe_path(string_address path, positive strip, bool absolute,
                 address_to escaped = false;
 
         if (!absolute)
-                while (string_is(at, '/'))
-                        at++;
+                at += string_span_of_set(at, "/");
         else if (string_is(path, '/'))
         {
                 work[0] = '/';
@@ -907,8 +906,7 @@ static positive tar_header_word(p8 address_to into, p8 address_to field,
         positive length = 0;
 
         if (!numeric)
-                while (length < width && field[length])
-                        length++;
+                length = string_length_max(field, width);
 
         if (!length)
                 length = positive_into(into, (positive)number);
@@ -1012,8 +1010,8 @@ static fn tar_long_line(p8 address_to block, p8 type, p64 mode, p64 size,
                         the way the size is right in one: GNU's datewidth. */
                 if (at > tar_listing_date_width)
                         tar_listing_date_width = at;
-                while (at < tar_listing_date_width)
-                        when[at++] = ' ';
+                memory_fill(when + at, ' ', tar_listing_date_width - at);
+                at = tar_listing_date_width;
                 when[at] = end;
                 string_format(log, "%s %s ", (string_address)amount, (string_address)when);
         }
@@ -1324,8 +1322,8 @@ static bipolar tar_stack_parent(string_address path, p8 address_to leaf,
         positive cut = length;
 
         address_to owned = false;
-        while (cut && path[cut - 1] != '/')
-                cut--;
+        string_address slash = memory_last_of(path, '/', cut);
+        cut = slash ? (positive)(slash - path) + 1 : 0;
         if (!length || path[0] == '/' || cut == length)
                 return tar_parent_walk(path, leaf, room, owned);
         if (length - cut >= room)
@@ -1887,11 +1885,7 @@ static bool tar_codec_begin_read(bipolar handle, p8 address_to magic, positive n
 
 static bool tar_bytes_zero(p8 address_to bytes, positive count)
 {
-        p8 combined = 0;
-
-        for (positive at = 0; at < count; at++)
-                combined |= bytes[at];
-        return combined == 0;
+        return memory_sum_bytes(bytes, count) == 0;
 }
 
 static fn tar_codec_end_read(bipolar handle)

@@ -286,8 +286,9 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
 
         address_to used = 0;
 
-        while (at < length && byte_is_space(text[at]))
-                at++;
+        if (at < length)
+                at += string_span_max(text + at, length - at,
+                                      string_set_space);
 
         if (at < length && (text[at] == '+' || text[at] == '-'))
         {
@@ -315,8 +316,9 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
                         return 0;
 
                 // Only the bare word: "+inf5" and "+infinity" are text.
-                while (stop < length && byte_is_space(text[stop]))
-                        stop++;
+                if (stop < length)
+                        stop += string_span_max(text + stop, length - stop,
+                                                string_set_space);
 
                 if (stop != length)
                         return 0;
@@ -1992,8 +1994,9 @@ static b32 awk_read_record(awk_reader address_to which, awk_text address_to addr
         {
                 for (;;)
                 {
-                        while (which->at < which->filled && which->data[which->at] == '\n')
-                                which->at++;
+                        which->at += memory_span_byte(
+                            which->data + which->at, '\n',
+                            which->filled - which->at);
 
                         if (which->at < which->filled || !awk_reader_fill(which))
                                 break;
@@ -2028,8 +2031,8 @@ static b32 awk_read_record(awk_reader address_to which, awk_text address_to addr
 
                 positive stop = scan;
 
-                while (stop > 0 && which->data[which->at + stop - 1] == '\n')
-                        stop--;
+                stop -= memory_span_byte_reverse(which->data + which->at,
+                                                 '\n', stop);
 
                 address_to into = awk_text_new(which->data + which->at, stop);
                 which->at += scan;

@@ -5450,8 +5450,9 @@ static inline INLINE fn rev_characters(p8 address_to at, positive length)
                         i += 8;
                 }
 
-                while (i < length && at[i] < 0x80)
-                        i++;
+                if (i < length)
+                        i += string_span_max(at + i, length - i,
+                                             string_set_ascii);
 
                 if (i == length)
                         break;
@@ -5498,8 +5499,9 @@ static bool rev_text_whole(p8 address_to at, positive length)
                         i += 8;
                 }
 
-                while (i < length && at[i] < 0x80)
-                        i++;
+                if (i < length)
+                        i += string_span_max(at + i, length - i,
+                                             string_set_ascii);
 
                 if (i == length)
                         break;
@@ -7117,8 +7119,8 @@ static bool text_tab_parse(string_address list)
                 {
                         positive after = at;
 
-                        while (list[after] == ',' || byte_is_space(list[after]))
-                                after++;
+                        after += string_span_of_set(list + after,
+                                                    ", \t\n\v\f\r");
 
                         if (list[after])
                                 return string_diagnostic(&text_diagnostic, 0, list, "tab repeat must be last");
@@ -8320,8 +8322,8 @@ static b32 text_fmt()
         positive leading = memory_span_byte(prefix_value, ' ', prefix_total);
         positive trailing = prefix_total;
 
-        while (trailing > leading && prefix_value[trailing - 1] == ' ')
-                trailing--;
+        trailing -= memory_span_byte_reverse(prefix_value + leading, ' ',
+                                             trailing - leading);
 
         fmt_prefix = prefix_value + leading;
         fmt_prefix_leading = leading;
@@ -9468,8 +9470,9 @@ static positive ptx_count_lines(byte_span address_to text)
 static positive ptx_skip_white(ptx_file address_to file, positive at,
                                positive limit)
 {
-        while (at < limit && byte_is_space(file->text.bytes[at]))
-                at++;
+        if (at < limit)
+                at += string_span_max(file->text.bytes + at, limit - at,
+                                      string_set_space);
 
         return at;
 }
@@ -9803,8 +9806,9 @@ static positive ptx_skip_something(ptx_file address_to file, positive at,
         }
 
         if (ptx_word_bytes[file->text.bytes[at]])
-                while (at < limit && ptx_word_bytes[file->text.bytes[at]])
-                        at++;
+                if (at < limit)
+                        at += string_span_max(file->text.bytes + at,
+                                              limit - at, ptx_word_bytes);
         else
                 at++;
 
@@ -16077,8 +16081,7 @@ static bool grep_glob_add(grep_glob address_to address_to list,
                           bool include)
 {
         if (directory)
-                while (length && value[length - 1] == '/')
-                        length--;
+                length -= memory_span_byte_reverse(value, '/', length);
 
         grep_glob address_to made = (grep_glob address_to)utility_arena_take(
             sizeof(grep_glob) + length + 1);
@@ -16234,8 +16237,7 @@ static string_address grep_path_join(string_address directory, string_address na
         positive have = directory ? string_length(directory) : 0;
         positive extra = string_length(name);
 
-        while (have > 1 && directory[have - 1] == '/')
-                have--;
+        have -= memory_span_byte_reverse(directory + 1, '/', have - 1);
 
         if (have == 1 && directory[0] == '/')
                 have = 0;
@@ -17203,8 +17205,9 @@ static PURE bool grep_text_valid(string_address bytes, positive length)
                         i += 8;
                 }
 
-                while (i < length && at[i] < 0x80)
-                        i++;
+                if (i < length)
+                        i += string_span_max(at + i, length - i,
+                                             string_set_ascii);
 
                 if (i == length)
                         break;
@@ -19061,8 +19064,7 @@ static bool grep_leaf_add(grep_node address_to directory,
         string_address above = (string_address)directory->path;
         positive have = directory->length;
 
-        while (have > 1 && above[have - 1] == '/')
-                have--;
+        have -= memory_span_byte_reverse(above + 1, '/', have - 1);
 
         if (have == 1 && above[0] == '/')
                 have = 0;
@@ -19123,8 +19125,7 @@ static grep_node address_to grep_node_new(grep_node address_to parent,
         string_address above = (string_address)parent->path;
         positive have = parent->length;
 
-        while (have > 1 && above[have - 1] == '/')
-                have--;
+        have -= memory_span_byte_reverse(above + 1, '/', have - 1);
 
         if (have == 1 && above[0] == '/')
                 have = 0;
@@ -22980,8 +22981,9 @@ static fn sort_key_span(sort_key address_to key, p8 address_to at, positive leng
         positive finish = length;
 
         if (key->order.blanks[0])
-                while (begin < length && string_set_blanks[at[begin]])
-                        begin++;
+                if (begin < length)
+                        begin += string_span_max(at + begin, length - begin,
+                                                 string_set_blanks);
 
         // A character position is counted from where the field starts and
         // may run past where it stops: GNU clamps it only at the end of the
@@ -22996,8 +22998,10 @@ static fn sort_key_span(sort_key address_to key, p8 address_to at, positive leng
                         finish = sort_field_start(at, length, key->second_field);
 
                         if (key->order.blanks[1])
-                                while (finish < length && string_set_blanks[at[finish]])
-                                        finish++;
+                                if (finish < length)
+                                        finish += string_span_max(
+                                            at + finish, length - finish,
+                                            string_set_blanks);
 
                         finish += key->second_char;
                 }
@@ -23063,8 +23067,8 @@ static sort_number sort_number_of(p8 address_to text, positive length)
 
                 at += string_span_max(text + at, length - at, string_set_digits);
 
-                while (at > fraction && text[at - 1] == '0')
-                        at--;
+                at -= memory_span_byte_reverse(text + fraction, '0',
+                                               at - fraction);
         }
 
         positive places = at - fraction;
@@ -23786,19 +23790,20 @@ static p64 sort_number_window(p8 address_to text, positive length,
         // nothing was a quarter of sort -rn.
         positive at = 0;
 
-        while (at < length && string_set_blanks[text[at]])
-                at++;
+        if (at < length)
+                at += string_span_max(text + at, length - at,
+                                      string_set_blanks);
 
         bool minus = at < length && text[at] == '-';
 
         at += minus;
         positive first = at;
 
-        while (at < length && (p8)(text[at] - '0') < 10)
-                at++;
+        if (at < length)
+                at += string_span_max(text + at, length - at,
+                                      string_set_digits);
 
-        while (first < at && text[first] == '0')
-                first++;
+        first += memory_span_byte(text + first, '0', at - first);
 
         positive digits = at - first;
         positive fraction = at;
@@ -23807,11 +23812,12 @@ static p64 sort_number_window(p8 address_to text, positive length,
         {
                 fraction = ++at;
 
-                while (at < length && (p8)(text[at] - '0') < 10)
-                        at++;
+                if (at < length)
+                        at += string_span_max(text + at, length - at,
+                                              string_set_digits);
 
-                while (at > fraction && text[at - 1] == '0')
-                        at--;
+                at -= memory_span_byte_reverse(text + fraction, '0',
+                                               at - fraction);
         }
 
         positive places = at - fraction;
@@ -27582,8 +27588,7 @@ static bool cmp_count_of(string_address value, positive address_to result)
 
         string_address suffix = value;
 
-        while (byte_is_digit(*suffix))
-                suffix++;
+        suffix += string_span(suffix, string_set_digits);
 
         return *suffix != 'b' && *suffix != 'R' && *suffix != 'Q' &&
                text_count_suffixed(value, result);

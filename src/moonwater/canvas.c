@@ -3572,11 +3572,12 @@ static void console_feed(const char *text, unsigned int count)
 
         for (i = 0; i < count;)
         {
-                unsigned int stop = i;
-
-                // What comes before the next newline goes in as one run.
-                while (stop < count && text[stop] != '\n')
-                        stop++;
+                const p8 *newline = memory_first_of(
+                    (address_any)(text + i), '\n', count - i);
+                unsigned int stop = newline
+                                        ? (unsigned int)(newline -
+                                                         (const p8 *)text)
+                                        : count;
 
                 term_bytes((const p8 *)(text + i), stop - i);
 
@@ -10975,4 +10976,3 @@ static void canvas_cursor_stats(struct cursor_stats *out)
 
         rt_mutex_unlock(&desktop.lock);
 }
-

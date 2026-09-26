@@ -358,6 +358,21 @@ static inline INLINE PURE positive memory_span_without_byte(
         return found ? (positive)(found - (p8 address_to)block) : size;
 }
 
+/* A trim commonly has nothing to trim. Keep that one-byte answer at the call
+   site; matching suffixes enter the reverse assembly span, where whole blocks
+   replace the repeated decrement loop. Parenthesizing the name still reaches
+   the routine directly for verification and benchmarking. */
+#define memory_span_byte_reverse(block, byte, size)                           \
+        ({ address_any _reverse_block = (block);                             \
+           p8 _reverse_byte = (byte);                                        \
+           positive _reverse_size = (size);                                  \
+           _reverse_size &&                                                  \
+                   ((const p8 address_to)_reverse_block)[_reverse_size - 1] ==\
+                       _reverse_byte                                          \
+               ? (memory_span_byte_reverse)(_reverse_block, _reverse_byte,   \
+                                            _reverse_size)                   \
+               : 0; })
+
 /* One Unicode scalar, with no terminator and no partial writes on failure.
    Fixed-width byte stores also work at unaligned addresses on the RV floor. */
 static inline INLINE positive memory_utf8_encode(
@@ -827,8 +842,7 @@ static COLD bipolar system_open_parent_walk(
 
         while (true)
         {
-                while (string_is(path, '/'))
-                        path++;
+                path += string_span_of_set(path, "/");
                 if (!string_get(path))
                 {
                         if (final_directory)
@@ -13188,8 +13202,7 @@ static bool numbers_read(string_address input, numbers_scan address_to number)
                 scan++;
                 after_point = scan;
 
-                while (address_to scan == '0')
-                        scan++;
+                scan += string_span_of_set(scan, "0");
 
                 if (scan != after_point)
                 {
@@ -33337,7 +33350,6 @@ static fn process_execute_shell(string_address path,
 {
         string_address words[PROCESS_ARGUMENT_MAX];
         positive count = 0;
-        positive at;
 
         while (!is_null(arguments[count]))
         {
@@ -33350,8 +33362,9 @@ static fn process_execute_shell(string_address path,
         words[0] = (string_address) "/bin/sh";
         words[1] = path;
 
-        for (at = 1; at < count; at++)
-                words[at + 1] = arguments[at];
+        if (count > 1)
+                memory_copy(words + 2, arguments + 1,
+                            (count - 1) * sizeof(*arguments));
 
         words[count + 1] = null;
 

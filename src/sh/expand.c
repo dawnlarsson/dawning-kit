@@ -1277,8 +1277,7 @@ static inline INLINE bool shell_match_core(string_address pattern,
                 }
         }
 
-        while (string_is(pattern, '*'))
-                pattern++;
+        pattern += string_span_of_set(pattern, "*");
 
         return string_get(pattern) == end;
 }
@@ -4206,8 +4205,8 @@ static fn expand_read_substitution(b32 fd, p8 mark, positive start)
 
         system_close(fd);
 
-        while (expand_length > start && expand_text[expand_length - 1] == '\n')
-                expand_length--;
+        expand_length -= memory_span_byte_reverse(
+            expand_text + start, '\n', expand_length - start);
 }
 
 static fn expand_substitution_done(b32 status)
@@ -4291,8 +4290,7 @@ static bool expand_command_file(string_address text, bool quoted)
         if (!shell_bash_compat)
                 return false;
 
-        while (lex_is_space(string_get(at)))
-                at++;
+        at += string_span_of_set(at, " \t\n");
 
         if (string_not(at, '<') || string_is(at + 1, '<') ||
             string_is(at + 1, '>') || string_is(at + 1, '('))
@@ -4300,8 +4298,7 @@ static bool expand_command_file(string_address text, bool quoted)
 
         at++;
 
-        while (lex_is_space(string_get(at)))
-                at++;
+        at += string_span_of_set(at, " \t\n");
 
         if (!string_get(at) || string_is(at, ';'))
                 return false;
@@ -4330,14 +4327,12 @@ static bool expand_command_file(string_address text, bool quoted)
 
         name_end = at;
 
-        while (lex_is_space(string_get(at)))
-                at++;
+        at += string_span_of_set(at, " \t\n");
 
         if (string_is(at, ';'))
         {
                 at++;
-                while (lex_is_space(string_get(at)))
-                        at++;
+                at += string_span_of_set(at, " \t\n");
         }
 
         if (string_get(at))
@@ -7010,8 +7005,7 @@ static COLD fn expand_push_nul_fields(p8 address_to start, p8 address_to stop,
         {
                 p8 address_to next = at;
 
-                while (next < stop && *next)
-                        next++;
+                next += string_length_max(next, (positive)(stop - next));
                 if (!first)
                         expand_push(' ', quoted ? MARK_BREAK : MARK_SEPARATE);
                 first = false;

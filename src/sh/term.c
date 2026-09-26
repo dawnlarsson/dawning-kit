@@ -3020,11 +3020,10 @@ static PURE positive line_word()
 {
         positive at = line_point;
 
-        while (at && line[at - 1] == ' ')
-                at--;
+        at -= memory_span_byte_reverse(line, ' ', at);
 
-        while (at && line[at - 1] != ' ')
-                at--;
+        p8 address_to space = memory_last_of(line, ' ', at);
+        at = space ? (positive)(space - line) + 1 : 0;
 
         return at;
 }
